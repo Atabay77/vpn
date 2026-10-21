@@ -1120,8 +1120,21 @@ async def start(u: Update, c: ContextTypes.DEFAULT_TYPE):
 async def cmd_id(u: Update, c: ContextTypes.DEFAULT_TYPE):
     await u.message.reply_text(f"ID: {u.effective_user.id}")
 
+async def emoji_test(m):
+    """Premium emoji denemesi: iletilen mesajdaki emojilerin ID'lerini yazar, bot olarak mesajda ve butonda göndermeyi dener."""
+    ems = [e for e in m.entities if e.type == "custom_emoji"]
+    lines = [f"{esc(m.parse_entity(e))}  <code>{e.custom_emoji_id}</code>" for e in ems[:15]]
+    await m.reply_text("🧪 <b>Premium emoji ID'leri</b>\n<blockquote>" + "\n".join(lines) + "</blockquote>", parse_mode="HTML")
+    e = ems[0]; ch = esc(m.parse_entity(e))
+    try: await m.reply_text(f'1) Mesajda: <tg-emoji emoji-id="{e.custom_emoji_id}">{ch}</tg-emoji> deneme', parse_mode="HTML")
+    except Exception as ex: await m.reply_text(f"1) Mesajda: ❌ {esc(str(ex)[:200])}", parse_mode="HTML")
+    try: await m.reply_text("2) Butonda:", reply_markup=KB([[_IKB("Deneme", callback_data="menu", api_kwargs={"icon_custom_emoji_id": e.custom_emoji_id})]]))
+    except Exception as ex: await m.reply_text(f"2) Butonda: ❌ {esc(str(ex)[:200])}", parse_mode="HTML")
+
 async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
     uid = u.effective_user.id
+    if uid in ADMINS and uid not in STATE and any(e.type == "custom_emoji" for e in (u.message.entities or [])):
+        await emoji_test(u.message); return
     if not is_admin(uid) or uid not in STATE: return
     txt = (u.message.text or "").strip()
     st = STATE.pop(uid)
