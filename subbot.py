@@ -2,7 +2,12 @@ import os, sys, io, re, json, html, uuid, base64, asyncio, zipfile, shutil, fcnt
 import urllib.request, urllib.parse
 from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor
-from telegram import Update, InlineKeyboardButton as B, InlineKeyboardMarkup as KB
+from telegram import Update, InlineKeyboardButton as _IKB, InlineKeyboardMarkup as KB
+
+def B(text, callback_data=None, style=None, **kw):
+    """Buton. style: "success" (yeşil), "primary" (mavi), "danger" (kırmızı) — eski Telegram'da yok sayılır."""
+    if style: kw["api_kwargs"] = {"style": style}
+    return _IKB(text, callback_data=callback_data, **kw)
 from telegram.error import BadRequest
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 from google.oauth2 import service_account
@@ -139,7 +144,8 @@ def left_txt(exp):
     if d <= 0: return "bitti"
     return f"{int(d // 86400)}g {int(d % 86400 // 3600)}s"
 
-def name_of(s, kid): return s.get("title") or s.get("name") or kid
+def name_of(s, kid): return s.get("title") or s.get("name") or kid      # abonelik başlığı (VPN uygulamasında)
+def btn_name(s, kid): return s.get("name") or s.get("title") or kid     # buton adı (sadece botta)
 
 def short(s, n=22):
     s = " ".join(str(s).split())
@@ -331,9 +337,6 @@ def dead_filter(codes):
     dead = [c for c in tcp if not alive.get(hps[c], False)]
     vlog(f"🧪 Ölü test ({time.time() - t0:.0f} sn): {len(tcp) - len(dead)}/{len(tcp)} TCP sunucu açık, "
          f"{len(dead)} kapalı atıldı · {len(codes) - len(tcp)} UDP test edilmedi")
-    for c in dead[:15]:
-        h, p = hps[c]
-        vlog(f"   ✖ {short(orig_name(c) or '-', 28)} {h}:{p}")
     return [c for c in codes if c not in set(dead)]
 
 def code_key(link):
@@ -484,25 +487,60 @@ def exit_country(link, geo):
     if any(w in low for w in RU_WORDS): return "ru", "isim"
     return geo.get(code_host(link)), "ip"
 
-def rename_all(codes, geo):
-    """Çıkışı Rusya olan -> her zaman 🇷🇺 (istisna, tekrar edebilir). Diğerleri -> rastgele bayrak,
-    HİÇBİR bayrak iki kez kullanılmaz. Bayrak biterse fazla kodlar atılır. Dönüş: (yeni kodlar, log satırları)."""
-    bag = random.sample([c for c in COUNTRIES if c != "ru"], len(COUNTRIES) - 1)
-    used, out, notes, skipped = set(), [], [], 0
-    for link in codes:
-        ex, how = exit_country(link, geo)
-        if ex == "ru": cc = "ru"
-        elif bag: cc = bag.pop()
-        else:
-            skipped += 1
-            continue
-        flag, cname, names = COUNTRIES[cc]
-        free = [n for n in names if (cc, n) not in used] or names
-        n = random.choice(free); used.add((cc, n))
-        new_name = f"{flag} {cname} | {n}"
-        out.append(set_name(link, new_name))
-        notes.append(f"   {new_name}  ← çıkış {(ex or '??').upper()}" + (" (IP'den)" if how == "ip" else ""))
-    if skipped: notes.append(f"⚠️ Bayrak kalmadı, {skipped} kod eklenmedi (aynı bayrak 2 kez kullanılmaz)")
+REAL_SEP, RAND_SEP = " · ", " | "   # gerçek ülke bayrağı "·", rastgele bayrak "|" (sadece kurucu bilir)
+REAL_MIN = 6                           # bu kadar farklı gerçek ülke varsa sadece onlar kalır
+
+def _emoji(n): return n.split(" ", 1)[0]
+
+def _pick_name(cc, used_names, used_emojis):
+    """Aynı isim ve aynı emoji bir listede iki kez kullanılmaz (mümkün olduğu sürece)."""
+    names = COUNTRIES[cc][2]
+    for ok in (lambda n: n not in used_names and _emoji(n) not in used_emojis, lambda n: n not in used_names, lambda n: True):
+        free = [n for n in names if ok(n)]
+        if free:
+            n = random.choice(free); used_names.add(n); used_emojis.add(_emoji(n))
+            return n
+
+def rename_all(codes, geo, ms=None, fresh=False):
+    """Kuralar:
+    - Rusya tek: birden fazla Rusya varsa en iyi ms'li kalır, her zaman 2. sırada.
+    - Telefon testinde ms'i olanlar ms'e göre sıralanır; test edilmemişler en altta, rastgele bayrakla.
+    - En üstte gerçek ülkeler (her ülkeden en hızlısı, gerçek bayrakla). 6+ farklı gerçek ülke varsa
+      sadece onlar kalır; azsa geri kalan kodlar onların altına rastgele bayrakla eklenir.
+    - Hiçbir bayrak (Rusya dahil) iki kez kullanılmaz; isim/emoji de tekrar etmez.
+    Dönüş: (yeni kodlar, log satırları)."""
+    ms = ms or {}
+    info = []
+    for i, c in enumerate(codes):
+        ex, _ = exit_country(c, geo)
+        k = code_key(c)
+        info.append({"c": c, "ex": ex if ex in COUNTRIES else None, "ms": ms.get(k), "tested": (not fresh) or k in ms, "i": i})
+    order = lambda x: (x["ms"] is None, x["ms"] or 0, x["i"])
+    tested = sorted([x for x in info if x["tested"]], key=order)
+    untested = [x for x in info if not x["tested"]]
+    ru_all = [x for x in tested if x["ex"] == "ru"] + [x for x in untested if x["ex"] == "ru"]
+    ru = ru_all[0] if ru_all else None
+    real, seen, others = [], {"ru"}, []
+    for x in tested:
+        if x["ex"] == "ru": continue
+        if x["ex"] and x["ex"] not in seen: seen.add(x["ex"]); real.append(x)
+        else: others.append(x)
+    rest_u = [x for x in untested if x["ex"] != "ru"]
+    dropped = len(ru_all) - (1 if ru else 0)
+    if len(real) >= REAL_MIN: dropped += len(others); others = []
+    bag = [c for c in COUNTRIES if c not in seen]; random.shuffle(bag)
+    plan = [(x, x["ex"], True) for x in real]
+    skipped = 0
+    for x in others + rest_u:
+        if bag: plan.append((x, bag.pop(), False))
+        else: skipped += 1
+    if ru: plan.insert(min(1, len(plan)), (ru, "ru", True))
+    used_names, used_emojis, out = set(), set(), []
+    for x, cc, is_real in plan:
+        flag, cname, _ = COUNTRIES[cc]
+        out.append(set_name(x["c"], f"{flag} {cname}{REAL_SEP if is_real else RAND_SEP}{_pick_name(cc, used_names, used_emojis)}"))
+    notes = [f"🧩 Liste: {len(real)} gerçek ülke · Rusya {'2. sırada' if ru else 'yok'} · {len(plan) - len(real) - (1 if ru else 0)} rastgele"
+             + (f" · {dropped} elendi" if dropped else "") + (f" · {skipped} bayrak bitti" if skipped else "")]
     return out, notes
 
 
@@ -566,7 +604,7 @@ def tm_sync(db, sources):
         if msg != RUN["tm_err"]: vlog(f"⚠️ Telefon testi okunamadı: {msg}")
         RUN["tm_err"] = msg
         RUN["tm_line"] = "📱 Telefon testi: okunamadı"
-        return set()
+        return set(), {}, False
     ts, res = int(ch.get("ts") or 0), ch.get("results") or {}
     good = sum(1 for v in res.values() if isinstance(v, (int, float)) and v > 0)
     stale = bool(ts) and time.time() - ts > TM_MAX_AGE
@@ -586,8 +624,9 @@ def tm_sync(db, sources):
     if ts and time.time() - ts > TM_ALERT and RUN.get("tm_alerted") != ts:
         RUN["tm_alerted"] = ts
         RUN["tm_alert"] = f"📱 Telefon testinden sonuç gelmiyor (son sonuç: {ago(ts)}). Termux'u aç, test kendiliğinden başlar."
-    if not ts or stale: return set()
-    return {k for k, v in res.items() if isinstance(v, (int, float)) and v < 0}
+    if not ts or stale: return set(), {}, False
+    return ({k for k, v in res.items() if isinstance(v, (int, float)) and v < 0},
+            {k: v for k, v in res.items() if isinstance(v, (int, float)) and v > 0}, True)
 
 
 # ───────── KONTROL DÖNGÜSÜ ─────────
@@ -626,7 +665,8 @@ def check_cycle(force=False):
     ips = {h for h in (code_host(c) for c in codes) if h}
     old = set(db.get("seen_ips", []))
     new = ips - old
-    dead_tm = tm_sync(db, sources) & {code_key(c) for c in codes}
+    dead_tm, tm_ms, tm_fresh = tm_sync(db, sources)
+    dead_tm &= {code_key(c) for c in codes}
     tm_changed = sorted(dead_tm) != sorted(db.get("tm_dead_pushed", []))
     if not force and old and len(new) <= NEW_IP_LIMIT and not tm_changed:
         RUN["last_msg"] = f"✅ {len(codes)} kod, {len(new)} yeni IP → değişiklik yok"
@@ -639,15 +679,13 @@ def check_cycle(force=False):
         keep = [c for c in codes if code_key(c) not in dead_tm]
         if keep:
             vlog(f"📱 TM'de çalışmayan {len(dead_tm)} kod çıkarıldı")
-            for c in codes:
-                if code_key(c) in dead_tm: vlog(f"   ✖ {short(orig_name(c) or code_host(c) or '-', 34)}")
             codes = keep
         else:
             vlog("⚠️ Telefon testine göre hiçbir kod çalışmıyor; test yok sayıldı")
     codes = dead_filter(codes)
     need_ip = [code_host(c) for c in codes if exit_country(c, {})[0] is None]   # isminde ülke olmayanlar
     geo = geo_lookup([h for h in need_ip if h]) if need_ip else {}
-    renamed, notes = rename_all(codes, geo)
+    renamed, notes = rename_all(codes, geo, tm_ms, tm_fresh)
     for n in notes: vlog(n)
     targets = [(s["file_id"], name_of(s, k), s.get("announce", "")) for k, s in db["subs"].items() if s.get("file_id") and not is_exp(s)]
     ok, bad = push_all(targets, renamed)
@@ -777,41 +815,71 @@ async def post_init(app):
 
 # ───────── MENÜLER ─────────
 def menu_text(uid):
+    try: db = load_db()
+    except Exception: db = None
     if uid not in ADMINS:
-        return f"🏠 <b>VIP PANEL</b>\n{LINE}\nBir işlem seç:"
-    try: db = load_db(); n, src, vip = len(db["template"]), len(db["sources"]), len(db["subs"]); lu = db.get("last_update")
-    except Exception: n = src = vip = "?"; lu = None
+        mine = [v for v in (db["subs"].values() if db else []) if v.get("owner_id") == uid]
+        e = (db.get("sub_admins", {}) if db else {}).get(str(uid), {})
+        return ("✦ <b>VIP PANEL</b> ✦\n"
+                f"<blockquote>🎟 Kodların  <b>{sum(1 for v in mine if not is_exp(v))}/{SUB_LIMIT}</b>\n"
+                f"⏳ Yetki süresi  <b>{left_txt(e.get('expires'))}</b></blockquote>\n"
+                "<i>Bir işlem seç</i> 👇")
+    n = len(db["template"]) if db else "?"
+    src = len(db["sources"]) if db else "?"
+    vip = len(db["subs"]) if db else "?"
     on = not os.path.exists(STOP_FLAG)
-    return (f"🏠 <b>VPN PANEL</b>\n{LINE}\n"
-            f"⚙️ Sistem: {'🟢 Çalışıyor' if on else '🔴 Durduruldu'}\n"
-            f"🔍 Son kontrol: {ago(RUN['last_check'])}\n"
-            f"🔄 Son güncelleme: {ago(lu)}\n"
-            f"📡 Kod: {n} · 🔗 Abonelik: {src} · 👥 VIP: {vip}\n"
-            f"{esc(RUN['tm_line'])}\n{LINE}")
+    tm = RUN["tm_line"].replace("📱 Telefon testi: ", "")
+    return ("✦ <b>VPN PANEL</b> ✦\n"
+            f"<blockquote>⚙️ Sistem  <b>{'🟢 Çalışıyor' if on else '🔴 Durduruldu'}</b>\n"
+            f"🔍 Son kontrol  <i>{ago(RUN['last_check'])}</i>\n"
+            f"🔄 Son güncelleme  <i>{ago(db.get('last_update') if db else None)}</i>\n"
+            f"📱 Telefon testi  <i>{esc(tm)}</i></blockquote>\n"
+            f"📡 <b>{n}</b> kod  ·  🔗 <b>{src}</b> abonelik  ·  👥 <b>{vip}</b> VIP")
 
 def main_kb(uid):
-    rows = [[B("✨ Kod Oluştur", callback_data="create_key"), B("👥 Kodlarım", callback_data="my_keys")]]
+    rows = [[B("✨ Kod Oluştur", "create_key", "success"), B("👥 Kodlarım", "my_keys", "primary")]]
     if uid in ADMINS:
         on = not os.path.exists(STOP_FLAG)
-        rows.append([B("🔗 Abonelikler", callback_data="sources"), B("📜 Loglar", callback_data="logs")])
-        rows.append([B("🛑 Durdur" if on else "▶️ Başlat", callback_data="toggle_sys"), B("⚙️ Admin", callback_data="admin")])
+        rows += [[B("🔗 Abonelikler", "sources"), B("📜 Loglar", "logs")],
+                 [B("📢 Toplu Duyuru", "bulk_ann"), B("🏷 Toplu Başlık", "bulk_title")],
+                 [B("🛑 Durdur", "toggle_sys", "danger") if on else B("▶️ Başlat", "toggle_sys", "success"), B("⚙️ Admin", "admin")]]
     return KB(rows)
 
 def admin_kb():
     return KB([
-        [B("⚡ Şimdi Güncelle", callback_data="upd_now"), B("📦 Yedek", callback_data="get_zip")],
-        [B("👮 Alt Adminler", callback_data="sa_menu")],
-        [B("◀️ Menü", callback_data="menu")]])
+        [B("⚡ Şimdi Güncelle", "upd_now", "primary"), B("📦 Yedek", "get_zip")],
+        [B("👮 Alt Adminler", "sa_menu")],
+        [B("◀️ Menü", "menu")]])
 
 def log_text():
     on = not os.path.exists(STOP_FLAG)
     nxt = int(RUN["next"] - time.time()) if on and RUN["next"] else None
-    st = "🟢 Çalışıyor" + (f" · sonraki kontrol {max(0, nxt)} sn" if nxt is not None else "") if on else "🔴 Durduruldu"
+    st = ("🟢 Çalışıyor" + (f" · sonraki kontrol {max(0, nxt)} sn" if nxt is not None else "")) if on else "🔴 Durduruldu"
     lines = [short(l, 70) for l in tail(VIP_LOG, 35)]
-    body = ("<pre>" + esc("\n".join(lines)) + "</pre>") if lines else "Log yok."
-    return f"📜 <b>Loglar</b>\n{LINE}\n{st}\n{esc(RUN['last_msg'])}\n{esc(RUN['tm_line'])}\n{body}\n<i>Güncellendi: {datetime.datetime.now():%H:%M:%S}</i>"
+    body = ('<pre><code class="language-log">' + esc("\n".join(lines)) + "</code></pre>") if lines else "<i>Log yok.</i>"
+    return ("📜 <b>Loglar</b>\n"
+            f"<blockquote>{st}\n{esc(RUN['last_msg']) or '—'}\n{esc(RUN['tm_line'])}</blockquote>\n"
+            f"{body}\n<i>⟳ {datetime.datetime.now():%H:%M:%S}</i>")
 
-LOG_KB = KB([[B("🔄 Yenile", callback_data="logs"), B("◀️ Menü", callback_data="menu")]])
+LOG_KB = KB([[B("🔄 Yenile", "logs", "primary"), B("◀️ Menü", "menu")]])
+
+def code_card(s, kid, uid):
+    fid = s.get("file_id", "")
+    ann = s.get("announce") or ""
+    return (f"🎟 <b>{esc(short(btn_name(s, kid), 40))}</b>\n"
+            f"<blockquote>🏷 Başlık  <code>{esc(name_of(s, kid))}</code>\n"
+            f"📢 Duyuru  {('<i>' + esc(short(ann, 120)) + '</i>') if ann else '—'}\n"
+            f"⏳ Süre  <b>{left_txt(s.get('expires'))}</b>"
+            + (f"\n👮 Sahibi  <code>{s.get('owner_id')}</code>" if uid in ADMINS and s.get("owner_id") and s.get("owner_id") not in ADMINS else "")
+            + "</blockquote>\n"
+            f"🔗 <b>Abonelik linki</b> <i>(dokun → kopyala)</i>\n<code>{esc(sub_link(fid) if fid else 'Drive dosyası yok')}</code>")
+
+def code_kb(kid, uid):
+    rows = [[B("🏷 Başlık", f"kt:{kid}"), B("🔘 Buton Adı", f"kn:{kid}")],
+            [B("📢 Duyuru", f"ka:{kid}")] + ([B("⏳ Süre", f"kx:{kid}")] if uid in ADMINS else []),
+            [B("🗑 Sil", f"kd:{kid}", "danger")],
+            [B("◀️ Kodlarım", "my_keys")]]
+    return KB(rows)
 
 async def live_log(q, uid):
     """Log mesajını 3 dakika boyunca canlı tutar. Sadece log DEĞİŞİNCE düzenler
@@ -840,6 +908,21 @@ async def notify_founders(app, text, kb=None):
         try: await app.bot.send_message(chat_id=fid, text=text, parse_mode="HTML", disable_web_page_preview=True, reply_markup=kb)
         except Exception as e: log.warning("notify: %s", e)
 
+def prompt(title, text, cancel_to):
+    return f"{title}\n<blockquote>{text}</blockquote>", back(cancel_to, "✖️ İptal")
+
+def bulk_apply(field, val):
+    """Bütün kodların duyurusunu/başlığını değiştirir ve Drive'a yazar. val None ise başlık = buton adı."""
+    def f(db):
+        items = []
+        for kid, s in db["subs"].items():
+            if field == "title": s["title"] = val if val is not None else btn_name(s, kid)
+            else: s["announce"] = val
+            if s.get("file_id") and not is_exp(s): items.append((s["file_id"], name_of(s, kid), s.get("announce", "")))
+        return items, list(db["template"])
+    items, tpl = mutate(f)
+    return push_all(items, tpl), len(items)
+
 
 # ───────── HANDLERS ─────────
 async def start(u: Update, c: ContextTypes.DEFAULT_TYPE):
@@ -867,11 +950,12 @@ async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
             if res:
                 kid, fid = res
                 audit(uid, f"create {kid} {name}")
-                out = (f"✅ <b>Kod oluşturuldu!</b>\n{LINE}\n👤 <code>{esc(name)}</code>\n\n"
-                       f"🔗 Abonelik linki\n<code>{esc(sub_link(fid))}</code>")
+                out = (f"✅ <b>Kod oluşturuldu!</b>\n<blockquote>🎟 <b>{esc(name)}</b></blockquote>\n"
+                       f"🔗 <b>Abonelik linki</b> <i>(dokun → kopyala)</i>\n<code>{esc(sub_link(fid))}</code>")
+                kb = KB([[B("🎟 Koda Git", f"kv:{kid}", "primary"), B("◀️ Menü", "menu")]])
             else:
-                out = f"⚠️ {esc(err)}"
-            await m.edit_text(out, parse_mode="HTML", reply_markup=back("menu", "◀️ Menü"), disable_web_page_preview=True)
+                out, kb = f"⚠️ {esc(err)}", back("menu", "◀️ Menü")
+            await m.edit_text(out, parse_mode="HTML", reply_markup=kb, disable_web_page_preview=True)
             if res and uid not in ADMINS:
                 await notify_founders(c.application, f"🔔 Alt admin <b>{esc(u.effective_user.full_name)}</b> (<code>{uid}</code>) kod oluşturdu: <code>{esc(name)}</code>")
 
@@ -884,9 +968,9 @@ async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
                 await u.message.reply_text("ℹ️ Bu ID zaten kurucu.", reply_markup=back("sa_menu"))
                 return
             exp = time.time() + SUB_DAYS * 86400
-            mutate(lambda d: d.setdefault("sub_admins", {}).__setitem__(str(nid), {"expires": exp, "added": time.time()}))
+            old = mutate(lambda d: (d.setdefault("sub_admins", {}).get(str(nid)), d["sub_admins"].__setitem__(str(nid), {"expires": exp, "added": time.time()}))[0])
             audit(uid, f"sa_add {nid}")
-            await u.message.reply_text(f"✅ Alt admin <code>{nid}</code> eklendi ({SUB_DAYS} gün).", parse_mode="HTML", reply_markup=back("sa_menu"))
+            await u.message.reply_text(f"✅ Alt admin <code>{nid}</code> {'süresi uzatıldı' if old else 'eklendi'} ({SUB_DAYS} gün).", parse_mode="HTML", reply_markup=back("sa_menu"))
 
         elif act == "src_add":
             lines = [x.strip() for x in txt.split() if x.strip().startswith("http")]
@@ -919,26 +1003,44 @@ async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
                 start_refresh(c.application, "abonelik değiştirildi")
             await u.message.reply_text("✅ Abonelik değiştirildi. Kodlar şimdi yeni abonelikten çekilip yazılıyor, bitince bildirim gelecek." if ok else "⚠️ Abonelik bulunamadı.", reply_markup=back("sources"))
 
-        elif act in ("rename", "announce"):
+        elif act in ("bulk_ann", "bulk_title"):
+            if act == "bulk_title" and txt != "-" and not txt: return
+            val = txt[:60] if act == "bulk_title" else txt
+            show = ("<i>(her kodun başlığı kendi buton adı olur)</i>" if txt == "-" else f"<code>{esc(val)}</code>") if act == "bulk_title" \
+                else ("<i>(bütün duyurular silinir)</i>" if txt == "-" else f"<i>{esc(val)}</i>")
+            STATE[uid] = {"action": "confirm", "what": act, "val": None if txt == "-" and act == "bulk_title" else ("" if txt == "-" else val)}
+            n = len(load_db()["subs"])
+            await u.message.reply_text(
+                f"{'📢' if act == 'bulk_ann' else '🏷'} <b>Onay</b>\n<blockquote>{show}</blockquote>\n"
+                f"<b>{n}</b> kodun hepsine uygulanacak ve Drive'a yazılacak.",
+                parse_mode="HTML", reply_markup=KB([[B("✅ Uygula", "bulk_yes", "success"), B("✖️ İptal", "menu", "danger")]]))
+
+        elif act in ("title", "bname", "announce"):
             kid = st["kid"]
-            val = txt[:60] if act == "rename" else ("" if txt == "-" else txt)
+            val = txt[:60] if act != "announce" else ("" if txt == "-" else txt)
             def f(db):
                 s = db["subs"].get(kid)
                 if not s: return None
-                if act == "rename": s["name"] = s["title"] = val
+                if act == "title": s["title"] = val
+                elif act == "bname": s["name"] = val
                 else: s["announce"] = val
                 return s.get("file_id"), name_of(s, kid), s.get("announce", ""), list(db["template"])
             r = mutate(f)
             if not r:
                 await u.message.reply_text("⚠️ Kod bulunamadı.", reply_markup=back("my_keys"))
                 return
-            ok = await asyncio.to_thread(lambda: sync_file(new_service(), *r))
-            await u.message.reply_text("✅ Kaydedildi ve Drive'a yazıldı." if ok else "⚠️ Kaydedildi ama Drive'a yazılamadı.", reply_markup=back(f"kv:{kid}"))
+            if act == "bname":
+                msg = "✅ Buton adı değişti. <i>(Abonelik başlığına dokunulmadı.)</i>"
+            else:
+                ok = await asyncio.to_thread(lambda: sync_file(new_service(), *r))
+                msg = "✅ Kaydedildi ve Drive'a yazıldı." if ok else "⚠️ Kaydedildi ama Drive'a yazılamadı."
+            await u.message.reply_text(msg, parse_mode="HTML", reply_markup=KB([[B("🎟 Koda Dön", f"kv:{kid}", "primary")]]))
     except Exception as e:
         log.exception("msg_handler")
         await u.message.reply_text(f"❌ Hata: {esc(str(e)[:300])}", parse_mode="HTML", reply_markup=back("menu", "◀️ Menü"))
 
-FOUNDER_ONLY = {"toggle_sys", "admin", "sources", "s_add", "logs", "upd_now", "get_zip", "sa_menu", "sa_add"}
+FOUNDER_ONLY = {"toggle_sys", "admin", "sources", "s_add", "logs", "upd_now", "get_zip", "sa_menu", "sa_add", "bulk_ann", "bulk_title", "bulk_yes"}
+OWNED = ("kv", "kt", "kn", "ka", "kd", "kdy")   # alt admin sadece kendi kodunda
 def src_find(db, h): return next((s for s in db["sources"] if hashlib.md5(s.encode()).hexdigest()[:8] == h), None)
 
 async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
@@ -947,7 +1049,7 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
     if not is_admin(uid):
         await q.answer("⛔ Erişim yok", show_alert=True); return
     a = q.data
-    if uid not in ADMINS and (a in FOUNDER_ONLY or a.startswith(("sv:", "se:", "sd:", "sa_del:", "kx:", "kxs:"))):
+    if uid not in ADMINS and (a in FOUNDER_ONLY or a.startswith(("sv:", "se:", "sd:", "sa_del:", "sa_ext:", "kx:", "kxs:"))):
         await q.answer("⛔ Sadece kurucu", show_alert=True); return
     if a not in ("toggle_sys", "upd_now"):
         await q.answer()
@@ -957,7 +1059,7 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await safe_edit(q, f"❌ {esc(e)}", back("menu", "◀️ Menü")); return
 
-    if uid not in ADMINS and ":" in a and a.split(":", 1)[0] in ("kv", "kn", "ka", "kd", "kdy"):
+    if uid not in ADMINS and ":" in a and a.split(":", 1)[0] in OWNED:
         s = db["subs"].get(a.split(":", 1)[1])
         if not s or s.get("owner_id") != uid:
             await safe_edit(q, "⛔ Bu kod senin değil.", back("my_keys")); return
@@ -979,13 +1081,17 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         await safe_edit(q, menu_text(uid), main_kb(uid))
 
     elif a == "admin":
-        await safe_edit(q, f"⚙️ <b>Admin</b>\n{LINE}\nKontrol her {CHECK_EVERY // 60} dakikada bir yapılır. {NEW_IP_LIMIT}'ten fazla yeni IP görülürse bütün kodlar yenilenip tüm Drive aboneliklerine yazılır.", admin_kb())
+        await safe_edit(q, "⚙️ <b>Admin</b>\n"
+                        f"<blockquote>🔍 Kontrol her <b>{CHECK_EVERY // 60} dk</b>\n"
+                        f"🚨 <b>{NEW_IP_LIMIT}</b>'ten fazla yeni IP → bütün kodlar yenilenir\n"
+                        "📱 TM'de çalışmayan kodlar telefon testine göre çıkarılır</blockquote>", admin_kb())
 
     elif a == "upd_now":
         if CHECK_LOCK.locked():
             await q.answer("⏳ Şu an kontrol yapılıyor, biraz bekle.", show_alert=True); return
         await q.answer()
-        await safe_edit(q, "⚡ <b>Güncelleniyor...</b> Bitince bildirim gelecek.\n\nCanlı izlemek için 📜 Loglar.", KB([[B("📜 Loglar", callback_data="logs"), B("◀️ Menü", callback_data="menu")]]))
+        await safe_edit(q, "⚡ <b>Güncelleniyor...</b>\n<blockquote>Bitince bildirim gelecek. Canlı izlemek için 📜 Loglar.</blockquote>",
+                        KB([[B("📜 Loglar", "logs", "primary"), B("◀️ Menü", "menu")]]))
         audit(uid, "upd_now")
         asyncio.create_task(run_check(c.application, force=True))
 
@@ -994,76 +1100,93 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         await safe_edit(q, log_text(), LOG_KB)
         LIVE[uid] = asyncio.create_task(live_log(q, uid))
 
+    elif a in ("bulk_ann", "bulk_title"):
+        STATE[uid] = {"action": a}
+        if a == "bulk_ann":
+            t, kb = prompt("📢 <b>Toplu Duyuru</b>", "Bütün kodlara yazılacak duyuruyu gönder.\nHepsinden silmek için <code>-</code> gönder.", "menu")
+        else:
+            t, kb = prompt("🏷 <b>Toplu Başlık</b>", "Bütün kodların <b>abonelik başlığı</b> (VPN uygulamasında görünen ad) bu olacak.\n"
+                           "<code>-</code> gönderirsen her kodun başlığı kendi buton adı olur.\n<i>Buton adları değişmez.</i>", "menu")
+        await safe_edit(q, t, kb)
+
+    elif a == "bulk_yes":
+        st = STATE.pop(uid, None)
+        if not st or st.get("action") != "confirm":
+            await safe_edit(q, "⚠️ Onay süresi geçti, baştan başla.", back("menu", "◀️ Menü")); return
+        field = "title" if st["what"] == "bulk_title" else "announce"
+        await safe_edit(q, "⏳ <b>Drive'a yazılıyor...</b>")
+        (ok, bad), n = await asyncio.to_thread(bulk_apply, field, st["val"])
+        audit(uid, f"bulk_{field} ok={ok} bad={len(bad)}")
+        await safe_edit(q, f"✅ <b>{'Toplu duyuru' if field == 'announce' else 'Toplu başlık'} uygulandı</b>\n"
+                        f"<blockquote>💾 Drive  <b>{ok}/{n}</b>" + (f"\n❌ Başarısız  {esc(', '.join(bad[:8]))}" if bad else "") + "</blockquote>",
+                        back("menu", "◀️ Menü"))
+
     elif a == "my_keys" or a.startswith("my_keys:"):
         page = int(a.split(":")[1]) if ":" in a else 0
         items = [(k, v) for k, v in db["subs"].items() if uid in ADMINS or v.get("owner_id") == uid]
         pages = max(1, (len(items) + PAGE - 1) // PAGE)
         page = max(0, min(page, pages - 1))
-        rows = grid([B(("🔴 " if is_exp(v) else "") + short(name_of(v, k), 14), callback_data=f"kv:{k}") for k, v in items[page * PAGE:(page + 1) * PAGE]], 2)
+        rows = grid([B(("🔴 " if is_exp(v) else "") + short(btn_name(v, k), 16), f"kv:{k}") for k, v in items[page * PAGE:(page + 1) * PAGE]], 2)
         if pages > 1:
             nav = []
-            if page > 0: nav.append(B("◀️", callback_data=f"my_keys:{page - 1}"))
-            nav.append(B(f"{page + 1}/{pages}", callback_data=f"my_keys:{page}"))
-            if page < pages - 1: nav.append(B("▶️", callback_data=f"my_keys:{page + 1}"))
+            if page > 0: nav.append(B("◀️", f"my_keys:{page - 1}"))
+            nav.append(B(f"{page + 1}/{pages}", f"my_keys:{page}"))
+            if page < pages - 1: nav.append(B("▶️", f"my_keys:{page + 1}"))
             rows.append(nav)
-        rows.append([B("◀️ Menü", callback_data="menu")])
-        await safe_edit(q, f"👥 <b>Kodlarım ({len(items)})</b>\n{LINE}\nYönetmek için birine dokun.", KB(rows))
+        rows.append([B("✨ Yeni Kod", "create_key", "success"), B("◀️ Menü", "menu")])
+        expd = sum(1 for _, v in items if is_exp(v))
+        await safe_edit(q, f"👥 <b>Kodlarım</b>  <code>{len(items)}</code>\n"
+                        f"<blockquote>Yönetmek için bir koda dokun." + (f"\n🔴 = süresi dolmuş ({expd})" if expd else "") + "</blockquote>", KB(rows))
 
     elif a.startswith("kv:"):
         kid = a.split(":", 1)[1]
         s = db["subs"].get(kid)
         if not s:
             await safe_edit(q, "⚠️ Kod bulunamadı.", back("my_keys")); return
-        fid = s.get("file_id", "")
-        txt = (f"👤 <b>{esc(short(name_of(s, kid), 40))}</b>\n{LINE}\n"
-               f"📢 Duyuru: <code>{esc(short(s.get('announce') or 'yok', 120))}</code>\n"
-               f"⏳ Süre: <b>{left_txt(s.get('expires'))}</b>\n\n"
-               f"🔗 Abonelik linki\n<code>{esc(sub_link(fid) if fid else 'Drive dosyası yok')}</code>")
-        rows = [[B("✏️ İsim", callback_data=f"kn:{kid}"), B("📢 Duyuru", callback_data=f"ka:{kid}")]]
-        rows.append(([B("⏳ Süre", callback_data=f"kx:{kid}")] if uid in ADMINS else []) + [B("🗑 Sil", callback_data=f"kd:{kid}")])
-        rows.append([B("◀️ Geri", callback_data="my_keys")])
-        await safe_edit(q, txt, KB(rows))
+        await safe_edit(q, code_card(s, kid, uid), code_kb(kid, uid))
 
-    elif a.startswith("kn:"):
-        kid = a.split(":", 1)[1]
-        STATE[uid] = {"action": "rename", "kid": kid}
-        await safe_edit(q, f"✏️ <b>Yeni isim</b>\n{LINE}\nYeni ismi gönder (VPN uygulamasında görünür).", back(f"kv:{kid}", "İptal"))
-
-    elif a.startswith("ka:"):
-        kid = a.split(":", 1)[1]
-        STATE[uid] = {"action": "announce", "kid": kid}
-        await safe_edit(q, f"📢 <b>Duyuru</b>\n{LINE}\nDuyuru metnini gönder.\nKaldırmak için <code>-</code> gönder.", back(f"kv:{kid}", "İptal"))
+    elif a.startswith(("kt:", "kn:", "ka:")):
+        kind, kid = a.split(":", 1)
+        s = db["subs"].get(kid, {})
+        act = {"kt": "title", "kn": "bname", "ka": "announce"}[kind]
+        STATE[uid] = {"action": act, "kid": kid}
+        texts = {"title": ("🏷 <b>Abonelik Başlığı</b>", f"Şu an: <code>{esc(name_of(s, kid))}</code>\nYeni başlığı gönder (VPN uygulamasında görünür, emoji olur: <code>VIP 🇹🇲</code>)."),
+                 "bname": ("🔘 <b>Buton Adı</b>", f"Şu an: <code>{esc(btn_name(s, kid))}</code>\nYeni adı gönder. <i>Sadece bu botta görünür, abonelik başlığı değişmez.</i>"),
+                 "announce": ("📢 <b>Duyuru</b>", f"Şu an: {('<i>' + esc(short(s.get('announce'), 100)) + '</i>') if s.get('announce') else '—'}\nBu koda özel duyuruyu gönder. Silmek için <code>-</code>.")}
+        t, kb = prompt(*texts[act], f"kv:{kid}")
+        await safe_edit(q, t, kb)
 
     elif a.startswith("kd:"):
         kid = a.split(":", 1)[1]
         s = db["subs"].get(kid, {})
-        await safe_edit(q, f"⚠️ <b>Bu kod silinsin mi?</b>\n<code>{esc(short(name_of(s, kid), 40))}</code>\n\nEski abonelik linki boşalır.",
-                        KB([[B("✅ Evet", callback_data=f"kdy:{kid}"), B("❌ Hayır", callback_data=f"kv:{kid}")]]))
+        await safe_edit(q, f"🗑 <b>Bu kod silinsin mi?</b>\n<blockquote>🎟 <b>{esc(short(btn_name(s, kid), 40))}</b>\nEski abonelik linki boşalır.</blockquote>",
+                        KB([[B("🗑 Evet, sil", f"kdy:{kid}", "danger"), B("✖️ Vazgeç", f"kv:{kid}")]]))
 
     elif a.startswith("kdy:"):
         kid = a.split(":", 1)[1]
-        nm = name_of(db["subs"].get(kid, {}), kid)
+        nm = btn_name(db["subs"].get(kid, {}), kid)
         ok = await asyncio.to_thread(delete_vip, kid)
         if ok: audit(uid, f"delete {kid} {nm}")
         if ok and uid not in ADMINS:
             await notify_founders(c.application, f"🔔 Alt admin <b>{esc(q.from_user.full_name)}</b> (<code>{uid}</code>) kod sildi: <code>{esc(nm)}</code>")
-        await safe_edit(q, "✅ Kod silindi." if ok else "⚠️ Kod bulunamadı.", back("my_keys"))
+        await safe_edit(q, "✅ Kod silindi." if ok else "⚠️ Kod bulunamadı.", back("my_keys", "◀️ Kodlarım"))
 
     elif a == "create_key":
-        if uid not in ADMINS and sum(1 for v in db["subs"].values() if v.get("owner_id") == uid) >= SUB_LIMIT:
-            await safe_edit(q, f"⛔ Limit doldu: {SUB_LIMIT} kod.", back("my_keys", "👥 Kodlarım")); return
+        if uid not in ADMINS and sum(1 for v in db["subs"].values() if v.get("owner_id") == uid and not is_exp(v)) >= SUB_LIMIT:
+            await safe_edit(q, f"⛔ <b>Limit doldu</b>\n<blockquote>En fazla {SUB_LIMIT} aktif kod. Yer açmak için birini sil.</blockquote>", back("my_keys", "👥 Kodlarım")); return
         STATE[uid] = {"action": "new_key"}
-        await safe_edit(q, f"✨ <b>Kod Oluştur</b>\n{LINE}\nKod için bir isim gönder (VPN uygulamasında görünür).", back("menu", "İptal"))
+        t, kb = prompt("✨ <b>Kod Oluştur</b>", "Kod için bir isim gönder.\n<i>Hem buton adı hem abonelik başlığı olur; sonra ayrı ayrı değiştirebilirsin.</i>", "menu")
+        await safe_edit(q, t, kb)
 
     elif a.startswith("kx:"):
         kid = a.split(":", 1)[1]
         s = db["subs"].get(kid)
         if not s:
             await safe_edit(q, "⚠️ Kod bulunamadı.", back("my_keys")); return
-        await safe_edit(q, f"⏳ <b>Süre</b>\n{LINE}\n<code>{esc(short(name_of(s, kid), 40))}</code>\nKalan: <b>{left_txt(s.get('expires'))}</b>", KB([
-            [B("+7g", callback_data=f"kxs:{kid}:7"), B("+30g", callback_data=f"kxs:{kid}:30"), B("+90g", callback_data=f"kxs:{kid}:90")],
-            [B("♾ Sınırsız", callback_data=f"kxs:{kid}:0"), B("⛔ Şimdi bitir", callback_data=f"kxs:{kid}:-1")],
-            [B("◀️ Geri", callback_data=f"kv:{kid}")]]))
+        await safe_edit(q, f"⏳ <b>Süre</b>\n<blockquote>🎟 <b>{esc(short(btn_name(s, kid), 40))}</b>\nKalan  <b>{left_txt(s.get('expires'))}</b></blockquote>", KB([
+            [B("+7g", f"kxs:{kid}:7"), B("+30g", f"kxs:{kid}:30", "primary"), B("+90g", f"kxs:{kid}:90")],
+            [B("♾ Sınırsız", f"kxs:{kid}:0", "success"), B("⛔ Şimdi bitir", f"kxs:{kid}:-1", "danger")],
+            [B("◀️ Geri", f"kv:{kid}")]]))
 
     elif a.startswith("kxs:"):
         _, kid, d = a.split(":")
@@ -1082,26 +1205,28 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
             await safe_edit(q, "⚠️ Kod bulunamadı.", back("my_keys")); return
         ok = await asyncio.to_thread(lambda: sync_file(new_service(), r[0], r[1], r[2], r[3], exp=is_exp({"expires": r[4]})))
         audit(uid, f"duration {kid} {d}")
-        await safe_edit(q, f"✅ Güncellendi. Kalan: <b>{left_txt(r[4])}</b>" + ("" if ok else "\n⚠️ Drive'a yazılamadı."), back(f"kv:{kid}"))
+        await safe_edit(q, f"✅ <b>Süre güncellendi</b>\n<blockquote>Kalan  <b>{left_txt(r[4])}</b>" + ("" if ok else "\n⚠️ Drive'a yazılamadı.") + "</blockquote>",
+                        KB([[B("🎟 Koda Dön", f"kv:{kid}", "primary")]]))
 
     elif a == "sources":
         src = db["sources"]
-        rows = [[B(f"{i}. {src_label(s)} · {RUN['src'].get(s, '…')[:14]}", callback_data="sv:" + hashlib.md5(s.encode()).hexdigest()[:8])] for i, s in enumerate(src, 1)]
-        rows.append([B("➕ Abonelik Ekle", callback_data="s_add")])
-        rows.append([B("◀️ Menü", callback_data="menu")])
-        await safe_edit(q, f"🔗 <b>Abonelikler ({len(src)})</b>\n{LINE}\nKodlar bu aboneliklerden çekilir.\nDeğiştirmek veya silmek için birine dokun.", KB(rows))
+        rows = [[B(f"{i}. {src_label(s)} · {RUN['src'].get(s, '…')[:14]}", "sv:" + hashlib.md5(s.encode()).hexdigest()[:8])] for i, s in enumerate(src, 1)]
+        rows.append([B("➕ Abonelik Ekle", "s_add", "success")])
+        rows.append([B("◀️ Menü", "menu")])
+        await safe_edit(q, f"🔗 <b>Abonelikler</b>  <code>{len(src)}</code>\n<blockquote>Kodlar bu aboneliklerden çekilir.\nDeğiştirmek veya silmek için birine dokun.</blockquote>", KB(rows))
 
     elif a.startswith("sv:"):
         h = a.split(":", 1)[1]
         s = src_find(db, h)
         if not s:
             await safe_edit(q, "⚠️ Bulunamadı.", back("sources")); return
-        await safe_edit(q, f"🔗 <b>Abonelik</b>\n{LINE}\n<code>{esc(s)}</code>\n\nSon kontrol: {esc(RUN['src'].get(s, 'henüz yok'))}",
-                        KB([[B("✏️ Değiştir", callback_data=f"se:{h}"), B("🗑 Sil", callback_data=f"sd:{h}")], [B("◀️ Geri", callback_data="sources")]]))
+        await safe_edit(q, f"🔗 <b>Abonelik</b>\n<blockquote>Son kontrol  {esc(RUN['src'].get(s, 'henüz yok'))}</blockquote>\n<code>{esc(s)}</code>",
+                        KB([[B("✏️ Değiştir", f"se:{h}", "primary"), B("🗑 Sil", f"sd:{h}", "danger")], [B("◀️ Geri", "sources")]]))
 
     elif a.startswith("se:"):
         STATE[uid] = {"action": "src_edit", "h": a.split(":", 1)[1]}
-        await safe_edit(q, f"✏️ <b>Abonelik değiştir</b>\n{LINE}\nYeni abonelik linkini gönder.", back("sources", "İptal"))
+        t, kb = prompt("✏️ <b>Abonelik değiştir</b>", "Yeni abonelik linkini gönder.", "sources")
+        await safe_edit(q, t, kb)
 
     elif a.startswith("sd:"):
         h = a.split(":", 1)[1]
@@ -1118,33 +1243,44 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
 
     elif a == "s_add":
         STATE[uid] = {"action": "src_add"}
-        await safe_edit(q, f"➕ <b>Abonelik ekle</b>\n{LINE}\nAbonelik linklerini gönder (her satıra bir tane).", back("sources", "İptal"))
+        t, kb = prompt("➕ <b>Abonelik ekle</b>", "Abonelik linklerini gönder (her satıra bir tane).", "sources")
+        await safe_edit(q, t, kb)
 
     elif a == "get_zip":
         buf = await asyncio.to_thread(make_backup)
         await c.bot.send_document(chat_id=uid, document=buf, filename=f"Backup_{datetime.datetime.now():%Y-%m-%d_%H%M}.zip")
 
     elif a == "sa_menu":
-        now = time.time()
         rows, lines = [], []
         for sid, e in db.get("sub_admins", {}).items():
-            left = float(e.get("expires", 0)) - now
-            n = sum(1 for v in db["subs"].values() if str(v.get("owner_id")) == sid)
-            lines.append(f"• <code>{sid}</code> · {left_txt(e.get('expires'))} · {n}/{SUB_LIMIT} kod")
-            rows.append([B(f"🗑 {sid}", callback_data=f"sa_del:{sid}")])
-        rows.append([B("➕ Alt Admin Ekle", callback_data="sa_add")])
-        rows.append([B("◀️ Admin", callback_data="admin")])
-        await safe_edit(q, f"👮 <b>Alt Adminler</b>\n{LINE}\n" + ("\n".join(lines) or "Alt admin yok."), KB(rows))
+            n = sum(1 for v in db["subs"].values() if str(v.get("owner_id")) == sid and not is_exp(v))
+            lines.append(f"👮 <code>{sid}</code>  ·  ⏳ {left_txt(e.get('expires'))}  ·  🎟 {n}/{SUB_LIMIT}")
+            rows.append([B(f"⏳ +{SUB_DAYS}g {sid}", f"sa_ext:{sid}", "primary"), B(f"🗑 {sid}", f"sa_del:{sid}", "danger")])
+        rows.append([B("➕ Alt Admin Ekle", "sa_add", "success")])
+        rows.append([B("◀️ Admin", "admin")])
+        await safe_edit(q, "👮 <b>Alt Adminler</b>\n<blockquote>" + ("\n".join(lines) or "Alt admin yok.") + "</blockquote>", KB(rows))
 
     elif a == "sa_add":
         STATE[uid] = {"action": "sa_add"}
-        await safe_edit(q, f"➕ <b>Alt admin ekle</b>\n{LINE}\nKişinin sayısal Telegram ID'sini gönder.\nSüre: {SUB_DAYS} gün, en fazla {SUB_LIMIT} kod.\n(ID'sini bota /start yazarak görebilir.)", back("sa_menu", "İptal"))
+        t, kb = prompt("➕ <b>Alt admin ekle</b>", f"Kişinin sayısal Telegram ID'sini gönder.\nSüre {SUB_DAYS} gün, en fazla {SUB_LIMIT} aktif kod.\n<i>ID'sini bota /start yazarak görebilir.</i>", "sa_menu")
+        await safe_edit(q, t, kb)
+
+    elif a.startswith("sa_ext:"):
+        sid = a.split(":", 1)[1]
+        def fe(d):
+            e = d.get("sub_admins", {}).get(sid)
+            if not e: return None
+            e["expires"] = max(time.time(), float(e.get("expires", 0))) + SUB_DAYS * 86400; e.pop("warned", None)
+            return e["expires"]
+        r = mutate(fe)
+        audit(uid, f"sa_ext {sid}")
+        await safe_edit(q, f"✅ <code>{esc(sid)}</code> süresi uzatıldı: <b>{left_txt(r)}</b>" if r else "⚠️ Bulunamadı.", back("sa_menu"))
 
     elif a.startswith("sa_del:"):
         sid = a.split(":", 1)[1]
         mutate(lambda d: d.get("sub_admins", {}).pop(sid, None))
         audit(uid, f"sa_del {sid}")
-        await safe_edit(q, f"✅ Alt admin <code>{esc(sid)}</code> silindi.", back("sa_menu"))
+        await safe_edit(q, f"✅ Alt admin <code>{esc(sid)}</code> silindi.\n<blockquote>Oluşturduğu kodlar çalışmaya devam eder.</blockquote>", back("sa_menu"))
 
 async def doc_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
     uid = u.effective_user.id
