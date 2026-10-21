@@ -1016,14 +1016,14 @@ def admin_kb():
     return KB([
         [B("🛠 Admin Kod Oluştur", "create_key", "primary")],
         [B("🔗 Abonelikler", "sources"), B("📜 Loglar", "logs")],
-        [B("🏷 Toplu Başlık", "bulk_title"), B(f"🎫 Destek ({sum(1 for t in load_db().get('tickets', {}).values() if t.get('status') == 'open')})", "tickets", "primary")],
-        [B("⚡ Güncelle", "upd_now", "primary"), B("📦 Yedek", "get_zip")],
-        [B("👥 Kullanıcı Logları", "ul_open", "primary")],
+        [B("🏷 Toplu Başlık", "bulk_title"), B(f"🎫 Destek ({sum(1 for t in load_db().get('tickets', {}).values() if t.get('status') == 'open')})", "tickets")],
+        [B("⚡ Güncelle", "upd_now"), B("📦 Yedek", "get_zip")],
+        [B("👥 Kullanıcı Logları", "ul_open")],
         [B("📊 İstatistik", "stats"), B("📢 Kanallar", "chans")],
         [B("🪙 CryptoBot", "cp"), B("💳 TMT 🔜", "pay_set")],
         [B("📣 Herkese Mesaj", "bcast")],
         [B("👮 Alt Adminler", "sa_menu")],
-        [B(f"🕰 Oto. Duyuru: {'Açık' if on else 'Kapalı'}", "auto_ann", "success" if on else "danger")],
+        [B(f"🕰 Oto. Duyuru: {'Açık' if on else 'Kapalı'}", "auto_ann")],
         [B("♻️ Önceki Sürüme Dön", "rollback")],
         [B("▶️ Başlat", "toggle_sys", "success") if stop else B("🛑 Durdur", "toggle_sys", "danger")],
         [B("◀️ Menü", "menu")]])
