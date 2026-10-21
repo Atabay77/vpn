@@ -868,6 +868,8 @@ async def watchdog(app):
                 try: await app.bot.send_message(chat_id=int(sid), text="🔒 Alt admin yetkinin süresi doldu.")
                 except Exception: pass
         except Exception: log.exception("watchdog expiry")
+        try: await check_invoices(app)   # USDT ödemeleri
+        except Exception: log.exception("check_invoices")
         # AUTO_ANN saatlerinde (Aşkabat) otomatik genel duyuru; bot o saatte kapalıysa açılınca yazar
         try:
             now = datetime.datetime.now(TM_TZ)
@@ -966,13 +968,14 @@ def menu_text(uid):
             f"📡 <b>{n}</b> kod  ·  🔗 <b>{src}</b> abonelik  ·  👥 <b>{vip}</b> VIP  ·  🙋 <b>{len(db.get('users', {})) if db else '?'}</b> kullanıcı")
 
 def main_kb(uid):
-    rows = [[B("✨ Kod Oluştur", "create_key", "success"), B("👥 Kodlarım", "my_keys", "primary")]]
-    if uid not in ADMINS: rows.append([B("🛒 Market", "u_market"), B("👤 Profil", "u_prof")])
+    if uid not in ADMINS:   # panel sahibi: kendi panelinde kod oluşturur
+        return KB([[B("✨ Kod Oluştur", "create_key", "success"), B("👥 Kodlarım", "my_keys", "primary")],
+                   [B("🛒 Market", "u_market"), B("👤 Profil", "u_prof")]])
+    rows = [[B("✨ Kod Oluştur", "u_menu", "success"), B("👥 Kodlarım", "my_keys", "primary")],
+            [B("🛠 Admin Kod Oluştur", "create_key")]]
     if uid in ADMINS:
         on = not os.path.exists(STOP_FLAG)
         rows += [[B("🔗 Abonelikler", "sources"), B("📜 Loglar", "logs")],
-                 [B("👥 Kullanıcı Logları", "ul_open", "primary"), B("📊 İstatistik", "stats")],
-                 [B("📣 Herkese Mesaj", "bcast"), B("👁 Kullanıcı Menüsü", "u_menu")],
                  [B("🏷 Toplu Başlık", "bulk_title"), B("⚙️ Admin", "admin")],
                  [B("🛑 Durdur", "toggle_sys", "danger") if on else B("▶️ Başlat", "toggle_sys", "success")]]
     return KB(rows)
@@ -982,7 +985,9 @@ def admin_kb():
     except Exception: on = True
     return KB([
         [B("⚡ Şimdi Güncelle", "upd_now", "primary"), B("📦 Yedek", "get_zip")],
-        [B("📢 Kanallar", "chans"), B("💳 Ödeme Bilgisi", "pay_set")],
+        [B("👥 Kullanıcı Logları", "ul_open", "primary"), B("📊 İstatistik", "stats")],
+        [B("📣 Herkese Mesaj", "bcast"), B("📢 Kanallar", "chans")],
+        [B("💳 Ödeme Bilgisi (TMT)", "pay_set"), B("🪙 CryptoBot (USDT)", "cp")],
         [B(f"🕰 Oto. Duyuru: {'Açık' if on else 'Kapalı'}", "auto_ann", "success" if on else "danger")],
         [B("♻️ Önceki Sürüme Dön", "rollback")],
         [B("👮 Alt Adminler", "sa_menu")],
@@ -1241,6 +1246,17 @@ async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
             msg = await add_channel(c, txt, getattr(fo, "chat", None))
             await u.message.reply_text(msg, parse_mode="HTML", reply_markup=back("chans"))
 
+        elif act == "cp_set":
+            try: await u.message.delete()   # token sohbette kalmasın
+            except Exception: pass
+            tok = txt.strip()
+            try: me = await asyncio.to_thread(crypto_call, "getMe", tok)
+            except Exception as e:
+                await u.message.reply_text(f"⚠️ Token çalışmadı: <code>{esc(str(e)[:150])}</code>", parse_mode="HTML", reply_markup=back("cp")); return
+            await asyncio.to_thread(set_env, "CRYPTO_PAY_TOKEN", tok)
+            audit(uid, "crypto token set")
+            await u.message.reply_text(f"✅ CryptoBot bağlandı: <b>{esc(me.get('name'))}</b>\nKullanıcılar artık USDT ile ödeyebilir.", parse_mode="HTML", reply_markup=back("admin"))
+
         elif act == "pay_set":
             v = "" if txt == "-" else txt[:500]
             mutate(lambda d: d.__setitem__("pay_info", v))
@@ -1252,7 +1268,7 @@ async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
             STATE[uid] = {"action": "bcast_ok", "text": txt[:3500]}
             n = sum(1 for k in load_db().get("users", {}) if int(k) not in ADMINS)
             await u.message.reply_text(f"📣 <b>Onay</b>\n<blockquote>{esc(short(txt, 600))}</blockquote>\n<b>{n}</b> kullanıcıya gönderilecek.", parse_mode="HTML",
-                                       reply_markup=KB([[B("✅ Gönder", "bcast_yes", "success"), B("✖️ İptal", "menu", "danger")]]))
+                                       reply_markup=KB([[B("✅ Gönder", "bcast_yes", "success"), B("✖️ İptal", "admin", "danger")]]))
 
         elif act in ("title", "bname", "announce"):
             kid = st["kid"]
@@ -1278,7 +1294,7 @@ async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
         log.exception("msg_handler")
         await u.message.reply_text(f"❌ Hata: {esc(str(e)[:300])}", parse_mode="HTML", reply_markup=back("menu", "◀️ Menü"))
 
-FOUNDER_ONLY = {"ul_open", "stats", "chans", "ch_add", "pay_set", "bcast", "bcast_yes", "rollback", "rollback_yes", "auto_ann", "toggle_sys", "admin", "sources", "s_add", "logs", "upd_now", "get_zip", "sa_menu", "sa_add", "bulk_ann", "bulk_title", "bulk_yes"}
+FOUNDER_ONLY = {"cp", "cp_set", "cp_del", "ul_open", "stats", "chans", "ch_add", "pay_set", "bcast", "bcast_yes", "rollback", "rollback_yes", "auto_ann", "toggle_sys", "admin", "sources", "s_add", "logs", "upd_now", "get_zip", "sa_menu", "sa_add", "bulk_ann", "bulk_title", "bulk_yes"}
 OWNED = ("kv", "kt", "kn", "ka", "kd", "kdy")   # alt admin sadece kendi kodunda
 def src_find(db, h): return next((s for s in db["sources"] if hashlib.md5(s.encode()).hexdigest()[:8] == h), None)
 
@@ -1314,7 +1330,7 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         await safe_edit(q, *ulog_view(None if a == "ul_open" else int(a.split(":", 1)[1])))
 
     elif a == "stats":
-        await safe_edit(q, await asyncio.to_thread(stats_text), KB([[B("🔄 Yenile", "stats", "primary"), B("◀️ Menü", "menu")]]))
+        await safe_edit(q, await asyncio.to_thread(stats_text), KB([[B("🔄 Yenile", "stats", "primary"), B("◀️ Admin", "admin")]]))
 
     elif a == "chans":
         await safe_edit(q, *channels_view())
@@ -1332,6 +1348,18 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         if ch: audit(uid, f"channel_del {ch['id']}")
         await safe_edit(q, *channels_view())
 
+    elif a == "cp":
+        await safe_edit(q, *(await asyncio.to_thread(crypto_view)))
+
+    elif a == "cp_set":
+        STATE[uid] = {"action": "cp_set"}
+        await safe_edit(q, *prompt("🔑 <b>CryptoBot Token</b>", "@CryptoBot → Crypto Pay → Create App → <b>API Token</b>'ı kopyala ve buraya gönder.\n<i>Mesajın güvenlik için hemen silinir.</i>", "cp"))
+
+    elif a == "cp_del":
+        await asyncio.to_thread(set_env, "CRYPTO_PAY_TOKEN", "")
+        audit(uid, "crypto token removed")
+        await safe_edit(q, *(await asyncio.to_thread(crypto_view)))
+
     elif a == "pay_set":
         STATE[uid] = {"action": "pay_set"}
         cur = db.get("pay_info") or "—"
@@ -1339,14 +1367,14 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
 
     elif a == "bcast":
         STATE[uid] = {"action": "bcast"}
-        await safe_edit(q, *prompt("📣 <b>Herkese Mesaj</b>", "Bütün kullanıcılara gidecek mesajı yaz.", "menu"))
+        await safe_edit(q, *prompt("📣 <b>Herkese Mesaj</b>", "Bütün kullanıcılara gidecek mesajı yaz.", "admin"))
 
     elif a == "bcast_yes":
         st = STATE.pop(uid, None)
         if not st or st.get("action") != "bcast_ok":
-            await safe_edit(q, "⚠️ Süre geçti, baştan başla.", back("menu", "◀️ Menü")); return
+            await safe_edit(q, "⚠️ Süre geçti, baştan başla.", back("admin")); return
         c.application.create_task(broadcast(c.application, st["text"], uid))
-        await safe_edit(q, "📣 Gönderiliyor... Bitince bildirim gelecek.", back("menu", "◀️ Menü"))
+        await safe_edit(q, "📣 Gönderiliyor... Bitince bildirim gelecek.", back("admin"))
 
     elif a.startswith(("ord_ok:", "ord_no:")):
         msg = await fulfill_order(c, a.split(":", 1)[1], a.startswith("ord_ok:"), uid)
@@ -1613,7 +1641,7 @@ T = {
   "menu": "✦ <b>VPN</b> ✦\n<blockquote>👥 Davet  <b>{avail}/{need}</b>\n🎟 Aktif kod  <b>{codes}</b></blockquote>\n<i>Bir işlem seç</i> 👇",
   "b_free": "🎁 Ücretsiz Kod", "b_mine": "🎟 Kodlarım", "b_prof": "👤 Profil", "b_market": "🛒 Market",
   "b_lang": "🇷🇺 Русский", "b_menu": "◀️ Menü", "b_share": "📤 Arkadaşlarına Gönder", "b_check": "✅ Kontrol Et",
-  "b_paid": "✅ Ödedim", "b_cancel": "✖️ İptal", "b_back": "◀️ Geri",
+  "b_paid": "✅ TMT ödedim", "b_cancel": "✖️ İptal", "b_back": "◀️ Geri",
   "free_need": "🎁 <b>Ücretsiz Kod</b>\n<blockquote>Her kod için <b>{need}</b> yeni arkadaşını davet et.\nŞu an  <b>{avail}/{need}</b>\nKod <b>1 gün</b> geçerli · günde en fazla 1 kod</blockquote>\n🔗 <b>Davet linkin</b> <i>(dokun → kopyala)</i>\n<code>{link}</code>",
   "free_today": "⏳ <b>Bugünkü ücretsiz kodunu aldın.</b>\n<blockquote>Yarın tekrar alabilirsin (Aşkabat saatiyle 00:00'dan sonra).</blockquote>",
   "free_ok": "✅ <b>Kodun hazır!</b>\n<blockquote>⏳ Süre  <b>{left}</b>\n📲 Linki kopyala, VPN uygulamana (Happ) abonelik olarak ekle.</blockquote>\n🔗 <b>Abonelik linki</b> <i>(dokun → kopyala)</i>\n<code>{link}</code>",
@@ -1625,12 +1653,17 @@ T = {
           "<blockquote>👥 Davet ettiklerin  <b>{total}</b>\n✅ Kullanılabilir davet  <b>{avail}/{need}</b>\n🎁 Alınan ücretsiz kod  <b>{free}</b>\n🎟 Aktif kod  <b>{active}</b>\n🛒 Satın alma  <b>{buys}</b>\n🙋 Seni davet eden  {inviter}</blockquote>\n"
           "🔗 <b>Davet linkin</b> <i>(dokun → kopyala)</i>\n<code>{link}</code>",
   "share_text": "Ücretsiz VPN kodu al 👇",
-  "market": "🛒 <b>Market</b>\n<blockquote>🎟 Kod · 7 gün  —  <b>30 TMT</b>\n🎟 Kod · 30 gün  —  <b>100 TMT</b>\n🖥 Panel  —  kullanıcı başı <b>20 TMT</b> <i>(en az 20)</i></blockquote>\n<i>Satın almak istediğini seç</i> 👇",
+  "market": "🛒 <b>Market</b>\n<blockquote>🎟 Kod · 7 gün  —  <b>30 TMT</b> · 1.5 USDT\n🎟 Kod · 30 gün  —  <b>100 TMT</b> · 5 USDT\n🖥 Panel  —  kullanıcı başı <b>20 TMT</b> · 1 USDT <i>(en az 20)</i></blockquote>\n💵 USDT ile ödeme (CryptoBot) otomatik onaylanır.\n<i>Satın almak istediğini seç</i> 👇",
   "b_c7": "🎟 Kod 7 gün · 30 TMT", "b_c30": "🎟 Kod 30 gün · 100 TMT", "b_panel": "🖥 Panel · 20 TMT/kullanıcı",
   "panel_ask": "🖥 <b>Panel</b>\n<blockquote>Kendi kullanıcıların için kod oluşturup yönetebileceğin panel.\nKullanıcı başı <b>20 TMT</b> · en az <b>20</b> kullanıcı · <b>30 gün</b></blockquote>\nKaç kullanıcı? Butona bas ya da sayı yaz:",
   "panel_min": "⚠️ En az 20 kullanıcı.",
   "it_c7": "🎟 Kod · 7 gün", "it_c30": "🎟 Kod · 30 gün", "it_panel": "🖥 Panel · {n} kullanıcı · 30 gün",
-  "order": "🧾 <b>Sipariş #{oid}</b>\n<blockquote>{item}\n💰 Tutar  <b>{price} TMT</b></blockquote>\n💳 <b>Ödeme</b>\n<blockquote>{pay}</blockquote>\n<i>Ödemeyi yaptıktan sonra «✅ Ödedim»e bas.</i>",
+  "order": "🧾 <b>Sipariş #{oid}</b>\n<blockquote>{item}\n💰 Tutar  <b>{price} TMT</b>  ·  <b>{usdt} USDT</b></blockquote>\n{usdt_line}💳 <b>TMT ile ödeme</b>\n<blockquote>{pay}</blockquote>\n<i>TMT ile ödediysen «✅ TMT ödedim»e bas, admin onaylayınca kodun gelir.</i>",
+  "usdt_line": "💵 <b>USDT ile ödeme</b> <i>(CryptoBot, otomatik onay)</i> → aşağıdaki butona bas.\n\n",
+  "b_usdt": "💵 USDT ile öde ({usdt} USDT)", "b_pay": "💸 CryptoBot'ta Öde", "b_chk": "🔄 Ödemeyi Kontrol Et",
+  "inv": "💵 <b>USDT ile ödeme · #{oid}</b>\n<blockquote>{item}\n💰 <b>{usdt} USDT</b>\n⏳ 1 saat geçerli</blockquote>\n«💸 CryptoBot'ta Öde»ye bas ve ödemeyi yap. Ödeme gelince kodun <b>otomatik</b> gönderilir.",
+  "inv_wait": "Ödeme henüz gelmedi. Ödediysen 1 dakika sonra tekrar bak.",
+  "inv_err": "⚠️ USDT faturası oluşturulamadı. Biraz sonra tekrar dene ya da TMT ile öde.",
   "pay_default": "Ödeme bilgisi için admin ile iletişime geç.",
   "order_sent": "⏳ <b>Sipariş #{oid} admine iletildi.</b>\n<blockquote>Onaylanınca buraya bildirim gelecek.</blockquote>",
   "order_old": "ℹ️ Bu sipariş zaten işlemde.",
@@ -1650,7 +1683,7 @@ T = {
   "menu": "✦ <b>VPN</b> ✦\n<blockquote>👥 Приглашения  <b>{avail}/{need}</b>\n🎟 Активные коды  <b>{codes}</b></blockquote>\n<i>Выберите действие</i> 👇",
   "b_free": "🎁 Бесплатный код", "b_mine": "🎟 Мои коды", "b_prof": "👤 Профиль", "b_market": "🛒 Магазин",
   "b_lang": "🇹🇷 Türkçe", "b_menu": "◀️ Меню", "b_share": "📤 Отправить друзьям", "b_check": "✅ Проверить",
-  "b_paid": "✅ Я оплатил", "b_cancel": "✖️ Отмена", "b_back": "◀️ Назад",
+  "b_paid": "✅ Оплатил в TMT", "b_cancel": "✖️ Отмена", "b_back": "◀️ Назад",
   "free_need": "🎁 <b>Бесплатный код</b>\n<blockquote>За каждый код пригласите <b>{need}</b> новых друзей.\nСейчас  <b>{avail}/{need}</b>\nКод действует <b>1 день</b> · не больше 1 кода в день</blockquote>\n🔗 <b>Ваша ссылка</b> <i>(нажмите → скопировать)</i>\n<code>{link}</code>",
   "free_today": "⏳ <b>Сегодняшний бесплатный код уже получен.</b>\n<blockquote>Завтра можно снова (после 00:00 по Ашхабаду).</blockquote>",
   "free_ok": "✅ <b>Ваш код готов!</b>\n<blockquote>⏳ Срок  <b>{left}</b>\n📲 Скопируйте ссылку и добавьте её как подписку в VPN-приложение (Happ).</blockquote>\n🔗 <b>Ссылка подписки</b> <i>(нажмите → скопировать)</i>\n<code>{link}</code>",
@@ -1662,12 +1695,17 @@ T = {
           "<blockquote>👥 Вы пригласили  <b>{total}</b>\n✅ Доступно приглашений  <b>{avail}/{need}</b>\n🎁 Получено бесплатных кодов  <b>{free}</b>\n🎟 Активные коды  <b>{active}</b>\n🛒 Покупки  <b>{buys}</b>\n🙋 Вас пригласил  {inviter}</blockquote>\n"
           "🔗 <b>Ваша ссылка</b> <i>(нажмите → скопировать)</i>\n<code>{link}</code>",
   "share_text": "Получи бесплатный VPN-код 👇",
-  "market": "🛒 <b>Магазин</b>\n<blockquote>🎟 Код · 7 дней  —  <b>30 TMT</b>\n🎟 Код · 30 дней  —  <b>100 TMT</b>\n🖥 Панель  —  <b>20 TMT</b> за пользователя <i>(от 20)</i></blockquote>\n<i>Выберите, что хотите купить</i> 👇",
+  "market": "🛒 <b>Магазин</b>\n<blockquote>🎟 Код · 7 дней  —  <b>30 TMT</b> · 1.5 USDT\n🎟 Код · 30 дней  —  <b>100 TMT</b> · 5 USDT\n🖥 Панель  —  <b>20 TMT</b> · 1 USDT за пользователя <i>(от 20)</i></blockquote>\n💵 Оплата в USDT (CryptoBot) подтверждается автоматически.\n<i>Выберите, что хотите купить</i> 👇",
   "b_c7": "🎟 Код 7 дней · 30 TMT", "b_c30": "🎟 Код 30 дней · 100 TMT", "b_panel": "🖥 Панель · 20 TMT/польз.",
   "panel_ask": "🖥 <b>Панель</b>\n<blockquote>Панель, где вы сами создаёте и управляете кодами для своих пользователей.\n<b>20 TMT</b> за пользователя · от <b>20</b> пользователей · <b>30 дней</b></blockquote>\nСколько пользователей? Нажмите кнопку или напишите число:",
   "panel_min": "⚠️ Минимум 20 пользователей.",
   "it_c7": "🎟 Код · 7 дней", "it_c30": "🎟 Код · 30 дней", "it_panel": "🖥 Панель · {n} польз. · 30 дней",
-  "order": "🧾 <b>Заказ #{oid}</b>\n<blockquote>{item}\n💰 Сумма  <b>{price} TMT</b></blockquote>\n💳 <b>Оплата</b>\n<blockquote>{pay}</blockquote>\n<i>После оплаты нажмите «✅ Я оплатил».</i>",
+  "order": "🧾 <b>Заказ #{oid}</b>\n<blockquote>{item}\n💰 Сумма  <b>{price} TMT</b>  ·  <b>{usdt} USDT</b></blockquote>\n{usdt_line}💳 <b>Оплата в TMT</b>\n<blockquote>{pay}</blockquote>\n<i>Если оплатили в TMT, нажмите «✅ Оплатил в TMT» — после подтверждения админом придёт код.</i>",
+  "usdt_line": "💵 <b>Оплата в USDT</b> <i>(CryptoBot, автоматически)</i> → нажмите кнопку ниже.\n\n",
+  "b_usdt": "💵 Оплатить USDT ({usdt} USDT)", "b_pay": "💸 Оплатить в CryptoBot", "b_chk": "🔄 Проверить оплату",
+  "inv": "💵 <b>Оплата в USDT · #{oid}</b>\n<blockquote>{item}\n💰 <b>{usdt} USDT</b>\n⏳ Действует 1 час</blockquote>\nНажмите «💸 Оплатить в CryptoBot» и оплатите. После оплаты код придёт <b>автоматически</b>.",
+  "inv_wait": "Оплата ещё не поступила. Если вы оплатили, проверьте через минуту.",
+  "inv_err": "⚠️ Не удалось создать счёт в USDT. Попробуйте позже или оплатите в TMT.",
   "pay_default": "Для оплаты свяжитесь с администратором.",
   "order_sent": "⏳ <b>Заказ #{oid} отправлен администратору.</b>\n<blockquote>После подтверждения придёт уведомление.</blockquote>",
   "order_old": "ℹ️ Этот заказ уже обрабатывается.",
@@ -1684,6 +1722,33 @@ T = {
   "nobody": "—",
  },
 }
+
+USDT_RATE = 20          # 1 USDT = 20 TMT
+CRYPTO_API = "https://pay.crypt.bot/api/"
+def usdt_of(tmt): return f"{tmt / USDT_RATE:.2f}".rstrip("0").rstrip(".")
+def crypto_token(): return os.environ.get("CRYPTO_PAY_TOKEN", "")
+
+def crypto_call(method, token=None, **params):
+    """Crypto Pay API (@CryptoBot). Hata olursa RuntimeError."""
+    url = CRYPTO_API + method + ("?" + urllib.parse.urlencode({k: v for k, v in params.items() if v is not None}) if params else "")
+    req = urllib.request.Request(url, headers={"Crypto-Pay-API-Token": token or crypto_token()})
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r: j = json.loads(r.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        try: j = json.loads(e.read().decode("utf-8"))
+        except Exception: raise RuntimeError(f"HTTP {e.code}")
+    if not j.get("ok"): raise RuntimeError(str(j.get("error"))[:200])
+    return j["result"]
+
+def set_env(key, val):
+    """env.txt'de bir satırı değiştirir/ekler/siler (val boşsa siler)."""
+    lines = open(ENV_FILE, encoding="utf-8").read().splitlines() if os.path.exists(ENV_FILE) else []
+    lines = [l for l in lines if not l.strip().startswith(key + "=")]
+    if val: lines.append(f"{key}={val}")
+    with open(ENV_FILE + ".tmp", "w", encoding="utf-8") as f: f.write("\n".join(lines) + "\n")
+    os.replace(ENV_FILE + ".tmp", ENV_FILE)
+    if val: os.environ[key] = val
+    else: os.environ.pop(key, None)
 
 def lang_of(db, uid): return (db.get("users", {}).get(str(uid), {}).get("lang") or "tr")
 def tr(lang, key, **kw):
@@ -1968,6 +2033,34 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
             f"🧾 <b>Yeni sipariş #{oid}</b>\n<blockquote>👤 {esc(who(user))}\n📦 {esc(item_tr(o))}\n💰 <b>{o['price']} TMT</b></blockquote>\n<i>Parayı aldıysan onayla; kod/panel otomatik verilir.</i>",
             KB([[B("✅ Onayla", f"ord_ok:{oid}", "success"), B("❌ Reddet", f"ord_no:{oid}", "danger")]]))
 
+    elif a.startswith("u_usdt:"):
+        oid = a.split(":", 1)[1]
+        o = db.get("orders", {}).get(oid)
+        if not o or o["uid"] != uid or o["status"] not in ("new", "paid"): await send(tr(lang, "order_old"), menu_btn); return
+        us = usdt_of(o["price"])
+        if not o.get("inv") or time.time() - o.get("inv_ts", 0) > 3500:   # yoksa ya da süresi dolmak üzereyse yeni fatura
+            try:
+                inv = await asyncio.to_thread(crypto_call, "createInvoice", asset="USDT", amount=us, description=f"#{oid} {item_tr(o)}"[:1000],
+                                              payload=oid, expires_in=3600, allow_comments="false")
+            except Exception as ex:
+                log.warning("createInvoice: %s", ex); await send(tr(lang, "inv_err"), menu_btn); return
+            def f(d):
+                x = d["orders"][oid]; x["inv"], x["inv_url"], x["inv_ts"] = inv["invoice_id"], inv.get("bot_invoice_url") or inv.get("pay_url"), time.time()
+                return dict(x)
+            o = mutate(f)
+            ulog("inv", f"💵 USDT faturası: {who(user)} · #{oid} · {us} USDT")
+        it = tr(lang, "it_panel", n=o["n"]) if o["item"] == "panel" else tr(lang, "it_" + o["item"])
+        await send(tr(lang, "inv", oid=oid, item=esc(it), usdt=us),
+                   KB([[B(tr(lang, "b_pay"), url=o["inv_url"], style="success")], [B(tr(lang, "b_chk"), f"u_chk:{oid}", "primary")], [B(tr(lang, "b_menu"), "u_menu")]]))
+
+    elif a.startswith("u_chk:"):
+        oid = a.split(":", 1)[1]
+        o = db.get("orders", {}).get(oid)
+        if not o or o["uid"] != uid: return
+        if o["status"] in ("done", "busy"): await send(tr(lang, "order_old"), menu_btn); return
+        if not await check_invoices(c.application, [oid]):
+            await q.answer(tr(lang, "inv_wait"), show_alert=True)
+
     elif a.startswith("u_cancel:"):
         oid = a.split(":", 1)[1]
         mutate(lambda d: d.get("orders", {}).get(oid, {}).__setitem__("status", "cancel") if d.get("orders", {}).get(oid, {}).get("status") == "new" else None)
@@ -1989,8 +2082,10 @@ def new_order(uid, user, lang, item, n=0):
     mutate(f)
     ulog("order", f"🧾 Sipariş açtı: {who(user)} · #{oid} · {item_tr(o)} · {price} TMT")
     pay = load_db().get("pay_info") or tr(lang, "pay_default")
-    return (tr(lang, "order", oid=oid, item=esc(it), price=price, pay=esc(pay)),
-            KB([[B(tr(lang, "b_paid"), f"u_paid:{oid}", "success"), B(tr(lang, "b_cancel"), f"u_cancel:{oid}", "danger")]]))
+    us = usdt_of(price); has = bool(crypto_token())
+    rows = ([[B(tr(lang, "b_usdt", usdt=us), f"u_usdt:{oid}", "primary")]] if has else []) + \
+           [[B(tr(lang, "b_paid"), f"u_paid:{oid}", "success"), B(tr(lang, "b_cancel"), f"u_cancel:{oid}", "danger")]]
+    return (tr(lang, "order", oid=oid, item=esc(it), price=price, usdt=us, usdt_line=tr(lang, "usdt_line") if has else "", pay=esc(pay)), KB(rows))
 
 async def pub_msg(u: Update, c: ContextTypes.DEFAULT_TYPE):
     """Kullanıcının yazdığı mesaj: şimdilik sadece panel kullanıcı sayısı."""
@@ -2056,6 +2151,42 @@ async def fulfill_order(c, oid, approve, admin_uid):
     except Exception: pass
     return f"✅ Sipariş #{oid} onaylandı ve kullanıcıya gönderildi."
 
+async def check_invoices(app, only=None):
+    """Bekleyen USDT faturalarını CryptoBot'ta kontrol eder; ödenenleri otomatik teslim eder. Dönüş: teslim edilen sayısı."""
+    if not crypto_token(): return 0
+    db = load_db()
+    pend = {oid: o for oid, o in db.get("orders", {}).items() if o.get("inv") and o["status"] in ("new", "paid") and (only is None or oid in only)}
+    pend = {k: o for k, o in pend.items() if time.time() - o.get("inv_ts", 0) < 2 * 86400}
+    if not pend: return 0
+    try:
+        res = await asyncio.to_thread(crypto_call, "getInvoices", invoice_ids=",".join(str(o["inv"]) for o in pend.values()), count=1000)
+    except Exception as e:
+        log.warning("getInvoices: %s", e); return 0
+    paid = {int(x["invoice_id"]) for x in res.get("items", []) if x.get("status") == "paid"}
+    n = 0
+    for oid, o in pend.items():
+        if int(o["inv"]) not in paid: continue
+        def f(d):
+            x = d["orders"].get(oid)
+            if x and x["status"] in ("new", "paid"): x["status"] = "paid"; x["via"] = "usdt"; return True
+        if not mutate(f): continue
+        ulog("usdt", f"💵 USDT ödendi: {o.get('who')} · #{oid} · {usdt_of(o['price'])} USDT")
+        msg = await fulfill_order(app, oid, True, 0)
+        await notify_founders(app, f"💵 <b>USDT ödemesi alındı</b> #{oid}\n<blockquote>👤 {esc(o.get('who'))}\n📦 {esc(item_tr(o))}\n💰 {usdt_of(o['price'])} USDT</blockquote>\n{msg}")
+        n += 1
+    return n
+
+def crypto_view():
+    tok = crypto_token()
+    if tok:
+        try: me = crypto_call("getMe"); st = f"🟢 Bağlı: <b>{esc(me.get('name'))}</b>"
+        except Exception as e: st = f"🔴 Token çalışmıyor: <code>{esc(str(e)[:100])}</code>"
+    else: st = "⚪️ Bağlı değil — USDT butonu kullanıcılara görünmüyor."
+    t = ("🪙 <b>CryptoBot (USDT)</b>\n<blockquote>" + st + f"\n💱 1 USDT = {USDT_RATE} TMT</blockquote>\n"
+         "<i>Token almak: @CryptoBot → Crypto Pay → Create App → API Token.</i>")
+    rows = [[B("🔑 Token Gir", "cp_set", "primary")]] + ([[B("🗑 Bağlantıyı Kaldır", "cp_del", "danger")]] if tok else []) + [[B("◀️ Admin", "admin")]]
+    return t, KB(rows)
+
 # ── kurucu ekranları ──
 def ulog_view(page=None):
     lines = ulog_lines()
@@ -2066,7 +2197,7 @@ def ulog_view(page=None):
     t = f"👥 <b>Kullanıcı Logları</b>  <code>{len(lines)}</code>\n<blockquote expandable>{body}</blockquote>"
     nav = [B("⏮", "ul:0"), B("◀️", f"ul:{max(0, page - 1)}"), B(f"{page + 1}/{pages}", f"ul:{page}"),
            B("▶️", f"ul:{min(pages - 1, page + 1)}"), B("⏭", f"ul:{pages - 1}")]
-    return t, KB([nav, [B("◀️ Menü", "menu")]])
+    return t, KB([nav, [B("◀️ Admin", "admin")]])
 
 def pool_count():
     try:
