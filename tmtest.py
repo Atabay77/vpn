@@ -40,13 +40,13 @@ def drive():
 
 def channel_id(svc):
     """Botun oluşturduğu tmtest.txt dosyası (her seferinde adla bulunur, en son değişen)."""
-    r = svc.files().list(q="name='%s' and trashed=false" % CHANNEL, fields="files(id,modifiedTime)", orderBy="modifiedTime desc", pageSize=5).execute()
+    r = svc.files().list(q="name='%s' and trashed=false" % CHANNEL, fields="files(id,modifiedTime)", orderBy="modifiedTime desc", pageSize=5).execute(num_retries=2)
     files = r.get("files", [])
     if not files: raise RuntimeError("Drive'da %s yok (bot henüz oluşturmadı)" % CHANNEL)
     return files[0]["id"]
 
 def read_channel(svc, fid):
-    raw = svc.files().get_media(fileId=fid).execute().decode("utf-8", "ignore").strip()
+    raw = svc.files().get_media(fileId=fid).execute(num_retries=2).decode("utf-8", "ignore").strip()
     return json.loads(raw) if raw.startswith("{") else {}
 
 def write_channel(svc, fid, data):
@@ -312,20 +312,25 @@ def cycle():
         ch = read_channel(svc, fid)
     except Exception as e:
         log("❌ Drive'a ulaşılamadı: %s" % str(e)[:150]); return
-    log("📂 Drive OK, %d abonelik okunuyor..." % len(ch.get("sources", [])))
+    log("📂 Drive OK, %s" % ("bottan %d kod" % len(ch["codes"]) if ch.get("codes") else "%d abonelik okunuyor..." % len(ch.get("sources", []))))
     if cc not in ("TM", "?"):
         log("⚠️ Termux TM'den çıkmıyor (%s). Happ → Per-app Proxy → Bypass + Termux, VPN'i yeniden bağla." % cname)
         ch.update({"status": "not_tm", "status_ts": int(time.time()), "country": cname})
         write_channel(svc, fid, ch)
         return
     codes, keys = [], set()
-    for u in ch.get("sources", []):
-        try:
-            for c in fetch_codes(u):
-                k = code_key(c)
-                if k not in keys: keys.add(k); codes.append(c)
-        except Exception as e:
-            log("❌ Abonelik okunamadı: %s" % str(e)[:80])
+    if ch.get("codes"):   # bot kodları kanala yazıyor; Google'a gitmeye gerek yok
+        for c in ch["codes"]:
+            k = code_key(c)
+            if k not in keys: keys.add(k); codes.append(c)
+    else:
+        for u in ch.get("sources", []):
+            try:
+                for c in fetch_codes(u):
+                    k = code_key(c)
+                    if k not in keys: keys.add(k); codes.append(c)
+            except Exception as e:
+                log("❌ Abonelik okunamadı: %s" % str(e)[:80])
     if not codes:
         log("❌ Kod yok, test yapılmadı"); return
     obs, keys_of = [], []
@@ -347,13 +352,33 @@ def cycle():
         % (len(results), time.time() - t0, good, len(results) - good, len(codes) - len(results)))
 
 
+def codes_sig():
+    """Kanaldaki kod listesinin imzası (değişti mi diye bakmak için). Hata olursa None."""
+    try:
+        ch = read_channel(drive_cached(), channel_id(drive_cached()))
+        return ch.get("codes_ts") or 0
+    except Exception:
+        _SVC.clear()   # bağlantı koptuysa bir dahakine yenisini kur
+        return None
+
+_SVC = {}
+def drive_cached():
+    if "s" not in _SVC: _SVC["s"] = drive()
+    return _SVC["s"]
+
 def loop():
     open(PIDF, "w").write(str(os.getpid()))
-    log("▶️ Test başladı, her %d dk" % (INTERVAL // 60))
+    log("▶️ Test başladı: her %d dk, kodlar değişince hemen" % (INTERVAL // 60))
+    last_run, last_sig = 0, None
     while True:
-        try: cycle()
-        except Exception as e: log("❌ Hata: %s" % str(e)[:200])
-        time.sleep(INTERVAL)
+        sig = codes_sig()
+        if time.time() - last_run >= INTERVAL or (sig is not None and last_sig is not None and sig != last_sig):
+            if last_sig is not None and sig != last_sig: log("🔁 Kodlar değişti → hemen test")
+            try: cycle()
+            except Exception as e: log("❌ Hata: %s" % str(e)[:200])
+            last_run = time.time()
+        if sig is not None: last_sig = sig
+        time.sleep(60)
 
 def running():
     """Kayıtlı PID gerçekten tmtest mi? (yeniden başlatmadan sonra aynı numara başka programa geçebilir)"""

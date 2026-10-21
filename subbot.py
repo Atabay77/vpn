@@ -603,7 +603,7 @@ def load_exits():
         with open(EXIT_FILE, encoding="utf-8") as f: return json.load(f)
     except Exception: return {}
 
-def tm_sync(db, sources):
+def tm_sync(db, sources, codes=None):
     """Kanal dosyasını hazır tutar, telefonun son sonucunu okur. Dönüş: TM'de çalışmayan kod anahtarları."""
     try:
         svc = new_service()
@@ -620,8 +620,11 @@ def tm_sync(db, sources):
             mutate(lambda d: d.__setitem__("tm_fid", fid))
             vlog(f"📱 Telefon testi kanalı hazır (Drive: {TM_NAME})")
             ch = {}
-        if ch.get("sources") != sources:
+        # Kodları telefona bot verir (telefon Google'dan abonelik okuyunca 403 alabiliyor)
+        new_keys = sorted(code_key(c) for c in (codes or []))
+        if ch.get("sources") != sources or (codes and sorted(code_key(c) for c in ch.get("codes", [])) != new_keys):
             ch["sources"] = sources
+            if codes: ch["codes"], ch["codes_ts"] = list(codes), int(time.time())
             _tm_write(svc, fid, ch)
         RUN["tm_err"] = ""
     except Exception as e:
@@ -702,7 +705,7 @@ def check_cycle(force=False):
     ips = {h for h in (code_host(c) for c in codes) if h}
     old = set(db.get("seen_ips", []))
     new = ips - old
-    dead_tm, tm_ms, tm_fresh, tm_exits = tm_sync(db, sources)
+    dead_tm, tm_ms, tm_fresh, tm_exits = tm_sync(db, sources, codes)
     dead_tm &= {code_key(c) for c in codes}
     tm_changed = sorted(dead_tm) != sorted(db.get("tm_dead_pushed", [])) or RUN.pop("exits_changed", False)
     if not force and old and len(new) <= NEW_IP_LIMIT and not tm_changed:
