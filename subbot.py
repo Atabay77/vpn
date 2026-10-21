@@ -36,6 +36,12 @@ NEW_IP_LIMIT = 3       # bundan FAZLA yeni IP görülürse kodlar yenilenir
 SUB_LIMIT = 10         # alt admin için varsayılan kod limiti (eklerken değiştirilebilir)
 SUB_DAYS = 7
 DEFAULT_DB = {"subs": {}, "template": [], "sources": [], "free_files": [], "sub_admins": {}, "seen_ips": []}
+AUTO_ANN = {23: "🌙 Спокойной ночи — мы на связи", 6: "☕ Доброе утро! Всё уже работает"}   # saat (Aşkabat): duyuru
+try:
+    from zoneinfo import ZoneInfo
+    TM_TZ = ZoneInfo("Asia/Ashgabat")
+except Exception:
+    TM_TZ = datetime.timezone(datetime.timedelta(hours=5))
 STATE = {}
 LIVE = {}
 RUN = {"last_check": 0.0, "last_msg": "", "next": 0.0, "src": {}, "tm_ts": 0, "tm_line": "📱 Telefon testi: henüz yok", "tm_err": ""}
@@ -255,7 +261,7 @@ def create_vip(name, owner=None, days=None):
             if f not in used: fid, from_free = f, True; break
         if not fid: fid = find_free_file(svc, used)
         if not fid: return None, "Boş Drive dosyası yok!"
-        if not sync_file(svc, fid, name, "", db["template"], exp=False):
+        if not sync_file(svc, fid, name, db.get("g_announce", ""), db["template"], exp=False):
             return None, "Drive'a yazılamadı (loglara bak)"
         if from_free: db["free_files"].remove(fid)
         kid = "vip_" + uuid.uuid4().hex[:8]
@@ -495,6 +501,10 @@ def exit_country(link, geo):
     if any(w in low for w in RU_WORDS): return "ru", "isim"
     return geo.get(code_host(link)), "ip"
 
+def eff_ann(db, s):
+    """Kodun duyurusu: koda özel duyuru varsa o, yoksa genel duyuru (toplu / otomatik)."""
+    return s.get("announce") or db.get("g_announce", "")
+
 REAL_SEP, RAND_SEP = " · ", " | "   # gerçek ülke bayrağı "·", rastgele bayrak "|" (sadece kurucu bilir)
 REAL_MIN = 6                           # bu kadar farklı gerçek ülke varsa sadece onlar kalır
 
@@ -714,7 +724,7 @@ def check_cycle(force=False):
     geo = geo_lookup([h for h in need_ip if h]) if need_ip else {}
     renamed, notes = rename_all(codes, geo, tm_ms, tm_fresh, tm_exits)
     for n in notes: vlog(n)
-    targets = [(s["file_id"], name_of(s, k), s.get("announce", "")) for k, s in db["subs"].items() if s.get("file_id") and not is_exp(s)]
+    targets = [(s["file_id"], name_of(s, k), eff_ann(db, s)) for k, s in db["subs"].items() if s.get("file_id") and not is_exp(s)]
     ok, bad = push_all(targets, renamed)
     vlog(f"{'✅' if not bad else '⚠️'} Drive: {ok}/{len(targets)} güncellendi" + (f" · başarısız: {', '.join(bad[:5])}" if bad else ""))
 
@@ -822,6 +832,24 @@ async def watchdog(app):
                 try: await app.bot.send_message(chat_id=int(sid), text="🔒 Alt admin yetkinin süresi doldu.")
                 except Exception: pass
         except Exception: log.exception("watchdog expiry")
+        # 23:00 / 06:00 (Aşkabat) otomatik genel duyuru
+        try:
+            now = datetime.datetime.now(TM_TZ)
+            if now.hour in AUTO_ANN:
+                slot = f"{now:%Y-%m-%d} {now.hour}"
+                db0 = load_db()
+                if db0.get("auto_ann_on", True) and db0.get("auto_ann_last") != slot:
+                    text = AUTO_ANN[now.hour]
+                    def ajob():
+                        def f(d):
+                            d["auto_ann_last"], d["g_announce"] = slot, text
+                            return [(x["file_id"], name_of(x, k), eff_ann(d, x)) for k, x in d["subs"].items() if x.get("file_id") and not is_exp(x)], list(d["template"])
+                        items, tpl = mutate(f)
+                        return push_all(items, tpl), len(items)
+                    async with CHECK_LOCK:
+                        (ok, bad), n = await asyncio.to_thread(ajob)
+                    vlog(f"🕰 Otomatik duyuru ({now:%H:%M}): {text} → Drive {ok}/{n}")
+        except Exception: log.exception("auto announce")
         # her gün 03:00 otomatik yedek
         try:
             now = datetime.datetime.now(); d = now.strftime("%Y-%m-%d")
@@ -841,7 +869,25 @@ async def watchdog(app):
                     except Exception as e: log.warning("auto-backup send: %s", e)
         except Exception: log.exception("watchdog backup")
 
+def migrate_announce():
+    """Bir kerelik: eski toplu duyuru her koda ayrı yazılmıştı. Hepsi aynıysa genel duyuruya taşınır,
+    farklı olanlar koda özel duyuru olarak kalır."""
+    def f(d):
+        if "g_announce" in d: return None
+        anns = {s.get("announce", "") for s in d["subs"].values()}
+        moved = None
+        if len(anns) == 1 and next(iter(anns)):
+            moved = next(iter(anns))
+            for s in d["subs"].values(): s["announce"] = ""
+        d["g_announce"] = moved or ""
+        return moved
+    try:
+        moved = mutate(f)
+        if moved: vlog(f"📢 Ortak duyuru genel duyuruya taşındı: {short(moved, 50)}")
+    except Exception: log.exception("migrate announce")
+
 async def post_init(app):
+    await asyncio.to_thread(migrate_announce)
     global CHECK_LOCK, WAKE
     CHECK_LOCK, WAKE = asyncio.Lock(), asyncio.Event()
     app.bot_data["mon"] = asyncio.create_task(monitor(app))
@@ -885,8 +931,11 @@ def main_kb(uid):
     return KB(rows)
 
 def admin_kb():
+    try: on = load_db().get("auto_ann_on", True)
+    except Exception: on = True
     return KB([
         [B("⚡ Şimdi Güncelle", "upd_now", "primary"), B("📦 Yedek", "get_zip")],
+        [B(f"🕰 Oto. Duyuru: {'Açık' if on else 'Kapalı'}", "auto_ann", "success" if on else "danger")],
         [B("👮 Alt Adminler", "sa_menu")],
         [B("◀️ Menü", "menu")]])
 
@@ -904,10 +953,12 @@ LOG_KB = KB([[B("🔄 Yenile", "logs", "primary"), B("◀️ Menü", "menu")]])
 
 def code_card(s, kid, uid):
     fid = s.get("file_id", "")
-    ann = s.get("announce") or ""
+    own = s.get("announce") or ""
+    try: g = load_db().get("g_announce", "")
+    except Exception: g = ""
     return (f"🎟 <b>{esc(short(btn_name(s, kid), 40))}</b>\n"
             f"<blockquote>🏷 Başlık  <code>{esc(name_of(s, kid))}</code>\n"
-            f"📢 Duyuru  {('<i>' + esc(short(ann, 120)) + '</i>') if ann else '—'}\n"
+            f"📢 Duyuru  {('<i>' + esc(short(own, 120)) + '</i>  <code>özel</code>') if own else (('<i>' + esc(short(g, 120)) + '</i>  <code>genel</code>') if g else '—')}\n"
             f"⏳ Süre  <b>{left_txt(s.get('expires'))}</b>"
             + (f"\n👮 Sahibi  <code>{s.get('owner_id')}</code>" if uid in ADMINS and s.get("owner_id") and s.get("owner_id") not in ADMINS else "")
             + "</blockquote>\n"
@@ -1031,8 +1082,10 @@ def bulk_apply(field, val):
         items = []
         for kid, s in db["subs"].items():
             if field == "title": s["title"] = val if val is not None else btn_name(s, kid)
-            else: s["announce"] = val
-            if s.get("file_id") and not is_exp(s): items.append((s["file_id"], name_of(s, kid), s.get("announce", "")))
+            else: s["announce"] = ""                       # toplu duyuru: koda özel duyurular temizlenir
+            if s.get("file_id") and not is_exp(s): items.append((s["file_id"], name_of(s, kid), s))
+        if field == "announce": db["g_announce"] = val
+        items = [(fid, t, eff_ann(db, x)) for fid, t, x in items]
         return items, list(db["template"])
     items, tpl = mutate(f)
     return push_all(items, tpl), len(items)
@@ -1138,7 +1191,7 @@ async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
                 if act == "title": s["title"] = val
                 elif act == "bname": s["name"] = val
                 else: s["announce"] = val
-                return s.get("file_id"), name_of(s, kid), s.get("announce", ""), list(db["template"])
+                return s.get("file_id"), name_of(s, kid), eff_ann(db, s), list(db["template"])
             r = mutate(f)
             if not r:
                 await u.message.reply_text("⚠️ Kod bulunamadı.", reply_markup=back("my_keys"))
@@ -1153,7 +1206,7 @@ async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
         log.exception("msg_handler")
         await u.message.reply_text(f"❌ Hata: {esc(str(e)[:300])}", parse_mode="HTML", reply_markup=back("menu", "◀️ Menü"))
 
-FOUNDER_ONLY = {"toggle_sys", "admin", "sources", "s_add", "logs", "upd_now", "get_zip", "sa_menu", "sa_add", "bulk_ann", "bulk_title", "bulk_yes"}
+FOUNDER_ONLY = {"auto_ann", "toggle_sys", "admin", "sources", "s_add", "logs", "upd_now", "get_zip", "sa_menu", "sa_add", "bulk_ann", "bulk_title", "bulk_yes"}
 OWNED = ("kv", "kt", "kn", "ka", "kd", "kdy")   # alt admin sadece kendi kodunda
 def src_find(db, h): return next((s for s in db["sources"] if hashlib.md5(s.encode()).hexdigest()[:8] == h), None)
 
@@ -1205,7 +1258,13 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         await safe_edit(q, "⚙️ <b>Admin</b>\n"
                         f"<blockquote>🔍 Kontrol her <b>{CHECK_EVERY // 60} dk</b>\n"
                         f"🚨 <b>{NEW_IP_LIMIT}</b>'ten fazla yeni IP → bütün kodlar yenilenir\n"
-                        "📱 TM'de çalışmayan kodlar telefon testine göre çıkarılır</blockquote>", admin_kb())
+                        "📱 TM'de çalışmayan kodlar telefon testine göre çıkarılır\n"
+                        "🕰 Otomatik duyuru (Aşkabat saati):\n" + "\n".join(f"   {h:02d}:00  {esc(t)}" for h, t in sorted(AUTO_ANN.items())) + "</blockquote>", admin_kb())
+
+    elif a == "auto_ann":
+        on = mutate(lambda d: d.__setitem__("auto_ann_on", not d.get("auto_ann_on", True)) or d["auto_ann_on"])
+        audit(uid, f"auto_ann {'on' if on else 'off'}")
+        await safe_edit(q, "⚙️ <b>Admin</b>\n<blockquote>🕰 Otomatik duyuru " + ("<b>açık</b>: 23:00 ve 06:00'da genel duyuru değişir." if on else "<b>kapalı</b>.") + "</blockquote>", admin_kb())
 
     elif a == "upd_now":
         if CHECK_LOCK.locked():
@@ -1236,7 +1295,8 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
             await safe_edit(q, "⚠️ Onay süresi geçti, baştan başla.", back("menu", "◀️ Menü")); return
         field = "title" if st["what"] == "bulk_title" else "announce"
         await safe_edit(q, "⏳ <b>Drive'a yazılıyor...</b>")
-        (ok, bad), n = await asyncio.to_thread(bulk_apply, field, st["val"])
+        async with CHECK_LOCK:   # botun güncellemesiyle aynı anda Drive'a yazmasın
+            (ok, bad), n = await asyncio.to_thread(bulk_apply, field, st["val"])
         audit(uid, f"bulk_{field} ok={ok} bad={len(bad)}")
         await safe_edit(q, f"✅ <b>{'Toplu duyuru' if field == 'announce' else 'Toplu başlık'} uygulandı</b>\n"
                         f"<blockquote>💾 Drive  <b>{ok}/{n}</b>" + (f"\n❌ Başarısız  {esc(', '.join(bad[:8]))}" if bad else "") + "</blockquote>",
@@ -1273,7 +1333,7 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         STATE[uid] = {"action": act, "kid": kid}
         texts = {"title": ("🏷 <b>Abonelik Başlığı</b>", f"Şu an: <code>{esc(name_of(s, kid))}</code>\nYeni başlığı gönder (VPN uygulamasında görünür, emoji olur: <code>VIP 🇹🇲</code>)."),
                  "bname": ("🔘 <b>Buton Adı</b>", f"Şu an: <code>{esc(btn_name(s, kid))}</code>\nYeni adı gönder. <i>Sadece bu botta görünür, abonelik başlığı değişmez.</i>"),
-                 "announce": ("📢 <b>Duyuru</b>", f"Şu an: {('<i>' + esc(short(s.get('announce'), 100)) + '</i>') if s.get('announce') else '—'}\nBu koda özel duyuruyu gönder. Silmek için <code>-</code>.")}
+                 "announce": ("📢 <b>Duyuru</b>", f"Şu an: {('<i>' + esc(short(s.get('announce'), 100)) + '</i>') if s.get('announce') else '—'}\nBu koda özel duyuruyu gönder. Silmek için <code>-</code> (o zaman genel duyuru görünür).")}
         t, kb = prompt(*texts[act], f"kv:{kid}")
         await safe_edit(q, t, kb)
 
@@ -1320,7 +1380,7 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
             elif d < 0: s["expires"] = now - 1
             else: s["expires"] = max(now, float(s.get("expires") or 0)) + d * 86400
             s["exp_done"] = is_exp(s)
-            return s.get("file_id"), name_of(s, kid), s.get("announce", ""), list(db2["template"]), s.get("expires")
+            return s.get("file_id"), name_of(s, kid), eff_ann(db2, s), list(db2["template"]), s.get("expires")
         r = mutate(fx)
         if not r:
             await safe_edit(q, "⚠️ Kod bulunamadı.", back("my_keys")); return
