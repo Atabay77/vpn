@@ -200,7 +200,7 @@ def sync_file(svc, fid, title, announce, servers, exp=None):
     try:
         clean = re.sub(r"[^\w\s\-\.\(\)]", "", str(title)).strip() or "VIP"
         media = MediaIoBaseUpload(io.BytesIO(build_text(title, announce, servers)), mimetype="text/plain")
-        svc.files().update(fileId=fid, body={"name": f"{clean}.txt"}, media_body=media).execute()
+        svc.files().update(fileId=fid, body={"name": f"{clean}.txt"}, media_body=media).execute(num_retries=2)  # kopan SSL bağlantısında 2 kez tekrar dener
         return True
     except Exception as e:
         log.warning("Drive write failed %s: %s", fid, e)
