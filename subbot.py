@@ -170,8 +170,14 @@ def src_label(s):
 # ───────── DRIVE ─────────
 def new_service():
     if not os.path.exists(SA_FILE): return None
-    creds = service_account.Credentials.from_service_account_file(SA_FILE)
-    return build("drive", "v3", credentials=creds, cache_discovery=False)
+    creds = service_account.Credentials.from_service_account_file(SA_FILE, scopes=["https://www.googleapis.com/auth/drive"])
+    try:
+        import httplib2, google_auth_httplib2
+        # 30 sn zaman aşımı: takılan bir Drive bağlantısı botu sonsuza kadar bekletmesin
+        http = google_auth_httplib2.AuthorizedHttp(creds, http=httplib2.Http(timeout=30))
+        return build("drive", "v3", http=http, cache_discovery=False)
+    except ImportError:
+        return build("drive", "v3", credentials=creds, cache_discovery=False)
 
 def sub_link(fid):
     return f"https://www.googleapis.com/drive/v3/files/{fid}?key={os.environ.get('API_KEY', '')}&alt=media"
@@ -201,16 +207,16 @@ def sync_file(svc, fid, title, announce, servers, exp=None):
         return False
 
 def push_all(items, servers):
-    """items: [(fid, title, announce)] -> (ok, failed_titles). Paralel yazar."""
-    def one(it):
-        fid, title, ann = it
-        try: return title, sync_file(new_service(), fid, title, ann, servers, exp=False)
-        except Exception: return title, False
+    """items: [(fid, title, announce)] -> (ok, failed_titles).
+    Tek Drive bağlantısıyla sırayla yazar (paralel bağlantılar küçük VPS'i kilitliyordu)."""
+    vlog(f"💾 Drive'a yazılıyor ({len(items)} dosya)...")
+    t0 = time.time()
+    svc = new_service()
     ok, bad = 0, []
-    with ThreadPoolExecutor(5) as ex:
-        for title, good in ex.map(one, items):
-            if good: ok += 1
-            else: bad.append(title)
+    for fid, title, ann in items:
+        if sync_file(svc, fid, title, ann, servers, exp=False): ok += 1
+        else: bad.append(title); vlog(f"❌ Drive yazılamadı: {title}")
+    vlog(f"   {time.time() - t0:.0f} sn sürdü")
     return ok, bad
 
 def find_free_file(svc, used):
