@@ -981,6 +981,7 @@ def main_kb(uid):
     if uid not in ADMINS:   # panel sahibi: kendi panelinde kod oluşturur
         return KB([[B(L(uid, "✨ Kod Oluştur", "✨ Создать код"), "create_key", "success"), B(L(uid, "👥 Kodlarım", "👥 Мои коды"), "my_keys", "primary")],
                    [B(L(uid, "👤 Profil", "👤 Профиль"), "u_prof"), B(L(uid, "🛒 Market", "🛒 Магазин"), "u_market")],
+                   [B(L(uid, "🆘 Destek", "🆘 Поддержка"), "u_sup")],
                    [lang_btn]])
     # kurucu: üstte kullanıcı butonları, altta sadece kurucunun gördükleri (mavi + 🟡)
     on = not os.path.exists(STOP_FLAG)
@@ -999,8 +1000,9 @@ def admin_kb():
         [B("⚡ Güncelle", "upd_now", "primary"), B("📦 Yedek", "get_zip")],
         [B("👥 Kullanıcı Logları", "ul_open", "primary")],
         [B("📊 İstatistik", "stats"), B("📢 Kanallar", "chans")],
+        [B(f"🎫 Destek ({sum(1 for t in load_db().get('tickets', {}).values() if t.get('status') == 'open')})", "tickets", "primary"), B("🪙 CryptoBot", "cp")],
         [B("📣 Herkese Mesaj", "bcast")],
-        [B("💳 TMT Ödeme", "pay_set"), B("🪙 CryptoBot", "cp")],
+        [B("💳 TMT Ödeme (yakında)", "pay_set")],
         [B(f"🕰 Oto. Duyuru: {'Açık' if on else 'Kapalı'}", "auto_ann", "success" if on else "danger")],
         [B("♻️ Önceki Sürüme Dön", "rollback")],
         [B("👮 Alt Adminler", "sa_menu")],
@@ -1317,9 +1319,9 @@ async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
             await u.message.reply_text(msg, parse_mode="HTML", reply_markup=KB([[B(L(uid, "🎟 Koda Dön", "🎟 К коду"), f"kv:{kid}", "primary")]]))
     except Exception as e:
         log.exception("msg_handler")
-        await u.message.reply_text(f"❌ Hata: {esc(str(e)[:300])}", parse_mode="HTML", reply_markup=back("menu", "◀️ Menü"))
+        await send_error(c, uid, f"mesaj:{act}", e)
 
-FOUNDER_ONLY = {"cp", "cp_set", "cp_del", "ul_open", "stats", "chans", "ch_add", "pay_set", "bcast", "bcast_yes", "rollback", "rollback_yes", "auto_ann", "toggle_sys", "admin", "sources", "s_add", "logs", "upd_now", "get_zip", "sa_menu", "sa_add", "bulk_ann", "bulk_title", "bulk_yes"}
+FOUNDER_ONLY = {"t_cancel", "tickets", "cp_test", "cp", "cp_set", "cp_del", "ul_open", "stats", "chans", "ch_add", "pay_set", "bcast", "bcast_yes", "rollback", "rollback_yes", "auto_ann", "toggle_sys", "admin", "sources", "s_add", "logs", "upd_now", "get_zip", "sa_menu", "sa_add", "bulk_ann", "bulk_title", "bulk_yes"}
 OWNED = ("kv", "kt", "kn", "ka", "kd", "kdy")   # alt admin sadece kendi kodunda
 def src_find(db, h): return next((s for s in db["sources"] if hashlib.md5(s.encode()).hexdigest()[:8] == h), None)
 
@@ -1332,7 +1334,7 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         miss = await missing_channels(c.bot, uid)
         if miss:
             await q.answer(); await safe_edit(q, *join_view(lang_of(load_db(), uid), miss)); return
-    if uid not in ADMINS and (a in FOUNDER_ONLY or a.startswith(("sv:", "se:", "sd:", "sa_del:", "sa_ext:", "sa_lim:", "kx:", "kxs:", "ul:", "chd:", "ord_ok:", "ord_no:"))):
+    if uid not in ADMINS and (a in FOUNDER_ONLY or a.startswith(("sv:", "se:", "sd:", "sa_del:", "sa_ext:", "sa_lim:", "kx:", "kxs:", "ul:", "chd:", "ord_ok:", "ord_no:", "t_rep:", "t_close:", "tv:"))):
         await q.answer(L(uid, "⛔ Erişim yok", "⛔ Нет доступа"), show_alert=True); return
     if a not in ("toggle_sys", "upd_now"):
         await q.answer()
@@ -1380,8 +1382,44 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         if ch: audit(uid, f"channel_del {ch['id']}")
         await safe_edit(q, *channels_view())
 
+    elif a == "tickets":
+        await safe_edit(q, *tickets_view())
+
+    elif a.startswith("tv:"):
+        tid = a.split(":", 1)[1]; t = db.get("tickets", {}).get(tid)
+        if not t: await safe_edit(q, "⚠️ Talep bulunamadı.", back("tickets")); return
+        await safe_edit(q, f"🎫 <b>Destek #{tid}</b>\n<blockquote>👤 {esc(t.get('who'))}\n📅 Açıldı  {ago(t.get('ts'))}\n💬 Mesaj  <b>{t.get('n', 0)}</b>\n"
+                           + ("🔴 Cevap bekliyor" if t.get("pending") else "🟢 Cevaplandı") + "</blockquote>\n<i>Kullanıcının mesajları sana ayrı ayrı geldi; birine Telegram'da yanıt vererek de cevaplayabilirsin.</i>",
+                        KB([[B("✍️ Yanıtla", f"t_rep:{tid}", "primary"), B("🔒 Kapat", f"t_close:{tid}", "danger")], [B("◀️ Talepler", "tickets")]]))
+
+    elif a.startswith("t_rep:"):   # mesaj medya olabilir: üzerine yazma, yeni mesaj gönder
+        tid = a.split(":", 1)[1]
+        STATE[uid] = {"action": "t_reply", "tid": tid}
+        await c.bot.send_message(uid, f"✍️ <b>#{tid}</b> için cevabını yaz.\n<blockquote>Yazı, fotoğraf, video, dosya... ne gönderirsen kullanıcıya gider.</blockquote>",
+                                 parse_mode="HTML", reply_markup=KB([[B("✖️ İptal", "t_cancel")]]))
+
+    elif a == "t_cancel":
+        STATE.pop(uid, None)
+        await safe_edit(q, "✖️ Cevap iptal edildi.")
+
+    elif a.startswith("t_close:"):
+        tid = a.split(":", 1)[1]
+        ok = await close_ticket(c, tid, True)
+        try: await q.edit_message_reply_markup(None)
+        except Exception: pass
+        await c.bot.send_message(uid, f"🔒 Talep #{tid} kapatıldı." if ok else f"ℹ️ Talep #{tid} zaten kapalı.")
+
     elif a == "cp":
         await safe_edit(q, *(await asyncio.to_thread(crypto_view)))
+
+    elif a == "cp_test":
+        try:
+            inv = await asyncio.to_thread(crypto_call, "createInvoice", asset="USDT", amount="0.1", description="Test ödemesi (bot)", payload="test", expires_in=3600, allow_comments="false")
+        except Exception as e:
+            await safe_edit(q, f"⚠️ Test faturası oluşturulamadı: <code>{esc(str(e)[:150])}</code>", back("cp")); return
+        mutate(lambda d: d.__setitem__("cp_test", {"inv": inv["invoice_id"], "url": inv.get("bot_invoice_url") or inv.get("pay_url"), "ts": time.time(), "by": uid}))
+        await safe_edit(q, "🧪 <b>Test Ödemesi</b>\n<blockquote>0.1 USDT'lik gerçek bir fatura açıldı. Öde → para kendi CryptoBot uygulamana gelir.\nBot ödemeyi en geç 1 dakikada görür ve sana «✅ Test ödemesi geldi» yazar.</blockquote>",
+                        KB([[B("💸 Testi Öde", url=inv.get("bot_invoice_url") or inv.get("pay_url"), style="success")], [B("◀️ CryptoBot", "cp")]]))
 
     elif a == "cp_set":
         STATE[uid] = {"action": "cp_set"}
@@ -1693,7 +1731,7 @@ T = {
           "<blockquote>👥 Davet ettiklerin  <b>{total}</b>\n✅ Kullanılabilir davet  <b>{avail}/{need}</b>\n🎁 Alınan ücretsiz kod  <b>{free}</b>\n🎟 Aktif kod  <b>{active}</b>\n🛒 Satın alma  <b>{buys}</b>\n🙋 Seni davet eden  {inviter}</blockquote>\n"
           "🔗 <b>Davet linkin</b> <i>(dokun → kopyala)</i>\n<code>{link}</code>",
   "share_text": "Ücretsiz VPN kodu al 👇",
-  "market": "🛒 <b>Market</b>\n<blockquote>🎟 Kod · 7 gün  —  <b>30 TMT</b> · 1.5 USDT\n🎟 Kod · 30 gün  —  <b>100 TMT</b> · 5 USDT\n🖥 Panel  —  kullanıcı başı <b>20 TMT</b> · 1 USDT <i>(en az 20)</i></blockquote>\n💵 USDT ile ödeme (CryptoBot) otomatik onaylanır.\n<i>Satın almak istediğini seç</i> 👇",
+  "market": "🛒 <b>Market</b>\n<blockquote>🎟 Kod · 7 gün  —  <b>30 TMT</b> · 1.5 USDT\n🎟 Kod · 30 gün  —  <b>100 TMT</b> · 5 USDT\n🖥 Panel  —  kullanıcı başı <b>20 TMT</b> · 1 USDT <i>(en az 20)</i></blockquote>\n💵 USDT ile ödeme (CryptoBot) otomatik onaylanır.\n💳 TMT ile ödeme yakında 🔜\n<i>Satın almak istediğini seç</i> 👇",
   "b_c7": "🎟 Kod 7 gün · 30 TMT", "b_c30": "🎟 Kod 30 gün · 100 TMT", "b_panel": "🖥 Panel · 20 TMT/kullanıcı",
   "panel_ask": "🖥 <b>Panel</b>\n<blockquote>Kendi kullanıcıların için kod oluşturup yönetebileceğin panel.\nKullanıcı başı <b>20 TMT</b> · en az <b>20</b> kullanıcı · <b>30 gün</b></blockquote>\nKaç kullanıcı? Butona bas ya da sayı yaz:",
   "panel_min": "⚠️ En az 20 kullanıcı.",
@@ -1735,7 +1773,7 @@ T = {
           "<blockquote>👥 Вы пригласили  <b>{total}</b>\n✅ Доступно приглашений  <b>{avail}/{need}</b>\n🎁 Получено бесплатных кодов  <b>{free}</b>\n🎟 Активные коды  <b>{active}</b>\n🛒 Покупки  <b>{buys}</b>\n🙋 Вас пригласил  {inviter}</blockquote>\n"
           "🔗 <b>Ваша ссылка</b> <i>(нажмите → скопировать)</i>\n<code>{link}</code>",
   "share_text": "Получи бесплатный VPN-код 👇",
-  "market": "🛒 <b>Магазин</b>\n<blockquote>🎟 Код · 7 дней  —  <b>30 TMT</b> · 1.5 USDT\n🎟 Код · 30 дней  —  <b>100 TMT</b> · 5 USDT\n🖥 Панель  —  <b>20 TMT</b> · 1 USDT за пользователя <i>(от 20)</i></blockquote>\n💵 Оплата в USDT (CryptoBot) подтверждается автоматически.\n<i>Выберите, что хотите купить</i> 👇",
+  "market": "🛒 <b>Магазин</b>\n<blockquote>🎟 Код · 7 дней  —  <b>30 TMT</b> · 1.5 USDT\n🎟 Код · 30 дней  —  <b>100 TMT</b> · 5 USDT\n🖥 Панель  —  <b>20 TMT</b> · 1 USDT за пользователя <i>(от 20)</i></blockquote>\n💵 Оплата в USDT (CryptoBot) подтверждается автоматически.\n💳 Оплата в TMT скоро 🔜\n<i>Выберите, что хотите купить</i> 👇",
   "b_c7": "🎟 Код 7 дней · 30 TMT", "b_c30": "🎟 Код 30 дней · 100 TMT", "b_panel": "🖥 Панель · 20 TMT/польз.",
   "panel_ask": "🖥 <b>Панель</b>\n<blockquote>Панель, где вы сами создаёте и управляете кодами для своих пользователей.\n<b>20 TMT</b> за пользователя · от <b>20</b> пользователей · <b>30 дней</b></blockquote>\nСколько пользователей? Нажмите кнопку или напишите число:",
   "panel_min": "⚠️ Минимум 20 пользователей.",
@@ -1895,6 +1933,7 @@ def pub_menu(db, uid):
     t = tr(lang, "menu", avail=max(0, avail_refs(e)), need=REF_NEED, codes=len(user_codes(db, uid)))
     kb = KB([[B(tr(lang, "b_free"), "u_free", "success"), B(tr(lang, "b_mine"), "u_mine", "primary")],
              [B(tr(lang, "b_prof"), "u_prof"), B(tr(lang, "b_market"), "u_market")],
+             [B(tr(lang, "b_sup"), "u_sup")],
              [B(tr(lang, "b_lang"), "u_lang")]])
     return t, kb
 
@@ -1963,6 +2002,16 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
     async def send(t, kb=None): await safe_edit(q, t, kb)
     menu_btn = KB([[B(tr(lang, "b_menu"), "u_menu")]])
 
+    if a.startswith("u_rep:"):   # hata mesajındaki "Admine Bildir"
+        x = ERRS.pop(a.split(":", 1)[1], None)
+        await q.answer(tr(lang, "reported"), show_alert=True)
+        if x:
+            await notify_founders(c.application, f"📨 <b>Kullanıcı hata bildirdi</b>\n<blockquote>👤 {esc(who(user))}\n📍 {esc(x['where'])}\n❗ <code>{esc(x['err'])}</code></blockquote>")
+            ulog("err", f"📨 Hata bildirdi: {who(user)} · {x['where']}")
+        try: await q.edit_message_reply_markup(None)
+        except Exception: pass
+        return
+
     if a.startswith("u_cap:"):
         e = db["users"].get(str(uid), {})
         if e.get("ok") or "cap" not in e:
@@ -1993,6 +2042,24 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
     if a == "u_menu":
         STATE.pop(uid, None)
         await send(*home(uid))
+
+    elif a == "u_sup":
+        def f(d):
+            x = d["users"].setdefault(str(uid), {})
+            tid = open_ticket(d, uid)
+            if tid: return tid, False
+            tid = uuid.uuid4().hex[:5].upper()
+            d.setdefault("tickets", {})[tid] = {"uid": uid, "status": "open", "ts": time.time(), "pending": 0, "n": 0, "who": who(user)}
+            x["ticket"] = tid
+            return tid, True
+        tid, new = mutate(f)
+        if new: ulog("t_open", f"🆘 Destek talebi açtı: {who(user)} · #{tid}")
+        await send(tr(lang, "sup_new" if new else "sup_open", tid=tid), KB([[B(tr(lang, "b_tclose"), "u_tclose", "danger")], [B(tr(lang, "b_menu"), "u_menu")]]))
+
+    elif a == "u_tclose":
+        tid = open_ticket(load_db(), uid)
+        if tid: await close_ticket(c, tid, False)
+        await send(tr(lang, "sup_closed", tid=tid or "—"), KB([[B(tr(lang, "b_menu"), "u_menu")]]))
 
     elif a == "u_lang":
         nl = "ru" if lang == "tr" else "tr"
@@ -2091,7 +2158,20 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
             ulog("inv", f"💵 USDT faturası: {who(user)} · #{oid} · {us} USDT")
         it = tr(lang, "it_panel", n=o["n"]) if o["item"] == "panel" else tr(lang, "it_" + o["item"])
         await send(tr(lang, "inv", oid=oid, item=esc(it), usdt=us),
-                   KB([[B(tr(lang, "b_pay"), url=o["inv_url"], style="success")], [B(tr(lang, "b_chk"), f"u_chk:{oid}", "primary")], [B(tr(lang, "b_menu"), "u_menu")]]))
+                   KB([[B(tr(lang, "b_pay"), url=o["inv_url"], style="success")], [B(tr(lang, "b_chk"), f"u_chk:{oid}", "primary")]]
+                      + ([[B("🟡 🧪 Ödendi say (test)", f"u_tpaid:{oid}", "primary")]] if uid in ADMINS else []) + [[B(tr(lang, "b_menu"), "u_menu")]]))
+
+    elif a.startswith("u_tpaid:"):   # sadece kurucu: ödeme yapmadan teslimi dener, satışa sayılmaz
+        if uid not in ADMINS: return
+        oid = a.split(":", 1)[1]
+        def f(d):
+            x = d.get("orders", {}).get(oid)
+            if not x or x["status"] not in ("new", "paid"): return False
+            x["status"] = "paid"; x["via"] = "test"; x["test"] = True; return True
+        if not mutate(f): await send(tr(lang, "order_old"), menu_btn); return
+        ulog("test", f"🧪 Test ödemesi (ödendi sayıldı): {who(user)} · #{oid}")
+        msg = await fulfill_order(c.application, oid, True, uid)
+        await send(f"🧪 <b>Test</b>\n<blockquote>{msg}</blockquote>\n<i>Kod/panel teslim mesajı ayrıca geldi. Bu sipariş satışlara sayılmaz.</i>", menu_btn)
 
     elif a.startswith("u_chk:"):
         oid = a.split(":", 1)[1]
@@ -2121,11 +2201,12 @@ def new_order(uid, user, lang, item, n=0):
     def f(d): d.setdefault("orders", {})[oid] = o
     mutate(f)
     ulog("order", f"🧾 Sipariş açtı: {who(user)} · #{oid} · {item_tr(o)} · {price} TMT")
-    pay = load_db().get("pay_info") or tr(lang, "pay_default")
     us = usdt_of(price); has = bool(crypto_token())
-    rows = ([[B(tr(lang, "b_usdt", usdt=us), f"u_usdt:{oid}", "primary")]] if has else []) + \
-           [[B(tr(lang, "b_paid"), f"u_paid:{oid}", "success"), B(tr(lang, "b_cancel"), f"u_cancel:{oid}", "danger")]]
-    return (tr(lang, "order", oid=oid, item=esc(it), price=price, usdt=us, usdt_line=tr(lang, "usdt_line") if has else "", pay=esc(pay)), KB(rows))
+    rows = ([[B(tr(lang, "b_usdt", usdt=us), f"u_usdt:{oid}", "success")]] if has else []) + [[B(tr(lang, "b_cancel"), f"u_cancel:{oid}", "danger")]]
+    # TMT ile ödeme henüz açık değil ("yakında"); açılınca eski TMT akışı (u_paid -> admin onayı) kullanılabilir
+    t = (f"🧾 <b>{'Заказ' if lang == 'ru' else 'Sipariş'} #{oid}</b>\n<blockquote>{esc(it)}\n💰 {'Сумма' if lang == 'ru' else 'Tutar'}  <b>{price} TMT</b>  ·  <b>{us} USDT</b></blockquote>\n"
+         + (tr(lang, "usdt_line") if has else tr(lang, "pay_off")) + tr(lang, "tmt_soon"))
+    return t, KB(rows)
 
 async def pub_msg(u: Update, c: ContextTypes.DEFAULT_TYPE):
     """Kullanıcının yazdığı mesaj: şimdilik sadece panel kullanıcı sayısı."""
@@ -2195,6 +2276,17 @@ async def check_invoices(app, only=None):
     """Bekleyen USDT faturalarını CryptoBot'ta kontrol eder; ödenenleri otomatik teslim eder. Dönüş: teslim edilen sayısı."""
     if not crypto_token(): return 0
     db = load_db()
+    tst = db.get("cp_test")
+    if tst and only is None:   # kurucunun test faturası
+        try:
+            items = (await asyncio.to_thread(crypto_call, "getInvoices", invoice_ids=str(tst["inv"]))).get("items", [])
+            stt = items[0].get("status") if items else "expired"
+            if stt == "paid":
+                mutate(lambda d: d.pop("cp_test", None))
+                await notify_founders(app, "✅ <b>Test ödemesi geldi</b> (0.1 USDT)\n<blockquote>CryptoBot bağlantısı ve otomatik ödeme kontrolü çalışıyor.</blockquote>")
+            elif stt == "expired" or time.time() - tst.get("ts", 0) > 3700:
+                mutate(lambda d: d.pop("cp_test", None))
+        except Exception as e: log.warning("test invoice: %s", e)
     pend = {oid: o for oid, o in db.get("orders", {}).items() if o.get("inv") and o["status"] in ("new", "paid") and (only is None or oid in only)}
     pend = {k: o for k, o in pend.items() if time.time() - o.get("inv_ts", 0) < 2 * 86400}
     if not pend: return 0
@@ -2224,7 +2316,10 @@ def crypto_view():
     else: st = "⚪️ Bağlı değil — USDT butonu kullanıcılara görünmüyor."
     t = ("🪙 <b>CryptoBot (USDT)</b>\n<blockquote>" + st + f"\n💱 1 USDT = {USDT_RATE} TMT</blockquote>\n"
          "<i>Token almak: @CryptoBot → Crypto Pay → Create App → API Token.</i>")
-    rows = [[B("🔑 Token Gir", "cp_set", "primary")]] + ([[B("🗑 Bağlantıyı Kaldır", "cp_del", "danger")]] if tok else []) + [[B("◀️ Admin", "admin")]]
+    tst = load_db().get("cp_test") or {}
+    if tst: t += f"\n🧪 Test ödemesi bekleniyor ({ago(tst.get('ts'))} açıldı)."
+    rows = ([[B("🧪 Test Ödemesi (0.1 USDT)", "cp_test", "success")]] if tok else []) + ([[B("💸 Testi Öde", url=tst["url"])]] if tok and tst.get("url") else []) + \
+           [[B("🔑 Token Gir", "cp_set", "primary")]] + ([[B("🗑 Bağlantıyı Kaldır", "cp_del", "danger")]] if tok else []) + [[B("◀️ Admin", "admin")]]
     return t, KB(rows)
 
 # ── kurucu ekranları ──
@@ -2251,7 +2346,7 @@ def stats_text():
     today = tm_now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
     pub = [s for s in db["subs"].values() if s.get("pub") and not is_exp(s)]
     orders = db.get("orders", {}).values()
-    paid = sum(o["price"] for o in orders if o["status"] == "done")
+    paid = sum(o["price"] for o in orders if o["status"] == "done" and not o.get("test"))
     return ("📊 <b>İstatistik</b>\n<blockquote>"
             f"👥 Kullanıcı  <b>{len(us)}</b>  ·  bugün <b>{sum(1 for e in us.values() if e.get('joined', 0) >= today)}</b>\n"
             f"🤝 Sayılan davet  <b>{sum(len(e.get('refs', [])) for e in us.values())}</b>\n"
@@ -2299,6 +2394,167 @@ async def broadcast(app, text, admin_uid):
     audit(admin_uid, f"broadcast ok={ok} bad={bad}")
     await notify_founders(app, f"📣 <b>Herkese mesaj gönderildi</b>\n<blockquote>✅ {ok}  ·  ❌ {bad} <i>(botu engelleyenler)</i></blockquote>")
 
+
+# ───────── DESTEK (talep) + HATA BİLDİRİMİ ─────────
+SUP_MAX = 3                      # admin cevap vermeden kullanıcının gönderebileceği mesaj sayısı
+SUP_LIMIT_MB = {"photo": 5, "other": 10}
+ERRS = {}                        # hata no -> bilgi (Admine Bildir butonu için)
+ERR_SEEN = {}                    # uid -> son hata mesajı zamanı (aynı kişiye arka arkaya hata yağmasın)
+from telegram.ext import ApplicationHandlerStop
+
+T["tr"].update({
+  "b_sup": "🆘 Destek", "b_tclose": "🔒 Talebi Kapat", "b_report": "📨 Admine Bildir",
+  "sup_new": "🆘 <b>Destek · #{tid}</b>\n<blockquote>Sorununu yaz. Fotoğraf, video ya da dosya da gönderebilirsin.\n📷 Fotoğraf en fazla 5 MB · 🎬 Video/dosya en fazla 10 MB</blockquote>\n<i>Admin cevap verince burada görürsün; sen de cevap yazabilirsin. Talep kapanana kadar konuşma devam eder.</i>",
+  "sup_open": "🆘 <b>Destek · #{tid}</b>\n<blockquote>Talebin açık. Mesaj yazabilirsin; admin cevap verince burada görürsün.</blockquote>",
+  "sup_sent": "✅ İletildi. Admin cevabını bekle.",
+  "sup_wait": "⏳ Önce admin cevabını bekle (cevapsız en fazla 3 mesaj).",
+  "sup_big": "⚠️ Dosya çok büyük. Fotoğraf en fazla 5 MB, video/dosya en fazla 10 MB.",
+  "sup_reply": "💬 <b>Destek cevabı</b> · #{tid}",
+  "sup_closed_admin": "🔒 Destek talebin #{tid} kapatıldı. Yeni bir sorun olursa 🆘 Destek'e bas.",
+  "sup_closed": "🔒 Talep #{tid} kapatıldı.",
+  "err": "⚠️ <b>Bir hata oluştu.</b>\n<blockquote>İşlem tamamlanamadı. Tekrar dene; sorun sürerse admine bildir.</blockquote>",
+  "reported": "✅ Admine bildirildi, teşekkürler.",
+  "tmt_soon": "💳 <b>TMT ile ödeme</b> — <i>yakında 🔜</i>",
+  "pay_off": "⚠️ Online ödeme şu an kapalı.\n\n",
+})
+T["ru"].update({
+  "b_sup": "🆘 Поддержка", "b_tclose": "🔒 Закрыть обращение", "b_report": "📨 Сообщить админу",
+  "sup_new": "🆘 <b>Поддержка · #{tid}</b>\n<blockquote>Опишите проблему. Можно отправить фото, видео или файл.\n📷 Фото до 5 МБ · 🎬 Видео/файл до 10 МБ</blockquote>\n<i>Ответ администратора придёт сюда, вы сможете ответить. Переписка идёт, пока обращение не закрыто.</i>",
+  "sup_open": "🆘 <b>Поддержка · #{tid}</b>\n<blockquote>Обращение открыто. Пишите сообщение — ответ администратора придёт сюда.</blockquote>",
+  "sup_sent": "✅ Отправлено. Ждите ответа администратора.",
+  "sup_wait": "⏳ Сначала дождитесь ответа администратора (не больше 3 сообщений без ответа).",
+  "sup_big": "⚠️ Файл слишком большой. Фото до 5 МБ, видео/файл до 10 МБ.",
+  "sup_reply": "💬 <b>Ответ поддержки</b> · #{tid}",
+  "sup_closed_admin": "🔒 Ваше обращение #{tid} закрыто. Если появится новая проблема — нажмите 🆘 Поддержка.",
+  "sup_closed": "🔒 Обращение #{tid} закрыто.",
+  "err": "⚠️ <b>Произошла ошибка.</b>\n<blockquote>Действие не выполнено. Попробуйте ещё раз; если не получится — сообщите админу.</blockquote>",
+  "reported": "✅ Админ уведомлён, спасибо.",
+  "tmt_soon": "💳 <b>Оплата в TMT</b> — <i>скоро 🔜</i>",
+  "pay_off": "⚠️ Онлайн-оплата сейчас недоступна.\n\n",
+})
+
+def open_ticket(db, uid):
+    tid = db.get("users", {}).get(str(uid), {}).get("ticket")
+    return tid if tid and db.get("tickets", {}).get(tid, {}).get("status") == "open" else None
+
+def media_size(m):
+    """(bayt, sınır MB). Yazı ise 0."""
+    if m.photo: return (m.photo[-1].file_size or 0), SUP_LIMIT_MB["photo"]
+    for a in (m.video, m.document, m.audio, m.voice, m.animation, m.video_note):
+        if a: return (a.file_size or 0), SUP_LIMIT_MB["other"]
+    return 0, SUP_LIMIT_MB["other"]
+
+def remember_tmsg(mid, tid):
+    def f(d):
+        tm = d.setdefault("tmsg", {})
+        tm[str(mid)] = tid
+        if len(tm) > 2000:
+            for k in list(tm)[:500]: tm.pop(k, None)
+    mutate(f)
+
+async def copy_with_header(bot, to, from_chat, m, header, kb):
+    """Yazıyı başlıkla birlikte gönderir; medyayı başlık açıklama olacak şekilde kopyalar. Dönüş: gönderilen mesaj no."""
+    if m.text:
+        r = await bot.send_message(to, header + "\n\n" + esc(m.text), parse_mode="HTML", reply_markup=kb, disable_web_page_preview=True)
+        return r.message_id
+    if m.sticker or m.video_note or m.dice or m.location or m.contact or m.poll:   # açıklama alamayan türler
+        await bot.send_message(to, header, parse_mode="HTML")
+        r = await bot.copy_message(to, from_chat, m.message_id, reply_markup=kb)
+        return r.message_id
+    cap = header + (("\n\n" + esc(m.caption)) if m.caption else "")
+    r = await bot.copy_message(to, from_chat, m.message_id, caption=cap[:1024], parse_mode="HTML", reply_markup=kb)
+    return r.message_id
+
+async def user_to_ticket(c, u, tid):
+    m, user = u.message, u.effective_user
+    uid = user.id; lang = lang_of(load_db(), uid)
+    size, lim = media_size(m)
+    if size > lim * 1024 * 1024:
+        await m.reply_text(tr(lang, "sup_big")); return
+    def f(d):
+        t = d["tickets"][tid]
+        if t.get("pending", 0) >= SUP_MAX: return None
+        t["pending"] = t.get("pending", 0) + 1; t["n"] = t.get("n", 0) + 1; t["last"] = time.time()
+        return True
+    if not mutate(f):
+        await m.reply_text(tr(lang, "sup_wait")); return
+    hdr = f"🎫 <b>Destek #{tid}</b> · {esc(who(user))}"
+    kb = KB([[B("✍️ Yanıtla", f"t_rep:{tid}", "primary"), B("🔒 Kapat", f"t_close:{tid}", "danger")]])
+    for fid in ADMINS:
+        try: remember_tmsg(await copy_with_header(c.bot, fid, uid, m, hdr, kb), tid)
+        except Exception as e: log.warning("destek iletilemedi: %s", e)
+    await m.reply_text(tr(lang, "sup_sent"), reply_markup=KB([[B(tr(lang, "b_tclose"), "u_tclose", "danger")]]))
+
+async def admin_reply(c, admin_uid, tid, m):
+    t = load_db().get("tickets", {}).get(tid)
+    if not t or t.get("status") != "open":
+        await m.reply_text(f"ℹ️ Talep #{tid} kapalı."); return
+    uid = t["uid"]; lang = lang_of(load_db(), uid)
+    try:
+        await copy_with_header(c.bot, uid, admin_uid, m, tr(lang, "sup_reply", tid=tid), KB([[B(tr(lang, "b_tclose"), "u_tclose", "danger")]]))
+    except Exception as e:
+        await m.reply_text(f"⚠️ Gönderilemedi: {esc(str(e)[:150])}", parse_mode="HTML"); return
+    def f(d):
+        x = d["tickets"][tid]; x["pending"] = 0; x["last"] = time.time(); x["n"] = x.get("n", 0) + 1
+    mutate(f)
+    await m.reply_text(f"✅ Cevap gönderildi · #{tid}", reply_markup=KB([[B("🔒 Talebi Kapat", f"t_close:{tid}", "danger")]]))
+
+async def close_ticket(c, tid, by_admin):
+    def f(d):
+        t = d.get("tickets", {}).get(tid)
+        if not t or t.get("status") != "open": return None
+        t["status"] = "closed"; t["closed"] = time.time()
+        d.get("users", {}).get(str(t["uid"]), {}).pop("ticket", None)
+        return dict(t)
+    t = mutate(f)
+    if not t: return False
+    ulog("t_close", f"🔒 Destek #{tid} kapatıldı ({'admin' if by_admin else 'kullanıcı'}): {t.get('who')}")
+    if by_admin:
+        try: await c.bot.send_message(t["uid"], tr(lang_of(load_db(), t["uid"]), "sup_closed_admin", tid=tid))
+        except Exception: pass
+    else:
+        await notify_founders(c.application if hasattr(c, "application") else c, f"🔒 Kullanıcı destek talebini kapattı · #{tid}\n<blockquote>{esc(t.get('who'))}</blockquote>")
+    return True
+
+async def support_router(u: Update, c: ContextTypes.DEFAULT_TYPE):
+    """Her mesajdan ÖNCE çalışır: açık destek talebi ya da kurucu cevabı varsa mesajı oraya yönlendirir."""
+    m = u.message
+    if not m or not u.effective_user or m.chat.type != "private": return
+    uid = u.effective_user.id
+    if uid in ADMINS:
+        st = STATE.get(uid) or {}
+        tid = st.get("tid") if st.get("action") == "t_reply" else None
+        if not tid and m.reply_to_message:
+            tid = load_db().get("tmsg", {}).get(str(m.reply_to_message.message_id))
+        if not tid: return
+        if st.get("action") == "t_reply": STATE.pop(uid, None)
+        await admin_reply(c, uid, tid, m)
+        raise ApplicationHandlerStop
+    if uid in STATE: return                      # başka bir işlem bekleniyor (ör. panel kullanıcı sayısı)
+    tid = open_ticket(load_db(), uid)
+    if not tid: return
+    await user_to_ticket(c, u, tid)
+    raise ApplicationHandlerStop
+
+def tickets_view():
+    db = load_db()
+    op = [(k, t) for k, t in db.get("tickets", {}).items() if t.get("status") == "open"]
+    op.sort(key=lambda x: -x[1].get("last", x[1].get("ts", 0)))
+    body = "\n".join(f"{'🔴' if t.get('pending') else '🟢'} <b>#{k}</b> · {esc(short(t.get('who', '?'), 40))} · {ago(t.get('last', t.get('ts')))}" for k, t in op[:20]) or "Açık talep yok."
+    rows = [[B(f"{'🔴' if t.get('pending') else '🟢'} #{k} · {short(t.get('who', '?'), 18)}", f"tv:{k}")] for k, t in op[:20]] + [[B("◀️ Admin", "admin")]]
+    return f"🎫 <b>Destek Talepleri</b>  <code>{len(op)}</code>\n<blockquote>{body}</blockquote>\n<i>🔴 = cevap bekliyor</i>", KB(rows)
+
+async def send_error(c, uid, where, err):
+    """Kullanıcıya hata mesajı + 'Admine Bildir' butonu."""
+    if time.time() - ERR_SEEN.get(uid, 0) < 20: return
+    ERR_SEEN[uid] = time.time()
+    eid = uuid.uuid4().hex[:6]
+    ERRS[eid] = {"uid": uid, "where": str(where)[:120], "err": str(err)[:400], "t": time.time()}
+    if len(ERRS) > 300:
+        for k in list(ERRS)[:100]: ERRS.pop(k, None)
+    lang = lang_of(load_db(), uid)
+    try: await c.bot.send_message(uid, tr(lang, "err"), parse_mode="HTML", reply_markup=KB([[B(tr(lang, "b_report"), f"u_rep:{eid}", "danger")]]))
+    except Exception: pass
 
 # ───────── KENDİNİ GÜNCELLEME (dosyayı bota atınca; sadece kurucular) ─────────
 SELF = os.path.abspath(__file__)
@@ -2387,7 +2643,13 @@ async def on_error(update, context):
     if isinstance(context.error, RetryAfter):
         vlog(f"⚠️ Telegram flood limiti: {context.error.retry_after} sn bekleniyor")
         return
-    if isinstance(context.error, NetworkError) or time.time() - _ERR["t"] < 600: return
+    if isinstance(context.error, NetworkError): return
+    try:
+        if isinstance(update, Update) and update.effective_user and update.effective_chat and update.effective_chat.type == "private":
+            where = update.callback_query.data if update.callback_query else ((update.message.text or "medya")[:60] if update.message else "?")
+            await send_error(context, update.effective_user.id, where, context.error)
+    except Exception: log.exception("send_error")
+    if time.time() - _ERR["t"] < 600: return
     _ERR["t"] = time.time()
     try: await notify_founders(context.application, f"❗ <b>Bot hatası</b>\n<code>{esc(str(context.error)[:300])}</code>")
     except Exception: pass
@@ -2399,6 +2661,7 @@ def main():
     if not token: raise SystemExit("BOT_TOKEN bulunamadı (/root/env.txt)")
     if not ADMINS: log.warning("ADMIN_IDS yok: kimse giriş yapamaz.")
     app = ApplicationBuilder().token(token).concurrent_updates(True).post_init(post_init).build()
+    app.add_handler(MessageHandler(filters.UpdateType.MESSAGE & ~filters.COMMAND, support_router), group=-1)
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("id", cmd_id))
     app.add_handler(CallbackQueryHandler(cb))
