@@ -633,6 +633,10 @@ def tm_sync(db, sources, codes=None):
         RUN["tm_err"] = msg
         RUN["tm_line"] = "📱 Telefon testi: okunamadı"
         return set(), {}, False, load_exits()
+    ver = ch.get("tmtest_ver")
+    if ver and ver != RUN.get("tm_ver"):
+        if RUN.get("tm_ver"): vlog(f"📲 Telefon programı güncellendi ({ver})")
+        RUN["tm_ver"] = ver
     ts, res = int(ch.get("ts") or 0), ch.get("results") or {}
     good = sum(1 for v in res.values() if isinstance(v, (int, float)) and v > 0)
     stale = bool(ts) and time.time() - ts > TM_MAX_AGE
@@ -891,6 +895,11 @@ def migrate_announce():
 
 async def post_init(app):
     await asyncio.to_thread(migrate_announce)
+    if os.path.exists(UPDATE_NOTE):
+        try:
+            sha = open(UPDATE_NOTE).read().strip(); os.remove(UPDATE_NOTE)
+            await notify_founders(app, f"🟢 <b>Bot yeni sürümle açıldı</b> <code>{esc(sha)}</code>")
+        except Exception: pass
     global CHECK_LOCK, WAKE
     CHECK_LOCK, WAKE = asyncio.Lock(), asyncio.Event()
     app.bot_data["mon"] = asyncio.create_task(monitor(app))
@@ -939,6 +948,7 @@ def admin_kb():
     return KB([
         [B("⚡ Şimdi Güncelle", "upd_now", "primary"), B("📦 Yedek", "get_zip")],
         [B(f"🕰 Oto. Duyuru: {'Açık' if on else 'Kapalı'}", "auto_ann", "success" if on else "danger")],
+        [B("♻️ Önceki Sürüme Dön", "rollback")],
         [B("👮 Alt Adminler", "sa_menu")],
         [B("◀️ Menü", "menu")]])
 
@@ -1209,7 +1219,7 @@ async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
         log.exception("msg_handler")
         await u.message.reply_text(f"❌ Hata: {esc(str(e)[:300])}", parse_mode="HTML", reply_markup=back("menu", "◀️ Menü"))
 
-FOUNDER_ONLY = {"auto_ann", "toggle_sys", "admin", "sources", "s_add", "logs", "upd_now", "get_zip", "sa_menu", "sa_add", "bulk_ann", "bulk_title", "bulk_yes"}
+FOUNDER_ONLY = {"rollback", "rollback_yes", "auto_ann", "toggle_sys", "admin", "sources", "s_add", "logs", "upd_now", "get_zip", "sa_menu", "sa_add", "bulk_ann", "bulk_title", "bulk_yes"}
 OWNED = ("kv", "kt", "kn", "ka", "kd", "kdy")   # alt admin sadece kendi kodunda
 def src_find(db, h): return next((s for s in db["sources"] if hashlib.md5(s.encode()).hexdigest()[:8] == h), None)
 
@@ -1263,6 +1273,23 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
                         f"🚨 <b>{NEW_IP_LIMIT}</b>'ten fazla yeni IP → bütün kodlar yenilenir\n"
                         "📱 TM'de çalışmayan kodlar telefon testine göre çıkarılır\n"
                         "🕰 Otomatik duyuru (Aşkabat saati):\n" + "\n".join(f"   {h:02d}:00  {esc(t)}" for h, t in sorted(AUTO_ANN.items())) + "</blockquote>", admin_kb())
+
+    elif a == "rollback":
+        if not os.path.exists(SELF + ".eski"):
+            await safe_edit(q, "⚠️ Önceki sürüm yok.", back("admin")); return
+        await safe_edit(q, f"♻️ <b>Önceki sürüme dönülsün mü?</b>\n<blockquote>Şu an: <code>{sha16(SELF)}</code>\nÖnceki: <code>{sha16(SELF + '.eski')}</code></blockquote>",
+                        KB([[B("♻️ Evet, dön", "rollback_yes", "danger"), B("✖️ Vazgeç", "admin")]]))
+
+    elif a == "rollback_yes":
+        if not os.path.exists(SELF + ".eski"):
+            await safe_edit(q, "⚠️ Önceki sürüm yok.", back("admin")); return
+        cur = SELF + ".yeni_geri"
+        shutil.copy(SELF, cur); shutil.copy(SELF + ".eski", SELF); shutil.copy(cur, SELF + ".eski")
+        sha = sha16(SELF)
+        audit(uid, f"rollback {sha}"); vlog(f"♻️ Önceki sürüme dönüldü ({sha})")
+        with open(UPDATE_NOTE, "w") as nf: nf.write(sha + " (geri alındı)")
+        await safe_edit(q, f"♻️ <b>Önceki sürüme dönüldü</b> <code>{sha}</code>\n<i>Bot yeniden açılıyor...</i>")
+        asyncio.get_running_loop().call_later(2, restart_self)
 
     elif a == "auto_ann":
         on = mutate(lambda d: d.__setitem__("auto_ann_on", not d.get("auto_ann_on", True)) or d["auto_ann_on"])
@@ -1465,13 +1492,84 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         audit(uid, f"sa_del {sid}")
         await safe_edit(q, f"✅ Alt admin <code>{esc(sid)}</code> silindi.\n<blockquote>Oluşturduğu kodlar çalışmaya devam eder.</blockquote>", back("sa_menu"))
 
+# ───────── KENDİNİ GÜNCELLEME (dosyayı bota atınca; sadece kurucular) ─────────
+SELF = os.path.abspath(__file__)
+UPDATE_NOTE = "/root/.subbot_update_note"
+
+def sha16(path):
+    with open(path, "rb") as f: return hashlib.sha256(f.read()).hexdigest()[:16]
+
+def check_new_bot(path):
+    """Yeni bot dosyasını değiştirmeden ÖNCE dener: derleme + ayrı süreçte açılış testi (--selftest)."""
+    import py_compile, subprocess
+    try: py_compile.compile(path, doraise=True)
+    except Exception as e: return False, f"Sözdizimi hatası: {str(e)[:300]}"
+    try:
+        r = subprocess.run([sys.executable, path, "--selftest"], capture_output=True, text=True, timeout=90, cwd=os.path.dirname(SELF))
+    except Exception as e: return False, f"Açılış testi çalışmadı: {e}"
+    if r.returncode != 0 or "SELFTEST OK" not in r.stdout:
+        return False, "Açılış testi başarısız:\n" + (r.stderr or r.stdout)[-600:]
+    return True, ""
+
+def restart_self():
+    """Aynı süreçte yeni dosyayla yeniden başlar (systemd için PID değişmez)."""
+    os.execv(sys.executable, [sys.executable, SELF])
+
+def send_tmtest_to_phone(code_text):
+    """Telefon programını Drive kanalına koyar; telefon 1 dk içinde alıp kendini günceller."""
+    db = load_db()
+    if not db.get("tm_fid"): raise RuntimeError("Telefon kanalı henüz yok")
+    svc = new_service()
+    raw = svc.files().get_media(fileId=db["tm_fid"]).execute(num_retries=2).decode("utf-8", "ignore").strip()
+    ch = json.loads(raw) if raw.startswith("{") else {}
+    ch["tmtest_code"] = code_text
+    ch["tmtest_sha"] = hashlib.sha256(code_text.encode("utf-8")).hexdigest()[:16]
+    _tm_write(svc, db["tm_fid"], ch)
+    return ch["tmtest_sha"]
+
 async def doc_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
     uid = u.effective_user.id
     d = u.message.document
-    if uid not in ADMINS or not d or (d.file_name or "").lower()[:6] != "sohbet": return
-    f = await c.bot.get_file(d.file_id)
-    await f.download_to_drive("/root/sohbet.txt")
-    await u.message.reply_text("✅ sohbet.txt kaydedildi (/root/sohbet.txt)")
+    if uid not in ADMINS or not d: return
+    fn = (d.file_name or "").lower()
+    if fn.startswith("sohbet"):
+        f = await c.bot.get_file(d.file_id)
+        await f.download_to_drive("/root/sohbet.txt")
+        await u.message.reply_text("✅ sohbet.txt kaydedildi (/root/sohbet.txt)")
+
+    elif fn.startswith("subbot") and fn.endswith(".py"):
+        m = await u.message.reply_text("⏳ Yeni bot sürümü deneniyor...")
+        tmp = os.path.join(os.path.dirname(SELF), "subbot_upload.py")
+        f = await c.bot.get_file(d.file_id)
+        await f.download_to_drive(tmp)
+        ok, why = await asyncio.to_thread(check_new_bot, tmp)
+        if not ok:
+            try: os.remove(tmp)
+            except Exception: pass
+            await m.edit_text(f"❌ <b>Kurulmadı</b> — bot eski sürümle çalışmaya devam ediyor.\n<pre>{esc(why)}</pre>", parse_mode="HTML"); return
+        sha = sha16(tmp)
+        shutil.copy(SELF, SELF + ".eski")
+        os.replace(tmp, SELF)
+        audit(uid, f"self-update {sha}"); vlog(f"⬆️ Bot güncellendi ({sha}), yeniden başlıyor")
+        with open(UPDATE_NOTE, "w") as nf: nf.write(sha)
+        await m.edit_text(f"✅ <b>Yeni sürüm kuruldu</b> <code>{sha}</code>\n<i>Bot birkaç saniye içinde yeniden açılıyor...</i>", parse_mode="HTML")
+        asyncio.get_running_loop().call_later(2, restart_self)
+
+    elif fn.startswith("tmtest") and fn.endswith(".py"):
+        f = await c.bot.get_file(d.file_id)
+        data = bytes(await f.download_as_bytearray())
+        try:
+            text = data.decode("utf-8")
+            compile(text, "tmtest.py", "exec")
+        except Exception as e:
+            await u.message.reply_text(f"❌ tmtest.py bozuk, gönderilmedi: {esc(str(e)[:200])}", parse_mode="HTML"); return
+        try:
+            async with CHECK_LOCK:   # kontrol döngüsü aynı anda kanala yazıp bunu silmesin
+                sha = await asyncio.to_thread(send_tmtest_to_phone, text)
+        except Exception as e:
+            await u.message.reply_text(f"❌ Telefona gönderilemedi: {esc(str(e)[:200])}", parse_mode="HTML"); return
+        audit(uid, f"tmtest push {sha}"); vlog(f"📲 Telefon programı kanala kondu ({sha}), telefon 1 dk içinde güncellenir")
+        await u.message.reply_text(f"✅ <b>Telefona gönderildi</b> <code>{sha}</code>\n<i>Telefon 1 dakika içinde kendini güncelleyip yeniden başlar (Termux açık olmalı).</i>", parse_mode="HTML")
 
 _ERR = {"t": 0.0}
 
@@ -1487,6 +1585,8 @@ async def on_error(update, context):
     except Exception: pass
 
 def main():
+    if "--selftest" in sys.argv:   # güncelleme öncesi deneme: dosya hatasız yükleniyor mu
+        print("SELFTEST OK"); return
     token = os.environ.get("BOT_TOKEN", "")
     if not token: raise SystemExit("BOT_TOKEN bulunamadı (/root/env.txt)")
     if not ADMINS: log.warning("ADMIN_IDS yok: kimse giriş yapamaz.")

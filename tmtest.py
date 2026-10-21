@@ -345,17 +345,45 @@ def cycle():
     results = {k: r[0] for k, r in zip(keys_of, res_list) if r is not None}
     exits = {k: r[1] for k, r in zip(keys_of, res_list) if r is not None and r[1]}   # gerçek çıkış ülkesi (ölçülen)
     good = sum(1 for v in results.values() if v > 0)
-    ch.update({"results": results, "exits": exits, "ts": int(time.time()), "status": "ok", "status_ts": int(time.time()),
+    try: ch = read_channel(svc, fid)   # test sürerken bot kanala yazmış olabilir (kodlar, güncelleme): onları silme
+    except Exception: pass
+    ch.update({"tmtest_ver": my_sha(), "results": results, "exits": exits, "ts": int(time.time()), "status": "ok", "status_ts": int(time.time()),
                "country": cname, "tested": len(results), "good": good, "skipped": len(codes) - len(results)})
     write_channel(svc, fid, ch)
     log("✅ %d kod test edildi (%d sn): %d çalışıyor, %d çalışmıyor, %d desteklenmiyor (test edilmedi)"
         % (len(results), time.time() - t0, good, len(results) - good, len(codes) - len(results)))
 
 
+SELF = os.path.abspath(__file__)
+
+def my_sha():
+    import hashlib
+    with open(SELF, "rb") as f: return hashlib.sha256(f.read()).hexdigest()[:16]
+
+def self_update(ch):
+    """Bot kanala yeni tmtest.py koyduysa: kontrol et, yaz, yeniden başla."""
+    code, sha = ch.get("tmtest_code"), ch.get("tmtest_sha")
+    if not code or not sha or sha == my_sha(): return
+    try: done = open(SELF + ".kurulan").read().strip()
+    except Exception: done = ""
+    if sha == done: return   # bu sürüm zaten bir kez kuruldu (sonradan elle başka sürüm kurulduysa ezme)
+    try: compile(code, "tmtest.py", "exec")
+    except Exception as e:
+        log("❌ Gelen güncelleme bozuk, kurulmadı: %s" % str(e)[:100]); return
+    import shutil
+    shutil.copy(SELF, SELF + ".eski")
+    with open(SELF + ".tmp", "w", encoding="utf-8") as f: f.write(code)
+    os.replace(SELF + ".tmp", SELF)
+    with open(SELF + ".kurulan", "w") as f: f.write(sha)
+    log("⬆️ Telefon programı güncellendi (%s), yeniden başlıyor" % sha)
+    os.execv(sys.executable, [sys.executable, "-u", SELF, "_loop"])
+
 def codes_sig():
-    """Kanaldaki kod listesinin imzası (değişti mi diye bakmak için). Hata olursa None."""
+    """Kanaldaki kod listesinin imzası (değişti mi diye bakmak için). Hata olursa None.
+    Ayrıca bot yeni program koyduysa kendini günceller."""
     try:
         ch = read_channel(drive_cached(), channel_id(drive_cached()))
+        self_update(ch)
         return ch.get("codes_ts") or 0
     except Exception:
         _SVC.clear()   # bağlantı koptuysa bir dahakine yenisini kur
