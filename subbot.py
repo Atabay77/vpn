@@ -1,5 +1,5 @@
 import os, sys, io, re, json, html, uuid, base64, asyncio, zipfile, shutil, fcntl, logging, datetime, time, socket, random, hashlib, warnings, unicodedata
-import urllib.request, urllib.parse
+import urllib.request, urllib.parse, urllib.error
 from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor
 from telegram import Update, InlineKeyboardButton as _IKB, InlineKeyboardMarkup as KB
@@ -661,6 +661,10 @@ def check_cycle(force=False):
         i, url = i_url
         t = time.time()
         try: return i, fetch_codes(url), None, time.time() - t
+        except urllib.error.HTTPError as e:   # Google'ın sebebini de yaz (ör. rateLimitExceeded)
+            try: why = json.loads(e.read().decode("utf-8", "ignore"))["error"]["errors"][0].get("reason", "")
+            except Exception: why = ""
+            return i, [], f"HTTP {e.code}" + (f" {why}" if why else ""), time.time() - t
         except Exception as e: return i, [], str(e)[:80], time.time() - t
 
     codes, keys = [], set()
