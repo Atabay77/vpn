@@ -14,6 +14,7 @@ CFG = H + "/.tmtest_xray.json"
 CHANNEL = "tmtest.txt"
 INTERVAL = 10 * 60
 API = "127.0.0.1:9095"
+GEO_URL = "http://ip-api.com/json/?fields=status,countryCode"   # IP Info uygulamasının kullandığı veritabanı
 TEST_URL = "https://www.cloudflare.com/cdn-cgi/trace"   # hem ms ölçer hem çıkış ülkesini söyler (loc=DE)
 PROTOS = ("vless://", "vmess://", "trojan://", "ss://", "hysteria2://", "hy2://")
 
@@ -282,6 +283,13 @@ def delay(port):
                     best = ms if best < 0 else min(best, ms)
                     m = re.search(r"^loc=([A-Z]{2})$", body, re.M)
                     if m: cc = m.group(1).lower()
+        except Exception: pass
+    if best > 0:
+        # Ülke: IP Info uygulamasıyla aynı veritabanı (ip-api.com). Cevap vermezse Cloudflare'in ülkesi kalır.
+        try:
+            with op.open(GEO_URL, timeout=6) as r:
+                j = json.loads(r.read(500).decode("utf-8", "ignore"))
+                if j.get("status") == "success" and j.get("countryCode"): cc = j["countryCode"].lower()
         except Exception: pass
     return best, cc
 
