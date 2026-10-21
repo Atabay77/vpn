@@ -36,7 +36,7 @@ NEW_IP_LIMIT = 3       # bundan FAZLA yeni IP görülürse kodlar yenilenir
 SUB_LIMIT = 10         # alt admin için varsayılan kod limiti (eklerken değiştirilebilir)
 SUB_DAYS = 7
 DEFAULT_DB = {"subs": {}, "template": [], "sources": [], "free_files": [], "sub_admins": {}, "seen_ips": []}
-AUTO_ANN = {0: "🌙 Спокойной ночи — мы на связи", 6: "☕ Доброе утро! Всё уже работает", 8: "🛡 Мы следим за серверами круглосуточно"}   # saat (Aşkabat): duyuru
+AUTO_ANN = {0: "🌙 Спокойной ночи — мы на связи", 6: "☕ Доброе утро! Всё уже работает", 8: "Поддержка 24/7 — мы всегда готовы помочь."}   # saat (Aşkabat): duyuru
 try:
     from zoneinfo import ZoneInfo
     TM_TZ = ZoneInfo("Asia/Ashgabat")
@@ -844,7 +844,7 @@ async def watchdog(app):
             now = datetime.datetime.now(TM_TZ)
             past = [h for h in sorted(AUTO_ANN) if h <= now.hour]
             h, day = (past[-1], now.date()) if past else (max(AUTO_ANN), now.date() - datetime.timedelta(days=1))
-            slot = f"{day:%Y-%m-%d} {h}"
+            slot = f"{day:%Y-%m-%d} {h} {AUTO_ANN[h]}"   # metin değişirse aynı gün de yeniden yazılır
             db0 = load_db()
             if db0.get("auto_ann_on", True) and db0.get("auto_ann_last") != slot:
                 text = AUTO_ANN[h]
