@@ -511,6 +511,7 @@ def rename_all(codes, geo):
 # Xray ile test eder ve sonucu aynı dosyaya yazar. Bot burada okuyup TM'de çalışmayan kodları çıkarır.
 TM_NAME = "tmtest.txt"
 TM_MAX_AGE = 6 * 3600     # bundan eski telefon sonucu yok sayılır
+TM_ALERT = 30 * 60        # bu kadar süre sonuç gelmezse kurucuya bir kez hatırlatma
 
 def source_fids(db):
     out = set()
@@ -582,6 +583,9 @@ def tm_sync(db, sources):
     if ts and ts != RUN["tm_ts"]:
         RUN["tm_ts"] = ts
         vlog(f"📱 Telefon testi (TM): {good} çalışıyor, {len(res) - good} çalışmıyor, {ch.get('skipped', 0)} test edilmedi")
+    if ts and time.time() - ts > TM_ALERT and RUN.get("tm_alerted") != ts:
+        RUN["tm_alerted"] = ts
+        RUN["tm_alert"] = f"📱 Telefon testinden sonuç gelmiyor (son sonuç: {ago(ts)}). Termux'u aç, test kendiliğinden başlar."
     if not ts or stale: return set()
     return {k for k, v in res.items() if isinstance(v, (int, float)) and v < 0}
 
@@ -678,6 +682,8 @@ async def run_check(app, force=False):
         head = (f"🔄 Kodlar güncellendi{' (elle)' if r['force'] else ''}: {len(r['codes'])} kod · "
                 f"Drive {r['ok']}/{r['total']} {'✅' if not r['bad'] else '⚠️'}")
         await notify_founders(app, head, KB([[B("📜 Loglar", callback_data="logs")]]))
+    alert = RUN.pop("tm_alert", None)
+    if alert: await notify_founders(app, esc(alert))
     return r
 
 def start_refresh(app, why):
