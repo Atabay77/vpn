@@ -281,6 +281,7 @@ def delay(port):
     return best
 
 def country():
+    """IP kontrol siteleri TM'de çoğunlukla engelli: açılmazsa '?' döner (= doğrudan TM bağlantısı sayılır)."""
     try:
         with urllib.request.urlopen("https://ipwho.is/?fields=country_code,country", timeout=10) as r:
             j = json.loads(r.read().decode())
@@ -290,10 +291,15 @@ def country():
 
 def cycle():
     cc, cname = country()
-    svc = drive()
-    fid = channel_id(svc)
-    ch = read_channel(svc, fid)
-    if cc != "TM":
+    if cc == "?":
+        log("ℹ️ IP kontrol sitesi açılmadı (TM'de engelli) → VPN'siz bağlantı varsayıldı")
+    try:
+        svc = drive()
+        fid = channel_id(svc)
+        ch = read_channel(svc, fid)
+    except Exception as e:
+        log("❌ Drive'a ulaşılamadı: %s" % str(e)[:150]); return
+    if cc not in ("TM", "?"):
         log("⚠️ Termux TM'den çıkmıyor (%s). Happ → Per-app Proxy → Bypass + Termux, VPN'i yeniden bağla." % cname)
         ch.update({"status": "not_tm", "status_ts": int(time.time()), "country": cname})
         write_channel(svc, fid, ch)
@@ -341,7 +347,9 @@ def running():
 def main():
     cmd = sys.argv[1] if len(sys.argv) > 1 else "status"
     if cmd == "_loop": loop()
-    elif cmd == "once": cycle()
+    elif cmd == "once":
+        try: cycle()
+        except Exception as e: log("❌ Hata: %s" % str(e)[:200])
     elif cmd == "start":
         if running(): print("Zaten çalışıyor (pid %s)" % running()); return
         subprocess.run(["termux-wake-lock"], stderr=subprocess.DEVNULL)
