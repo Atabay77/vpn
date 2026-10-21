@@ -569,7 +569,6 @@ def rename_all(codes, geo, ms=None, fresh=False, exits=None):
 # Xray ile test eder ve sonucu aynı dosyaya yazar. Bot burada okuyup TM'de çalışmayan kodları çıkarır.
 TM_NAME = "tmtest.txt"
 TM_MAX_AGE = 6 * 3600     # bundan eski telefon sonucu yok sayılır
-TM_MIN_OK = 0.30          # testte çalışan oranı bundan düşükse sonuç güvenilmez (telefonun interneti kısılmış olabilir)
 TM_ALERT = 30 * 60        # bu kadar süre sonuç gelmezse kurucuya bir kez hatırlatma
 
 def source_fids(db):
@@ -659,11 +658,6 @@ def tm_sync(db, sources):
         RUN["tm_alerted"] = ts
         RUN["tm_alert"] = f"📱 Telefon testinden sonuç gelmiyor (son sonuç: {ago(ts)}). Termux'u aç, test kendiliğinden başlar."
     if not ts or stale: return set(), {}, False, load_exits()
-    if len(res) >= 10 and good < TM_MIN_OK * len(res):
-        RUN["tm_line"] = f"⚠️ Telefon testi güvenilmez ({good}/{len(res)} çalışıyor, telefonun interneti zayıf olabilir) · kod çıkarılmadı"
-        if RUN.get("tm_bad") != ts:
-            RUN["tm_bad"] = ts; vlog(f"⚠️ Telefon testi güvenilmez: {good}/{len(res)} çalışıyor → yok sayıldı, kod çıkarılmadı")
-        return set(), {}, False, load_exits()
     return ({k for k, v in res.items() if isinstance(v, (int, float)) and v < 0},
             {k: v for k, v in res.items() if isinstance(v, (int, float)) and v > 0}, True, load_exits())
 
