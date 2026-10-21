@@ -728,7 +728,10 @@ def check_cycle(force=False):
             try: why = json.loads(e.read().decode("utf-8", "ignore"))["error"]["errors"][0].get("reason", "")
             except Exception: why = ""
             return i, [], f"HTTP {e.code}" + (f" {why}" if why else ""), time.time() - t
-        except Exception as e: return i, [], str(e)[:80], time.time() - t
+        except Exception as e:   # zaman aşımı vb.: 2 sn sonra bir kez daha dene
+            time.sleep(2)
+            try: return i, fetch_codes(url), None, time.time() - t
+            except Exception as e2: return i, [], str(e2 or e)[:80], time.time() - t
 
     codes, keys = [], set()
     with ThreadPoolExecutor(max(1, min(8, len(sources)))) as ex:
@@ -744,6 +747,17 @@ def check_cycle(force=False):
         RUN["last_msg"] = "❌ Hiç kod alınamadı"
         vlog("❌ Hiç kod alınamadı, Drive'a dokunulmadı.")
         return {"error": "Hiç kod alınamadı."}
+    # bir abonelik anlık okunamadıysa eksik listeyle Drive'ı bozma (sonra "yeni IP" sanıp tekrar yazıyordu)
+    failed = [str(i) for i, _, err, _ in res if err]
+    if failed and not force:
+        RUN["src_fail"] = RUN.get("src_fail", 0) + 1
+        if RUN["src_fail"] < 3:
+            RUN["last_msg"] = f"⏸ Abonelik {', '.join(failed)} okunamadı → değişiklik yok"
+            vlog(f"⏸ Abonelik {', '.join(failed)} okunamadı → bu tur değişiklik yapılmadı, eski kodlar kalıyor ({RUN['src_fail']}/3)")
+            return None
+        vlog(f"⚠️ Abonelik {', '.join(failed)} 3 kontroldür okunamıyor → okunabilen aboneliklerle devam")
+    else:
+        RUN["src_fail"] = 0
 
     ips = {h for h in (code_host(c) for c in codes) if h}
     old = set(db.get("seen_ips", []))
