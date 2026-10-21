@@ -30,10 +30,10 @@ GEO_FILE = "/root/geo_cache.json"
 EXIT_FILE = "/root/exit_cache.json"   # telefonun ÖLÇTÜĞÜ gerçek çıkış ülkeleri (kod anahtarı -> ülke)
 BACKUP_DIR = "/root/backups"
 LINE = "──────────────"
-PAGE = 16
+PAGE = 6               # Kodlarım: sayfa başına kod
 CHECK_EVERY = 120      # saniye: iki kontrol arası bekleme
 NEW_IP_LIMIT = 3       # bundan FAZLA yeni IP görülürse kodlar yenilenir
-SUB_LIMIT = 10
+SUB_LIMIT = 10         # alt admin için varsayılan kod limiti (eklerken değiştirilebilir)
 SUB_DAYS = 7
 DEFAULT_DB = {"subs": {}, "template": [], "sources": [], "free_files": [], "sub_admins": {}, "seen_ips": []}
 STATE = {}
@@ -236,13 +236,19 @@ def find_free_file(svc, used):
         if f["id"] not in used: return f["id"]
     return None
 
-def create_vip(name, owner=None):
+def sa_limit(db, uid):
+    try: return int(db.get("sub_admins", {}).get(str(uid), {}).get("limit", SUB_LIMIT))
+    except Exception: return SUB_LIMIT
+
+def owned(db, uid): return sum(1 for v in db["subs"].values() if v.get("owner_id") == uid)
+
+def create_vip(name, owner=None, days=None):
     svc = new_service()
     if not svc: return None, "drive-sa.json bulunamadı"
     with db_lock():
         db = load_db()
-        if owner is not None and owner not in ADMINS and sum(1 for v in db["subs"].values() if v.get("owner_id") == owner) >= SUB_LIMIT:
-            return None, f"Limit doldu ({SUB_LIMIT} kod). Yer açmak için birini sil."
+        if owner is not None and owner not in ADMINS and owned(db, owner) >= sa_limit(db, owner):
+            return None, f"Limit doldu ({sa_limit(db, owner)} kod). Yer açmak için birini sil."
         used = {v.get("file_id") for v in db["subs"].values() if v.get("file_id")} | {db.get("tm_fid")} | source_fids(db)
         fid, from_free = None, False
         for f in db["free_files"]:
@@ -254,6 +260,7 @@ def create_vip(name, owner=None):
         if from_free: db["free_files"].remove(fid)
         kid = "vip_" + uuid.uuid4().hex[:8]
         db["subs"][kid] = {"name": name, "title": name, "file_id": fid, "announce": "", "owner_id": owner}
+        if days: db["subs"][kid]["expires"] = time.time() + int(days) * 86400
         save_db(db)
         return (kid, fid), ""
 
@@ -779,29 +786,41 @@ async def watchdog(app):
         try:
             def job():
                 def f(db):
-                    hit, warn = [], []
+                    hit, warn, ended = [], [], []
                     for kid, s in db["subs"].items():
                         if is_exp(s) and not s.get("exp_done"):
                             s["exp_done"] = True
                             hit.append((s.get("file_id"), name_of(s, kid), s.get("owner_id")))
                     for sid, e in db.get("sub_admins", {}).items():
-                        if 0 < float(e.get("expires", 0)) - time.time() < 86400 and not e.get("warned"):
-                            e["warned"] = True; warn.append(sid)
-                    return hit, warn
-                hit, warn = mutate(f)
+                        left = float(e.get("expires", 0)) - time.time()
+                        if 0 < left < 86400 and not e.get("warned"):
+                            e["warned"] = True; warn.append((sid, e.get("name") or sid))
+                        if left <= 0 and not e.get("ended"):
+                            e["ended"] = True; ended.append((sid, e.get("name") or sid))
+                    return hit, warn, ended
+                hit, warn, ended = mutate(f)
                 if hit:
                     svc = new_service()
                     for fid, nm, _ in hit: sync_file(svc, fid, nm, "", [], exp=True)
-                return hit, warn
-            hit, warn = await asyncio.to_thread(job)
+                return hit, warn, ended
+            hit, warn, ended = await asyncio.to_thread(job)
             for fid, nm, owner in hit:
                 audit(0, f"expired {nm}")
                 await notify_founders(app, f"⏳ Kodun süresi doldu, kapatıldı: <code>{esc(nm)}</code>")
                 if owner and owner not in ADMINS:
                     try: await app.bot.send_message(chat_id=owner, text=f"⏳ Kodunun süresi doldu: {nm}")
                     except Exception: pass
-            for sid in warn:
-                await notify_founders(app, f"👮 Alt admin <code>{sid}</code> 24 saatten az kaldı.")
+            for sid, nm in warn:
+                await notify_founders(app, f"⏳ <b>Alt admin süresi bitiyor</b>\n<blockquote>👮 {esc(nm)} <code>{sid}</code>\n24 saatten az kaldı.</blockquote>",
+                                      KB([[B("⏳ Uzat", f"sa_ext:{sid}", "primary")]]))
+                try: await app.bot.send_message(chat_id=int(sid), text="⏳ Alt admin yetkinin bitmesine 24 saatten az kaldı.")
+                except Exception: pass
+            for sid, nm in ended:
+                audit(0, f"sa_ended {sid}")
+                await notify_founders(app, f"🔒 <b>Alt admin yetkileri alındı</b>\n<blockquote>👮 {esc(nm)} <code>{sid}</code>\nSüresi doldu. Oluşturduğu kodlar çalışmaya devam ediyor.</blockquote>",
+                                      KB([[B("⏳ Uzat", f"sa_ext:{sid}", "success")]]))
+                try: await app.bot.send_message(chat_id=int(sid), text="🔒 Alt admin yetkinin süresi doldu.")
+                except Exception: pass
         except Exception: log.exception("watchdog expiry")
         # her gün 03:00 otomatik yedek
         try:
@@ -841,7 +860,7 @@ def menu_text(uid):
         mine = [v for v in (db["subs"].values() if db else []) if v.get("owner_id") == uid]
         e = (db.get("sub_admins", {}) if db else {}).get(str(uid), {})
         return ("✦ <b>VIP PANEL</b> ✦\n"
-                f"<blockquote>🎟 Kodların  <b>{sum(1 for v in mine if not is_exp(v))}/{SUB_LIMIT}</b>\n"
+                f"<blockquote>🎟 Kodların  <b>{len(mine)}/{sa_limit(db, uid) if db else SUB_LIMIT}</b>\n"
                 f"⏳ Yetki süresi  <b>{left_txt(e.get('expires'))}</b></blockquote>\n"
                 "<i>Bir işlem seç</i> 👇")
     n = len(db["template"]) if db else "?"
@@ -931,6 +950,81 @@ async def notify_founders(app, text, kb=None):
 def prompt(title, text, cancel_to):
     return f"{title}\n<blockquote>{text}</blockquote>", back(cancel_to, "✖️ İptal")
 
+DAYS = [1, 3, 7, 15, 30]
+NUM_ASK = {   # ne soruluyor: (başlık, soru, hazır butonlar, birim)
+    "nk_days":  ("⏳ <b>Kod süresi</b>", "Kod kaç gün geçerli olsun?", DAYS, "g"),
+    "sa_days":  ("⏳ <b>Alt admin süresi</b>", "Kaç gün alt admin kalsın?", DAYS, "g"),
+    "sa_limit": ("🎟 <b>Kod limiti</b>", "En fazla kaç kod oluşturabilsin?", [1, 3, 5, 10, 20], ""),
+    "sa_ext":   ("⏳ <b>Süre uzat</b>", "Kaç gün uzatılsın?", DAYS, "g"),
+    "sa_lim":   ("🎟 <b>Kod limiti</b>", "Yeni limit kaç olsun?", [1, 3, 5, 10, 20], ""),
+}
+
+def ask_num(uid, what, info="", **ctx):
+    """Sayı sorar: hazır butonlar + elle yazma. Cevap on_num'a gider."""
+    title, q, vals, unit = NUM_ASK[what]
+    STATE[uid] = {"action": "num", "what": what, **ctx}
+    btns = [B(f"{v}{unit}", f"num:{v}", "primary" if v == vals[2] else None) for v in vals]
+    rows = [btns[:3], btns[3:]]
+    if what == "nk_days" and uid in ADMINS: rows.append([B("♾ Süresiz", "num:0", "success")])
+    rows.append([B("✖️ İptal", "sa_menu" if what.startswith("sa_") else "menu")])
+    return f"{title}\n<blockquote>{info}{q}\n<i>Butona bas ya da sayı yaz.</i></blockquote>", KB(rows)
+
+def create_result(res, err, name):
+    if not res: return f"⚠️ {esc(err)}", back("menu", "◀️ Menü")
+    kid, fid = res
+    return (f"✅ <b>Kod oluşturuldu!</b>\n<blockquote>🎟 <b>{esc(name)}</b>\n⏳ Süre  <b>{left_txt(load_db()['subs'].get(kid, {}).get('expires'))}</b></blockquote>\n"
+            f"🔗 <b>Abonelik linki</b> <i>(dokun → kopyala)</i>\n<code>{esc(sub_link(fid))}</code>",
+            KB([[B("🎟 Koda Git", f"kv:{kid}", "primary"), B("◀️ Menü", "menu")]]))
+
+async def on_num(c, uid, st, n, send, who=""):
+    """send(text, kb): mesajı düzenler ya da yeni mesaj atar."""
+    what = st["what"]
+    if what.startswith("sa_") and uid not in ADMINS: return
+    lo = 0 if what == "nk_days" and uid in ADMINS else 1
+    hi = 500 if what in ("sa_limit", "sa_lim") else 3650
+    if not (lo <= n <= hi):   # butonlarla birlikte tekrar sor
+        ctx = {k: v for k, v in st.items() if k not in ("action", "what")}
+        await send(*ask_num(uid, what, f"⚠️ {lo} ile {hi} arasında bir sayı.\n", **ctx)); return
+    if what == "nk_days":
+        res, err = await asyncio.to_thread(create_vip, st["name"], uid, n or None)
+        if res: audit(uid, f"create {res[0]} {st['name']} {n or '∞'}g")
+        await send(*create_result(res, err, st["name"]))
+        if res and uid not in ADMINS:
+            await notify_founders(c.application, f"🔔 Alt admin <b>{esc(who)}</b> (<code>{uid}</code>) kod oluşturdu: <code>{esc(st['name'])}</code> · {n} gün")
+    elif what == "sa_days":
+        t, kb = ask_num(uid, "sa_limit", f"👮 <code>{st['nid']}</code> · ⏳ {n} gün\n", nid=st["nid"], days=n)
+        await send(t, kb)
+    elif what == "sa_limit":
+        nid, days = st["nid"], st["days"]
+        def f(d):
+            e = d.setdefault("sub_admins", {}).get(str(nid), {})
+            old = bool(e)
+            e.update({"expires": time.time() + days * 86400, "limit": n, "added": e.get("added", time.time())})
+            e.pop("warned", None); e.pop("ended", None)
+            d["sub_admins"][str(nid)] = e
+            return old
+        old = mutate(f)
+        audit(uid, f"sa_add {nid} {days}g limit={n}")
+        await send(f"✅ <b>Alt admin {'güncellendi' if old else 'eklendi'}</b>\n<blockquote>👮 <code>{nid}</code>\n⏳ {days} gün  ·  🎟 en fazla {n} kod</blockquote>", back("sa_menu"))
+    elif what in ("sa_ext", "sa_lim"):
+        sid = st["sid"]
+        def f(d):
+            e = d.get("sub_admins", {}).get(sid)
+            if not e: return None
+            if what == "sa_ext":
+                e["expires"] = max(time.time(), float(e.get("expires", 0))) + n * 86400
+                e.pop("warned", None); e.pop("ended", None)
+            else: e["limit"] = n
+            return e
+        e = mutate(f)
+        audit(uid, f"{what} {sid} {n}")
+        if not e: await send("⚠️ Alt admin bulunamadı.", back("sa_menu")); return
+        msg = f"✅ Süre uzatıldı, yetkiler açık. Kalan: <b>{left_txt(e['expires'])}</b>" if what == "sa_ext" else f"✅ Limit: <b>{n}</b> kod"
+        await send(msg, back("sa_menu"))
+        if what == "sa_ext":
+            try: await c.bot.send_message(chat_id=int(sid), text=f"✅ Alt admin yetkin {n} gün uzatıldı.")
+            except Exception: pass
+
 def bulk_apply(field, val):
     """Bütün kodların duyurusunu/başlığını değiştirir ve Drive'a yazar. val None ise başlık = buton adı."""
     def f(db):
@@ -951,6 +1045,9 @@ async def start(u: Update, c: ContextTypes.DEFAULT_TYPE):
         await u.message.reply_text(f"⛔ Erişim yok.\nID: {uid}")
         return
     STATE.pop(uid, None)
+    if uid not in ADMINS:
+        nm = u.effective_user.full_name or ""
+        mutate(lambda d: d["sub_admins"].get(str(uid), {}).__setitem__("name", nm) if d["sub_admins"].get(str(uid), {}).get("name") != nm else None)
     await u.message.reply_text(menu_text(uid), parse_mode="HTML", reply_markup=main_kb(uid))
 
 async def cmd_id(u: Update, c: ContextTypes.DEFAULT_TYPE):
@@ -965,19 +1062,18 @@ async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
     try:
         if act == "new_key":
             name = txt[:60]
-            m = await u.message.reply_text("⏳ Drive dosyası atanıyor...")
-            res, err = await asyncio.to_thread(create_vip, name, uid)
-            if res:
-                kid, fid = res
-                audit(uid, f"create {kid} {name}")
-                out = (f"✅ <b>Kod oluşturuldu!</b>\n<blockquote>🎟 <b>{esc(name)}</b></blockquote>\n"
-                       f"🔗 <b>Abonelik linki</b> <i>(dokun → kopyala)</i>\n<code>{esc(sub_link(fid))}</code>")
-                kb = KB([[B("🎟 Koda Git", f"kv:{kid}", "primary"), B("◀️ Menü", "menu")]])
-            else:
-                out, kb = f"⚠️ {esc(err)}", back("menu", "◀️ Menü")
-            await m.edit_text(out, parse_mode="HTML", reply_markup=kb, disable_web_page_preview=True)
-            if res and uid not in ADMINS:
-                await notify_founders(c.application, f"🔔 Alt admin <b>{esc(u.effective_user.full_name)}</b> (<code>{uid}</code>) kod oluşturdu: <code>{esc(name)}</code>")
+            if not name: return
+            t, kb = ask_num(uid, "nk_days", f"🎟 <b>{esc(name)}</b>\n", name=name)
+            await u.message.reply_text(t, parse_mode="HTML", reply_markup=kb)
+
+        elif act == "num":
+            m = re.fullmatch(r"\s*(\d{1,4})\s*", txt)
+            if not m:
+                STATE[uid] = st
+                await u.message.reply_text("⚠️ Sadece sayı yaz (ör. 7).")
+                return
+            async def send(t, kb): await u.message.reply_text(t, parse_mode="HTML", reply_markup=kb, disable_web_page_preview=True)
+            await on_num(c, uid, st, int(m.group(1)), send, u.effective_user.full_name)
 
         elif act == "sa_add":
             if not txt.isdigit():
@@ -987,10 +1083,8 @@ async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
             if nid in ADMINS:
                 await u.message.reply_text("ℹ️ Bu ID zaten kurucu.", reply_markup=back("sa_menu"))
                 return
-            exp = time.time() + SUB_DAYS * 86400
-            old = mutate(lambda d: (d.setdefault("sub_admins", {}).get(str(nid)), d["sub_admins"].__setitem__(str(nid), {"expires": exp, "added": time.time()}))[0])
-            audit(uid, f"sa_add {nid}")
-            await u.message.reply_text(f"✅ Alt admin <code>{nid}</code> {'süresi uzatıldı' if old else 'eklendi'} ({SUB_DAYS} gün).", parse_mode="HTML", reply_markup=back("sa_menu"))
+            t, kb = ask_num(uid, "sa_days", f"👮 <code>{nid}</code>\n", nid=nid)
+            await u.message.reply_text(t, parse_mode="HTML", reply_markup=kb)
 
         elif act == "src_add":
             lines = [x.strip() for x in txt.split() if x.strip().startswith("http")]
@@ -1069,7 +1163,7 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
     if not is_admin(uid):
         await q.answer("⛔ Erişim yok", show_alert=True); return
     a = q.data
-    if uid not in ADMINS and (a in FOUNDER_ONLY or a.startswith(("sv:", "se:", "sd:", "sa_del:", "sa_ext:", "kx:", "kxs:"))):
+    if uid not in ADMINS and (a in FOUNDER_ONLY or a.startswith(("sv:", "se:", "sd:", "sa_del:", "sa_ext:", "sa_lim:", "kx:", "kxs:"))):
         await q.answer("⛔ Sadece kurucu", show_alert=True); return
     if a not in ("toggle_sys", "upd_now"):
         await q.answer()
@@ -1087,6 +1181,13 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
     if a == "menu":
         STATE.pop(uid, None)
         await safe_edit(q, menu_text(uid), main_kb(uid))
+
+    elif a.startswith("num:"):
+        st = STATE.pop(uid, None)
+        if not st or st.get("action") != "num":
+            await safe_edit(q, "⚠️ Süre geçti, baştan başla.", back("menu", "◀️ Menü")); return
+        async def send(t, kb): await safe_edit(q, t, kb)
+        await on_num(c, uid, st, int(a.split(":", 1)[1]), send, q.from_user.full_name)
 
     elif a == "toggle_sys":
         audit(uid, "toggle_sys")
@@ -1192,10 +1293,10 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         await safe_edit(q, "✅ Kod silindi." if ok else "⚠️ Kod bulunamadı.", back("my_keys", "◀️ Kodlarım"))
 
     elif a == "create_key":
-        if uid not in ADMINS and sum(1 for v in db["subs"].values() if v.get("owner_id") == uid and not is_exp(v)) >= SUB_LIMIT:
-            await safe_edit(q, f"⛔ <b>Limit doldu</b>\n<blockquote>En fazla {SUB_LIMIT} aktif kod. Yer açmak için birini sil.</blockquote>", back("my_keys", "👥 Kodlarım")); return
+        if uid not in ADMINS and owned(db, uid) >= sa_limit(db, uid):
+            await safe_edit(q, f"⛔ <b>Limit doldu</b>\n<blockquote>En fazla {sa_limit(db, uid)} kod. Yer açmak için birini sil.</blockquote>", back("my_keys", "👥 Kodlarım")); return
         STATE[uid] = {"action": "new_key"}
-        t, kb = prompt("✨ <b>Kod Oluştur</b>", "Kod için bir isim gönder.\n<i>Hem buton adı hem abonelik başlığı olur; sonra ayrı ayrı değiştirebilirsin.</i>", "menu")
+        t, kb = prompt("✨ <b>Kod Oluştur</b>", "Kod için bir isim gönder.\n<i>Hem buton adı hem abonelik başlığı olur; sonra ayrı ayrı değiştirebilirsin. Ardından süre sorulacak.</i>", "menu")
         await safe_edit(q, t, kb)
 
     elif a.startswith("kx:"):
@@ -1273,28 +1374,27 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
     elif a == "sa_menu":
         rows, lines = [], []
         for sid, e in db.get("sub_admins", {}).items():
-            n = sum(1 for v in db["subs"].values() if str(v.get("owner_id")) == sid and not is_exp(v))
-            lines.append(f"👮 <code>{sid}</code>  ·  ⏳ {left_txt(e.get('expires'))}  ·  🎟 {n}/{SUB_LIMIT}")
-            rows.append([B(f"⏳ +{SUB_DAYS}g {sid}", f"sa_ext:{sid}", "primary"), B(f"🗑 {sid}", f"sa_del:{sid}", "danger")])
+            nm = e.get("name") or sid
+            on = float(e.get("expires", 0)) > time.time()
+            lines.append(f"{'🟢' if on else '🔒'} <b>{esc(short(nm, 20))}</b> <code>{sid}</code>\n     ⏳ {left_txt(e.get('expires'))}  ·  🎟 {sum(1 for v in db['subs'].values() if str(v.get('owner_id')) == sid)}/{sa_limit(db, sid)}")
+            rows.append([B(f"⏳ {short(nm, 10)}", f"sa_ext:{sid}", "primary"), B("🎟 Limit", f"sa_lim:{sid}"), B("🗑", f"sa_del:{sid}", "danger")])
         rows.append([B("➕ Alt Admin Ekle", "sa_add", "success")])
         rows.append([B("◀️ Admin", "admin")])
-        await safe_edit(q, "👮 <b>Alt Adminler</b>\n<blockquote>" + ("\n".join(lines) or "Alt admin yok.") + "</blockquote>", KB(rows))
+        await safe_edit(q, "👮 <b>Alt Adminler</b>\n<blockquote>" + ("\n".join(lines) or "Alt admin yok.") + "</blockquote>\n<i>⏳ uzat · 🎟 kod limiti · 🗑 sil</i>", KB(rows))
 
     elif a == "sa_add":
         STATE[uid] = {"action": "sa_add"}
-        t, kb = prompt("➕ <b>Alt admin ekle</b>", f"Kişinin sayısal Telegram ID'sini gönder.\nSüre {SUB_DAYS} gün, en fazla {SUB_LIMIT} aktif kod.\n<i>ID'sini bota /start yazarak görebilir.</i>", "sa_menu")
+        t, kb = prompt("➕ <b>Alt admin ekle</b>", "Kişinin sayısal Telegram ID'sini gönder.\nSonra süre ve kod limiti sorulacak.\n<i>ID'sini bota /start yazarak görebilir.</i>", "sa_menu")
         await safe_edit(q, t, kb)
 
-    elif a.startswith("sa_ext:"):
-        sid = a.split(":", 1)[1]
-        def fe(d):
-            e = d.get("sub_admins", {}).get(sid)
-            if not e: return None
-            e["expires"] = max(time.time(), float(e.get("expires", 0))) + SUB_DAYS * 86400; e.pop("warned", None)
-            return e["expires"]
-        r = mutate(fe)
-        audit(uid, f"sa_ext {sid}")
-        await safe_edit(q, f"✅ <code>{esc(sid)}</code> süresi uzatıldı: <b>{left_txt(r)}</b>" if r else "⚠️ Bulunamadı.", back("sa_menu"))
+    elif a.startswith(("sa_ext:", "sa_lim:")):
+        kind, sid = a.split(":", 1)
+        e = db.get("sub_admins", {}).get(sid)
+        if not e:
+            await safe_edit(q, "⚠️ Alt admin bulunamadı.", back("sa_menu")); return
+        info = f"👮 <b>{esc(e.get('name') or sid)}</b> <code>{sid}</code>\n" + (f"Kalan: {left_txt(e.get('expires'))}\n" if kind == "sa_ext" else f"Şu an: {sa_limit(db, sid)} kod\n")
+        t, kb = ask_num(uid, "sa_ext" if kind == "sa_ext" else "sa_lim", info, sid=sid)
+        await safe_edit(q, t, kb)
 
     elif a.startswith("sa_del:"):
         sid = a.split(":", 1)[1]
