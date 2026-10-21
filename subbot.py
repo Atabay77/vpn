@@ -262,9 +262,18 @@ def pool_files(svc):
         if not tok: return out
 
 def make_public(svc, fid):
-    """Abonelik linki (API anahtarıyla) sadece herkese açık dosyada çalışır."""
-    try: svc.permissions().create(fileId=fid, body={"type": "anyone", "role": "reader"}).execute(num_retries=2)
-    except Exception as e: log.warning("make_public %s: %s", fid, e)
+    """Abonelik linki (API anahtarıyla) sadece herkese açık dosyada çalışır. Dönüş: dosya herkese açık mı."""
+    try:
+        svc.permissions().create(fileId=fid, body={"type": "anyone", "role": "reader"}).execute(num_retries=2)
+        return True
+    except Exception as e:
+        err = str(e)[:150]
+    try:   # paylaşma izni olmayabilir ama dosya zaten açık olabilir (eski kod dosyaları)
+        ps = svc.permissions().list(fileId=fid, fields="permissions(type)").execute(num_retries=2).get("permissions", [])
+        if any(p_.get("type") == "anyone" for p_ in ps): return True
+    except Exception: pass
+    vlog(f"⚠️ Dosya herkese açık yapılamadı ({fid[:10]}…): {err}")
+    return False
 
 def sa_limit(db, uid):
     try: return int(db.get("sub_admins", {}).get(str(uid), {}).get("limit", SUB_LIMIT))
@@ -285,10 +294,11 @@ def create_vip(name, owner=None, days=None, check_limit=True, extra=None):
             if f not in used: fid, from_free = f, True; break
         if not fid:
             try: fid = next((f for f in pool_files(svc) if f not in used), None)
-            except Exception as e: log.warning("pool: %s", e)
-            if fid: make_public(svc, fid)
+            except Exception as e: vlog(f"⚠️ Kod havuzu okunamadı: {str(e)[:120]}")
         if not fid: fid = find_free_file(svc, used)
         if not fid: return None, "Boş Drive dosyası yok!"
+        if not make_public(svc, fid):   # herkese açık değilse VPN uygulaması 404 alır: bozuk link verme
+            return None, "Drive dosyası herkese açık yapılamadı (Loglar'a bak)"
         if not sync_file(svc, fid, name, db.get("g_announce", ""), db["template"], exp=False):
             return None, "Drive'a yazılamadı (loglara bak)"
         if from_free: db["free_files"].remove(fid)
@@ -990,6 +1000,7 @@ def main_kb(uid):
                [B("🟡 Admin Kod Oluştur", "create_key", "primary")],
                [B("🟡 Abonelikler", "sources", "primary"), B("🟡 Loglar", "logs", "primary")],
                [B("🟡 Toplu Başlık", "bulk_title", "primary"), B("🟡 Admin", "admin", "primary")],
+               [B(f"🟡 Destek ({sum(1 for t in load_db().get('tickets', {}).values() if t.get('status') == 'open')})", "tickets", "primary")],
                [lang_btn],
                [B("🛑 Durdur", "toggle_sys", "danger") if on else B("▶️ Başlat", "toggle_sys", "success")]])
 
