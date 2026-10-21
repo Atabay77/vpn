@@ -13,6 +13,7 @@ PIDF = H + "/.tmtest.pid"
 CFG = H + "/.tmtest_xray.json"
 CHANNEL = "tmtest.txt"
 INTERVAL = 10 * 60
+TRIES, TRY_WAIT = 5, 60   # çalışmayan kod: 1 dk arayla toplam 5 deneme
 API = "127.0.0.1:9095"
 GEO_URL = "http://ip-api.com/json/?fields=status,countryCode"   # IP Info uygulamasının kullandığı veritabanı
 TEST_URL = "https://www.cloudflare.com/cdn-cgi/trace"   # hem ms ölçer hem çıkış ülkesini söyler (loc=DE)
@@ -342,6 +343,16 @@ def cycle():
     try: res_list = run_tests(obs)
     except RuntimeError as e:
         log("❌ %s" % e); return
+    for attempt in range(2, TRIES + 1):   # çalışmayanlar 1 dk arayla tekrar denenir; TRIES denemenin hiçbirinde geçemezse çalışmıyor sayılır
+        bad = [i for i, r in enumerate(res_list) if r is not None and r[0] < 0]
+        if not bad: break
+        log("🔁 %d kod çalışmadı, 1 dk sonra tekrar denenecek (%d/%d)" % (len(bad), attempt, TRIES))
+        time.sleep(TRY_WAIT)
+        try: again = run_tests([obs[i] for i in bad])
+        except RuntimeError as e:
+            log("❌ %s" % e); break
+        for i, r in zip(bad, again):
+            if r is not None and r[0] > 0: res_list[i] = r
     results = {k: r[0] for k, r in zip(keys_of, res_list) if r is not None}
     exits = {k: r[1] for k, r in zip(keys_of, res_list) if r is not None and r[1]}   # gerçek çıkış ülkesi (ölçülen)
     good = sum(1 for v in results.values() if v > 0)
