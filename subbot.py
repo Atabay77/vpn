@@ -977,28 +977,30 @@ def menu_text(uid):
             f"📡 <b>{n}</b> kod  ·  🔗 <b>{src}</b> abonelik  ·  👥 <b>{vip}</b> VIP  ·  🙋 <b>{len(db.get('users', {})) if db else '?'}</b> kullanıcı")
 
 def main_kb(uid):
-    lang_btn = B("🇹🇷 Türkçe" if is_ru(uid) else "🇷🇺 Русский", "lang")
+    lang_btn = B(L(uid, "🌐 Dil: Türkçe", "🌐 Язык: Русский"), "lang")
     if uid not in ADMINS:   # panel sahibi: kendi panelinde kod oluşturur
         return KB([[B(L(uid, "✨ Kod Oluştur", "✨ Создать код"), "create_key", "success"), B(L(uid, "👥 Kodlarım", "👥 Мои коды"), "my_keys", "primary")],
-                   [B(L(uid, "🛒 Market", "🛒 Магазин"), "u_market"), B(L(uid, "👤 Profil", "👤 Профиль"), "u_prof")],
+                   [B(L(uid, "👤 Profil", "👤 Профиль"), "u_prof"), B(L(uid, "🛒 Market", "🛒 Магазин"), "u_market")],
                    [lang_btn]])
-    rows = [[B("✨ Kod Oluştur", "u_menu", "success"), B("👥 Kodlarım", "my_keys", "primary")],
-            [B("🛠 Admin Kod Oluştur", "create_key"), lang_btn]]
-    if uid in ADMINS:
-        on = not os.path.exists(STOP_FLAG)
-        rows += [[B("🔗 Abonelikler", "sources"), B("📜 Loglar", "logs")],
-                 [B("🏷 Toplu Başlık", "bulk_title"), B("⚙️ Admin", "admin")],
-                 [B("🛑 Durdur", "toggle_sys", "danger") if on else B("▶️ Başlat", "toggle_sys", "success")]]
-    return KB(rows)
+    # kurucu: üstte kullanıcı butonları, altta sadece kurucunun gördükleri (mavi + 🟡)
+    on = not os.path.exists(STOP_FLAG)
+    return KB([[B(L(uid, "✨ Kod Oluştur", "✨ Создать код"), "u_free", "success"), B(L(uid, "👥 Kodlarım", "👥 Мои коды"), "my_keys")],
+               [B(L(uid, "👤 Profil", "👤 Профиль"), "u_prof"), B(L(uid, "🛒 Market", "🛒 Магазин"), "u_market")],
+               [B("🟡 Admin Kod Oluştur", "create_key", "primary")],
+               [B("🟡 Abonelikler", "sources", "primary"), B("🟡 Loglar", "logs", "primary")],
+               [B("🟡 Toplu Başlık", "bulk_title", "primary"), B("🟡 Admin", "admin", "primary")],
+               [lang_btn],
+               [B("🛑 Durdur", "toggle_sys", "danger") if on else B("▶️ Başlat", "toggle_sys", "success")]])
 
 def admin_kb():
     try: on = load_db().get("auto_ann_on", True)
     except Exception: on = True
     return KB([
-        [B("⚡ Şimdi Güncelle", "upd_now", "primary"), B("📦 Yedek", "get_zip")],
-        [B("👥 Kullanıcı Logları", "ul_open", "primary"), B("📊 İstatistik", "stats")],
-        [B("📣 Herkese Mesaj", "bcast"), B("📢 Kanallar", "chans")],
-        [B("💳 Ödeme Bilgisi (TMT)", "pay_set"), B("🪙 CryptoBot (USDT)", "cp")],
+        [B("⚡ Güncelle", "upd_now", "primary"), B("📦 Yedek", "get_zip")],
+        [B("👥 Kullanıcı Logları", "ul_open", "primary")],
+        [B("📊 İstatistik", "stats"), B("📢 Kanallar", "chans")],
+        [B("📣 Herkese Mesaj", "bcast")],
+        [B("💳 TMT Ödeme", "pay_set"), B("🪙 CryptoBot", "cp")],
         [B(f"🕰 Oto. Duyuru: {'Açık' if on else 'Kapalı'}", "auto_ann", "success" if on else "danger")],
         [B("♻️ Önceki Sürüme Dön", "rollback")],
         [B("👮 Alt Adminler", "sa_menu")],
@@ -1677,8 +1679,8 @@ JOINED = {}             # kanal üyelik önbelleği: uid -> zaman
 T = {
  "tr": {
   "menu": "✦ <b>VPN</b> ✦\n<blockquote>👥 Davet  <b>{avail}/{need}</b>\n🎟 Aktif kod  <b>{codes}</b></blockquote>\n<i>Bir işlem seç</i> 👇",
-  "b_free": "🎁 Ücretsiz Kod", "b_mine": "🎟 Kodlarım", "b_prof": "👤 Profil", "b_market": "🛒 Market",
-  "b_lang": "🇷🇺 Русский", "b_menu": "◀️ Menü", "b_share": "📤 Arkadaşlarına Gönder", "b_check": "✅ Kontrol Et",
+  "b_free": "✨ Kod Oluştur", "b_mine": "🎟 Kodlarım", "b_prof": "👤 Profil", "b_market": "🛒 Market",
+  "b_lang": "🌐 Dil: Türkçe", "b_menu": "◀️ Menü", "b_share": "📤 Arkadaşlarına Gönder", "b_check": "✅ Kontrol Et",
   "b_paid": "✅ TMT ödedim", "b_cancel": "✖️ İptal", "b_back": "◀️ Geri",
   "free_need": "🎁 <b>Ücretsiz Kod</b>\n<blockquote>Her kod için <b>{need}</b> yeni arkadaşını davet et.\nŞu an  <b>{avail}/{need}</b>\nKod <b>1 gün</b> geçerli · günde en fazla 1 kod</blockquote>\n🔗 <b>Davet linkin</b> <i>(dokun → kopyala)</i>\n<code>{link}</code>",
   "free_today": "⏳ <b>Bugünkü ücretsiz kodunu aldın.</b>\n<blockquote>Yarın tekrar alabilirsin (Aşkabat saatiyle 00:00'dan sonra).</blockquote>",
@@ -1719,8 +1721,8 @@ T = {
  },
  "ru": {
   "menu": "✦ <b>VPN</b> ✦\n<blockquote>👥 Приглашения  <b>{avail}/{need}</b>\n🎟 Активные коды  <b>{codes}</b></blockquote>\n<i>Выберите действие</i> 👇",
-  "b_free": "🎁 Бесплатный код", "b_mine": "🎟 Мои коды", "b_prof": "👤 Профиль", "b_market": "🛒 Магазин",
-  "b_lang": "🇹🇷 Türkçe", "b_menu": "◀️ Меню", "b_share": "📤 Отправить друзьям", "b_check": "✅ Проверить",
+  "b_free": "✨ Создать код", "b_mine": "🎟 Мои коды", "b_prof": "👤 Профиль", "b_market": "🛒 Магазин",
+  "b_lang": "🌐 Язык: Русский", "b_menu": "◀️ Меню", "b_share": "📤 Отправить друзьям", "b_check": "✅ Проверить",
   "b_paid": "✅ Оплатил в TMT", "b_cancel": "✖️ Отмена", "b_back": "◀️ Назад",
   "free_need": "🎁 <b>Бесплатный код</b>\n<blockquote>За каждый код пригласите <b>{need}</b> новых друзей.\nСейчас  <b>{avail}/{need}</b>\nКод действует <b>1 день</b> · не больше 1 кода в день</blockquote>\n🔗 <b>Ваша ссылка</b> <i>(нажмите → скопировать)</i>\n<code>{link}</code>",
   "free_today": "⏳ <b>Сегодняшний бесплатный код уже получен.</b>\n<blockquote>Завтра можно снова (после 00:00 по Ашхабаду).</blockquote>",
@@ -1788,7 +1790,7 @@ def set_env(key, val):
     if val: os.environ[key] = val
     else: os.environ.pop(key, None)
 
-def lang_of(db, uid): return (db.get("users", {}).get(str(uid), {}).get("lang") or "tr")
+def lang_of(db, uid): return "ru" if is_ru(uid) else "tr"   # tek kaynak: LANGC (menüler arasında tutarsızlık olmasın)
 def tr(lang, key, **kw):
     s = T.get(lang, T["tr"]).get(key) or T["tr"][key]
     return s.format(**kw) if kw else s
@@ -1893,8 +1895,7 @@ def pub_menu(db, uid):
     t = tr(lang, "menu", avail=max(0, avail_refs(e)), need=REF_NEED, codes=len(user_codes(db, uid)))
     kb = KB([[B(tr(lang, "b_free"), "u_free", "success"), B(tr(lang, "b_mine"), "u_mine", "primary")],
              [B(tr(lang, "b_prof"), "u_prof"), B(tr(lang, "b_market"), "u_market")],
-             [B(tr(lang, "b_lang"), "u_lang")]]
-            + ([[B("◀️ Назад" if lang == "ru" else "◀️ Geri", "menu")]] if is_admin(uid) else []))
+             [B(tr(lang, "b_lang"), "u_lang")]])
     return t, kb
 
 def home(uid):
@@ -1991,7 +1992,7 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
 
     if a == "u_menu":
         STATE.pop(uid, None)
-        await send(*pub_menu(db, uid))
+        await send(*home(uid))
 
     elif a == "u_lang":
         nl = "ru" if lang == "tr" else "tr"
@@ -2029,7 +2030,7 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
     elif a == "u_mine":
         mine = user_codes(db, uid)
         if not mine: await send(tr(lang, "mine_none"), menu_btn); return
-        body = "".join(tr(lang, "mine_item", name=esc(short(name_of(s, k), 30)), left=left_txt(s.get("expires"), lang == "ru"), link=esc(sub_link(s.get("file_id", "")))) for k, s in mine[:8])
+        body = "\n".join(tr(lang, "mine_item", name=esc(short(name_of(s, k), 30)), left=left_txt(s.get("expires"), lang == "ru"), link=esc(sub_link(s.get("file_id", "")))) for k, s in mine[:8])
         await send(tr(lang, "mine") + "\n" + body, menu_btn)
 
     elif a == "u_prof":
