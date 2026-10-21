@@ -491,6 +491,12 @@ async def run_check(app, force=False):
         await notify_founders(app, head, KB([[B("📜 Loglar", callback_data="logs")]]))
     return r
 
+def start_refresh(app, why):
+    """Abonelik listesi değişince beklemeden zorla güncelle (sürmekte olan kontrol bitince başlar)."""
+    vlog(f"🔁 {why} → kodlar yeniden yazılacak")
+    RUN["src"] = {}
+    asyncio.create_task(run_check(app, force=True))
+
 async def monitor(app):
     await asyncio.sleep(5)
     vlog("▶️ Bot başladı, kontrol sistemi hazır.")
@@ -612,17 +618,20 @@ def log_text():
 LOG_KB = KB([[B("🔄 Yenile", callback_data="logs"), B("◀️ Menü", callback_data="menu")]])
 
 async def live_log(q, uid):
-    """Log mesajını 5 dakika boyunca her 5 saniyede bir yeniler."""
-    last = ""
+    """Log mesajını 3 dakika boyunca canlı tutar. Sadece log DEĞİŞİNCE düzenler
+    (her 5 sn düzenlemek Telegram'ın flood limitine takılıp botu dakikalarca kilitliyordu)."""
+    last = "\n".join(tail(VIP_LOG, 35))
     try:
-        for _ in range(60):
-            await asyncio.sleep(5)
-            t = log_text()
-            if t.split("<i>")[0] != last.split("<i>")[0]:
-                last = t
-                await safe_edit(q, t, LOG_KB)
+        for _ in range(30):
+            await asyncio.sleep(6)
+            cur = "\n".join(tail(VIP_LOG, 35))
+            if cur != last:
+                last = cur
+                await q.edit_message_text(log_text()[:4000], parse_mode="HTML", reply_markup=LOG_KB, disable_web_page_preview=True)
     except asyncio.CancelledError: pass
-    except Exception: pass
+    except Exception as e: log.info("live log stopped: %s", e)   # flood/silinen mesaj -> sessizce dur
+    finally:
+        if LIVE.get(uid) is asyncio.current_task(): LIVE.pop(uid, None)
 
 async def safe_edit(q, text, kb=None):
     try:
@@ -695,7 +704,8 @@ async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
                 return n
             n = mutate(f)
             audit(uid, f"src_add n={n}")
-            await u.message.reply_text(f"✅ {n} abonelik eklendi. Sonraki kontrolde kullanılacak.", reply_markup=back("sources"))
+            if n: start_refresh(c.application, "abonelik eklendi")
+            await u.message.reply_text(f"✅ {n} abonelik eklendi." + (" Bütün aboneliklerin kodları şimdi yeniden yazılıyor, bitince bildirim gelecek." if n else ""), reply_markup=back("sources"))
 
         elif act == "src_edit":
             new = next((x for x in txt.split() if x.startswith("http")), None)
@@ -708,8 +718,10 @@ async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
                         db["sources"][i] = new; return True
                 return False
             ok = mutate(f)
-            if ok: audit(uid, "src_edit")
-            await u.message.reply_text("✅ Abonelik değiştirildi. Sonraki kontrolde kullanılacak." if ok else "⚠️ Abonelik bulunamadı.", reply_markup=back("sources"))
+            if ok:
+                audit(uid, "src_edit")
+                start_refresh(c.application, "abonelik değiştirildi")
+            await u.message.reply_text("✅ Abonelik değiştirildi. Kodlar şimdi yeni abonelikten çekilip yazılıyor, bitince bildirim gelecek." if ok else "⚠️ Abonelik bulunamadı.", reply_markup=back("sources"))
 
         elif act in ("rename", "announce"):
             kid = st["kid"]
@@ -903,8 +915,10 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
                     d["sources"].remove(s); return True
             return False
         ok = mutate(f)
-        if ok: audit(uid, "src_del")
-        await safe_edit(q, "✅ Abonelik silindi." if ok else "⚠️ Bulunamadı.", back("sources"))
+        if ok:
+            audit(uid, "src_del")
+            start_refresh(c.application, "abonelik silindi")
+        await safe_edit(q, "✅ Abonelik silindi. Kalan aboneliklerin kodları şimdi yeniden yazılıyor." if ok else "⚠️ Bulunamadı.", back("sources"))
 
     elif a == "s_add":
         STATE[uid] = {"action": "src_add"}
@@ -948,7 +962,10 @@ _ERR = {"t": 0.0}
 
 async def on_error(update, context):
     log.error("Error: %s", context.error, exc_info=context.error)
-    from telegram.error import NetworkError
+    from telegram.error import NetworkError, RetryAfter
+    if isinstance(context.error, RetryAfter):
+        vlog(f"⚠️ Telegram flood limiti: {context.error.retry_after} sn bekleniyor")
+        return
     if isinstance(context.error, NetworkError) or time.time() - _ERR["t"] < 600: return
     _ERR["t"] = time.time()
     try: await notify_founders(context.application, f"❗ <b>Bot hatası</b>\n<code>{esc(str(context.error)[:300])}</code>")
