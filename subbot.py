@@ -32,7 +32,7 @@ SUB_DAYS = 7
 DEFAULT_DB = {"subs": {}, "template": [], "sources": [], "free_files": [], "sub_admins": {}, "seen_ips": []}
 STATE = {}
 LIVE = {}
-RUN = {"last_check": 0.0, "last_msg": "", "next": 0.0, "src": {}}
+RUN = {"last_check": 0.0, "last_msg": "", "next": 0.0, "src": {}, "tm_ts": 0, "tm_line": "📱 Telefon testi: henüz yok", "tm_err": ""}
 
 
 # ───────── ENV & ADMIN ─────────
@@ -236,7 +236,7 @@ def create_vip(name, owner=None):
         db = load_db()
         if owner is not None and owner not in ADMINS and sum(1 for v in db["subs"].values() if v.get("owner_id") == owner) >= SUB_LIMIT:
             return None, f"Limit doldu ({SUB_LIMIT} kod). Yer açmak için birini sil."
-        used = {v.get("file_id") for v in db["subs"].values() if v.get("file_id")}
+        used = {v.get("file_id") for v in db["subs"].values() if v.get("file_id")} | {db.get("tm_fid")} | source_fids(db)
         fid, from_free = None, False
         for f in db["free_files"]:
             if f not in used: fid, from_free = f, True; break
@@ -506,6 +506,86 @@ def rename_all(codes, geo):
     return out, notes
 
 
+# ───────── TELEFON TESTİ (Türkmenistan) ─────────
+# Telefon (Termux, VPN dışı) Drive'daki tmtest.txt'den abonelikleri okur, kodları TM internetinden
+# Xray ile test eder ve sonucu aynı dosyaya yazar. Bot burada okuyup TM'de çalışmayan kodları çıkarır.
+TM_NAME = "tmtest.txt"
+TM_MAX_AGE = 6 * 3600     # bundan eski telefon sonucu yok sayılır
+
+def source_fids(db):
+    out = set()
+    for u in list(db.get("sources", [])) + list(db.get("source_subs", [])):
+        m = re.search(r"files/([\w-]{10,})", u)
+        if m: out.add(m.group(1))
+    return out
+
+def _tm_write(svc, fid, data, name=None):
+    media = MediaIoBaseUpload(io.BytesIO(json.dumps(data, ensure_ascii=False).encode("utf-8")), mimetype="text/plain")
+    body = {"name": name} if name else {}
+    svc.files().update(fileId=fid, body=body, media_body=media).execute(num_retries=2)
+
+def _tm_create(svc, db, data):
+    """Önce adla var olanı bul, yoksa yeni dosya oluştur, o da olmazsa boş bir dosyayı kullan."""
+    r = svc.files().list(q=f"name='{TM_NAME}' and trashed=false", fields="files(id)", orderBy="modifiedTime desc", pageSize=1).execute()
+    if r.get("files"): return r["files"][0]["id"]
+    media = MediaIoBaseUpload(io.BytesIO(json.dumps(data).encode("utf-8")), mimetype="text/plain")
+    try:
+        return svc.files().create(body={"name": TM_NAME, "mimeType": "text/plain"}, media_body=media, fields="id").execute()["id"]
+    except Exception as e:
+        log.warning("tm create: %s", e)
+    used = {v.get("file_id") for v in db["subs"].values()} | set(db["free_files"]) | source_fids(db)
+    fid = find_free_file(svc, used)
+    if not fid: raise RuntimeError("Drive'da kanal için boş dosya yok")
+    _tm_write(svc, fid, data, TM_NAME)
+    return fid
+
+def tm_sync(db, sources):
+    """Kanal dosyasını hazır tutar, telefonun son sonucunu okur. Dönüş: TM'de çalışmayan kod anahtarları."""
+    try:
+        svc = new_service()
+        fid, ch = db.get("tm_fid"), None
+        if fid:
+            try:
+                raw = svc.files().get_media(fileId=fid).execute().decode("utf-8", "ignore").strip()
+                ch = json.loads(raw) if raw.startswith("{") else {}
+            except Exception as e:
+                if "404" not in str(e) and "notFound" not in str(e): raise
+                fid = None
+        if not fid:
+            fid = _tm_create(svc, db, {"sources": sources})
+            mutate(lambda d: d.__setitem__("tm_fid", fid))
+            vlog(f"📱 Telefon testi kanalı hazır (Drive: {TM_NAME})")
+            ch = {}
+        if ch.get("sources") != sources:
+            ch["sources"] = sources
+            _tm_write(svc, fid, ch)
+        RUN["tm_err"] = ""
+    except Exception as e:
+        msg = str(e)[:120]
+        if msg != RUN["tm_err"]: vlog(f"⚠️ Telefon testi okunamadı: {msg}")
+        RUN["tm_err"] = msg
+        RUN["tm_line"] = "📱 Telefon testi: okunamadı"
+        return set()
+    ts, res = int(ch.get("ts") or 0), ch.get("results") or {}
+    good = sum(1 for v in res.values() if isinstance(v, (int, float)) and v > 0)
+    stale = bool(ts) and time.time() - ts > TM_MAX_AGE
+    if ch.get("status") == "not_tm" and int(ch.get("status_ts") or 0) >= ts:
+        RUN["tm_line"] = f"⚠️ Telefon testi VPN'den çıkıyor ({ch.get('country', '?')}) → Happ'te Termux Bypass olmalı"
+        if RUN.get("tm_warned") != ch.get("status_ts"):
+            RUN["tm_warned"] = ch.get("status_ts"); vlog(RUN["tm_line"])
+    elif stale:
+        RUN["tm_line"] = f"📱 Telefon testi: {ago(ts)} (eski, kullanılmıyor)"
+    elif ts:
+        RUN["tm_line"] = f"📱 Telefon testi: {ago(ts)} · {good}/{len(res)} çalışıyor"
+    else:
+        RUN["tm_line"] = "📱 Telefon testi: henüz sonuç yok (tmtest start)"
+    if ts and ts != RUN["tm_ts"]:
+        RUN["tm_ts"] = ts
+        vlog(f"📱 Telefon testi (TM): {good} çalışıyor, {len(res) - good} çalışmıyor, {ch.get('skipped', 0)} test edilmedi")
+    if not ts or stale: return set()
+    return {k for k, v in res.items() if isinstance(v, (int, float)) and v < 0}
+
+
 # ───────── KONTROL DÖNGÜSÜ ─────────
 def check_cycle(force=False):
     """Bloklayan iş (thread'de çalışır). Güncelleme olursa sonuç dict döner, olmazsa None."""
@@ -542,12 +622,24 @@ def check_cycle(force=False):
     ips = {h for h in (code_host(c) for c in codes) if h}
     old = set(db.get("seen_ips", []))
     new = ips - old
-    if not force and old and len(new) <= NEW_IP_LIMIT:
+    dead_tm = tm_sync(db, sources) & {code_key(c) for c in codes}
+    tm_changed = sorted(dead_tm) != sorted(db.get("tm_dead_pushed", []))
+    if not force and old and len(new) <= NEW_IP_LIMIT and not tm_changed:
         RUN["last_msg"] = f"✅ {len(codes)} kod, {len(new)} yeni IP → değişiklik yok"
         vlog(f"ℹ️ {len(codes)} kod · {len(new)} yeni IP (eşik: {NEW_IP_LIMIT}'ten fazla) → değişiklik yok")
         return None
 
-    vlog(("⚡ Elle güncelleme" if force else f"🚨 {len(new)} yeni IP bulundu") + f" → {len(codes)} kod yenileniyor...")
+    why = "⚡ Elle güncelleme" if force else (f"🚨 {len(new)} yeni IP bulundu" if (not old or len(new) > NEW_IP_LIMIT) else "📱 Telefon testi değişti")
+    vlog(f"{why} → {len(codes)} kod yenileniyor...")
+    if dead_tm:
+        keep = [c for c in codes if code_key(c) not in dead_tm]
+        if keep:
+            vlog(f"📱 TM'de çalışmayan {len(dead_tm)} kod çıkarıldı")
+            for c in codes:
+                if code_key(c) in dead_tm: vlog(f"   ✖ {short(orig_name(c) or code_host(c) or '-', 34)}")
+            codes = keep
+        else:
+            vlog("⚠️ Telefon testine göre hiçbir kod çalışmıyor; test yok sayıldı")
     codes = dead_filter(codes)
     need_ip = [code_host(c) for c in codes if exit_country(c, {})[0] is None]   # isminde ülke olmayanlar
     geo = geo_lookup([h for h in need_ip if h]) if need_ip else {}
@@ -560,7 +652,9 @@ def check_cycle(force=False):
     def f(d):
         d["template"] = renamed
         d["last_update"] = time.time()
-        if not bad: d["seen_ips"] = sorted(ips)   # hata varsa eski IP'ler kalsın, sonraki turda tekrar dener
+        if not bad:   # hata varsa eskileri kalsın, sonraki turda tekrar dener
+            d["seen_ips"] = sorted(ips)
+            d["tm_dead_pushed"] = sorted(dead_tm)
     mutate(f)
     RUN["last_msg"] = f"🔄 Güncellendi: {len(renamed)} kod → {ok}/{len(targets)} Drive"
     return {"new": len(new), "codes": renamed, "ok": ok, "total": len(targets), "bad": bad, "force": force}
@@ -686,7 +780,8 @@ def menu_text(uid):
             f"⚙️ Sistem: {'🟢 Çalışıyor' if on else '🔴 Durduruldu'}\n"
             f"🔍 Son kontrol: {ago(RUN['last_check'])}\n"
             f"🔄 Son güncelleme: {ago(lu)}\n"
-            f"📡 Kod: {n} · 🔗 Abonelik: {src} · 👥 VIP: {vip}\n{LINE}")
+            f"📡 Kod: {n} · 🔗 Abonelik: {src} · 👥 VIP: {vip}\n"
+            f"{esc(RUN['tm_line'])}\n{LINE}")
 
 def main_kb(uid):
     rows = [[B("✨ Kod Oluştur", callback_data="create_key"), B("👥 Kodlarım", callback_data="my_keys")]]
@@ -708,7 +803,7 @@ def log_text():
     st = "🟢 Çalışıyor" + (f" · sonraki kontrol {max(0, nxt)} sn" if nxt is not None else "") if on else "🔴 Durduruldu"
     lines = [short(l, 70) for l in tail(VIP_LOG, 35)]
     body = ("<pre>" + esc("\n".join(lines)) + "</pre>") if lines else "Log yok."
-    return f"📜 <b>Loglar</b>\n{LINE}\n{st}\n{esc(RUN['last_msg'])}\n{body}\n<i>Güncellendi: {datetime.datetime.now():%H:%M:%S}</i>"
+    return f"📜 <b>Loglar</b>\n{LINE}\n{st}\n{esc(RUN['last_msg'])}\n{esc(RUN['tm_line'])}\n{body}\n<i>Güncellendi: {datetime.datetime.now():%H:%M:%S}</i>"
 
 LOG_KB = KB([[B("🔄 Yenile", callback_data="logs"), B("◀️ Menü", callback_data="menu")]])
 
