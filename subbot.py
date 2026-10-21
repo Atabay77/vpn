@@ -288,7 +288,7 @@ def create_vip(name, owner=None, days=None, check_limit=True, extra=None):
         db = load_db()
         if check_limit and owner is not None and owner not in ADMINS and owned(db, owner) >= sa_limit(db, owner):
             return None, f"Limit doldu ({sa_limit(db, owner)} kod). Yer açmak için birini sil."
-        used = {v.get("file_id") for v in db["subs"].values() if v.get("file_id")} | {db.get("tm_fid")} | source_fids(db)
+        used = used_fids(db)
         fid, from_free = None, False
         for f in db["free_files"]:
             if f not in used: fid, from_free = f, True; break
@@ -631,7 +631,7 @@ def _tm_create(svc, db, data):
         return svc.files().create(body={"name": TM_NAME, "mimeType": "text/plain"}, media_body=media, fields="id").execute()["id"]
     except Exception as e:
         log.warning("tm create: %s", e)
-    used = {v.get("file_id") for v in db["subs"].values()} | set(db["free_files"]) | source_fids(db)
+    used = used_fids(db) | set(db["free_files"])
     fid = find_free_file(svc, used)
     if not fid: raise RuntimeError("Drive'da kanal için boş dosya yok")
     _tm_write(svc, fid, data, TM_NAME)
@@ -660,10 +660,14 @@ def tm_sync(db, sources, codes=None):
             vlog(f"📱 Telefon testi kanalı hazır (Drive: {TM_NAME})")
             ch = {}
         # Kodları telefona bot verir (telefon Google'dan abonelik okuyunca 403 alabiliyor)
-        new_keys = sorted(code_key(c) for c in (codes or []))
+        codes_all = list(codes or [])
+        if codes:   # pazardaki satıcı kodları da telefonda test edilsin
+            ks = {code_key(c) for c in codes_all}
+            codes_all += [c for c in market_codes(db) if code_key(c) not in ks]
+        new_keys = sorted(code_key(c) for c in codes_all)
         if ch.get("sources") != sources or (codes and sorted(code_key(c) for c in ch.get("codes", [])) != new_keys):
             ch["sources"] = sources
-            if codes: ch["codes"], ch["codes_ts"] = list(codes), int(time.time())
+            if codes: ch["codes"], ch["codes_ts"] = codes_all, int(time.time())
             _tm_write(svc, fid, ch)
         RUN["tm_err"] = ""
     except Exception as e:
@@ -677,7 +681,9 @@ def tm_sync(db, sources, codes=None):
         if RUN.get("tm_ver"): vlog(f"📲 Telefon programı güncellendi ({ver})")
         RUN["tm_ver"] = ver
     ts, res = int(ch.get("ts") or 0), ch.get("results") or {}
-    good = sum(1 for v in res.values() if isinstance(v, (int, float)) and v > 0)
+    mk_keys = {code_key(c) for c in market_codes(db)}
+    ours = {k: v for k, v in res.items() if k not in mk_keys}   # menüdeki sayı sadece bizim kodlar (pazar kodları ayrı)
+    good = sum(1 for v in ours.values() if isinstance(v, (int, float)) and v > 0)
     stale = bool(ts) and time.time() - ts > TM_MAX_AGE
     if ch.get("status") == "not_tm" and int(ch.get("status_ts") or 0) >= ts:
         RUN["tm_line"] = f"⚠️ Telefon testi VPN'den çıkıyor ({ch.get('country', '?')}) → Happ'te Termux Bypass olmalı"
@@ -686,7 +692,7 @@ def tm_sync(db, sources, codes=None):
     elif stale:
         RUN["tm_line"] = f"📱 Telefon testi: {ago(ts)} (eski, kullanılmıyor)"
     elif ts:
-        RUN["tm_line"] = f"📱 Telefon testi: {ago(ts)} · {good}/{len(res)} çalışıyor"
+        RUN["tm_line"] = f"📱 Telefon testi: {ago(ts)} · {good}/{len(ours)} çalışıyor"
     else:
         RUN["tm_line"] = "📱 Telefon testi: henüz sonuç yok (tmtest start)"
     if ch.get("exits"):
@@ -699,7 +705,7 @@ def tm_sync(db, sources, codes=None):
             except Exception: pass
     if ts and ts != RUN["tm_ts"]:
         RUN["tm_ts"] = ts
-        vlog(f"📱 Telefon testi (TM): {good} çalışıyor, {len(res) - good} çalışmıyor, {ch.get('skipped', 0)} test edilmedi")
+        vlog(f"📱 Telefon testi (TM): {good} çalışıyor, {len(ours) - good} çalışmıyor, {ch.get('skipped', 0)} test edilmedi" + (f" · pazar: {len(res) - len(ours)} kod" if len(res) > len(ours) else ""))
     if ts and time.time() - ts > TM_ALERT and RUN.get("tm_alerted") != ts:
         RUN["tm_alerted"] = ts
         RUN["tm_alert"] = f"📱 Telefon testinden sonuç gelmiyor (son sonuç: {ago(ts)}). Termux'u aç, test kendiliğinden başlar."
@@ -996,6 +1002,9 @@ async def post_init(app):
     CHECK_LOCK, WAKE = asyncio.Lock(), asyncio.Event()
     app.bot_data["mon"] = asyncio.create_task(monitor(app))
     app.bot_data["wd"] = asyncio.create_task(watchdog(app))
+    try: mutate(ensure_own)   # bizim ilan pazarda hep olsun
+    except Exception: log.exception("market init")
+    app.bot_data["mkt"] = asyncio.create_task(market_loop(app))
     try:
         from telegram import BotCommand
         await app.bot.set_my_commands([BotCommand("start", "Ana menü"), BotCommand("id", "Telegram ID'n")])
@@ -1062,7 +1071,7 @@ def admin_kb():
         [B("🔎 Kullanıcı Ara", "usearch")],
         [B("📈 Rapor", "rep_today"), B("📊 İstatistik", "stats")],
         [B("📢 Kanallar", "chans"), B("🪙 CryptoBot", "cp")],
-        [B("💳 TMT 🔜", "pay_set")],
+        [B("🏪 Pazar", "mk_admin"), B("💳 TMT 🔜", "pay_set")],
         [B("📣 Herkese Mesaj", "bcast")],
         [B("👮 Alt Adminler", "sa_menu")],
         [B(f"🕰 Oto. Duyuru: {'Açık' if on else 'Kapalı'}", "auto_ann")],
@@ -1356,6 +1365,24 @@ async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
             msg = await add_channel(c, txt, getattr(fo, "chat", None))
             await u.message.reply_text(msg, parse_mode="HTML", reply_markup=back("chans"))
 
+        elif act == "mk_price":
+            pr = parse_usdt(txt)
+            if not pr or not (10 <= pr <= 10_000):
+                STATE[uid] = st; await u.message.reply_text("⚠️ 0.00001 ile 0.01 arası bir sayı yaz."); return
+            mutate(lambda d: ensure_own(d)[OWN_LID].__setitem__("price", pr))
+            audit(uid, f"own_price {fmt_u(pr)}")
+            t, kb = mkt_admin_view(); await u.message.reply_text("✅ Fiyat kaydedildi.\n\n" + t, parse_mode="HTML", reply_markup=kb)
+
+        elif act == "bal_adj":
+            try: v = int(round(float(txt.replace(",", ".").replace("$", "").strip()) * UM))
+            except Exception: v = 0
+            if not v: STATE[uid] = st; await u.message.reply_text("⚠️ Sayı yaz, ör. 2 ya da -0.5"); return
+            tid_ = st["target"]
+            nb = mutate(lambda d: d["users"].setdefault(str(tid_), {}).__setitem__("bal", max(0, d["users"][str(tid_)].get("bal", 0) + v)) or d["users"][str(tid_)]["bal"])
+            ulog("m_bal", f"💰 Admin bakiye düzeltti: {tid_} · {'+' if v > 0 else ''}{fmt_u(v) if v > 0 else '-' + fmt_u(-v)} USDT")
+            audit(uid, f"bal_adj {tid_} {v}")
+            t, kb = user_view(tid_); await u.message.reply_text(f"✅ Yeni bakiye: {fmt_u(nb)} USDT\n\n" + t, parse_mode="HTML", reply_markup=kb)
+
         elif act == "u_search":
             found = find_users(txt)
             if not found:
@@ -1416,7 +1443,7 @@ async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
         log.exception("msg_handler")
         await send_error(c, uid, f"mesaj:{act}", e)
 
-FOUNDER_ONLY = {"usearch", "rep_today", "rep_yday", "tickets_bug", "t_cancel", "tickets", "cp_test", "cp", "cp_set", "cp_del", "ul_open", "stats", "chans", "ch_add", "pay_set", "bcast", "bcast_yes", "rollback", "rollback_yes", "auto_ann", "toggle_sys", "admin", "sources", "s_add", "logs", "upd_now", "get_zip", "sa_menu", "sa_add", "bulk_ann", "bulk_title", "bulk_yes"}
+FOUNDER_ONLY = {"mk_admin", "mk_price", "usearch", "rep_today", "rep_yday", "tickets_bug", "t_cancel", "tickets", "cp_test", "cp", "cp_set", "cp_del", "ul_open", "stats", "chans", "ch_add", "pay_set", "bcast", "bcast_yes", "rollback", "rollback_yes", "auto_ann", "toggle_sys", "admin", "sources", "s_add", "logs", "upd_now", "get_zip", "sa_menu", "sa_add", "bulk_ann", "bulk_title", "bulk_yes"}
 OWNED = ("kv", "kt", "kn", "ka", "kd", "kdy")   # alt admin sadece kendi kodunda
 def src_find(db, h): return next((s for s in db["sources"] if hashlib.md5(s.encode()).hexdigest()[:8] == h), None)
 
@@ -1429,7 +1456,7 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         miss = await missing_channels(c.bot, uid)
         if miss:
             await q.answer(); await safe_edit(q, *join_view(lang_of(load_db(), uid), miss)); return
-    if uid not in ADMINS and (a in FOUNDER_ONLY or a.startswith(("sv:", "se:", "sd:", "sa_del:", "sa_ext:", "sa_lim:", "kx:", "kxs:", "ul:", "chd:", "ord_ok:", "ord_no:", "t_rep:", "t_close:", "tv:", "ug:", "ux:", "uxc:", "ub:", "uv:"))):
+    if uid not in ADMINS and (a in FOUNDER_ONLY or a.startswith(("sv:", "se:", "sd:", "sa_del:", "sa_ext:", "sa_lim:", "kx:", "kxs:", "ul:", "chd:", "ord_ok:", "ord_no:", "t_rep:", "t_close:", "tv:", "ug:", "ux:", "uxc:", "ub:", "uv:", "ubal:", "mk_l:", "mk_ok:", "mk_rm:", "mk_ph:"))):
         await q.answer(L(uid, "⛔ Erişim yok", "⛔ Нет доступа"), show_alert=True); return
     if a not in ("toggle_sys", "upd_now"):
         await q.answer()
@@ -1476,6 +1503,44 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         ch = mutate(f); JOINED.clear()
         if ch: audit(uid, f"channel_del {ch['id']}")
         await safe_edit(q, *channels_view())
+
+    elif a == "mk_admin":
+        await safe_edit(q, *mkt_admin_view())
+
+    elif a == "mk_price":
+        STATE[uid] = {"action": "mk_price"}
+        await safe_edit(q, *prompt("💲 <b>Bizim ilanın fiyatı</b>", "Dakika başı fiyatı USDT olarak yaz (ör. <code>0.0001</code>).", "mk_admin"))
+
+    elif a.startswith("mk_l:"):
+        await safe_edit(q, *mkt_admin_detail(a.split(":", 1)[1]))
+
+    elif a.startswith("mk_ph:"):
+        L_ = db.get("market", {}).get(a.split(":", 1)[1], {})
+        if L_.get("photo"):
+            try: await c.bot.send_photo(uid, L_["photo"], caption=f"🏪 {L_.get('title', '')}"[:1000])
+            except Exception: pass
+
+    elif a.startswith(("mk_ok:", "mk_rm:")):
+        lid = a.split(":", 1)[1]; ok_ = a.startswith("mk_ok:")
+        def f(d):
+            L = d.get("market", {}).get(lid)
+            if not L or L.get("own"): return None
+            if ok_ and L["status"] == "pending": L["status"] = "live"; L["live_ts"] = L["last_good"] = time.time(); return L.get("owner"), L["title"]
+            if not ok_ and L["status"] in ("pending", "live"): L["status"] = "removed"; L["removed_ts"] = time.time(); L["removed_why"] = "admin"; return L.get("owner"), L["title"]
+            return None
+        r = mutate(f)
+        if r:
+            audit(uid, f"{'mk_ok' if ok_ else 'mk_rm'} {lid}")
+            ulog("m_admin", f"{'✅ Admin ilanı onayladı' if ok_ else '🗑 Admin ilanı kaldırdı'}: {r[1]} · satıcı {r[0]}")
+            if ok_:
+                lg = lang_of(load_db(), r[0]); st_ = load_db()["market"][lid].get("st") or {}
+                try: await c.bot.send_message(r[0], tr(lg, "m_approved", title=esc(r[1]), ncc=len(st_.get("cc", [])), work=st_.get("work", 0), tested=st_.get("tested", 0)), parse_mode="HTML")
+                except Exception: pass
+        await safe_edit(q, *mkt_admin_view())
+
+    elif a.startswith("ubal:"):
+        STATE[uid] = {"action": "bal_adj", "target": int(a.split(":", 1)[1])}
+        await safe_edit(q, *prompt("💰 <b>Bakiye düzelt</b>", "Eklenecek tutarı USDT olarak yaz (ör. <code>2</code>). Düşmek için eksi: <code>-0.5</code>", "admin"))
 
     elif a in ("rep_today", "rep_yday"):
         a0, a1, lbl = day_bounds(0 if a == "rep_today" else -1)
@@ -2197,6 +2262,129 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         if tid: await close_ticket(c, tid, False)
         await send(tr(lang, "sup_closed", tid=tid or "—"), KB([[B(tr(lang, "b_menu"), "u_menu")]]))
 
+    elif a == "u_mkt":
+        STATE.pop(uid, None)
+        await send(*mkt_list_view(load_db(), uid, lang))
+
+    elif a.startswith("u_ml:"):
+        await send(*mkt_detail_view(load_db(), uid, lang, a.split(":", 1)[1]))
+
+    elif a.startswith("u_mph:"):
+        L_ = db.get("market", {}).get(a.split(":", 1)[1], {})
+        if L_.get("photo"):
+            try: await c.bot.send_photo(uid, L_["photo"], caption=f"🏪 {L_.get('title', '')}"[:1000])
+            except Exception: pass
+
+    elif a.startswith("u_ms:"):
+        lid = a.split(":", 1)[1]
+        res, err = await asyncio.to_thread(mkt_start, uid, lid)
+        if not res:
+            if err.startswith("nobal:"):
+                await send(tr(lang, "m_need", need=fmt_u(int(err.split(":")[1])), bal=fmt_u(load_db()["users"].get(str(uid), {}).get("bal", 0))),
+                           KB([[B(tr(lang, "b_top"), "u_top", "success")], [B(tr(lang, "b_back_mkt"), f"u_ml:{lid}")]]))
+            elif err == "already": await send(tr(lang, "m_already"), KB([[B(tr(lang, "b_mine"), "u_mine")], [B(tr(lang, "b_back_mkt"), "u_mkt")]]))
+            elif err == "gone": await send(tr(lang, "m_gone"), KB([[B(tr(lang, "b_back_mkt"), "u_mkt")]]))
+            else:
+                await send(tr(lang, "no_slot"), menu_btn)
+                await notify_founders(c.application, f"⚠️ <b>Pazar kodu başlatılamadı</b>\n<blockquote>{esc(who(user))}\n{esc(err)}</blockquote>")
+            return
+        sid, fid = res
+        d2 = load_db(); L_ = d2["market"][lid]
+        ulog("m_start", f"▶️ Pazar kodu başladı: {who(user)} · {L_['title']} · {fmt_u(L_['price'])} USDT/dk")
+        await send(tr(lang, "m_started", title=esc(L_["title"]), p=fmt_u(L_["price"]), bal=fmt_u(d2["users"][str(uid)].get("bal", 0)), link=esc(sub_link(fid))),
+                   KB([[B(tr(lang, "b_stop"), f"u_msx:{sid}", "danger")], [B(tr(lang, "b_menu"), "u_menu")]]))
+
+    elif a.startswith("u_msx:"):
+        sid = a.split(":", 1)[1]
+        s_ = db.get("msess", {}).get(sid)
+        if not s_ or s_["buyer"] != uid: return
+        await stop_session(c.application, sid, "user")
+        await send(*mkt_list_view(load_db(), uid, lang))
+
+    elif a == "u_mrules":
+        await send(tr(lang, "rules"), KB([[B(tr(lang, "b_back_mkt"), "u_mkt")]]))
+
+    elif a == "u_sell":
+        if e.get("mban", 0) > time.time():
+            await send(tr(lang, "sell_banned", left=dur_txt(e["mban"] - time.time(), lang == "ru")), KB([[B(tr(lang, "b_back_mkt"), "u_mkt")]])); return
+        STATE[uid] = {"action": "u_sell", "step": "link"}
+        await send(tr(lang, "sell_1"), KB([[B(tr(lang, "b_cancel"), "u_mkt")]]))
+
+    elif a == "u_sellp":
+        st_ = STATE.get(uid)
+        if st_ and st_.get("action") == "u_sell" and st_.get("price"):
+            st_["step"] = "price"
+            await send(tr(lang, "sell_5"), KB([[B(tr(lang, "b_cancel"), "u_mkt")]]))
+
+    elif a == "u_sellok":
+        st_ = STATE.get(uid)
+        if not st_ or st_.get("action") != "u_sell" or st_.get("step") != "confirm":
+            await send(*mkt_list_view(load_db(), uid, lang)); return
+        def f(d):
+            x = d["users"].setdefault(str(uid), {})
+            if x.get("mban", 0) > time.time(): return "ban"
+            if any(L.get("link") == st_["link"] and L.get("status") in ("pending", "live") for L in d.get("market", {}).values()): return "dup"
+            if x.get("bal", 0) < MKT_FEE: return "nobal"
+            x["bal"] -= MKT_FEE; d["mkt_fees"] = d.get("mkt_fees", 0) + MKT_FEE
+            lid = uuid.uuid4().hex[:6]
+            d.setdefault("market", {})[lid] = {"owner": uid, "title": st_["title"], "link": st_["link"], "photo": st_["photo"], "desc": st_.get("desc", ""),
+                                               "price": st_["price"], "codes": st_["codes"], "codes_ts": time.time(), "status": "pending", "created": time.time()}
+            return "ok"
+        r = mutate(f)
+        if r == "nobal": await send(tr(lang, "sell_nobal"), KB([[B(tr(lang, "b_top"), "u_top", "success")], [B(tr(lang, "b_back_mkt"), "u_mkt")]])); return
+        STATE.pop(uid, None)
+        if r == "dup": await send(tr(lang, "sell_dup"), KB([[B(tr(lang, "b_back_mkt"), "u_mkt")]])); return
+        if r == "ban": await send(tr(lang, "sell_banned", left="—"), KB([[B(tr(lang, "b_back_mkt"), "u_mkt")]])); return
+        ulog("m_list", f"📤 Pazara ilan verdi: {who(user)} · {st_['title']} · {fmt_u(st_['price'])} USDT/dk")
+        await send(tr(lang, "sell_sent"), KB([[B(tr(lang, "b_myl"), "u_myl")], [B(tr(lang, "b_back_mkt"), "u_mkt")]]))
+        await notify_founders(c.application, f"📤 <b>Yeni pazar ilanı</b> (incelemede)\n<blockquote>{esc(who(user))}\n🏷 {esc(st_['title'])} · {fmt_u(st_['price'])} USDT/dk</blockquote>")
+
+    elif a == "u_myl":
+        mine_l = sorted([(lid, L) for lid, L in db.get("market", {}).items() if L.get("owner") == uid], key=lambda x: -x[1].get("created", 0))[:10]
+        if not mine_l: await send(tr(lang, "myl_none"), KB([[B(tr(lang, "b_sell"), "u_sell", "primary")], [B(tr(lang, "b_back_mkt"), "u_mkt")]])); return
+        ss = db.get("msess", {}).values()
+        body = "\n".join(tr(lang, "myl_item", st=tr(lang, "st_" + L["status"]), title=esc(L["title"]), p=fmt_u(L["price"]),
+                            n=sum(1 for x in ss if x["lid"] == lid and x["status"] == "on"), earned=fmt_u(sum(x["total"] for x in ss if x["lid"] == lid))) for lid, L in mine_l)
+        rows = [[B(f"🗑 {short(L['title'], 22)}", f"u_mld:{lid}", "danger")] for lid, L in mine_l if L["status"] in ("pending", "live")]
+        await send(tr(lang, "myl") + "\n" + body, KB(rows + [[B(tr(lang, "b_back_mkt"), "u_mkt")]]))
+
+    elif a.startswith("u_mld:"):
+        lid = a.split(":", 1)[1]
+        def f(d):
+            L = d.get("market", {}).get(lid)
+            if not L or L.get("owner") != uid or L.get("status") not in ("pending", "live"): return False
+            L["status"] = "removed"; L["removed_ts"] = time.time(); L["removed_why"] = "seller"; return True
+        if mutate(f): ulog("m_rm", f"🗑 Satıcı ilanını kaldırdı: {who(user)} · {lid}")
+        await send(*mkt_list_view(load_db(), uid, lang))
+
+    elif a == "u_top":
+        STATE.pop(uid, None)
+        await send(tr(lang, "top", bal=fmt_u(e.get("bal", 0))),
+                   KB([[B(f"{n} USDT", f"u_topa:{n}", "primary") for n in (1, 3, 5, 10)], [B(tr(lang, "b_other"), "u_topc")], [B(tr(lang, "b_menu"), "u_menu")]]))
+
+    elif a.startswith("u_topa:"):
+        await send(*topup_order(uid, user, lang, float(a.split(":", 1)[1])))
+
+    elif a == "u_topc":
+        STATE[uid] = {"action": "u_topamt"}
+        await send(tr(lang, "top_ask"), KB([[B(tr(lang, "b_cancel"), "u_top")]]))
+
+    elif a == "u_wd":
+        amt = e.get("earn", 0)
+        if amt < WITHDRAW_MIN: await send(tr(lang, "wd_min", earn=fmt_u(amt)), menu_btn); return
+        def take(d):
+            x = d["users"][str(uid)]
+            if x.get("earn", 0) < amt: return False
+            x["earn"] -= amt; return True
+        if not mutate(take): return
+        try:
+            await asyncio.to_thread(crypto_call, "transfer", user_id=uid, asset="USDT", amount=fmt_u(amt), spend_id=f"wd-{uid}-{int(time.time())}", comment="VPN pazarı kazancı")
+        except Exception as ex:
+            mutate(lambda d: d["users"][str(uid)].__setitem__("earn", d["users"][str(uid)].get("earn", 0) + amt))
+            await send(tr(lang, "wd_err", err=esc(str(ex)[:100])), menu_btn); return
+        ulog("m_wd", f"💸 Kazanç çekti: {who(user)} · {fmt_u(amt)} USDT")
+        await send(tr(lang, "wd_ok", usdt=fmt_u(amt)), menu_btn)
+
     elif a == "u_lang":
         nl = "ru" if lang == "tr" else "tr"
         mutate(lambda d: d["users"][str(uid)].__setitem__("lang", nl))
@@ -2259,10 +2447,14 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
 
     elif a == "u_mine":
         mine = user_codes(db, uid)
-        if not mine: await send(tr(lang, "mine_none"), menu_btn); return
+        sess = [(sid, x) for sid, x in db.get("msess", {}).items() if x["buyer"] == uid and x["status"] == "on"]
+        if not mine and not sess: await send(tr(lang, "mine_none"), menu_btn); return
         body = "\n".join(tr(lang, "mine_item", name=esc(short(name_of(s, k), 30)), left=left_txt(s.get("expires"), lang == "ru"), link=esc(sub_link(s.get("file_id", "")))) for k, s in mine[:8])
+        body2 = "\n".join(tr(lang, "mine_m", title=esc(short(db["market"].get(x["lid"], {}).get("title", "?"), 26)), dur=dur_txt(time.time() - x["start"], lang == "ru"),
+                             usdt=fmt_u(x["total"]), link=esc(sub_link(x["fid"]))) for sid, x in sess[:5])
         ext_rows = [[B(f"{tr(lang, 'b_ext')} · {short(name_of(s_, k), 18)}", f"u_ext:{k}")] for k, s_ in mine[:8] if s_.get("pub") in ("paid", "gift")]
-        await send(tr(lang, "mine") + "\n" + body, KB(ext_rows + [[B(tr(lang, "b_menu"), "u_menu")]]))
+        stop_rows = [[B(f"{tr(lang, 'b_stop')} · {short(db['market'].get(x['lid'], {}).get('title', '?'), 18)}", f"u_msx:{sid}", "danger")] for sid, x in sess[:5]]
+        await send(tr(lang, "mine") + "\n" + "\n".join(x for x in (body, body2) if x), KB(ext_rows + stop_rows + [[B(tr(lang, "b_menu"), "u_menu")]]))
 
     elif a == "u_prof":
         inv = db["users"].get(str(e.get("ref_by")), {}) if e.get("ref_by") else {}
@@ -2271,12 +2463,15 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
                total=len(e.get("refs", [])), avail=max(0, avail_refs(e)), need=REF_NEED, free=e.get("free_n", 0),
                active=len(user_codes(db, uid)), buys=e.get("buys", 0), inviter=esc(inv.get("name") or tr(lang, "nobody")),
                link=esc(ref_link(uid)))
-        await send(t, KB([[B(tr(lang, "b_share"), url=share_url(lang, uid), style="success")], [B(tr(lang, "b_menu"), "u_menu")]]))
+        t += tr(lang, "bal_line", bal=fmt_u(e.get("bal", 0)), tmt=tmt_u(e.get("bal", 0))) + (tr(lang, "earn_line", earn=fmt_u(e["earn"])) if e.get("earn") else "")
+        await send(t, KB([[B(tr(lang, "b_share"), url=share_url(lang, uid), style="success")],
+                          [B(tr(lang, "b_top"), "u_top", "primary")]] + ([[B(tr(lang, "b_wd"), "u_wd")]] if e.get("earn") else []) + [
+                          [B(tr(lang, "b_menu"), "u_menu")]]))
 
     elif a == "u_market":
         STATE.pop(uid, None)
-        await send(tr(lang, "market"), KB([[B(tr(lang, "b_c7"), "u_buy:c7", "primary")], [B(tr(lang, "b_c30"), "u_buy:c30", "primary")],
-                                           [B(tr(lang, "b_panel"), "u_buy:panel", "success")], [B(tr(lang, "b_menu"), "u_menu")]]))
+        await send(tr(lang, "market"), KB([[B(tr(lang, "b_mkt"), "u_mkt", "success")], [B(tr(lang, "b_c7"), "u_buy:c7", "primary")], [B(tr(lang, "b_c30"), "u_buy:c30", "primary")],
+                                           [B(tr(lang, "b_panel"), "u_buy:panel")], [B(tr(lang, "b_menu"), "u_menu")]]))
 
     elif a == "u_buy:panel":
         STATE[uid] = {"action": "u_panel"}
@@ -2320,7 +2515,7 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
                 return dict(x)
             o = mutate(f)
             ulog("inv", f"💵 USDT faturası: {who(user)} · #{oid} · {us} USDT")
-        it = tr(lang, "it_panel", n=o["n"]) if o["item"] == "panel" else tr(lang, "it_" + o["item"])
+        it = tr(lang, "it_panel", n=o["n"]) if o["item"] == "panel" else (tr(lang, "it_top", usdt=us) if o["item"] == "topup" else tr(lang, "it_" + o["item"]))
         await send(tr(lang, "inv", oid=oid, item=esc(it), usdt=us),
                    KB([[B(tr(lang, "b_pay"), url=o["inv_url"], style="success")], [B(tr(lang, "b_chk"), f"u_chk:{oid}", "primary")]]
                       + ([[B("🟡 🧪 Ödendi say (test)", f"u_tpaid:{oid}", "primary")]] if uid in ADMINS else []) + [[B(tr(lang, "b_menu"), "u_menu")]]))
@@ -2351,6 +2546,7 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         await send(*pub_menu(load_db(), uid))
 
 def item_tr(o):
+    if o["item"] == "topup": return f"Bakiye yükleme · {usdt_of(o['price'])} USDT"
     if o["item"] == "panel": return f"Panel · {o['n']} kullanıcı · {PANEL_DAYS} gün"
     if o.get("ext"): return f"Uzatma · {PRICES[o['item']][0]} gün"
     return f"Kod · {PRICES[o['item']][0]} gün"
@@ -2409,7 +2605,15 @@ async def fulfill_order(c, oid, approve, admin_uid):
         try: await c.bot.send_message(uid, tr(lang, "order_no", oid=oid), parse_mode="HTML")
         except Exception: pass
         return f"❌ Sipariş #{oid} reddedildi."
-    if o["item"] == "panel":
+    if o["item"] == "topup":
+        amt = int(round(o["price"] / USDT_RATE * UM))
+        def p(d):
+            x = d.setdefault("users", {}).setdefault(str(uid), {}); x["bal"] = x.get("bal", 0) + amt
+            d["orders"][oid]["status"] = "done"; d["orders"][oid]["done_ts"] = time.time()
+            return x["bal"]
+        bal = mutate(p)
+        msg = tr(lang, "top_ok", usdt=fmt_u(amt), bal=fmt_u(bal))
+    elif o["item"] == "panel":
         def p(d):
             e = d.setdefault("sub_admins", {}).get(str(uid), {})
             active = float(e.get("expires", 0)) > time.time()
@@ -2514,8 +2718,7 @@ def ulog_view(page=None):
 def pool_count():
     try:
         svc = new_service(); db = load_db()
-        used = {v.get("file_id") for v in db["subs"].values()}
-        return len((set(pool_files(svc)) | set(db["free_files"])) - used)
+        return len((set(pool_files(svc)) | set(db["free_files"])) - used_fids(db))
     except Exception: return "?"
 
 def stats_text():
@@ -2523,7 +2726,7 @@ def stats_text():
     today = tm_now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
     pub = [s for s in db["subs"].values() if s.get("pub") and not is_exp(s)]
     orders = db.get("orders", {}).values()
-    paid = sum(o["price"] for o in orders if o["status"] == "done" and not o.get("test"))
+    paid = sum(o["price"] for o in orders if o["status"] == "done" and not o.get("test") and o.get("item") != "topup")
     return ("📊 <b>İstatistik</b>\n<blockquote>"
             f"👥 Kullanıcı  <b>{len(us)}</b>  ·  bugün <b>{sum(1 for e in us.values() if e.get('joined', 0) >= today)}</b>\n"
             f"🤝 Sayılan davet  <b>{sum(len(e.get('refs', [])) for e in us.values())}</b>\n"
@@ -2701,6 +2904,10 @@ async def support_router(u: Update, c: ContextTypes.DEFAULT_TYPE):
     m = u.message
     if not m or not u.effective_user or m.chat.type != "private": return
     uid = u.effective_user.id
+    st0 = STATE.get(uid) or {}
+    if st0.get("action") in ("u_sell", "u_topamt"):   # pazar: ilan adımları / yükleme tutarı (yazı ya da fotoğraf)
+        if not is_banned(uid): await market_input(c, u, st0)
+        raise ApplicationHandlerStop
     if uid in ADMINS:
         st = STATE.get(uid) or {}
         tid = st.get("tid") if st.get("action") == "t_reply" else None
@@ -2799,7 +3006,9 @@ def report_text(start, end, title):
     db = load_db()
     lines = [x for x in ulog_lines() if start <= x.get("t", 0) < end]
     k = lambda kind: sum(1 for x in lines if x.get("k") == kind)
-    done = [o for o in db.get("orders", {}).values() if o.get("status") == "done" and not o.get("test") and start <= o.get("done_ts", 0) < end]
+    done_all = [o for o in db.get("orders", {}).values() if o.get("status") == "done" and not o.get("test") and start <= o.get("done_ts", 0) < end]
+    done = [o for o in done_all if o.get("item") != "topup"]
+    tops = sum(o["price"] for o in done_all if o.get("item") == "topup") / USDT_RATE
     tmt = sum(o["price"] for o in done)
     usdt = sum(o["price"] for o in done if o.get("via") == "usdt") / USDT_RATE
     pub = [s for s in db["subs"].values() if s.get("pub") and not is_exp(s)]
@@ -2809,6 +3018,8 @@ def report_text(start, end, title):
             f"🤝 Sayılan davet  <b>{k('credit')}</b>\n"
             f"🎁 Ücretsiz kod  <b>{k('free')}</b>  ·  🧪 Deneme  <b>{k('trial')}</b>\n"
             f"💰 Satış  <b>{len(done)}</b>  ·  <b>{tmt} TMT</b>  ·  💵 <b>{usdt:g} USDT</b>\n"
+            f"💳 Bakiye yükleme  <b>{tops:g} USDT</b>\n"
+            f"🏪 Pazar  ilan <b>{k('m_list')}</b> · başlatma <b>{k('m_start')}</b> · ödeme <b>{k('m_pay') + k('m_stop')}</b>\n"
             f"🆘 Açılan talep  <b>{k('t_open')}</b>  ·  📨 Hata bildirimi  <b>{k('err')}</b></blockquote>\n"
             f"<blockquote>👥 Toplam kullanıcı  <b>{len(db.get('users', {}))}</b>\n"
             f"🎟 Aktif kullanıcı kodu  <b>{len(pub)}</b>\n"
@@ -2846,13 +3057,609 @@ def user_view(tid):
          f"🎁 Ücretsiz kod  <b>{e.get('free_n', 0)}</b> · 🧪 Deneme  <b>{'kullandı' if e.get('trial_used') else 'yok'}</b>\n"
          f"🛒 Sipariş  <b>{len(orders)}</b> · tamamlanan <b>{sum(1 for o in orders if o['status'] == 'done')}</b>\n"
          + (f"🖥 Panel  <b>{left_txt(sa.get('expires'))}</b> · limit {sa.get('limit')}\n" if sa else "")
+         + f"💰 Bakiye  <b>{fmt_u(e.get('bal', 0))} USDT</b>" + (f" · 💼 Kazanç <b>{fmt_u(e['earn'])}</b>" if e.get("earn") else "") + "\n"
+         + (f"🏪 Pazar yasağı  {dur_txt(e['mban'] - time.time())}\n" if e.get("mban", 0) > time.time() else "")
          + ("🚫 <b>ENGELLİ</b>\n" if e.get("banned") else "")
          + "</blockquote>\n"
          + ("\n".join(f"🎟 {esc(short(name_of(s, k), 26))} · ⏳ {left_txt(s.get('expires'))}" for k, s in codes) or "<i>Aktif kodu yok.</i>"))
     kb = KB([[B("🎁 Kod Ver", f"ug:{tid}", "success"), B("⏳ Süre Ekle", f"ux:{tid}")],
+             [B("💰 Bakiye ±", f"ubal:{tid}")],
              [B("✅ Engeli Kaldır", f"ub:{tid}") if e.get("banned") else B("🚫 Engelle", f"ub:{tid}", "danger")],
              [B("🔎 Başka Ara", "usearch"), B("◀️ Admin", "admin")]])
     return t, kb
+
+# ───────── PAZAR: VPN satıcıları, dakika başı ödeme (bakiye + CryptoBot) ─────────
+UM = 1_000_000                   # 1 USDT = 1.000.000 mikro (kuruş hatası olmasın diye tam sayı)
+MKT_FEE = 100_000                # 0.1 USDT: satıcı ilan ücreti ve alıcı başlatma ücreti (bota kalır)
+TOPUP_MIN = 1                    # en az bakiye yükleme (USDT)
+WITHDRAW_MIN = 1 * UM            # en az kazanç çekme
+MIN_COUNTRIES, MAX_DEAD = 4, 3   # en az 4 gerçek ülke, en fazla 3 çalışmayan sunucu
+BAD_WINDOW = 30 * 60             # kural ihlali bu kadar sürerse ilan kaldırılır
+BAN_DEAD_H, BAN_LOWC_H = 3, 6    # yasak süreleri (saat)
+SETTLE_EVERY = 86400             # alıcı durdurmazsa satıcıya günde bir ödeme
+START_MINUTES = 60               # başlatmak için bakiye en az 60 dakikaya yetmeli
+OWN_LID = "own"                  # bizim ilanımız (her zaman en üstte)
+OWN_PRICE = 100                  # bizim fiyat: 0.0001 USDT/dk (≈ 4.3 USDT / 30 gün)
+TM_FRESH = 40 * 60               # telefon sonucu bundan eskiyse kurallar uygulanmaz
+MKT = {"lock": None}
+
+def fmt_u(m):
+    s = f"{m / UM:.6f}".rstrip("0").rstrip(".")
+    return s or "0"
+def tmt_u(m):
+    s = f"{m * USDT_RATE / UM:.4f}".rstrip("0").rstrip(".")
+    return s or "0"
+def dur_txt(sec, ru=False):
+    m = int(sec // 60); h, m = divmod(m, 60); d, h = divmod(h, 24)
+    parts = ([f"{d}{'д' if ru else 'g'}"] if d else []) + ([f"{h}{'ч' if ru else 's'}"] if h else []) + [f"{m}{'м' if ru else 'dk'}"]
+    return " ".join(parts)
+
+def calc_text(price, ru=False):
+    rows = [(1, "1 мин" if ru else "1 dk"), (60, "1 час" if ru else "1 saat"), (1440, "1 день" if ru else "1 gün"), (43200, "30 дней" if ru else "30 gün")]
+    return "\n".join(f"⏱ {lbl}  —  <b>{fmt_u(price * n)} USDT</b>  ·  {tmt_u(price * n)} TMT" for n, lbl in rows)
+
+def parse_usdt(txt):
+    try:
+        v = float(txt.replace(",", ".").replace("$", "").replace("usdt", "").strip())
+        return int(round(v * UM)) if v > 0 else None
+    except Exception: return None
+
+def proto_of(c):
+    p = c.split("://", 1)[0].lower()
+    return {"hy2": "hysteria", "hysteria2": "hysteria", "ss": "ss"}.get(p, p)
+
+def used_fids(db):
+    """Şu an bir koda/oturuma bağlı Drive dosyaları (boş dosya seçerken bunlar alınmaz)."""
+    u = {v.get("file_id") for v in db["subs"].values() if v.get("file_id")} | {db.get("tm_fid")} | source_fids(db)
+    u |= {s.get("fid") for s in db.get("msess", {}).values() if s.get("status") == "on"}
+    return u
+
+def ensure_own(db):
+    m = db.setdefault("market", {})
+    if OWN_LID not in m:
+        m[OWN_LID] = {"own": True, "status": "live", "price": OWN_PRICE, "title": "⭐ VIP 🇹🇲 Servers", "owner": None, "created": time.time()}
+    return m
+
+def market_codes(db):
+    """Telefonun test edeceği satıcı kodları (yayında + incelemede)."""
+    out, seen = [], set()
+    for lid, L in db.get("market", {}).items():
+        if L.get("own") or L.get("status") not in ("pending", "live"): continue
+        for c in L.get("codes", []):
+            k = code_key(c)
+            if k not in seen: seen.add(k); out.append(c)
+    return out
+
+def listing_codes(db, L):
+    return list(db.get("template", [])) if L.get("own") else list(L.get("codes", []))
+
+def listing_stats(db, L, res=None, exits=None, ts=0):
+    """Telefon sonuçlarından: kaç sunucu çalışıyor, kaç gerçek ülke (bayrağa bakılmaz, ölçülen çıkış ülkesi)."""
+    codes = listing_codes(db, L)
+    keys = [code_key(c) for c in codes]
+    res = res or {}; exits = exits or {}
+    tested = [k for k in keys if isinstance(res.get(k), (int, float))]
+    work = [k for k in tested if res[k] > 0]
+    dead = [k for k in tested if res[k] < 0]
+    cache = load_exits()
+    cc = sorted({(exits.get(k) or cache.get(k) or "").lower() for k in work} - {"", "?"})
+    protos = {}
+    for c in codes: protos[proto_of(c)] = protos.get(proto_of(c), 0) + 1
+    return {"total": len(codes), "tested": len(tested), "work": len(work), "dead": len(dead), "cc": cc, "protos": protos, "ts": ts}
+
+def tcp_open_count(codes):
+    tcp = [c for c in codes if c.split("://", 1)[0].lower() not in UDP_PROTOS]
+    hps = sorted({hp for hp in (code_hostport(c) for c in tcp) if hp[0] and hp[1]})[:200]
+    if not hps: return 0, 0
+    with ThreadPoolExecutor(32) as ex: ok = sum(ex.map(lambda hp: tcp_alive(*hp), hps))
+    return ok, len(hps)
+
+def alloc_file(svc, db):
+    """Kod havuzundan boş, herkese açık bir Drive dosyası (db_lock içinde çağrılır). Dönüş: (fid, free_files'tan mı)."""
+    used = used_fids(db)
+    for f in db["free_files"]:
+        if f not in used: return f, True
+    fid = None
+    try: fid = next((f for f in pool_files(svc) if f not in used), None)
+    except Exception as e: vlog(f"⚠️ Kod havuzu okunamadı: {str(e)[:120]}")
+    if not fid: fid = find_free_file(svc, used)
+    return fid, False
+
+def mkt_start(uid, lid):
+    """Alıcı bir ilanı başlatır: 0.1$ ücret, Drive dosyası, kodlar. Dönüş: ((sid, fid), "") ya da (None, sebep)."""
+    svc = new_service()
+    if not svc: return None, "drive"
+    with db_lock():
+        db = load_db(); ensure_own(db)
+        L = db["market"].get(lid); e = db["users"].setdefault(str(uid), {})
+        if not L or L.get("status") != "live": return None, "gone"
+        if any(s["buyer"] == uid and s["lid"] == lid and s["status"] == "on" for s in db.get("msess", {}).values()): return None, "already"
+        need = MKT_FEE + L["price"] * START_MINUTES
+        if e.get("bal", 0) < need: return None, f"nobal:{need}"
+        codes = listing_codes(db, L)
+        if not codes: return None, "nocodes"
+        fid, from_free = alloc_file(svc, db)
+        if not fid or not make_public(svc, fid): return None, "noslot"
+        if not sync_file(svc, fid, L["title"], "🏪 " + ("Пазар" if lang_of(db, uid) == "ru" else "Pazar"), codes, exp=False): return None, "drive"
+        if from_free: db["free_files"].remove(fid)
+        e["bal"] = e.get("bal", 0) - MKT_FEE
+        db["mkt_fees"] = db.get("mkt_fees", 0) + MKT_FEE
+        sid = uuid.uuid4().hex[:8]
+        now = time.time()
+        db.setdefault("msess", {})[sid] = {"buyer": uid, "lid": lid, "fid": fid, "start": now, "last": now, "settle_ts": now,
+                                          "acc": 0, "total": 0, "status": "on", "hash": hashlib.md5("\n".join(codes).encode()).hexdigest()}
+        save_db(db)
+        return (sid, fid), ""
+
+def charge(db, sid, now):
+    """Tek oturum: geçen tam dakikaların ücretini alıcı bakiyesinden keser. Bakiye yetmediyse False."""
+    s = db["msess"][sid]
+    L = db.get("market", {}).get(s["lid"]); e = db["users"].setdefault(str(s["buyer"]), {})
+    if not L: return False
+    price = int(L["price"]); mins = int((now - s["last"]) // 60)
+    if mins <= 0: return True
+    can = min(mins, e.get("bal", 0) // price) if price else mins
+    cost = can * price
+    e["bal"] = e.get("bal", 0) - cost; s["acc"] += cost; s["total"] += cost; s["last"] += can * 60
+    return can == mins
+
+def bill(db, now):
+    """Her dakika: aktif oturumların ücreti alıcı bakiyesinden düşer. Dönüş: (durdurulacaklar, uyarılacaklar, günlük ödemeler)."""
+    stop, warn, settle = [], [], []
+    for sid, s in db.get("msess", {}).items():
+        if s.get("status") != "on": continue
+        L = db.get("market", {}).get(s["lid"])
+        if not L or L.get("status") != "live": stop.append((sid, "gone")); continue
+        if not charge(db, sid, now): stop.append((sid, "nobal")); continue
+        price = int(L["price"]); bal = db["users"][str(s["buyer"])].get("bal", 0)
+        left_min = (bal // price) if price else 10**9
+        if left_min < 60 and not s.get("warned"): s["warned"] = True; warn.append((sid, s["buyer"], left_min))
+        if left_min >= 60: s.pop("warned", None)
+        if now - s.get("settle_ts", s["start"]) >= SETTLE_EVERY and s["acc"] > 0:
+            settle.append((sid, s["acc"], int(now - s["settle_ts"]))); s["acc"] = 0; s["settle_ts"] = now
+    return stop, warn, settle
+
+def mkt_stop(sid, reason):
+    """Oturumu kapatır: son dakikalar kesilir, dosya boşaltılır. Dönüş: ödeme bilgisi ya da None."""
+    with db_lock():
+        db = load_db(); s = db.get("msess", {}).get(sid)
+        if not s or s.get("status") != "on": return None
+        now = time.time()
+        charge(db, sid, now)   # son tam dakikalar (bakiye yettiği kadar)
+        s["status"] = "off"; s["end"] = now; s["reason"] = reason
+        payout, s["acc"] = s["acc"], 0
+        if s["fid"] not in db["free_files"]: db["free_files"].append(s["fid"])
+        L = db.get("market", {}).get(s["lid"], {})
+        if L.get("own"): db["mkt_own_rev"] = db.get("mkt_own_rev", 0) + payout
+        info = {"sid": sid, "buyer": s["buyer"], "lid": s["lid"], "owner": L.get("owner"), "own": bool(L.get("own")), "title": L.get("title", "?"),
+                "payout": payout, "span": int(now - s.get("settle_ts", s["start"])), "dur": int(now - s["start"]), "total": s["total"], "reason": reason}
+        save_db(db)
+    try: sync_file(new_service(), s["fid"], "Empty", "Abonelik durduruldu", [], exp=False)
+    except Exception: pass
+    return info
+
+def pay_seller(seller, amount, spend_id, comment):
+    """Satıcının kazancını CryptoBot'a gönderir; olmazsa bot içi çekilebilir bakiyeye ekler. Dönüş: 'sent' | 'bal'."""
+    if amount <= 0: return "none"
+    if crypto_token():
+        try:
+            crypto_call("transfer", user_id=seller, asset="USDT", amount=fmt_u(amount), spend_id=spend_id[:64], comment=comment[:500])
+            return "sent"
+        except Exception as e:
+            RUN["transfer_err"] = str(e)[:150]
+    mutate(lambda d: d["users"].setdefault(str(seller), {}).__setitem__("earn", d["users"][str(seller)].get("earn", 0) + amount))
+    return "bal"
+
+# ── metinler ──
+T["tr"].update({
+  "b_mkt": "🏪 Pazar (dakika başı)", "b_sell": "➕ Kodumu Sat", "b_myl": "📦 İlanlarım", "b_rules": "📜 Kurallar",
+  "b_start": "▶️ Başlat · 0.1$ + {p}/dk", "b_shot": "📷 Ekran Görüntüsü", "b_back_mkt": "◀️ Pazar", "b_stop": "⏹ Durdur",
+  "b_top": "➕ Bakiye Yükle", "b_wd": "💸 Kazancı Çek", "b_other": "✏️ Başka tutar",
+  "mkt": "🏪 <b>Pazar</b>\n<blockquote>Satıcıların VPN kodları. Dakika başı ödersin, istediğin an durdurursun.\nKodlar bot tarafından her dakika kontrol edilir.\n💰 Bakiyen  <b>{bal} USDT</b></blockquote>\n<i>Bir ilan seç</i> 👇",
+  "mkt_empty": "<i>Şu an başka ilan yok.</i>",
+  "ml": "🏪 <b>{title}</b>\n<blockquote>{own}👤 Satıcı  {seller}\n📡 Sunucu  <b>{total}</b>  ·  {protos}\n🇹🇲 TM testi  <b>{work}/{tested}</b> çalışıyor  ·  ❌ {dead}\n🌍 Gerçek ülke  <b>{ncc}</b>  {flags}\n🔌 Açık port (VPS)  {tcp}\n🕒 Son kontrol  {chk}\n✅ Son sağlam  {good}</blockquote>\n💲 <b>Fiyat</b>\n<blockquote>{calc}</blockquote>{desc}\n<i>Başlatınca 0.1$ başlatma ücreti alınır, sonra her dakika bakiyenden düşer.</i>",
+  "ml_own": "⭐ Resmi ilan\n",
+  "m_need": "⚠️ <b>Bakiye yetersiz</b>\n<blockquote>Başlatmak için en az <b>{need} USDT</b> gerekli (0.1$ + 60 dakika).\n💰 Bakiyen  <b>{bal} USDT</b></blockquote>",
+  "m_started": "✅ <b>Kod başladı!</b>\n<blockquote>🏪 {title}\n💲 {p} USDT/dk  ·  💰 Bakiye {bal} USDT</blockquote>\n🔗 <b>Abonelik linki</b> <i>(dokun → kopyala)</i>\n<code>{link}</code>\n<i>Durdurmak için: 🎟 Kodlarım → ⏹ Durdur</i>",
+  "m_already": "ℹ️ Bu ilan sende zaten açık. 🎟 Kodlarım'dan bakabilirsin.",
+  "m_gone": "⚠️ Bu ilan artık yayında değil.",
+  "m_stopped": "⏹ <b>Kod durduruldu</b>\n<blockquote>🏪 {title}\n⏱ Kullanım  {dur}\n💸 Toplam  {usdt} USDT</blockquote>{why}",
+  "why_nobal": "<i>Bakiyen bittiği için durduruldu.</i>", "why_gone": "<i>İlan pazardan kaldırıldığı için durduruldu.</i>", "why_user": "",
+  "m_low": "⚠️ Bakiyen azalıyor: pazardaki kodun yaklaşık <b>{m} dk</b> daha çalışır.",
+  "mine_m": "<blockquote>🏪 <b>{title}</b>  ·  ⏱ {dur}  ·  💸 {usdt} USDT\n<code>{link}</code></blockquote>",
+  "sell_banned": "⛔ Pazar yasağın var: <b>{left}</b> sonra tekrar ilan verebilirsin.",
+  "sell_1": "➕ <b>Kodumu Sat · 1/5</b>\n<blockquote>Abonelik linkini gönder. <b>Limitsiz</b> olmalı (trafik ve cihaz).\nKurallar: en az 4 farklı gerçek ülke (bot ölçer, bayraklara bakılmaz), en fazla 3 çalışmayan sunucu.</blockquote>",
+  "sell_badlink": "⚠️ Bu linkten kod alınamadı. Linki kontrol edip tekrar gönder.",
+  "sell_dup": "⚠️ Bu link zaten pazarda.",
+  "sell_2": "➕ <b>Kodumu Sat · 2/5</b>\n<blockquote>✅ Linkte <b>{n}</b> sunucu bulundu ({protos}).\nİlanın adını yaz (ör. <code>Fast VPN 🇩🇪</code>).</blockquote>",
+  "sell_3": "➕ <b>Kodumu Sat · 3/5</b>\n<blockquote>Kodunun <b>ekran görüntüsünü</b> gönder (fotoğraf olarak).</blockquote>",
+  "sell_need_photo": "⚠️ Ekran görüntüsünü fotoğraf olarak gönder.",
+  "sell_4": "➕ <b>Kodumu Sat · 4/5</b>\n<blockquote>Açıklama yaz (hız, özellik, iletişim...). Atlamak için <code>-</code> gönder.</blockquote>",
+  "sell_5": "➕ <b>Kodumu Sat · 5/5</b>\n<blockquote>Dakika başı fiyatını <b>USDT</b> olarak yaz.\nÖrnek: <code>0.0001</code> = günde 0.144 USDT · 30 günde 4.32 USDT</blockquote>",
+  "sell_badprice": "⚠️ Geçerli bir fiyat yaz (0.00001 ile 0.01 USDT arası), ör. <code>0.0001</code>.",
+  "sell_confirm": "🧾 <b>İlan özeti</b>\n<blockquote>🏷 {title}\n📡 {n} sunucu · {protos}\n📝 {desc}</blockquote>\n💲 <b>Fiyat hesaplayıcı</b>\n<blockquote>{calc}</blockquote>\n<i>Onaylarsan bakiyenden <b>0.1$</b> ilan ücreti alınır (iade edilmez). Bot kodlarını test eder; kurallara uyuyorsa birkaç dakika içinde yayına alınır.</i>",
+  "b_sellok": "✅ Limitsiz olduğunu onaylıyorum · 0.1$ öde", "b_sellp": "✏️ Fiyatı değiştir",
+  "sell_nobal": "⚠️ İlan ücreti için bakiyen yetersiz (0.1$). Önce bakiye yükle.",
+  "sell_sent": "⏳ <b>İlanın incelemede</b>\n<blockquote>Bot kodlarını Türkmenistan'dan test ediyor. Uygunsa birkaç dakika içinde yayına alınır, sana haber gelir.</blockquote>",
+  "m_approved": "✅ <b>İlanın yayında!</b>\n<blockquote>🏪 {title}\n🌍 {ncc} gerçek ülke · ✅ {work}/{tested} sunucu çalışıyor</blockquote>",
+  "m_rejected": "❌ <b>İlanın kabul edilmedi</b>\n<blockquote>🏪 {title}\n{why}</blockquote>",
+  "m_removed": "⛔ <b>İlanın pazardan kaldırıldı</b>\n<blockquote>🏪 {title}\n{why}</blockquote>\n⏳ {h} saat pazar yasağın var.",
+  "r_dead": "3'ten fazla sunucu 30 dakika boyunca çalışmadı.", "r_lowc": "Gerçek ülke sayısı 30 dakika boyunca 4'ün altında kaldı.",
+  "r_link": "Abonelik linki 30 dakika boyunca açılmadı.", "rj_lowc": "En az 4 farklı gerçek ülke yok (ölçülen: {n}).",
+  "rj_dead": "{n} sunucu çalışmıyor (en fazla 3 olabilir).", "rj_link": "Abonelik linki açılmadı.",
+  "m_paid_sent": "🎉 <b>Tebrikler!</b>\n<blockquote>🏪 {title}\n⏱ Alıcı kodunu {dur} kullandı\n💰 Ödemen  <b>{usdt} USDT</b> (≈{tmt} TMT)</blockquote>\n💸 CryptoBot hesabına gönderildi.",
+  "m_paid_bal": "🎉 <b>Tebrikler!</b>\n<blockquote>🏪 {title}\n⏱ Alıcı kodunu {dur} kullandı\n💰 Ödemen  <b>{usdt} USDT</b> (≈{tmt} TMT)</blockquote>\n💼 Bot bakiyene eklendi. Profil → 💸 Kazancı Çek.",
+  "myl": "📦 <b>İlanlarım</b>", "myl_none": "📦 <b>İlanlarım</b>\n<blockquote>İlanın yok.</blockquote>",
+  "myl_item": "<blockquote>{st} <b>{title}</b>\n💲 {p} USDT/dk · 👥 {n} alıcı · 💰 {earned} USDT kazanç</blockquote>",
+  "st_pending": "⏳", "st_live": "🟢", "st_removed": "⛔", "st_rejected": "❌",
+  "rules": "📜 <b>Pazar kuralları</b>\n<blockquote><b>Satıcı</b>\n• Her ilan 0.1$ (iade edilmez).\n• Abonelik limitsiz olmalı; ekran görüntüsü zorunlu.\n• En az 4 farklı gerçek ülke (bot ölçer, bayraklara bakılmaz).\n• 3'ten fazla sunucu 30 dk çalışmazsa ilan kaldırılır + 3 saat yasak.\n• Gerçek ülke 30 dk 4'ün altına düşerse ilan kaldırılır + 6 saat yasak.\n• Link 30 dk açılmazsa ilan kaldırılır + 3 saat yasak.\n• Kazanç: alıcı durdurunca, uzun kullanımda her 24 saatte bir gönderilir.</blockquote>\n<blockquote><b>Alıcı</b>\n• Her başlatma 0.1$ (iade edilmez).\n• Dakika başı ücret bakiyenden düşer (kullansan da kullanmasan da).\n• İstediğin an durdurursun; bakiye bitince kod durur.\n• Bakiye en az 1$ yüklenir; yüklenen bakiye geri çekilmez.</blockquote>",
+  "bal_line": "\n\n💰 <b>Bakiye</b>  {bal} USDT (≈{tmt} TMT)" , "earn_line": "\n💼 <b>Çekilebilir kazanç</b>  {earn} USDT",
+  "top": "➕ <b>Bakiye Yükle</b>\n<blockquote>CryptoBot ile USDT. En az 1 USDT.\n💰 Bakiyen  <b>{bal} USDT</b></blockquote>",
+  "top_ask": "✏️ Kaç USDT yüklemek istiyorsun? (en az 1)", "top_bad": "⚠️ En az 1 USDT, sayı yaz (ör. 2.5).",
+  "top_order": "🧾 <b>Bakiye yükleme · #{oid}</b>\n<blockquote>💵 <b>{usdt} USDT</b></blockquote>\n«💵 USDT ile öde»ye bas.",
+  "it_top": "Bakiye yükleme · {usdt} USDT",
+  "top_ok": "✅ <b>Bakiyene {usdt} USDT eklendi.</b>\n<blockquote>💰 Bakiye  <b>{bal} USDT</b></blockquote>",
+  "wd_min": "ℹ️ Çekmek için en az 1 USDT kazanç gerekli. Şu an: {earn} USDT.",
+  "wd_ok": "✅ <b>{usdt} USDT</b> CryptoBot hesabına gönderildi.",
+  "wd_err": "⚠️ Gönderilemedi: {err}\n<i>@CryptoBot'u en az bir kez açmış olman gerekir. Sorun sürerse 🆘 Destek'e yaz.</i>",
+})
+T["ru"].update({
+  "b_mkt": "🏪 Биржа (поминутно)", "b_sell": "➕ Продать код", "b_myl": "📦 Мои объявления", "b_rules": "📜 Правила",
+  "b_start": "▶️ Запустить · 0.1$ + {p}/мин", "b_shot": "📷 Скриншот", "b_back_mkt": "◀️ Биржа", "b_stop": "⏹ Стоп",
+  "b_top": "➕ Пополнить", "b_wd": "💸 Вывести доход", "b_other": "✏️ Другая сумма",
+  "mkt": "🏪 <b>Биржа</b>\n<blockquote>VPN-коды продавцов. Оплата поминутно, остановить можно в любой момент.\nБот проверяет коды каждую минуту.\n💰 Баланс  <b>{bal} USDT</b></blockquote>\n<i>Выберите объявление</i> 👇",
+  "mkt_empty": "<i>Других объявлений пока нет.</i>",
+  "ml": "🏪 <b>{title}</b>\n<blockquote>{own}👤 Продавец  {seller}\n📡 Серверов  <b>{total}</b>  ·  {protos}\n🇹🇲 Тест в ТМ  <b>{work}/{tested}</b> работают  ·  ❌ {dead}\n🌍 Реальных стран  <b>{ncc}</b>  {flags}\n🔌 Открытые порты (VPS)  {tcp}\n🕒 Проверка  {chk}\n✅ Последний раз исправен  {good}</blockquote>\n💲 <b>Цена</b>\n<blockquote>{calc}</blockquote>{desc}\n<i>При запуске списывается 0.1$, затем оплата каждую минуту с баланса.</i>",
+  "ml_own": "⭐ Официальное объявление\n",
+  "m_need": "⚠️ <b>Недостаточно средств</b>\n<blockquote>Для запуска нужно минимум <b>{need} USDT</b> (0.1$ + 60 минут).\n💰 Баланс  <b>{bal} USDT</b></blockquote>",
+  "m_started": "✅ <b>Код запущен!</b>\n<blockquote>🏪 {title}\n💲 {p} USDT/мин  ·  💰 Баланс {bal} USDT</blockquote>\n🔗 <b>Ссылка подписки</b> <i>(нажмите → скопировать)</i>\n<code>{link}</code>\n<i>Остановить: 🎟 Мои коды → ⏹ Стоп</i>",
+  "m_already": "ℹ️ Это объявление у вас уже запущено. Смотрите в 🎟 Мои коды.",
+  "m_gone": "⚠️ Это объявление больше не активно.",
+  "m_stopped": "⏹ <b>Код остановлен</b>\n<blockquote>🏪 {title}\n⏱ Использование  {dur}\n💸 Итого  {usdt} USDT</blockquote>{why}",
+  "why_nobal": "<i>Остановлен: закончился баланс.</i>", "why_gone": "<i>Остановлен: объявление снято с биржи.</i>", "why_user": "",
+  "m_low": "⚠️ Баланс заканчивается: код с биржи проработает ещё примерно <b>{m} мин</b>.",
+  "mine_m": "<blockquote>🏪 <b>{title}</b>  ·  ⏱ {dur}  ·  💸 {usdt} USDT\n<code>{link}</code></blockquote>",
+  "sell_banned": "⛔ У вас бан на бирже: можно снова через <b>{left}</b>.",
+  "sell_1": "➕ <b>Продать код · 1/5</b>\n<blockquote>Отправьте ссылку подписки. Она должна быть <b>безлимитной</b> (трафик и устройства).\nПравила: минимум 4 разные реальные страны (бот проверяет сам, флаги не учитываются), не больше 3 неработающих серверов.</blockquote>",
+  "sell_badlink": "⚠️ По этой ссылке коды не получены. Проверьте и отправьте снова.",
+  "sell_dup": "⚠️ Эта ссылка уже на бирже.",
+  "sell_2": "➕ <b>Продать код · 2/5</b>\n<blockquote>✅ Найдено серверов: <b>{n}</b> ({protos}).\nНапишите название объявления (напр. <code>Fast VPN 🇩🇪</code>).</blockquote>",
+  "sell_3": "➕ <b>Продать код · 3/5</b>\n<blockquote>Отправьте <b>скриншот</b> вашего кода (как фото).</blockquote>",
+  "sell_need_photo": "⚠️ Отправьте скриншот как фото.",
+  "sell_4": "➕ <b>Продать код · 4/5</b>\n<blockquote>Напишите описание (скорость, особенности, контакты...). Пропустить — <code>-</code>.</blockquote>",
+  "sell_5": "➕ <b>Продать код · 5/5</b>\n<blockquote>Укажите цену за минуту в <b>USDT</b>.\nПример: <code>0.0001</code> = 0.144 USDT в день · 4.32 USDT за 30 дней</blockquote>",
+  "sell_badprice": "⚠️ Укажите цену от 0.00001 до 0.01 USDT, напр. <code>0.0001</code>.",
+  "sell_confirm": "🧾 <b>Итог объявления</b>\n<blockquote>🏷 {title}\n📡 {n} серверов · {protos}\n📝 {desc}</blockquote>\n💲 <b>Калькулятор цены</b>\n<blockquote>{calc}</blockquote>\n<i>При подтверждении с баланса спишется <b>0.1$</b> (не возвращается). Бот проверит коды; если всё по правилам — объявление появится через несколько минут.</i>",
+  "b_sellok": "✅ Подтверждаю безлимит · оплатить 0.1$", "b_sellp": "✏️ Изменить цену",
+  "sell_nobal": "⚠️ Недостаточно баланса для оплаты объявления (0.1$). Сначала пополните.",
+  "sell_sent": "⏳ <b>Объявление на проверке</b>\n<blockquote>Бот проверяет коды из Туркменистана. Если всё в порядке — опубликует через несколько минут и сообщит вам.</blockquote>",
+  "m_approved": "✅ <b>Объявление опубликовано!</b>\n<blockquote>🏪 {title}\n🌍 {ncc} реальных стран · ✅ {work}/{tested} серверов работают</blockquote>",
+  "m_rejected": "❌ <b>Объявление не принято</b>\n<blockquote>🏪 {title}\n{why}</blockquote>",
+  "m_removed": "⛔ <b>Объявление снято с биржи</b>\n<blockquote>🏪 {title}\n{why}</blockquote>\n⏳ Бан на бирже: {h} ч.",
+  "r_dead": "Больше 3 серверов не работали 30 минут.", "r_lowc": "Реальных стран меньше 4 в течение 30 минут.",
+  "r_link": "Ссылка подписки не открывалась 30 минут.", "rj_lowc": "Нет минимум 4 разных реальных стран (измерено: {n}).",
+  "rj_dead": "Не работают {n} серверов (максимум 3).", "rj_link": "Ссылка подписки не открылась.",
+  "m_paid_sent": "🎉 <b>Поздравляем!</b>\n<blockquote>🏪 {title}\n⏱ Покупатель использовал ваш код {dur}\n💰 Выплата  <b>{usdt} USDT</b> (≈{tmt} TMT)</blockquote>\n💸 Отправлено на ваш счёт в CryptoBot.",
+  "m_paid_bal": "🎉 <b>Поздравляем!</b>\n<blockquote>🏪 {title}\n⏱ Покупатель использовал ваш код {dur}\n💰 Выплата  <b>{usdt} USDT</b> (≈{tmt} TMT)</blockquote>\n💼 Зачислено на ваш баланс в боте. Профиль → 💸 Вывести доход.",
+  "myl": "📦 <b>Мои объявления</b>", "myl_none": "📦 <b>Мои объявления</b>\n<blockquote>Объявлений нет.</blockquote>",
+  "myl_item": "<blockquote>{st} <b>{title}</b>\n💲 {p} USDT/мин · 👥 {n} покуп. · 💰 {earned} USDT доход</blockquote>",
+  "rules": "📜 <b>Правила биржи</b>\n<blockquote><b>Продавец</b>\n• Каждое объявление 0.1$ (не возвращается).\n• Подписка должна быть безлимитной; скриншот обязателен.\n• Минимум 4 разные реальные страны (бот измеряет сам, флаги не учитываются).\n• Если больше 3 серверов не работают 30 мин — снятие + бан 3 ч.\n• Если реальных стран меньше 4 в течение 30 мин — снятие + бан 6 ч.\n• Если ссылка не открывается 30 мин — снятие + бан 3 ч.\n• Выплата: после остановки покупателем, при долгом использовании — каждые 24 ч.</blockquote>\n<blockquote><b>Покупатель</b>\n• Каждый запуск 0.1$ (не возвращается).\n• Поминутная оплата списывается с баланса (пользуетесь или нет).\n• Остановить можно в любой момент; при нулевом балансе код останавливается.\n• Пополнение от 1$; пополненный баланс не выводится.</blockquote>",
+  "bal_line": "\n\n💰 <b>Баланс</b>  {bal} USDT (≈{tmt} TMT)", "earn_line": "\n💼 <b>Доход к выводу</b>  {earn} USDT",
+  "top": "➕ <b>Пополнение</b>\n<blockquote>USDT через CryptoBot. Минимум 1 USDT.\n💰 Баланс  <b>{bal} USDT</b></blockquote>",
+  "top_ask": "✏️ Сколько USDT пополнить? (минимум 1)", "top_bad": "⚠️ Минимум 1 USDT, напишите число (напр. 2.5).",
+  "top_order": "🧾 <b>Пополнение · #{oid}</b>\n<blockquote>💵 <b>{usdt} USDT</b></blockquote>\nНажмите «💵 Оплатить USDT».",
+  "it_top": "Пополнение · {usdt} USDT",
+  "top_ok": "✅ <b>На баланс зачислено {usdt} USDT.</b>\n<blockquote>💰 Баланс  <b>{bal} USDT</b></blockquote>",
+  "wd_min": "ℹ️ Для вывода нужно минимум 1 USDT дохода. Сейчас: {earn} USDT.",
+  "wd_ok": "✅ <b>{usdt} USDT</b> отправлено на ваш счёт в CryptoBot.",
+  "wd_err": "⚠️ Не удалось отправить: {err}\n<i>Нужно хотя бы раз открыть @CryptoBot. Если не получается — напишите в 🆘 Поддержку.</i>",
+})
+for _k in ("st_pending", "st_live", "st_removed", "st_rejected"): T["ru"][_k] = T["tr"][_k]
+
+def protos_txt(p):
+    names = {"hysteria": "Hysteria", "vless": "VLESS", "vmess": "VMess", "trojan": "Trojan", "ss": "SS", "tuic": "TUIC"}
+    return " · ".join(f"{names.get(k, k)} {v}" for k, v in sorted(p.items(), key=lambda x: -x[1])) or "—"
+
+def mkt_list_view(db, uid, lang):
+    ensure_own(db)
+    e = db["users"].get(str(uid), {})
+    lst = [(lid, L) for lid, L in db["market"].items() if L.get("status") == "live"]
+    own = [x for x in lst if x[1].get("own")]
+    rest = sorted([x for x in lst if not x[1].get("own")], key=lambda x: (-(x[1].get("st") or {}).get("work", 0), x[1]["price"]))
+    rows = []
+    for lid, L in own + rest:
+        st = L.get("st") or {}
+        rows.append([B(f"{'⭐ ' if L.get('own') else ''}{short(L['title'], 18)} · 🌍{len(st.get('cc', []))} · {fmt_u(L['price'])}$", f"u_ml:{lid}", "success" if L.get("own") else None)])
+    rows += [[B(tr(lang, "b_sell"), "u_sell", "primary"), B(tr(lang, "b_myl"), "u_myl")],
+             [B(tr(lang, "b_top"), "u_top")],
+             [B(tr(lang, "b_rules"), "u_mrules"), B(tr(lang, "b_menu"), "u_menu")]]
+    t = tr(lang, "mkt", bal=fmt_u(e.get("bal", 0))) + ("" if rest else "\n" + tr(lang, "mkt_empty"))
+    return t, KB(rows)
+
+def mkt_detail_view(db, uid, lang, lid):
+    L = db.get("market", {}).get(lid)
+    if not L or L.get("status") != "live": return tr(lang, "m_gone"), KB([[B(tr(lang, "b_back_mkt"), "u_mkt")]])
+    st = L.get("st") or listing_stats(db, L)
+    ru = lang == "ru"
+    seller = "VIP 🇹🇲" if L.get("own") else esc(db["users"].get(str(L.get("owner")), {}).get("name") or "?")
+    tcp = L.get("tcp")
+    t = tr(lang, "ml", title=esc(L["title"]), own=tr(lang, "ml_own") if L.get("own") else "", seller=seller, total=st.get("total", 0),
+           protos=protos_txt(st.get("protos", {})), work=st.get("work", 0), tested=st.get("tested", 0), dead=st.get("dead", 0),
+           ncc=len(st.get("cc", [])), flags="".join(flag_of(c) for c in st.get("cc", [])[:12]),
+           tcp=f"{tcp[0]}/{tcp[1]}" if tcp else "—", chk=ago(L.get("last_fetch") or st.get("ts")), good=ago(L.get("last_good") or L.get("live_ts")),
+           calc=calc_text(L["price"], ru), desc=("\n📝 " + esc(L["desc"])) if L.get("desc") else "")
+    rows = [[B(tr(lang, "b_start", p=fmt_u(L["price"])), f"u_ms:{lid}", "success")]]
+    if L.get("photo"): rows.append([B(tr(lang, "b_shot"), f"u_mph:{lid}")])
+    rows.append([B(tr(lang, "b_back_mkt"), "u_mkt")])
+    return t, KB(rows)
+
+# ── her dakika: linkler, telefon sonuçları, kurallar ──
+def _read_channel(db):
+    if not db.get("tm_fid"): return {}
+    try:
+        raw = new_service().files().get_media(fileId=db["tm_fid"]).execute(num_retries=2).decode("utf-8", "ignore").strip()
+        return json.loads(raw) if raw.startswith("{") else {}
+    except Exception as e:
+        log.warning("market channel: %s", e); return {}
+
+def market_scan():
+    """Bloklayan iş. Satıcı linklerini çeker, telefon sonuçlarıyla istatistik çıkarır, kuralları uygular. Dönüş: olaylar."""
+    now = time.time()
+    db = load_db()
+    lids = [lid for lid, L in db.get("market", {}).items() if not L.get("own") and L.get("status") in ("pending", "live")]
+    fetched = {}
+    if lids:
+        def one(lid):
+            try: return lid, fetch_codes(db["market"][lid]["link"]), None
+            except Exception as e: return lid, [], str(e)[:80]
+        with ThreadPoolExecutor(min(8, len(lids))) as ex:
+            for lid, codes, err in ex.map(one, lids): fetched[lid] = (codes, err)
+    tcp = {lid: tcp_open_count(c) for lid, (c, err) in fetched.items() if c}
+    ch = _read_channel(db)
+    res, exits, ts = ch.get("results") or {}, ch.get("exits") or {}, int(ch.get("ts") or 0)
+    fresh = bool(ts) and now - ts < TM_FRESH
+    events = []
+    with db_lock():
+        db = load_db(); ensure_own(db)
+        m = db["market"]
+        for lid, (codes, err) in fetched.items():
+            L = m.get(lid)
+            if not L or L.get("status") not in ("pending", "live"): continue
+            L["last_fetch"] = now
+            if err or not codes: L["link_ok"] = False; L.setdefault("linkfail_since", now)
+            else:
+                L["link_ok"] = True; L.pop("linkfail_since", None); L["tcp"] = tcp.get(lid)
+                if [code_key(c) for c in codes] != [code_key(c) for c in L.get("codes", [])]: L["codes"] = codes; L["codes_ts"] = now
+            st = listing_stats(db, L, res, exits, ts); L["st"] = st
+            if L["status"] == "pending":
+                if not L.get("link_ok") and now - L["created"] > 600:
+                    L["status"] = "rejected"; events.append(("rejected", lid, "rj_link", 0))
+                elif fresh and ts > L.get("pushed_ts", 1e18) and st["tested"] > 0:
+                    if len(st["cc"]) >= MIN_COUNTRIES and st["dead"] <= MAX_DEAD:
+                        L["status"] = "live"; L["live_ts"] = L["last_good"] = now; events.append(("approved", lid, "", 0))
+                    else:
+                        L["status"] = "rejected"
+                        events.append(("rejected", lid, "rj_lowc" if len(st["cc"]) < MIN_COUNTRIES else "rj_dead", len(st["cc"]) if len(st["cc"]) < MIN_COUNTRIES else st["dead"]))
+                elif now - L["created"] > 3600 and not L.get("slow_warned"):
+                    L["slow_warned"] = True; events.append(("slow", lid, "", 0))
+            elif L["status"] == "live":
+                if fresh and st["tested"]:
+                    if st["dead"] > MAX_DEAD: L.setdefault("dead_since", now)
+                    else: L.pop("dead_since", None)
+                    if len(st["cc"]) < MIN_COUNTRIES: L.setdefault("lowc_since", now)
+                    else: L.pop("lowc_since", None)
+                why = None
+                if L.get("linkfail_since") and now - L["linkfail_since"] >= BAD_WINDOW: why, h = "r_link", BAN_DEAD_H
+                elif L.get("dead_since") and now - L["dead_since"] >= BAD_WINDOW: why, h = "r_dead", BAN_DEAD_H
+                elif L.get("lowc_since") and now - L["lowc_since"] >= BAD_WINDOW: why, h = "r_lowc", BAN_LOWC_H
+                if why:
+                    L["status"] = "removed"; L["removed_ts"] = now; L["removed_why"] = why
+                    e = db["users"].setdefault(str(L["owner"]), {}); e["mban"] = max(e.get("mban", 0), now + h * 3600)
+                    events.append(("removed", lid, why, h))
+                elif L.get("link_ok") and not L.get("dead_since") and not L.get("lowc_since"): L["last_good"] = now
+        own = m[OWN_LID]; own["st"] = listing_stats(db, own, res, exits, ts); own["last_fetch"] = now
+        if not own.get("dead_since") and (own["st"]["work"] or not fresh): own["last_good"] = now
+        save_db(db)
+    return events
+
+def market_push_phone():
+    """Satıcı kodlarını telefon test kanalına ekler (bizim kodlar korunur)."""
+    db = load_db()
+    mk = market_codes(db); mkeys = [code_key(c) for c in mk]
+    if not db.get("tm_fid"): return
+    ch = _read_channel(db)
+    old = set(db.get("mkt_pushed", []))
+    ours = [c for c in ch.get("codes", []) if code_key(c) not in old]
+    seen = {code_key(c) for c in ours}
+    new = ours + [c for c in mk if code_key(c) not in seen]
+    now = time.time()
+    if sorted(code_key(c) for c in new) != sorted(code_key(c) for c in ch.get("codes", [])):
+        ch["codes"], ch["codes_ts"] = new, int(now)
+        _tm_write(new_service(), db["tm_fid"], ch)
+    def f(d):
+        d["mkt_pushed"] = sorted(set(mkeys))
+        for L in d.get("market", {}).values():
+            if not L.get("own") and L.get("status") in ("pending", "live") and L.get("pushed_ts", 0) < L.get("codes_ts", L.get("created", 0)):
+                L["pushed_ts"] = now
+    mutate(f)
+
+def market_bill():
+    with db_lock():
+        db = load_db(); now = time.time()
+        stop, warn, settle = bill(db, now)
+        info = []
+        for sid, amount, span in settle:
+            s = db["msess"][sid]; L = db["market"].get(s["lid"], {})
+            if L.get("own"): db["mkt_own_rev"] = db.get("mkt_own_rev", 0) + amount
+            else: info.append({"sid": sid, "owner": L.get("owner"), "title": L.get("title"), "payout": amount, "span": span})
+        save_db(db)
+    return stop, warn, info
+
+def market_refresh_files():
+    """İlanın kodları değiştiyse açık oturumların Drive dosyalarını günceller."""
+    db = load_db(); jobs = []
+    for sid, s in db.get("msess", {}).items():
+        if s.get("status") != "on": continue
+        L = db.get("market", {}).get(s["lid"])
+        if not L: continue
+        codes = listing_codes(db, L)
+        h = hashlib.md5("\n".join(codes).encode()).hexdigest()
+        if codes and h != s.get("hash"): jobs.append((sid, s["fid"], L["title"], codes, h))
+    if not jobs: return
+    svc = new_service()
+    for sid, fid, title, codes, h in jobs:
+        if sync_file(svc, fid, title, "🏪", codes, exp=False):
+            mutate(lambda d: d["msess"][sid].__setitem__("hash", h))
+
+async def notify_payout(app, info):
+    """Satıcıya ödeme + tebrik mesajı."""
+    if info.get("own") or not info.get("owner") or info["payout"] <= 0: return
+    r = await asyncio.to_thread(pay_seller, info["owner"], info["payout"], f"{info['sid']}-{int(time.time())}", f"VPN pazarı: {info['title']}")
+    lg = lang_of(load_db(), info["owner"])
+    try:
+        await app.bot.send_message(info["owner"], tr(lg, "m_paid_sent" if r == "sent" else "m_paid_bal", title=esc(info["title"]), dur=dur_txt(info["span"], lg == "ru"),
+                                                     usdt=fmt_u(info["payout"]), tmt=tmt_u(info["payout"])), parse_mode="HTML")
+    except Exception: pass
+    if r == "bal" and RUN.get("transfer_err") and RUN.get("transfer_warned") != RUN["transfer_err"]:
+        RUN["transfer_warned"] = RUN["transfer_err"]
+        await notify_founders(app, f"⚠️ <b>CryptoBot transferi yapılamadı</b>\n<blockquote>{esc(RUN['transfer_err'])}</blockquote>\n<i>Satıcının kazancı bot bakiyesine eklendi. CryptoBot → Crypto Pay → uygulaman → transferlere izin ver.</i>")
+
+async def stop_session(app, sid, reason):
+    info = await asyncio.to_thread(mkt_stop, sid, reason)
+    if not info: return None
+    lg = lang_of(load_db(), info["buyer"])
+    why = tr(lg, {"nobal": "why_nobal", "gone": "why_gone"}.get(reason, "why_user"))
+    try:
+        await app.bot.send_message(info["buyer"], tr(lg, "m_stopped", title=esc(info["title"]), dur=dur_txt(info["dur"], lg == "ru"), usdt=fmt_u(info["total"]), why=("\n" + why) if why else ""),
+                                   parse_mode="HTML", reply_markup=KB([[B(tr(lg, "b_top"), "u_top")]]) if reason == "nobal" else None)
+    except Exception: pass
+    ulog("m_stop", f"⏹ Pazar kodu durdu ({reason}): {info['title']} · alıcı {info['buyer']} · {dur_txt(info['dur'])} · {fmt_u(info['total'])} USDT")
+    await notify_payout(app, info)
+    return info
+
+async def market_tick(app):
+    if MKT["lock"] is None: MKT["lock"] = asyncio.Lock()
+    async with MKT["lock"]:
+        events = await asyncio.to_thread(market_scan)
+        async with CHECK_LOCK:   # test kanalına botun kontrolüyle aynı anda yazılmasın
+            await asyncio.to_thread(market_push_phone)
+        db = load_db()
+        for kind, lid, why, n in events:
+            L = db["market"].get(lid, {}); ow = L.get("owner"); lg = lang_of(db, ow) if ow else "tr"; st = L.get("st") or {}
+            try:
+                if kind == "approved":
+                    ulog("m_live", f"🟢 İlan yayında: {L.get('title')} · satıcı {ow}")
+                    await app.bot.send_message(ow, tr(lg, "m_approved", title=esc(L["title"]), ncc=len(st.get("cc", [])), work=st.get("work", 0), tested=st.get("tested", 0)), parse_mode="HTML")
+                elif kind == "rejected":
+                    ulog("m_rej", f"❌ İlan reddedildi: {L.get('title')} · satıcı {ow} · {why}")
+                    await app.bot.send_message(ow, tr(lg, "m_rejected", title=esc(L["title"]), why=tr(lg, why, n=n)), parse_mode="HTML")
+                elif kind == "removed":
+                    ulog("m_rm", f"⛔ İlan kaldırıldı + {n} saat yasak: {L.get('title')} · satıcı {ow} · {why}")
+                    await app.bot.send_message(ow, tr(lg, "m_removed", title=esc(L["title"]), why=tr(lg, why), h=n), parse_mode="HTML")
+                elif kind == "slow":
+                    await notify_founders(app, f"⏳ <b>Pazar ilanı 1 saattir incelemede</b>\n<blockquote>{esc(L.get('title'))}\nTelefon testi sonuç göndermiyor olabilir. Admin → 🏪 Pazar'dan elle onaylayabilirsin.</blockquote>")
+            except Exception: pass
+        stop, warn, settle = await asyncio.to_thread(market_bill)
+        for sid, reason in stop: await stop_session(app, sid, reason)
+        for sid, buyer, left_min in warn:
+            lg = lang_of(load_db(), buyer)
+            try: await app.bot.send_message(buyer, tr(lg, "m_low", m=left_min), parse_mode="HTML", reply_markup=KB([[B(tr(lg, "b_top"), "u_top", "success")]]))
+            except Exception: pass
+        for info in settle:
+            ulog("m_pay", f"💸 Günlük satıcı ödemesi: {info['title']} · {fmt_u(info['payout'])} USDT")
+            await notify_payout(app, info)
+        await asyncio.to_thread(market_refresh_files)
+
+async def market_loop(app):
+    while True:
+        await asyncio.sleep(60)
+        try: await market_tick(app)
+        except Exception: log.exception("market tick")
+
+# ── yükleme / ilan girişi (mesajla gelenler) ──
+def topup_order(uid, user, lang, usdt):
+    usdt = round(float(usdt), 2)
+    oid = uuid.uuid4().hex[:6].upper()
+    o = {"uid": uid, "item": "topup", "usdt": usdt, "n": 0, "price": usdt * USDT_RATE, "ts": time.time(), "status": "new", "who": who(user)}
+    mutate(lambda d: d.setdefault("orders", {}).__setitem__(oid, o))
+    ulog("order", f"🧾 Bakiye yükleme açtı: {who(user)} · #{oid} · {usdt} USDT")
+    rows = ([[B(tr(lang, "b_usdt", usdt=usdt_of(o["price"])), f"u_usdt:{oid}", "success")]] if crypto_token() else []) + [[B(tr(lang, "b_cancel"), f"u_cancel:{oid}", "danger")]]
+    return tr(lang, "top_order", oid=oid, usdt=usdt_of(o["price"])) + ("" if crypto_token() else "\n" + tr(lang, "pay_off")), KB(rows)
+
+async def market_input(c, u, st):
+    """Satıcı ilan adımları ve özel yükleme tutarı (yazı ya da fotoğraf)."""
+    m, user = u.message, u.effective_user
+    uid = user.id; lang = lang_of(load_db(), uid); txt = (m.text or "").strip()
+    cancel = KB([[B(tr(lang, "b_cancel"), "u_mkt")]])
+    async def say(t, kb=None): await m.reply_text(t, parse_mode="HTML", reply_markup=kb or cancel, disable_web_page_preview=True)
+    if st["action"] == "u_topamt":
+        try: v = float(txt.replace(",", ".").replace("$", "").strip())
+        except Exception: v = 0
+        if v < TOPUP_MIN: await say(tr(lang, "top_bad"), KB([[B(tr(lang, "b_cancel"), "u_top")]])); return
+        STATE.pop(uid, None)
+        await say(*topup_order(uid, user, lang, v)); return
+    step = st.get("step")
+    if step == "link":
+        link = next((w for w in txt.split() if w.startswith("http")), None)
+        if not link: await say(tr(lang, "sell_badlink")); return
+        try: codes = await asyncio.to_thread(fetch_codes, link)
+        except Exception: codes = []
+        if not codes: await say(tr(lang, "sell_badlink")); return
+        if any(L.get("link") == link and L.get("status") in ("pending", "live") for L in load_db().get("market", {}).values()):
+            STATE.pop(uid, None); await say(tr(lang, "sell_dup"), KB([[B(tr(lang, "b_back_mkt"), "u_mkt")]])); return
+        protos = {}
+        for c_ in codes: protos[proto_of(c_)] = protos.get(proto_of(c_), 0) + 1
+        st.update({"step": "name", "link": link, "codes": codes, "protos": protos})
+        await say(tr(lang, "sell_2", n=len(codes), protos=protos_txt(protos)))
+    elif step == "name":
+        if not txt: return
+        st.update({"step": "photo", "title": txt[:40]})
+        await say(tr(lang, "sell_3"))
+    elif step == "photo":
+        if not m.photo: await say(tr(lang, "sell_need_photo")); return
+        st.update({"step": "desc", "photo": m.photo[-1].file_id})
+        await say(tr(lang, "sell_4"))
+    elif step == "desc":
+        st.update({"step": "price", "desc": "" if txt == "-" else txt[:300]})
+        await say(tr(lang, "sell_5"))
+    elif step == "price":
+        p = parse_usdt(txt)
+        if not p or not (10 <= p <= 10_000): await say(tr(lang, "sell_badprice")); return
+        st.update({"step": "confirm", "price": p})
+        await say(tr(lang, "sell_confirm", title=esc(st["title"]), n=len(st["codes"]), protos=protos_txt(st["protos"]), desc=esc(st.get("desc") or "—"), calc=calc_text(p, lang == "ru")),
+                  KB([[B(tr(lang, "b_sellok"), "u_sellok", "success")], [B(tr(lang, "b_sellp"), "u_sellp")], [B(tr(lang, "b_cancel"), "u_mkt", "danger")]]))
+
+# ── kurucu ekranları ──
+def mkt_admin_view():
+    db = load_db(); ensure_own(db)
+    m = db["market"]; own = m[OWN_LID]
+    act = [s for s in db.get("msess", {}).values() if s.get("status") == "on"]
+    rows = [[B(f"💲 Bizim fiyat: {fmt_u(own['price'])}/dk", "mk_price", "primary")]]
+    for lid, L in sorted(m.items(), key=lambda x: x[1].get("created", 0), reverse=True):
+        if L.get("own") or L.get("status") not in ("pending", "live"): continue
+        rows.append([B(f"{T['tr']['st_' + L['status']]} {short(L['title'], 20)} · {fmt_u(L['price'])}$", f"mk_l:{lid}")])
+    rows.append([B("◀️ Admin", "admin")])
+    t = ("🏪 <b>Pazar</b>\n<blockquote>"
+         f"🟢 Yayında  <b>{sum(1 for L in m.values() if L.get('status') == 'live' and not L.get('own'))}</b>  ·  ⏳ İncelemede  <b>{sum(1 for L in m.values() if L.get('status') == 'pending')}</b>\n"
+         f"▶️ Açık oturum  <b>{len(act)}</b>\n"
+         f"💰 Ücret geliri (0.1$'lar)  <b>{fmt_u(db.get('mkt_fees', 0))} USDT</b>\n"
+         f"⭐ Bizim ilan kullanım geliri  <b>{fmt_u(db.get('mkt_own_rev', 0))} USDT</b>\n"
+         f"⭐ Bizim fiyat  <b>{fmt_u(own['price'])} USDT/dk</b>\n{calc_text(own['price'])}</blockquote>")
+    return t, KB(rows)
+
+def mkt_admin_detail(lid):
+    db = load_db(); L = db.get("market", {}).get(lid)
+    if not L: return "⚠️ İlan bulunamadı.", back("mk_admin")
+    st = L.get("st") or {}
+    ow = db["users"].get(str(L.get("owner")), {})
+    t = (f"🏪 <b>{esc(L['title'])}</b>  {T['tr']['st_' + L['status']]}\n<blockquote>"
+         f"👤 {esc(ow.get('name') or '?')} <code>{L.get('owner')}</code>\n"
+         f"📡 {st.get('total', len(L.get('codes', [])))} sunucu · {protos_txt(st.get('protos', {}))}\n"
+         f"🇹🇲 {st.get('work', 0)}/{st.get('tested', 0)} çalışıyor · ❌ {st.get('dead', 0)} · 🌍 {len(st.get('cc', []))} ülke\n"
+         f"💲 {fmt_u(L['price'])} USDT/dk\n📝 {esc(L.get('desc') or '—')}</blockquote>\n🔗 <code>{esc(L.get('link', ''))}</code>")
+    rows = ([[B("✅ Elle Onayla", f"mk_ok:{lid}", "success")]] if L["status"] == "pending" else []) + \
+           [[B("🗑 Kaldır", f"mk_rm:{lid}", "danger"), B("📷 Görüntü", f"mk_ph:{lid}")], [B("👤 Satıcı", f"uv:{L.get('owner')}"), B("◀️ Pazar", "mk_admin")]]
+    return t, KB(rows)
 
 # ───────── KENDİNİ GÜNCELLEME (dosyayı bota atınca; sadece kurucular) ─────────
 SELF = os.path.abspath(__file__)
