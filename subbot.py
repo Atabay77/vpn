@@ -1,4 +1,4 @@
-import os, sys, io, re, json, html, uuid, base64, asyncio, zipfile, shutil, fcntl, logging, datetime, time, socket, random, hashlib, warnings
+import os, sys, io, re, json, html, uuid, base64, asyncio, zipfile, shutil, fcntl, logging, datetime, time, socket, random, hashlib, warnings, unicodedata
 import urllib.request, urllib.parse
 from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor
@@ -32,7 +32,7 @@ SUB_DAYS = 7
 DEFAULT_DB = {"subs": {}, "template": [], "sources": [], "free_files": [], "sub_admins": {}, "seen_ips": []}
 STATE = {}
 LIVE = {}
-RUN = {"last_check": 0.0, "last_msg": "", "next": 0.0}
+RUN = {"last_check": 0.0, "last_msg": "", "next": 0.0, "src": {}}
 
 
 # ───────── ENV & ADMIN ─────────
@@ -374,20 +374,42 @@ def geo_lookup(hosts):
         except Exception: pass
     return {h: cache[h][0] for h in hosts if h in cache}
 
+def orig_name(link):
+    if link.lower().startswith("vmess://"):
+        try: return str(json.loads(b64d(link[8:].split("#", 1)[0])).get("ps", ""))
+        except Exception: return ""
+    return urllib.parse.unquote(link.split("#", 1)[1]) if "#" in link else ""
+
+RU_WORDS = ("russia", "россия", "moscow", "москва", "saint petersburg", "санкт")
+
+def exit_country(link, geo):
+    """Çıkış ülkesi. Sunucular aracı (relay) olduğu için giriş IP'si yanıltır;
+    asıl çıkış ülkesi kaynağın orijinal ismindeki bayraktadır. Bayrak yoksa ülke adı, o da yoksa IP konumu."""
+    nm = unicodedata.normalize("NFKC", orig_name(link))
+    m = re.search(r"[\U0001F1E6-\U0001F1FF]{2}", nm)
+    if m: return "".join(chr(ord(ch) - 0x1F1E6 + 97) for ch in m.group(0)), "isim"
+    low = nm.lower()
+    if any(w in low for w in RU_WORDS): return "ru", "isim"
+    return geo.get(code_host(link)), "ip"
+
 def rename_all(codes, geo):
-    """Rus IP -> her zaman 🇷🇺. Diğerleri -> rastgele bayrak (mümkün olduğunca tekrar etmeden). İsim her seferinde rastgele."""
+    """Çıkışı Rusya olan -> her zaman 🇷🇺. Diğerleri -> rastgele bayrak (Rusya hariç, mümkün olduğunca tekrar etmeden).
+    İsim her seferinde rastgele. Dönüş: (yeni kodlar, log satırları)."""
     others = [c for c in COUNTRIES if c != "ru"]
-    bag, used, out = [], set(), []
+    bag, used, out, notes = [], set(), [], []
     for link in codes:
-        if geo.get(code_host(link)) == "ru": cc = "ru"
+        ex, how = exit_country(link, geo)
+        if ex == "ru": cc = "ru"
         else:
             if not bag: bag = random.sample(others, len(others))
             cc = bag.pop()
         flag, cname, names = COUNTRIES[cc]
         free = [n for n in names if (cc, n) not in used] or names
         n = random.choice(free); used.add((cc, n))
-        out.append(set_name(link, f"{flag} {cname} | {n}"))
-    return out
+        new_name = f"{flag} {cname} | {n}"
+        out.append(set_name(link, new_name))
+        notes.append(f"   {new_name}  ← çıkış {(ex or '??').upper()}" + (" (IP'den)" if how == "ip" else ""))
+    return out, notes
 
 
 # ───────── KONTROL DÖNGÜSÜ ─────────
@@ -398,7 +420,7 @@ def check_cycle(force=False):
     RUN["last_check"] = time.time()
     if not sources:
         RUN["last_msg"] = "⚠️ Abonelik eklenmemiş"
-        vlog("⚠️ Abonelik eklenmemiş. Admin → Abonelikler'den ekle.")
+        vlog("⚠️ Abonelik eklenmemiş. 🔗 Abonelikler'den ekle.")
         return {"error": "Abonelik eklenmemiş."} if force else None
     vlog(f"🔍 Kontrol ediliyor ({len(sources)} abonelik)...")
 
@@ -414,6 +436,7 @@ def check_cycle(force=False):
     for i, got, err, dt in res:
         if err: vlog(f"❌ Abonelik {i}: başarısız ({err})")
         else: vlog(f"✅ Abonelik {i}: {len(got)} kod ({dt:.1f} sn)")
+        RUN["src"][sources[i - 1]] = f"❌ {err}" if err else f"✅ {len(got)} kod"
         for c in got:
             k = code_key(c)
             if k not in keys: keys.add(k); codes.append(c)
@@ -431,10 +454,10 @@ def check_cycle(force=False):
         return None
 
     vlog(("⚡ Elle güncelleme" if force else f"🚨 {len(new)} yeni IP bulundu") + f" → {len(codes)} kod yenileniyor...")
-    geo = geo_lookup(list(ips))
-    miss = [h for h in ips if h not in geo]
-    if miss: vlog(f"⚠️ Ülkesi bulunamadı: {', '.join(miss[:5])}")
-    renamed = rename_all(codes, geo)
+    need_ip = [code_host(c) for c in codes if exit_country(c, {})[0] is None]   # isminde ülke olmayanlar
+    geo = geo_lookup([h for h in need_ip if h]) if need_ip else {}
+    renamed, notes = rename_all(codes, geo)
+    for n in notes: vlog(n)
     targets = [(s["file_id"], name_of(s, k), s.get("announce", "")) for k, s in db["subs"].items() if s.get("file_id") and not is_exp(s)]
     ok, bad = push_all(targets, renamed)
     vlog(f"{'✅' if not bad else '⚠️'} Drive: {ok}/{len(targets)} güncellendi" + (f" · başarısız: {', '.join(bad[:5])}" if bad else ""))
@@ -462,18 +485,10 @@ async def run_check(app, force=False):
             FAIL["t"] = time.time()
             await notify_founders(app, f"❌ <b>Kontrol başarısız</b>\n{esc(r['error'])}")
     elif r:
-        head = (f"🔄 <b>Kodlar güncellendi</b>{' (elle)' if r['force'] else ''}\n{LINE}\n"
-                f"🆕 Yeni IP: {r['new']} · 📡 Kod: {len(r['codes'])}\n"
-                f"💾 Drive: {r['ok']}/{r['total']} {'✅' if not r['bad'] else '⚠️'}")
-        if r["bad"]: head += "\n❌ Başarısız: " + esc(", ".join(r["bad"][:10]))
-        await notify_founders(app, head)
-        chunk = ""
-        for c in r["codes"]:
-            item = f"<code>{esc(c)}</code>\n\n"
-            if len(chunk) + len(item) > 3800:
-                await notify_founders(app, chunk); chunk = ""
-            chunk += item
-        if chunk: await notify_founders(app, chunk)
+        # kodlar sohbete yazılmaz; ayrıntı 📜 Loglar'da
+        head = (f"🔄 Kodlar güncellendi{' (elle)' if r['force'] else ''}: {len(r['codes'])} kod · "
+                f"Drive {r['ok']}/{r['total']} {'✅' if not r['bad'] else '⚠️'}")
+        await notify_founders(app, head, KB([[B("📜 Loglar", callback_data="logs")]]))
     return r
 
 async def monitor(app):
@@ -576,12 +591,12 @@ def main_kb(uid):
     rows = [[B("✨ Kod Oluştur", callback_data="create_key"), B("👥 Kodlarım", callback_data="my_keys")]]
     if uid in ADMINS:
         on = not os.path.exists(STOP_FLAG)
+        rows.append([B("🔗 Abonelikler", callback_data="sources"), B("📜 Loglar", callback_data="logs")])
         rows.append([B("🛑 Durdur" if on else "▶️ Başlat", callback_data="toggle_sys"), B("⚙️ Admin", callback_data="admin")])
     return KB(rows)
 
 def admin_kb():
     return KB([
-        [B("🔗 Abonelikler", callback_data="sources"), B("📜 Canlı Log", callback_data="logs")],
         [B("⚡ Şimdi Güncelle", callback_data="upd_now"), B("📦 Yedek", callback_data="get_zip")],
         [B("👮 Alt Adminler", callback_data="sa_menu")],
         [B("◀️ Menü", callback_data="menu")]])
@@ -590,11 +605,11 @@ def log_text():
     on = not os.path.exists(STOP_FLAG)
     nxt = int(RUN["next"] - time.time()) if on and RUN["next"] else None
     st = "🟢 Çalışıyor" + (f" · sonraki kontrol {max(0, nxt)} sn" if nxt is not None else "") if on else "🔴 Durduruldu"
-    lines = [short(l, 60) for l in tail(VIP_LOG, 22)]
+    lines = [short(l, 70) for l in tail(VIP_LOG, 35)]
     body = ("<pre>" + esc("\n".join(lines)) + "</pre>") if lines else "Log yok."
-    return f"📜 <b>Canlı Log</b>\n{LINE}\n{st}\n{esc(RUN['last_msg'])}\n{body}\n<i>Güncellendi: {datetime.datetime.now():%H:%M:%S}</i>"
+    return f"📜 <b>Loglar</b>\n{LINE}\n{st}\n{esc(RUN['last_msg'])}\n{body}\n<i>Güncellendi: {datetime.datetime.now():%H:%M:%S}</i>"
 
-LOG_KB = KB([[B("🔄 Yenile", callback_data="logs"), B("◀️ Admin", callback_data="admin")]])
+LOG_KB = KB([[B("🔄 Yenile", callback_data="logs"), B("◀️ Menü", callback_data="menu")]])
 
 async def live_log(q, uid):
     """Log mesajını 5 dakika boyunca her 5 saniyede bir yeniler."""
@@ -615,9 +630,9 @@ async def safe_edit(q, text, kb=None):
     except BadRequest as e:
         if "not modified" not in str(e).lower(): log.warning("edit: %s", e)
 
-async def notify_founders(app, text):
+async def notify_founders(app, text, kb=None):
     for fid in ADMINS:
-        try: await app.bot.send_message(chat_id=fid, text=text, parse_mode="HTML", disable_web_page_preview=True)
+        try: await app.bot.send_message(chat_id=fid, text=text, parse_mode="HTML", disable_web_page_preview=True, reply_markup=kb)
         except Exception as e: log.warning("notify: %s", e)
 
 
@@ -682,6 +697,20 @@ async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
             audit(uid, f"src_add n={n}")
             await u.message.reply_text(f"✅ {n} abonelik eklendi. Sonraki kontrolde kullanılacak.", reply_markup=back("sources"))
 
+        elif act == "src_edit":
+            new = next((x for x in txt.split() if x.startswith("http")), None)
+            if not new:
+                await u.message.reply_text("⚠️ Geçerli link yok.", reply_markup=back("sources"))
+                return
+            def f(db):
+                for i, s0 in enumerate(db["sources"]):
+                    if hashlib.md5(s0.encode()).hexdigest()[:8] == st["h"]:
+                        db["sources"][i] = new; return True
+                return False
+            ok = mutate(f)
+            if ok: audit(uid, "src_edit")
+            await u.message.reply_text("✅ Abonelik değiştirildi. Sonraki kontrolde kullanılacak." if ok else "⚠️ Abonelik bulunamadı.", reply_markup=back("sources"))
+
         elif act in ("rename", "announce"):
             kid = st["kid"]
             val = txt[:60] if act == "rename" else ("" if txt == "-" else txt)
@@ -702,6 +731,7 @@ async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
         await u.message.reply_text(f"❌ Hata: {esc(str(e)[:300])}", parse_mode="HTML", reply_markup=back("menu", "◀️ Menü"))
 
 FOUNDER_ONLY = {"toggle_sys", "admin", "sources", "s_add", "logs", "upd_now", "get_zip", "sa_menu", "sa_add"}
+def src_find(db, h): return next((s for s in db["sources"] if hashlib.md5(s.encode()).hexdigest()[:8] == h), None)
 
 async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
     q = u.callback_query
@@ -709,7 +739,7 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
     if not is_admin(uid):
         await q.answer("⛔ Erişim yok", show_alert=True); return
     a = q.data
-    if uid not in ADMINS and (a in FOUNDER_ONLY or a.startswith(("sd:", "sa_del:", "kx:", "kxs:"))):
+    if uid not in ADMINS and (a in FOUNDER_ONLY or a.startswith(("sv:", "se:", "sd:", "sa_del:", "kx:", "kxs:"))):
         await q.answer("⛔ Sadece kurucu", show_alert=True); return
     if a not in ("toggle_sys", "upd_now"):
         await q.answer()
@@ -747,7 +777,7 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         if CHECK_LOCK.locked():
             await q.answer("⏳ Şu an kontrol yapılıyor, biraz bekle.", show_alert=True); return
         await q.answer()
-        await safe_edit(q, "⚡ <b>Güncelleniyor...</b> Bitince bildirim gelecek.\n\nCanlı izlemek için 📜 Canlı Log.", KB([[B("📜 Canlı Log", callback_data="logs"), B("◀️ Admin", callback_data="admin")]]))
+        await safe_edit(q, "⚡ <b>Güncelleniyor...</b> Bitince bildirim gelecek.\n\nCanlı izlemek için 📜 Loglar.", KB([[B("📜 Loglar", callback_data="logs"), B("◀️ Menü", callback_data="menu")]]))
         audit(uid, "upd_now")
         asyncio.create_task(run_check(c.application, force=True))
 
@@ -848,10 +878,22 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
 
     elif a == "sources":
         src = db["sources"]
-        rows = [[B(f"🗑 {i}. {src_label(s)}", callback_data="sd:" + hashlib.md5(s.encode()).hexdigest()[:8])] for i, s in enumerate(src, 1)]
+        rows = [[B(f"{i}. {src_label(s)} · {RUN['src'].get(s, '…')[:14]}", callback_data="sv:" + hashlib.md5(s.encode()).hexdigest()[:8])] for i, s in enumerate(src, 1)]
         rows.append([B("➕ Abonelik Ekle", callback_data="s_add")])
-        rows.append([B("◀️ Admin", callback_data="admin")])
-        await safe_edit(q, f"🔗 <b>Abonelikler ({len(src)})</b>\n{LINE}\nKodlar bu aboneliklerden çekilir. Silmek için 🗑'a dokun.", KB(rows))
+        rows.append([B("◀️ Menü", callback_data="menu")])
+        await safe_edit(q, f"🔗 <b>Abonelikler ({len(src)})</b>\n{LINE}\nKodlar bu aboneliklerden çekilir.\nDeğiştirmek veya silmek için birine dokun.", KB(rows))
+
+    elif a.startswith("sv:"):
+        h = a.split(":", 1)[1]
+        s = src_find(db, h)
+        if not s:
+            await safe_edit(q, "⚠️ Bulunamadı.", back("sources")); return
+        await safe_edit(q, f"🔗 <b>Abonelik</b>\n{LINE}\n<code>{esc(s)}</code>\n\nSon kontrol: {esc(RUN['src'].get(s, 'henüz yok'))}",
+                        KB([[B("✏️ Değiştir", callback_data=f"se:{h}"), B("🗑 Sil", callback_data=f"sd:{h}")], [B("◀️ Geri", callback_data="sources")]]))
+
+    elif a.startswith("se:"):
+        STATE[uid] = {"action": "src_edit", "h": a.split(":", 1)[1]}
+        await safe_edit(q, f"✏️ <b>Abonelik değiştir</b>\n{LINE}\nYeni abonelik linkini gönder.", back("sources", "İptal"))
 
     elif a.startswith("sd:"):
         h = a.split(":", 1)[1]
