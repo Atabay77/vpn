@@ -35,7 +35,7 @@ CHECK_EVERY = 120      # saniye: iki kontrol arası bekleme
 NEW_IP_LIMIT = 5       # bundan FAZLA yeni IP görülürse kodlar yenilenir
 SUB_LIMIT = 10         # alt admin için varsayılan kod limiti (eklerken değiştirilebilir)
 SUB_DAYS = 7
-DEFAULT_DB = {"subs": {}, "template": [], "sources": [], "free_files": [], "sub_admins": {}, "seen_ips": []}
+DEFAULT_DB = {"subs": {}, "template": [], "sources": [], "free_files": [], "sub_admins": {}, "seen_ips": [], "users": {}, "orders": {}, "channels": []}
 AUTO_ANN = {0: "🌙 Спокойной ночи — мы на связи", 6: "☕ Доброе утро! Всё уже работает", 8: "Поддержка 24/7 — мы всегда готовы помочь."}   # saat (Aşkabat): duyuru
 try:
     from zoneinfo import ZoneInfo
@@ -242,23 +242,43 @@ def find_free_file(svc, used):
         if f["id"] not in used: return f["id"]
     return None
 
+POOL_FOLDER = "1rJmVKo7yLn4lPfBWnPaFUq_wn4xaMHQK"   # boş kod dosyaları havuzu (Drive klasörü, servis hesabı yazabilir)
+
+def pool_files(svc):
+    out, tok = [], None
+    while True:
+        r = svc.files().list(q=f"'{POOL_FOLDER}' in parents and trashed=false and mimeType='text/plain'",
+                             fields="nextPageToken,files(id)", pageSize=200, pageToken=tok).execute(num_retries=2)
+        out += [f["id"] for f in r.get("files", [])]
+        tok = r.get("nextPageToken")
+        if not tok: return out
+
+def make_public(svc, fid):
+    """Abonelik linki (API anahtarıyla) sadece herkese açık dosyada çalışır."""
+    try: svc.permissions().create(fileId=fid, body={"type": "anyone", "role": "reader"}).execute(num_retries=2)
+    except Exception as e: log.warning("make_public %s: %s", fid, e)
+
 def sa_limit(db, uid):
     try: return int(db.get("sub_admins", {}).get(str(uid), {}).get("limit", SUB_LIMIT))
     except Exception: return SUB_LIMIT
 
-def owned(db, uid): return sum(1 for v in db["subs"].values() if v.get("owner_id") == uid)
+def owned(db, uid): return sum(1 for v in db["subs"].values() if v.get("owner_id") == uid and not v.get("pub"))   # ücretsiz/satın alınan kodlar panel limitine sayılmaz
 
-def create_vip(name, owner=None, days=None):
+def create_vip(name, owner=None, days=None, check_limit=True, extra=None):
     svc = new_service()
     if not svc: return None, "drive-sa.json bulunamadı"
     with db_lock():
         db = load_db()
-        if owner is not None and owner not in ADMINS and owned(db, owner) >= sa_limit(db, owner):
+        if check_limit and owner is not None and owner not in ADMINS and owned(db, owner) >= sa_limit(db, owner):
             return None, f"Limit doldu ({sa_limit(db, owner)} kod). Yer açmak için birini sil."
         used = {v.get("file_id") for v in db["subs"].values() if v.get("file_id")} | {db.get("tm_fid")} | source_fids(db)
         fid, from_free = None, False
         for f in db["free_files"]:
             if f not in used: fid, from_free = f, True; break
+        if not fid:
+            try: fid = next((f for f in pool_files(svc) if f not in used), None)
+            except Exception as e: log.warning("pool: %s", e)
+            if fid: make_public(svc, fid)
         if not fid: fid = find_free_file(svc, used)
         if not fid: return None, "Boş Drive dosyası yok!"
         if not sync_file(svc, fid, name, db.get("g_announce", ""), db["template"], exp=False):
@@ -267,6 +287,7 @@ def create_vip(name, owner=None, days=None):
         kid = "vip_" + uuid.uuid4().hex[:8]
         db["subs"][kid] = {"name": name, "title": name, "file_id": fid, "announce": "", "owner_id": owner}
         if days: db["subs"][kid]["expires"] = time.time() + int(days) * 86400
+        if extra: db["subs"][kid].update(extra)
         save_db(db)
         return (kid, fid), ""
 
@@ -790,7 +811,7 @@ async def monitor(app):
 def make_backup():
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        for f in [DB_FILE, SA_FILE, ENV_FILE, VIP_LOG, AUDIT_LOG, GEO_FILE, "/root/sohbet.txt", os.path.abspath(__file__)]:
+        for f in [DB_FILE, SA_FILE, ENV_FILE, VIP_LOG, AUDIT_LOG, USERS_LOG, GEO_FILE, "/root/sohbet.txt", os.path.abspath(__file__)]:
             if os.path.exists(f): zf.write(f, os.path.basename(f))
     buf.seek(0)
     return buf
@@ -805,6 +826,7 @@ async def watchdog(app):
                 def f(db):
                     hit, warn, ended = [], [], []
                     for kid, s in db["subs"].items():
+                        if s.get("pub") and is_exp(s): continue   # kullanıcı kodu: aşağıda silinir
                         if is_exp(s) and not s.get("exp_done"):
                             s["exp_done"] = True
                             hit.append((s.get("file_id"), name_of(s, kid), s.get("owner_id")))
@@ -821,6 +843,13 @@ async def watchdog(app):
                     for fid, nm, _ in hit: sync_file(svc, fid, nm, "", [], exp=True)
                 return hit, warn, ended
             hit, warn, ended = await asyncio.to_thread(job)
+            gone = [(k, dict(s)) for k, s in load_db()["subs"].items() if s.get("pub") and is_exp(s)]
+            for kid, s in gone:
+                if await asyncio.to_thread(delete_vip, kid):
+                    ow = s.get("owner_id"); e = load_db().get("users", {}).get(str(ow), {})
+                    ulog("del", f"🗑 Kod silindi (süre doldu): {e.get('name', '?')} ({ow}) · {kid} · {'ücretsiz' if s['pub'] == 'free' else 'satın alınan'}")
+                    try: await app.bot.send_message(ow, tr(e.get("lang", "tr"), "expired", name=name_of(s, kid)))
+                    except Exception: pass
             for fid, nm, owner in hit:
                 audit(0, f"expired {nm}")
                 await notify_founders(app, f"⏳ Kodun süresi doldu, kapatıldı: <code>{esc(nm)}</code>")
@@ -901,6 +930,8 @@ async def post_init(app):
             sha = open(UPDATE_NOTE).read().strip(); os.remove(UPDATE_NOTE)
             await notify_founders(app, f"🟢 <b>Bot yeni sürümle açıldı</b> <code>{esc(sha)}</code>")
         except Exception: pass
+    try: BOT["un"] = (await app.bot.get_me()).username or ""
+    except Exception as e: log.warning("get_me: %s", e)
     global CHECK_LOCK, WAKE
     CHECK_LOCK, WAKE = asyncio.Lock(), asyncio.Event()
     app.bot_data["mon"] = asyncio.create_task(monitor(app))
@@ -932,10 +963,11 @@ def menu_text(uid):
             f"🔍 Son kontrol  <i>{ago(RUN['last_check'])}</i>\n"
             f"🔄 Son güncelleme  <i>{ago(db.get('last_update') if db else None)}</i>\n"
             f"📱 Telefon testi  <i>{esc(tm)}</i></blockquote>\n"
-            f"📡 <b>{n}</b> kod  ·  🔗 <b>{src}</b> abonelik  ·  👥 <b>{vip}</b> VIP")
+            f"📡 <b>{n}</b> kod  ·  🔗 <b>{src}</b> abonelik  ·  👥 <b>{vip}</b> VIP  ·  🙋 <b>{len(db.get('users', {})) if db else '?'}</b> kullanıcı")
 
 def main_kb(uid):
     rows = [[B("✨ Kod Oluştur", "create_key", "success"), B("👥 Kodlarım", "my_keys", "primary")]]
+    if uid not in ADMINS: rows.append([B("🛒 Market", "u_market"), B("👤 Profil", "u_prof")])
     if uid in ADMINS:
         on = not os.path.exists(STOP_FLAG)
         rows += [[B("🔗 Abonelikler", "sources"), B("📜 Loglar", "logs")],
@@ -948,6 +980,9 @@ def admin_kb():
     except Exception: on = True
     return KB([
         [B("⚡ Şimdi Güncelle", "upd_now", "primary"), B("📦 Yedek", "get_zip")],
+        [B("👥 Kullanıcı Logları", "ul_open", "primary"), B("📊 İstatistik", "stats")],
+        [B("📢 Kanallar", "chans"), B("💳 Ödeme Bilgisi", "pay_set")],
+        [B("📣 Herkese Mesaj", "bcast"), B("👁 Kullanıcı Menüsü", "u_menu")],
         [B(f"🕰 Oto. Duyuru: {'Açık' if on else 'Kapalı'}", "auto_ann", "success" if on else "danger")],
         [B("♻️ Önceki Sürüme Dön", "rollback")],
         [B("👮 Alt Adminler", "sa_menu")],
@@ -1108,10 +1143,14 @@ def bulk_apply(field, val):
 # ───────── HANDLERS ─────────
 async def start(u: Update, c: ContextTypes.DEFAULT_TYPE):
     uid = u.effective_user.id
-    if not is_admin(uid):
-        await u.message.reply_text(f"⛔ Erişim yok.\nID: {uid}")
-        return
+    if not is_admin(uid): return await pub_start(u, c)
     STATE.pop(uid, None)
+    if uid not in ADMINS:
+        await asyncio.to_thread(touch_user, u.effective_user)
+        miss = await missing_channels(c.bot, uid)
+        if miss:
+            t, kb = join_view(lang_of(load_db(), uid), miss)
+            await u.message.reply_text(t, parse_mode="HTML", reply_markup=kb); return
     if uid not in ADMINS:
         nm = u.effective_user.full_name or ""
         mutate(lambda d: d["sub_admins"].get(str(uid), {}).__setitem__("name", nm) if d["sub_admins"].get(str(uid), {}).get("name") != nm else None)
@@ -1122,7 +1161,8 @@ async def cmd_id(u: Update, c: ContextTypes.DEFAULT_TYPE):
 
 async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
     uid = u.effective_user.id
-    if not is_admin(uid) or uid not in STATE: return
+    if not is_admin(uid) or (uid not in ADMINS and STATE.get(uid, {}).get("action") == "u_panel"): return await pub_msg(u, c)
+    if uid not in STATE: return
     txt = (u.message.text or "").strip()
     st = STATE.pop(uid)
     act = st.get("action")
@@ -1196,6 +1236,24 @@ async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
                 f"<b>{n}</b> kodun hepsine uygulanacak ve Drive'a yazılacak.",
                 parse_mode="HTML", reply_markup=KB([[B("✅ Uygula", "bulk_yes", "success"), B("✖️ İptal", "menu", "danger")]]))
 
+        elif act == "ch_add":
+            fo = getattr(u.message, "forward_origin", None)
+            msg = await add_channel(c, txt, getattr(fo, "chat", None))
+            await u.message.reply_text(msg, parse_mode="HTML", reply_markup=back("chans"))
+
+        elif act == "pay_set":
+            v = "" if txt == "-" else txt[:500]
+            mutate(lambda d: d.__setitem__("pay_info", v))
+            audit(uid, "pay_info")
+            await u.message.reply_text("✅ Ödeme bilgisi kaydedildi." if v else "✅ Ödeme bilgisi silindi.", reply_markup=back("admin"))
+
+        elif act == "bcast":
+            if not txt: return
+            STATE[uid] = {"action": "bcast_ok", "text": txt[:3500]}
+            n = sum(1 for k in load_db().get("users", {}) if int(k) not in ADMINS)
+            await u.message.reply_text(f"📣 <b>Onay</b>\n<blockquote>{esc(short(txt, 600))}</blockquote>\n<b>{n}</b> kullanıcıya gönderilecek.", parse_mode="HTML",
+                                       reply_markup=KB([[B("✅ Gönder", "bcast_yes", "success"), B("✖️ İptal", "admin", "danger")]]))
+
         elif act in ("title", "bname", "announce"):
             kid = st["kid"]
             val = txt[:60] if act != "announce" else ("" if txt == "-" else txt)
@@ -1220,17 +1278,20 @@ async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
         log.exception("msg_handler")
         await u.message.reply_text(f"❌ Hata: {esc(str(e)[:300])}", parse_mode="HTML", reply_markup=back("menu", "◀️ Menü"))
 
-FOUNDER_ONLY = {"rollback", "rollback_yes", "auto_ann", "toggle_sys", "admin", "sources", "s_add", "logs", "upd_now", "get_zip", "sa_menu", "sa_add", "bulk_ann", "bulk_title", "bulk_yes"}
+FOUNDER_ONLY = {"ul_open", "stats", "chans", "ch_add", "pay_set", "bcast", "bcast_yes", "rollback", "rollback_yes", "auto_ann", "toggle_sys", "admin", "sources", "s_add", "logs", "upd_now", "get_zip", "sa_menu", "sa_add", "bulk_ann", "bulk_title", "bulk_yes"}
 OWNED = ("kv", "kt", "kn", "ka", "kd", "kdy")   # alt admin sadece kendi kodunda
 def src_find(db, h): return next((s for s in db["sources"] if hashlib.md5(s.encode()).hexdigest()[:8] == h), None)
 
 async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
     q = u.callback_query
     uid = q.from_user.id
-    if not is_admin(uid):
-        await q.answer("⛔ Erişim yok", show_alert=True); return
     a = q.data
-    if uid not in ADMINS and (a in FOUNDER_ONLY or a.startswith(("sv:", "se:", "sd:", "sa_del:", "sa_ext:", "sa_lim:", "kx:", "kxs:"))):
+    if a.startswith("u_") or not is_admin(uid): return await pub_cb(u, c)
+    if uid not in ADMINS:
+        miss = await missing_channels(c.bot, uid)
+        if miss:
+            await q.answer(); await safe_edit(q, *join_view(lang_of(load_db(), uid), miss)); return
+    if uid not in ADMINS and (a in FOUNDER_ONLY or a.startswith(("sv:", "se:", "sd:", "sa_del:", "sa_ext:", "sa_lim:", "kx:", "kxs:", "ul:", "chd:", "ord_ok:", "ord_no:"))):
         await q.answer("⛔ Sadece kurucu", show_alert=True); return
     if a not in ("toggle_sys", "upd_now"):
         await q.answer()
@@ -1248,6 +1309,50 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
     if a == "menu":
         STATE.pop(uid, None)
         await safe_edit(q, menu_text(uid), main_kb(uid))
+
+    elif a == "ul_open" or a.startswith("ul:"):
+        await safe_edit(q, *ulog_view(None if a == "ul_open" else int(a.split(":", 1)[1])))
+
+    elif a == "stats":
+        await safe_edit(q, await asyncio.to_thread(stats_text), KB([[B("🔄 Yenile", "stats", "primary"), B("◀️ Admin", "admin")]]))
+
+    elif a == "chans":
+        await safe_edit(q, *channels_view())
+
+    elif a == "ch_add":
+        STATE[uid] = {"action": "ch_add"}
+        await safe_edit(q, *prompt("📢 <b>Kanal Ekle</b>", "1) Botu kanala <b>admin</b> olarak ekle.\n2) Kanalın <code>@kullanıcıadı</code>'nı yaz ya da kanaldan bir mesajı buraya ilet.", "chans"))
+
+    elif a.startswith("chd:"):
+        i = int(a.split(":", 1)[1])
+        def f(d):
+            chs = d.get("channels", [])
+            return chs.pop(i) if 0 <= i < len(chs) else None
+        ch = mutate(f); JOINED.clear()
+        if ch: audit(uid, f"channel_del {ch['id']}")
+        await safe_edit(q, *channels_view())
+
+    elif a == "pay_set":
+        STATE[uid] = {"action": "pay_set"}
+        cur = db.get("pay_info") or "—"
+        await safe_edit(q, *prompt("💳 <b>Ödeme Bilgisi</b>", f"Şu an:\n<i>{esc(cur)}</i>\n\nKullanıcıların sipariş verirken göreceği ödeme bilgisini yaz (ör. telefon numarası, kime ödeme yapılacağı).\nSilmek için <code>-</code> gönder.", "admin"))
+
+    elif a == "bcast":
+        STATE[uid] = {"action": "bcast"}
+        await safe_edit(q, *prompt("📣 <b>Herkese Mesaj</b>", "Bütün kullanıcılara gidecek mesajı yaz.", "admin"))
+
+    elif a == "bcast_yes":
+        st = STATE.pop(uid, None)
+        if not st or st.get("action") != "bcast_ok":
+            await safe_edit(q, "⚠️ Süre geçti, baştan başla.", back("admin")); return
+        c.application.create_task(broadcast(c.application, st["text"], uid))
+        await safe_edit(q, "📣 Gönderiliyor... Bitince bildirim gelecek.", back("admin"))
+
+    elif a.startswith(("ord_ok:", "ord_no:")):
+        msg = await fulfill_order(c, a.split(":", 1)[1], a.startswith("ord_ok:"), uid)
+        try: await q.edit_message_reply_markup(None)
+        except Exception: pass
+        await c.bot.send_message(uid, msg, parse_mode="HTML", disable_web_page_preview=True)
 
     elif a.startswith("num:"):
         st = STATE.pop(uid, None)
@@ -1492,6 +1597,537 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         mutate(lambda d: d.get("sub_admins", {}).pop(sid, None))
         audit(uid, f"sa_del {sid}")
         await safe_edit(q, f"✅ Alt admin <code>{esc(sid)}</code> silindi.\n<blockquote>Oluşturduğu kodlar çalışmaya devam eder.</blockquote>", back("sa_menu"))
+
+# ───────── HERKESE AÇIK KISIM (kullanıcılar, davet, market, kanallar) ─────────
+REF_NEED = 3            # 1 ücretsiz kod için gereken yeni davet
+FREE_DAYS = 1           # ücretsiz kod süresi (gün)
+PRICES = {"c7": (7, 30), "c30": (30, 100)}   # ürün: (gün, TMT)
+PANEL_PRICE, PANEL_MIN, PANEL_DAYS = 20, 20, 30
+USERS_LOG = "/root/users.log"
+ULOG_PAGE = 10
+BOT = {"un": ""}        # botun kullanıcı adı (post_init'te dolar)
+JOINED = {}             # kanal üyelik önbelleği: uid -> zaman
+
+T = {
+ "tr": {
+  "menu": "✦ <b>VPN</b> ✦\n<blockquote>👥 Davet  <b>{avail}/{need}</b>\n🎟 Aktif kod  <b>{codes}</b></blockquote>\n<i>Bir işlem seç</i> 👇",
+  "b_free": "🎁 Ücretsiz Kod", "b_mine": "🎟 Kodlarım", "b_prof": "👤 Profil", "b_market": "🛒 Market",
+  "b_lang": "🇷🇺 Русский", "b_menu": "◀️ Menü", "b_share": "📤 Arkadaşlarına Gönder", "b_check": "✅ Kontrol Et",
+  "b_paid": "✅ Ödedim", "b_cancel": "✖️ İptal", "b_back": "◀️ Geri",
+  "free_need": "🎁 <b>Ücretsiz Kod</b>\n<blockquote>Her kod için <b>{need}</b> yeni arkadaşını davet et.\nŞu an  <b>{avail}/{need}</b>\nKod <b>1 gün</b> geçerli · günde en fazla 1 kod</blockquote>\n🔗 <b>Davet linkin</b> <i>(dokun → kopyala)</i>\n<code>{link}</code>",
+  "free_today": "⏳ <b>Bugünkü ücretsiz kodunu aldın.</b>\n<blockquote>Yarın tekrar alabilirsin (Aşkabat saatiyle 00:00'dan sonra).</blockquote>",
+  "free_ok": "✅ <b>Kodun hazır!</b>\n<blockquote>⏳ Süre  <b>{left}</b>\n📲 Linki kopyala, VPN uygulamana (Happ) abonelik olarak ekle.</blockquote>\n🔗 <b>Abonelik linki</b> <i>(dokun → kopyala)</i>\n<code>{link}</code>",
+  "no_slot": "⚠️ Şu an boş kod yeri yok. Biraz sonra tekrar dene.",
+  "mine_none": "🎟 <b>Kodlarım</b>\n<blockquote>Aktif kodun yok.</blockquote>",
+  "mine": "🎟 <b>Kodlarım</b>",
+  "mine_item": "<blockquote>🎟 <b>{name}</b>  ·  ⏳ {left}\n<code>{link}</code></blockquote>",
+  "prof": "👤 <b>Profil</b>\n<blockquote>🪪 ID  <code>{id}</code>\n👤 İsim  {name}\n🔗 Kullanıcı adı  {un}\n🌐 Dil  Türkçe\n📅 Katılma  {joined}\n🕒 Şu an  {now}</blockquote>\n"
+          "<blockquote>👥 Davet ettiklerin  <b>{total}</b>\n✅ Kullanılabilir davet  <b>{avail}/{need}</b>\n🎁 Alınan ücretsiz kod  <b>{free}</b>\n🎟 Aktif kod  <b>{active}</b>\n🛒 Satın alma  <b>{buys}</b>\n🙋 Seni davet eden  {inviter}</blockquote>\n"
+          "🔗 <b>Davet linkin</b> <i>(dokun → kopyala)</i>\n<code>{link}</code>",
+  "share_text": "Ücretsiz VPN kodu al 👇",
+  "market": "🛒 <b>Market</b>\n<blockquote>🎟 Kod · 7 gün  —  <b>30 TMT</b>\n🎟 Kod · 30 gün  —  <b>100 TMT</b>\n🖥 Panel  —  kullanıcı başı <b>20 TMT</b> <i>(en az 20)</i></blockquote>\n<i>Satın almak istediğini seç</i> 👇",
+  "b_c7": "🎟 Kod 7 gün · 30 TMT", "b_c30": "🎟 Kod 30 gün · 100 TMT", "b_panel": "🖥 Panel · 20 TMT/kullanıcı",
+  "panel_ask": "🖥 <b>Panel</b>\n<blockquote>Kendi kullanıcıların için kod oluşturup yönetebileceğin panel.\nKullanıcı başı <b>20 TMT</b> · en az <b>20</b> kullanıcı · <b>30 gün</b></blockquote>\nKaç kullanıcı? Butona bas ya da sayı yaz:",
+  "panel_min": "⚠️ En az 20 kullanıcı.",
+  "it_c7": "🎟 Kod · 7 gün", "it_c30": "🎟 Kod · 30 gün", "it_panel": "🖥 Panel · {n} kullanıcı · 30 gün",
+  "order": "🧾 <b>Sipariş #{oid}</b>\n<blockquote>{item}\n💰 Tutar  <b>{price} TMT</b></blockquote>\n💳 <b>Ödeme</b>\n<blockquote>{pay}</blockquote>\n<i>Ödemeyi yaptıktan sonra «✅ Ödedim»e bas.</i>",
+  "pay_default": "Ödeme bilgisi için admin ile iletişime geç.",
+  "order_sent": "⏳ <b>Sipariş #{oid} admine iletildi.</b>\n<blockquote>Onaylanınca buraya bildirim gelecek.</blockquote>",
+  "order_old": "ℹ️ Bu sipariş zaten işlemde.",
+  "order_ok_code": "✅ <b>Sipariş #{oid} onaylandı!</b>\n<blockquote>⏳ Süre  <b>{left}</b></blockquote>\n🔗 <b>Abonelik linki</b> <i>(dokun → kopyala)</i>\n<code>{link}</code>",
+  "order_ok_panel": "✅ <b>Sipariş #{oid} onaylandı!</b>\n<blockquote>🖥 Panelin hazır: <b>{n}</b> kullanıcı · <b>{days}</b> gün</blockquote>\nPaneli açmak için /start yaz.",
+  "order_no": "❌ <b>Sipariş #{oid} onaylanmadı.</b>\n<blockquote>Bir sorun varsa admin ile iletişime geç.</blockquote>",
+  "cap": "🤖 <b>Doğrulama</b>\n<blockquote>Bot olmadığını doğrula:  <b>{a} {op} {b} = ?</b></blockquote>",
+  "cap_wrong": "❌ Yanlış, tekrar dene.",
+  "join": "📢 <b>Botu kullanmak için kanala abone ol</b>\n<blockquote>Abone olduktan sonra «✅ Kontrol Et»e bas.</blockquote>",
+  "join_no": "Henüz abone olmadın.",
+  "ref_new": "🎉 <b>{name}</b> davetinle katıldı!\n<blockquote>Davet  <b>{avail}/{need}</b></blockquote>",
+  "ref_ready": "🎁 Davetler tamam! Ücretsiz kodunu alabilirsin.",
+  "expired": "⏳ Kodunun süresi doldu ve silindi: {name}",
+  "nobody": "—",
+ },
+ "ru": {
+  "menu": "✦ <b>VPN</b> ✦\n<blockquote>👥 Приглашения  <b>{avail}/{need}</b>\n🎟 Активные коды  <b>{codes}</b></blockquote>\n<i>Выберите действие</i> 👇",
+  "b_free": "🎁 Бесплатный код", "b_mine": "🎟 Мои коды", "b_prof": "👤 Профиль", "b_market": "🛒 Магазин",
+  "b_lang": "🇹🇷 Türkçe", "b_menu": "◀️ Меню", "b_share": "📤 Отправить друзьям", "b_check": "✅ Проверить",
+  "b_paid": "✅ Я оплатил", "b_cancel": "✖️ Отмена", "b_back": "◀️ Назад",
+  "free_need": "🎁 <b>Бесплатный код</b>\n<blockquote>За каждый код пригласите <b>{need}</b> новых друзей.\nСейчас  <b>{avail}/{need}</b>\nКод действует <b>1 день</b> · не больше 1 кода в день</blockquote>\n🔗 <b>Ваша ссылка</b> <i>(нажмите → скопировать)</i>\n<code>{link}</code>",
+  "free_today": "⏳ <b>Сегодняшний бесплатный код уже получен.</b>\n<blockquote>Завтра можно снова (после 00:00 по Ашхабаду).</blockquote>",
+  "free_ok": "✅ <b>Ваш код готов!</b>\n<blockquote>⏳ Срок  <b>{left}</b>\n📲 Скопируйте ссылку и добавьте её как подписку в VPN-приложение (Happ).</blockquote>\n🔗 <b>Ссылка подписки</b> <i>(нажмите → скопировать)</i>\n<code>{link}</code>",
+  "no_slot": "⚠️ Сейчас нет свободных мест. Попробуйте чуть позже.",
+  "mine_none": "🎟 <b>Мои коды</b>\n<blockquote>Активных кодов нет.</blockquote>",
+  "mine": "🎟 <b>Мои коды</b>",
+  "mine_item": "<blockquote>🎟 <b>{name}</b>  ·  ⏳ {left}\n<code>{link}</code></blockquote>",
+  "prof": "👤 <b>Профиль</b>\n<blockquote>🪪 ID  <code>{id}</code>\n👤 Имя  {name}\n🔗 Юзернейм  {un}\n🌐 Язык  Русский\n📅 С нами с  {joined}\n🕒 Сейчас  {now}</blockquote>\n"
+          "<blockquote>👥 Вы пригласили  <b>{total}</b>\n✅ Доступно приглашений  <b>{avail}/{need}</b>\n🎁 Получено бесплатных кодов  <b>{free}</b>\n🎟 Активные коды  <b>{active}</b>\n🛒 Покупки  <b>{buys}</b>\n🙋 Вас пригласил  {inviter}</blockquote>\n"
+          "🔗 <b>Ваша ссылка</b> <i>(нажмите → скопировать)</i>\n<code>{link}</code>",
+  "share_text": "Получи бесплатный VPN-код 👇",
+  "market": "🛒 <b>Магазин</b>\n<blockquote>🎟 Код · 7 дней  —  <b>30 TMT</b>\n🎟 Код · 30 дней  —  <b>100 TMT</b>\n🖥 Панель  —  <b>20 TMT</b> за пользователя <i>(от 20)</i></blockquote>\n<i>Выберите, что хотите купить</i> 👇",
+  "b_c7": "🎟 Код 7 дней · 30 TMT", "b_c30": "🎟 Код 30 дней · 100 TMT", "b_panel": "🖥 Панель · 20 TMT/польз.",
+  "panel_ask": "🖥 <b>Панель</b>\n<blockquote>Панель, где вы сами создаёте и управляете кодами для своих пользователей.\n<b>20 TMT</b> за пользователя · от <b>20</b> пользователей · <b>30 дней</b></blockquote>\nСколько пользователей? Нажмите кнопку или напишите число:",
+  "panel_min": "⚠️ Минимум 20 пользователей.",
+  "it_c7": "🎟 Код · 7 дней", "it_c30": "🎟 Код · 30 дней", "it_panel": "🖥 Панель · {n} польз. · 30 дней",
+  "order": "🧾 <b>Заказ #{oid}</b>\n<blockquote>{item}\n💰 Сумма  <b>{price} TMT</b></blockquote>\n💳 <b>Оплата</b>\n<blockquote>{pay}</blockquote>\n<i>После оплаты нажмите «✅ Я оплатил».</i>",
+  "pay_default": "Для оплаты свяжитесь с администратором.",
+  "order_sent": "⏳ <b>Заказ #{oid} отправлен администратору.</b>\n<blockquote>После подтверждения придёт уведомление.</blockquote>",
+  "order_old": "ℹ️ Этот заказ уже обрабатывается.",
+  "order_ok_code": "✅ <b>Заказ #{oid} подтверждён!</b>\n<blockquote>⏳ Срок  <b>{left}</b></blockquote>\n🔗 <b>Ссылка подписки</b> <i>(нажмите → скопировать)</i>\n<code>{link}</code>",
+  "order_ok_panel": "✅ <b>Заказ #{oid} подтверждён!</b>\n<blockquote>🖥 Панель готова: <b>{n}</b> польз. · <b>{days}</b> дней</blockquote>\nЧтобы открыть панель, напишите /start.",
+  "order_no": "❌ <b>Заказ #{oid} не подтверждён.</b>\n<blockquote>Если есть вопросы, свяжитесь с администратором.</blockquote>",
+  "cap": "🤖 <b>Проверка</b>\n<blockquote>Подтвердите, что вы не бот:  <b>{a} {op} {b} = ?</b></blockquote>",
+  "cap_wrong": "❌ Неверно, попробуйте ещё раз.",
+  "join": "📢 <b>Чтобы пользоваться ботом, подпишитесь на канал</b>\n<blockquote>После подписки нажмите «✅ Проверить».</blockquote>",
+  "join_no": "Вы ещё не подписались.",
+  "ref_new": "🎉 <b>{name}</b> присоединился по вашей ссылке!\n<blockquote>Приглашения  <b>{avail}/{need}</b></blockquote>",
+  "ref_ready": "🎁 Приглашений достаточно! Можете получить бесплатный код.",
+  "expired": "⏳ Срок вашего кода истёк, он удалён: {name}",
+  "nobody": "—",
+ },
+}
+
+def lang_of(db, uid): return (db.get("users", {}).get(str(uid), {}).get("lang") or "tr")
+def tr(lang, key, **kw):
+    s = T.get(lang, T["tr"]).get(key) or T["tr"][key]
+    return s.format(**kw) if kw else s
+
+def who(user):
+    """Log için: 'Ad (@kullanıcı, id)'"""
+    un = f"@{user.username}, " if getattr(user, "username", None) else ""
+    return f"{user.full_name or '?'} ({un}{user.id})"
+
+def ulog(kind, text):
+    try:
+        if os.path.exists(USERS_LOG) and os.path.getsize(USERS_LOG) > 3_000_000:   # çok büyürse en eskiler gider
+            with open(USERS_LOG, encoding="utf-8", errors="ignore") as f: keep = f.readlines()[-15000:]
+            with open(USERS_LOG, "w", encoding="utf-8") as f: f.writelines(keep)
+        with open(USERS_LOG, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"t": time.time(), "k": kind, "x": text}, ensure_ascii=False) + "\n")
+    except Exception: pass
+
+def ulog_lines():
+    try:
+        with open(USERS_LOG, encoding="utf-8", errors="ignore") as f:
+            out = []
+            for ln in f:
+                try: out.append(json.loads(ln))
+                except Exception: pass
+            return out
+    except Exception: return []
+
+def tm_now(): return datetime.datetime.now(TM_TZ)
+def tm_fmt(ts): return datetime.datetime.fromtimestamp(ts, TM_TZ).strftime("%d.%m.%Y %H:%M")
+def tm_day(): return tm_now().strftime("%Y-%m-%d")
+
+def ref_link(uid): return f"https://t.me/{BOT['un']}?start=r{uid}" if BOT["un"] else "—"
+
+def user_codes(db, uid):
+    return [(k, s) for k, s in db["subs"].items() if s.get("owner_id") == uid and not is_exp(s)]
+
+def avail_refs(u): return len(u.get("refs", [])) - int(u.get("spent", 0))
+
+def touch_user(user, ref=None):
+    """Kullanıcıyı kaydeder/günceller. Dönüş: (yeni_mi, kayıt)."""
+    uid, key = user.id, str(user.id)
+    nm, un = getattr(user, "full_name", "") or "", getattr(user, "username", "") or ""
+    cur = load_db().get("users", {}).get(key)
+    if cur and cur.get("name") == nm and cur.get("un") == un: return False, cur   # değişiklik yok: diske yazma
+    def f(db):
+        us = db.setdefault("users", {})
+        e = us.get(key)
+        new = e is None
+        if new:
+            e = {"joined": time.time(), "lang": "tr", "refs": [], "spent": 0, "free_n": 0, "buys": 0}
+            if ref and ref != uid and str(ref) in us: e["ref_by"] = ref; e["ok"] = False   # davetle geldi: doğrulama bekliyor
+            else: e["ok"] = True
+            us[key] = e
+        e["name"], e["un"] = nm, un
+        return new, json.loads(json.dumps(e))
+    return mutate(f)
+
+# ── kanal şartı ──
+async def missing_channels(bot, uid):
+    """Abone olunmamış kanallar. Kurucular muaf. Bot üyeliği kontrol edemezse kullanıcıyı kilitlemez."""
+    if uid in ADMINS: return []
+    chans = load_db().get("channels", [])
+    if not chans or time.time() - JOINED.get(uid, 0) < 300: return []
+    miss = []
+    for ch in chans:
+        try:
+            m = await bot.get_chat_member(ch["id"], uid)
+            ok = m.status in ("member", "administrator", "creator") or (m.status == "restricted" and getattr(m, "is_member", False))
+            if not ok: miss.append(ch)
+        except BadRequest as e:
+            if "user not found" in str(e).lower() or "participant" in str(e).lower(): miss.append(ch)
+            else: log.warning("kanal kontrolü %s: %s", ch.get("title"), e)
+        except Exception as e: log.warning("kanal kontrolü %s: %s", ch.get("title"), e)
+    if not miss: JOINED[uid] = time.time()
+    return miss
+
+def join_view(lang, miss):
+    rows = [[B(f"📢 {short(ch.get('title') or 'Kanal', 30)}", url=ch["link"])] for ch in miss if ch.get("link")]
+    rows.append([B(tr(lang, "b_check"), "u_check", "success")])
+    return tr(lang, "join"), KB(rows)
+
+# ── doğrulama (sadece davetle gelenler) ──
+def new_captcha(uid):
+    a, b = random.randint(2, 9), random.randint(2, 9)
+    op = random.choice(["+", "×"])
+    ans = a + b if op == "+" else a * b
+    opts = {ans}
+    while len(opts) < 4: opts.add(max(1, ans + random.randint(-6, 6)))
+    opts = list(opts); random.shuffle(opts)
+    mutate(lambda d: d["users"].get(str(uid), {}).__setitem__("cap", ans))
+    return a, op, b, opts
+
+def captcha_view(lang, uid):
+    a, op, b, opts = new_captcha(uid)
+    return tr(lang, "cap", a=a, op=op, b=b), KB([[B(str(o), f"u_cap:{o}") for o in opts]])
+
+# ── ana menü ──
+def pub_menu(db, uid):
+    lang = lang_of(db, uid)
+    e = db.get("users", {}).get(str(uid), {})
+    t = tr(lang, "menu", avail=max(0, avail_refs(e)), need=REF_NEED, codes=len(user_codes(db, uid)))
+    kb = KB([[B(tr(lang, "b_free"), "u_free", "success"), B(tr(lang, "b_mine"), "u_mine", "primary")],
+             [B(tr(lang, "b_prof"), "u_prof"), B(tr(lang, "b_market"), "u_market")],
+             [B(tr(lang, "b_lang"), "u_lang")]]
+            + ([[B("🖥 Panel", "menu", "primary")]] if is_admin(uid) else []))
+    return t, kb
+
+def home(uid):
+    """Kurucu/panel sahibi -> kendi paneli, diğerleri -> kullanıcı menüsü."""
+    return (menu_text(uid), main_kb(uid)) if is_admin(uid) else pub_menu(load_db(), uid)
+
+def share_url(lang, uid):
+    return "https://t.me/share/url?" + urllib.parse.urlencode({"url": ref_link(uid), "text": tr(lang, "share_text")})
+
+async def credit_ref(c, uid):
+    """Doğrulama + kanal şartı tamamlanınca daveti sayar (bir kez)."""
+    def f(d):
+        e = d["users"].get(str(uid), {})
+        if e.get("ok"): return None
+        e["ok"] = True; e.pop("cap", None)
+        inv = d["users"].get(str(e.get("ref_by")))
+        if not inv or uid in inv.setdefault("refs", []): return None
+        inv["refs"].append(uid)
+        return e.get("ref_by"), inv.get("lang", "tr"), avail_refs(inv), inv.get("name", "")
+    r = mutate(f)
+    if not r: return
+    inv_id, ilang, av, iname = r
+    db = load_db(); me = db["users"].get(str(uid), {})
+    ulog("credit", f"🤝 Davet sayıldı: {iname} ({inv_id}) → {me.get('name')} ({uid}) · davet {av}/{REF_NEED}")
+    try:
+        await c.bot.send_message(inv_id, tr(ilang, "ref_new", name=esc(me.get("name") or uid), avail=min(av, REF_NEED), need=REF_NEED), parse_mode="HTML")
+        if av == REF_NEED: await c.bot.send_message(inv_id, tr(ilang, "ref_ready"))
+    except Exception: pass
+
+async def pub_gate(c, uid, lang, send):
+    """Kullanıcı ilerleyebilir mi? Doğrulama ve kanal ekranını gösterir. True = devam."""
+    e = load_db().get("users", {}).get(str(uid), {})
+    if not e.get("ok") and e.get("ref_by") and not e.get("cap_ok"):   # davetle geldi, doğrulamadı
+        await send(*captcha_view(lang, uid)); return False
+    miss = await missing_channels(c.bot, uid)
+    if miss:
+        await send(*join_view(lang, miss)); return False
+    if not e.get("ok"): await credit_ref(c, uid)
+    return True
+
+async def pub_start(u: Update, c: ContextTypes.DEFAULT_TYPE):
+    user = u.effective_user
+    arg = (c.args[0] if getattr(c, "args", None) else "") or ""
+    ref = int(arg[1:]) if re.fullmatch(r"r\d{3,15}", arg) else None
+    new, e = await asyncio.to_thread(touch_user, user, ref)
+    if new:
+        inv = load_db()["users"].get(str(e.get("ref_by")), {}) if e.get("ref_by") else {}
+        ulog("join", f"🆕 Katıldı: {who(user)}" + (f" · davet eden: {inv.get('name')} ({e['ref_by']})" if e.get("ref_by") else ""))
+    STATE.pop(user.id, None)
+    lang = e.get("lang", "tr")
+    async def send(t, kb): await u.message.reply_text(t, parse_mode="HTML", reply_markup=kb, disable_web_page_preview=True)
+    if not await pub_gate(c, user.id, lang, send): return
+    await send(*pub_menu(load_db(), user.id))
+
+def make_code_for(uid, name, days, kind):
+    """Kullanıcıya kod (Drive dosyası) verir. Dönüş: ((kid, fid), hata)."""
+    return create_vip(name, uid, days, check_limit=False, extra={"pub": kind})
+
+async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
+    q = u.callback_query
+    user = q.from_user; uid = user.id
+    a = q.data
+    await asyncio.to_thread(touch_user, user)
+    db = load_db(); lang = lang_of(db, uid)
+    async def send(t, kb=None): await safe_edit(q, t, kb)
+    menu_btn = KB([[B(tr(lang, "b_menu"), "u_menu")]])
+
+    if a.startswith("u_cap:"):
+        e = db["users"].get(str(uid), {})
+        if e.get("ok") or "cap" not in e:
+            await q.answer(); await send(*pub_menu(db, uid)); return
+        if str(e.get("cap")) != a.split(":", 1)[1]:
+            await q.answer(tr(lang, "cap_wrong"), show_alert=True)
+            ulog("cap_bad", f"🤖 Yanlış cevap: {who(user)}")
+            await send(*captcha_view(lang, uid)); return
+        await q.answer("✅")
+        mutate(lambda d: (d["users"][str(uid)].pop("cap", None), d["users"][str(uid)].__setitem__("cap_ok", True)))
+        ulog("verify", f"✅ Doğrulamayı geçti: {who(user)}")
+        if not await pub_gate(c, uid, lang, send): return
+        await send(*pub_menu(load_db(), uid)); return
+
+    if a == "u_check":
+        JOINED.pop(uid, None)
+        miss = await missing_channels(c.bot, uid)
+        if miss:
+            await q.answer(tr(lang, "join_no"), show_alert=True); return
+        await q.answer("✅")
+        if not await pub_gate(c, uid, lang, send): return
+        await send(*home(uid)); return
+
+    await q.answer()
+    if not await pub_gate(c, uid, lang, send): return
+    db = load_db(); e = db["users"].get(str(uid), {})
+
+    if a == "u_menu":
+        STATE.pop(uid, None)
+        await send(*pub_menu(db, uid))
+
+    elif a == "u_lang":
+        nl = "ru" if lang == "tr" else "tr"
+        mutate(lambda d: d["users"][str(uid)].__setitem__("lang", nl))
+        await send(*pub_menu(load_db(), uid))
+
+    elif a == "u_free":
+        if e.get("free_day") == tm_day():
+            await send(tr(lang, "free_today"), menu_btn); return
+        if avail_refs(e) < REF_NEED:
+            await send(tr(lang, "free_need", need=REF_NEED, avail=max(0, avail_refs(e)), link=esc(ref_link(uid))),
+                       KB([[B(tr(lang, "b_share"), url=share_url(lang, uid), style="success")], [B(tr(lang, "b_menu"), "u_menu")]])); return
+        # yer ayır (aynı anda iki kez basılırsa iki kod çıkmasın)
+        def take(d):
+            x = d["users"][str(uid)]
+            if x.get("free_day") == tm_day() or avail_refs(x) < REF_NEED: return False
+            x["free_day"] = tm_day(); x["spent"] = int(x.get("spent", 0)) + REF_NEED
+            return True
+        if not mutate(take):
+            await send(tr(lang, "free_today"), menu_btn); return
+        res, err = await asyncio.to_thread(make_code_for, uid, f"{short(user.first_name or 'VPN', 20)} 🎁", FREE_DAYS, "free")
+        if not res:
+            def undo(d):
+                x = d["users"][str(uid)]; x.pop("free_day", None); x["spent"] = max(0, int(x.get("spent", 0)) - REF_NEED)
+            mutate(undo)
+            await send(tr(lang, "no_slot"), menu_btn)
+            await notify_founders(c.application, f"⚠️ <b>Ücretsiz kod verilemedi</b>\n<blockquote>{esc(who(user))}\n{esc(err)}</blockquote>")
+            return
+        kid, fid = res
+        mutate(lambda d: d["users"][str(uid)].__setitem__("free_n", int(d["users"][str(uid)].get("free_n", 0)) + 1))
+        ulog("free", f"🎁 Ücretsiz kod aldı: {who(user)} · {kid} · {FREE_DAYS} gün")
+        await send(tr(lang, "free_ok", left=left_txt(load_db()["subs"][kid].get("expires")), link=esc(sub_link(fid))), menu_btn)
+
+    elif a == "u_mine":
+        mine = user_codes(db, uid)
+        if not mine: await send(tr(lang, "mine_none"), menu_btn); return
+        body = "".join(tr(lang, "mine_item", name=esc(short(name_of(s, k), 30)), left=left_txt(s.get("expires")), link=esc(sub_link(s.get("file_id", "")))) for k, s in mine[:8])
+        await send(tr(lang, "mine") + "\n" + body, menu_btn)
+
+    elif a == "u_prof":
+        inv = db["users"].get(str(e.get("ref_by")), {}) if e.get("ref_by") else {}
+        t = tr(lang, "prof", id=uid, name=esc(user.full_name or "—"), un=("@" + esc(user.username)) if user.username else "—",
+               joined=tm_fmt(e.get("joined", time.time())), now=tm_now().strftime("%d.%m.%Y %H:%M"),
+               total=len(e.get("refs", [])), avail=max(0, avail_refs(e)), need=REF_NEED, free=e.get("free_n", 0),
+               active=len(user_codes(db, uid)), buys=e.get("buys", 0), inviter=esc(inv.get("name") or tr(lang, "nobody")),
+               link=esc(ref_link(uid)))
+        await send(t, KB([[B(tr(lang, "b_share"), url=share_url(lang, uid), style="success")], [B(tr(lang, "b_menu"), "u_menu")]]))
+
+    elif a == "u_market":
+        STATE.pop(uid, None)
+        await send(tr(lang, "market"), KB([[B(tr(lang, "b_c7"), "u_buy:c7", "primary")], [B(tr(lang, "b_c30"), "u_buy:c30", "primary")],
+                                           [B(tr(lang, "b_panel"), "u_buy:panel", "success")], [B(tr(lang, "b_menu"), "u_menu")]]))
+
+    elif a == "u_buy:panel":
+        STATE[uid] = {"action": "u_panel"}
+        await send(tr(lang, "panel_ask"), KB([[B(str(n), f"u_pn:{n}", "primary" if n == 20 else None) for n in (20, 30, 50, 100)],
+                                               [B(tr(lang, "b_back"), "u_market")]]))
+
+    elif a.startswith("u_buy:") or a.startswith("u_pn:"):
+        STATE.pop(uid, None)
+        item = a.split(":", 1)[1] if a.startswith("u_buy:") else "panel"
+        n = int(a.split(":", 1)[1]) if a.startswith("u_pn:") else 0
+        await send(*new_order(uid, user, lang, item, n))
+
+    elif a.startswith("u_paid:"):
+        oid = a.split(":", 1)[1]
+        def f(d):
+            o = d.get("orders", {}).get(oid)
+            if not o or o["uid"] != uid or o["status"] != "new": return None
+            o["status"] = "paid"; o["paid_ts"] = time.time()
+            return dict(o)
+        o = mutate(f)
+        if not o: await send(tr(lang, "order_old"), menu_btn); return
+        ulog("paid", f"💳 Ödedim dedi: {who(user)} · #{oid} · {item_tr(o)} · {o['price']} TMT")
+        await send(tr(lang, "order_sent", oid=oid), menu_btn)
+        await notify_founders(c.application,
+            f"🧾 <b>Yeni sipariş #{oid}</b>\n<blockquote>👤 {esc(who(user))}\n📦 {esc(item_tr(o))}\n💰 <b>{o['price']} TMT</b></blockquote>\n<i>Parayı aldıysan onayla; kod/panel otomatik verilir.</i>",
+            KB([[B("✅ Onayla", f"ord_ok:{oid}", "success"), B("❌ Reddet", f"ord_no:{oid}", "danger")]]))
+
+    elif a.startswith("u_cancel:"):
+        oid = a.split(":", 1)[1]
+        mutate(lambda d: d.get("orders", {}).get(oid, {}).__setitem__("status", "cancel") if d.get("orders", {}).get(oid, {}).get("status") == "new" else None)
+        await send(*pub_menu(load_db(), uid))
+
+def item_tr(o):
+    if o["item"] == "panel": return f"Panel · {o['n']} kullanıcı · {PANEL_DAYS} gün"
+    return f"Kod · {PRICES[o['item']][0]} gün"
+
+def new_order(uid, user, lang, item, n=0):
+    if item == "panel":
+        if n < PANEL_MIN: return tr(lang, "panel_min"), KB([[B(tr(lang, "b_back"), "u_buy:panel")]])
+        price, it = n * PANEL_PRICE, tr(lang, "it_panel", n=n)
+    elif item in PRICES: price, it = PRICES[item][1], tr(lang, "it_" + item)
+    else: return pub_menu(load_db(), uid)
+    oid = uuid.uuid4().hex[:6].upper()
+    o = {"uid": uid, "item": item, "n": n, "price": price, "ts": time.time(), "status": "new", "who": who(user)}
+    def f(d): d.setdefault("orders", {})[oid] = o
+    mutate(f)
+    ulog("order", f"🧾 Sipariş açtı: {who(user)} · #{oid} · {item_tr(o)} · {price} TMT")
+    pay = load_db().get("pay_info") or tr(lang, "pay_default")
+    return (tr(lang, "order", oid=oid, item=esc(it), price=price, pay=esc(pay)),
+            KB([[B(tr(lang, "b_paid"), f"u_paid:{oid}", "success"), B(tr(lang, "b_cancel"), f"u_cancel:{oid}", "danger")]]))
+
+async def pub_msg(u: Update, c: ContextTypes.DEFAULT_TYPE):
+    """Kullanıcının yazdığı mesaj: şimdilik sadece panel kullanıcı sayısı."""
+    uid = u.effective_user.id
+    st = STATE.get(uid)
+    db = load_db(); lang = lang_of(db, uid)
+    async def send(t, kb): await u.message.reply_text(t, parse_mode="HTML", reply_markup=kb, disable_web_page_preview=True)
+    if not st or st.get("action") != "u_panel":
+        if str(uid) not in db.get("users", {}): return await pub_start(u, c)
+        if not await pub_gate(c, uid, lang, send): return
+        await send(*pub_menu(db, uid)); return
+    m = re.fullmatch(r"\s*(\d{1,4})\s*", u.message.text or "")
+    if not m: await u.message.reply_text(tr(lang, "panel_min")); return
+    STATE.pop(uid, None)
+    await send(*new_order(uid, u.effective_user, lang, "panel", int(m.group(1))))
+
+async def fulfill_order(c, oid, approve, admin_uid):
+    """Kurucu onayladı/reddetti. Dönüş: kurucuya gösterilecek metin."""
+    def f(d):
+        o = d.get("orders", {}).get(oid)
+        if not o or o["status"] not in ("new", "paid"): return None
+        o["status"] = "busy" if approve else "rejected"
+        return dict(o)
+    o = mutate(f)
+    if not o: return "ℹ️ Bu sipariş zaten işlendi."
+    uid = o["uid"]; db = load_db(); lang = lang_of(db, uid)
+    if not approve:
+        ulog("rej", f"❌ Sipariş reddedildi: {o.get('who')} · #{oid}")
+        audit(admin_uid, f"order_no {oid}")
+        try: await c.bot.send_message(uid, tr(lang, "order_no", oid=oid), parse_mode="HTML")
+        except Exception: pass
+        return f"❌ Sipariş #{oid} reddedildi."
+    if o["item"] == "panel":
+        def p(d):
+            e = d.setdefault("sub_admins", {}).get(str(uid), {})
+            active = float(e.get("expires", 0)) > time.time()
+            e["limit"] = (int(e.get("limit", 0)) if active else 0) + o["n"]
+            e["expires"] = max(time.time(), float(e.get("expires", 0))) + PANEL_DAYS * 86400
+            e.setdefault("added", time.time()); e["name"] = d.get("users", {}).get(str(uid), {}).get("name", "")
+            e.pop("warned", None); e.pop("ended", None)
+            d["sub_admins"][str(uid)] = e
+            d["orders"][oid]["status"] = "done"
+            d.setdefault("users", {}).setdefault(str(uid), {})["buys"] = int(d["users"][str(uid)].get("buys", 0)) + 1
+            return e
+        e = mutate(p)
+        msg = tr(lang, "order_ok_panel", oid=oid, n=e["limit"], days=PANEL_DAYS)
+    else:
+        days = PRICES[o["item"]][0]
+        nm = db.get("users", {}).get(str(uid), {}).get("name") or str(uid)
+        res, err = await asyncio.to_thread(make_code_for, uid, f"{short(nm, 20)} 💎", days, "paid")
+        if not res:
+            mutate(lambda d: d["orders"][oid].__setitem__("status", "paid"))   # tekrar onaylanabilsin
+            return f"⚠️ Kod oluşturulamadı: {esc(err)}\nSipariş bekliyor, sonra tekrar onayla."
+        kid, fid = res
+        def p(d):
+            d["orders"][oid]["status"] = "done"; d["orders"][oid]["kid"] = kid
+            d.setdefault("users", {}).setdefault(str(uid), {})["buys"] = int(d["users"][str(uid)].get("buys", 0)) + 1
+        mutate(p)
+        msg = tr(lang, "order_ok_code", oid=oid, left=left_txt(load_db()["subs"][kid].get("expires")), link=esc(sub_link(fid)))
+    ulog("ok", f"✅ Sipariş onaylandı: {o.get('who')} · #{oid} · {item_tr(o)} · {o['price']} TMT")
+    audit(admin_uid, f"order_ok {oid}")
+    try: await c.bot.send_message(uid, msg, parse_mode="HTML", disable_web_page_preview=True)
+    except Exception: pass
+    return f"✅ Sipariş #{oid} onaylandı ve kullanıcıya gönderildi."
+
+# ── kurucu ekranları ──
+def ulog_view(page=None):
+    lines = ulog_lines()
+    pages = max(1, (len(lines) + ULOG_PAGE - 1) // ULOG_PAGE)
+    page = pages - 1 if page is None else max(0, min(page, pages - 1))
+    chunk = lines[page * ULOG_PAGE:(page + 1) * ULOG_PAGE]
+    body = "\n".join(f"<code>{datetime.datetime.fromtimestamp(x['t'], TM_TZ):%d.%m %H:%M}</code> {esc(x.get('x', ''))}" for x in chunk) or "<i>Henüz kayıt yok.</i>"
+    t = f"👥 <b>Kullanıcı Logları</b>  <code>{len(lines)}</code>\n<blockquote expandable>{body}</blockquote>"
+    nav = [B("⏮", "ul:0"), B("◀️", f"ul:{max(0, page - 1)}"), B(f"{page + 1}/{pages}", f"ul:{page}"),
+           B("▶️", f"ul:{min(pages - 1, page + 1)}"), B("⏭", f"ul:{pages - 1}")]
+    return t, KB([nav, [B("◀️ Admin", "admin")]])
+
+def pool_count():
+    try:
+        svc = new_service(); db = load_db()
+        used = {v.get("file_id") for v in db["subs"].values()}
+        return len((set(pool_files(svc)) | set(db["free_files"])) - used)
+    except Exception: return "?"
+
+def stats_text():
+    db = load_db(); us = db.get("users", {})
+    today = tm_now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+    pub = [s for s in db["subs"].values() if s.get("pub") and not is_exp(s)]
+    orders = db.get("orders", {}).values()
+    paid = sum(o["price"] for o in orders if o["status"] == "done")
+    return ("📊 <b>İstatistik</b>\n<blockquote>"
+            f"👥 Kullanıcı  <b>{len(us)}</b>  ·  bugün <b>{sum(1 for e in us.values() if e.get('joined', 0) >= today)}</b>\n"
+            f"🤝 Sayılan davet  <b>{sum(len(e.get('refs', [])) for e in us.values())}</b>\n"
+            f"🎁 Aktif ücretsiz kod  <b>{sum(1 for s in pub if s['pub'] == 'free')}</b>\n"
+            f"💎 Aktif satılmış kod  <b>{sum(1 for s in pub if s['pub'] == 'paid')}</b>\n"
+            f"🖥 Aktif panel  <b>{sum(1 for e in db.get('sub_admins', {}).values() if float(e.get('expires', 0)) > time.time())}</b>\n"
+            f"🧾 Bekleyen sipariş  <b>{sum(1 for o in orders if o['status'] == 'paid')}</b>\n"
+            f"💰 Onaylanan satış  <b>{paid} TMT</b>\n"
+            f"📂 Boş kod yeri (Drive)  <b>{pool_count()}</b></blockquote>")
+
+def channels_view():
+    chans = load_db().get("channels", [])
+    body = "\n".join(f"📢 {esc(ch.get('title'))}  <code>{ch['id']}</code>" for ch in chans) or "Kanal yok — herkes botu kullanabilir."
+    rows = [[B(f"🗑 {short(ch.get('title') or ch['id'], 28)}", f"chd:{i}", "danger")] for i, ch in enumerate(chans)]
+    rows += [[B("➕ Kanal Ekle", "ch_add", "success")], [B("◀️ Admin", "admin")]]
+    return ("📢 <b>Zorunlu Kanallar</b>\n<blockquote>" + body + "</blockquote>\n"
+            "<i>Kurucular dışında herkes bu kanallara abone olmadan botu kullanamaz. Bot kanalda admin olmalı.</i>"), KB(rows)
+
+async def add_channel(c, txt, fwd_chat=None):
+    """@kullanıcıadı, -100… ID ya da kanaldan iletilen mesaj. Dönüş: mesaj."""
+    try:
+        chat = fwd_chat or await c.bot.get_chat(txt.strip() if txt.strip().startswith(("@", "-")) else "@" + txt.strip().lstrip("@").split("/")[-1])
+        me = await c.bot.get_me()
+        m = await c.bot.get_chat_member(chat.id, me.id)
+        if m.status not in ("administrator", "creator"):
+            return "⚠️ Bot bu kanalda admin değil. Önce botu kanala admin olarak ekle."
+        link = f"https://t.me/{chat.username}" if chat.username else (getattr(chat, "invite_link", None) or await c.bot.export_chat_invite_link(chat.id))
+    except Exception as e:
+        return f"⚠️ Kanal bulunamadı ya da erişilemedi: {esc(str(e)[:150])}"
+    def f(d):
+        chs = d.setdefault("channels", [])
+        if any(x["id"] == chat.id for x in chs): return False
+        chs.append({"id": chat.id, "title": chat.title or str(chat.id), "link": link}); return True
+    ok = mutate(f)
+    JOINED.clear()
+    return f"✅ Kanal eklendi: <b>{esc(chat.title)}</b>" if ok else "ℹ️ Bu kanal zaten ekli."
+
+async def broadcast(app, text, admin_uid):
+    ids = [int(k) for k in load_db().get("users", {}) if int(k) not in ADMINS]
+    ok = bad = 0
+    for i in ids:
+        try: await app.bot.send_message(i, text, disable_web_page_preview=True); ok += 1
+        except Exception: bad += 1
+        await asyncio.sleep(0.05)   # Telegram sınırı: saniyede ~30 mesaj
+    audit(admin_uid, f"broadcast ok={ok} bad={bad}")
+    await notify_founders(app, f"📣 <b>Herkese mesaj gönderildi</b>\n<blockquote>✅ {ok}  ·  ❌ {bad} <i>(botu engelleyenler)</i></blockquote>")
+
 
 # ───────── KENDİNİ GÜNCELLEME (dosyayı bota atınca; sadece kurucular) ─────────
 SELF = os.path.abspath(__file__)
