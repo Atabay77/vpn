@@ -971,6 +971,8 @@ def main_kb(uid):
     if uid in ADMINS:
         on = not os.path.exists(STOP_FLAG)
         rows += [[B("🔗 Abonelikler", "sources"), B("📜 Loglar", "logs")],
+                 [B("👥 Kullanıcı Logları", "ul_open", "primary"), B("📊 İstatistik", "stats")],
+                 [B("📣 Herkese Mesaj", "bcast"), B("👁 Kullanıcı Menüsü", "u_menu")],
                  [B("🏷 Toplu Başlık", "bulk_title"), B("⚙️ Admin", "admin")],
                  [B("🛑 Durdur", "toggle_sys", "danger") if on else B("▶️ Başlat", "toggle_sys", "success")]]
     return KB(rows)
@@ -980,9 +982,7 @@ def admin_kb():
     except Exception: on = True
     return KB([
         [B("⚡ Şimdi Güncelle", "upd_now", "primary"), B("📦 Yedek", "get_zip")],
-        [B("👥 Kullanıcı Logları", "ul_open", "primary"), B("📊 İstatistik", "stats")],
         [B("📢 Kanallar", "chans"), B("💳 Ödeme Bilgisi", "pay_set")],
-        [B("📣 Herkese Mesaj", "bcast"), B("👁 Kullanıcı Menüsü", "u_menu")],
         [B(f"🕰 Oto. Duyuru: {'Açık' if on else 'Kapalı'}", "auto_ann", "success" if on else "danger")],
         [B("♻️ Önceki Sürüme Dön", "rollback")],
         [B("👮 Alt Adminler", "sa_menu")],
@@ -1252,7 +1252,7 @@ async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
             STATE[uid] = {"action": "bcast_ok", "text": txt[:3500]}
             n = sum(1 for k in load_db().get("users", {}) if int(k) not in ADMINS)
             await u.message.reply_text(f"📣 <b>Onay</b>\n<blockquote>{esc(short(txt, 600))}</blockquote>\n<b>{n}</b> kullanıcıya gönderilecek.", parse_mode="HTML",
-                                       reply_markup=KB([[B("✅ Gönder", "bcast_yes", "success"), B("✖️ İptal", "admin", "danger")]]))
+                                       reply_markup=KB([[B("✅ Gönder", "bcast_yes", "success"), B("✖️ İptal", "menu", "danger")]]))
 
         elif act in ("title", "bname", "announce"):
             kid = st["kid"]
@@ -1314,7 +1314,7 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         await safe_edit(q, *ulog_view(None if a == "ul_open" else int(a.split(":", 1)[1])))
 
     elif a == "stats":
-        await safe_edit(q, await asyncio.to_thread(stats_text), KB([[B("🔄 Yenile", "stats", "primary"), B("◀️ Admin", "admin")]]))
+        await safe_edit(q, await asyncio.to_thread(stats_text), KB([[B("🔄 Yenile", "stats", "primary"), B("◀️ Menü", "menu")]]))
 
     elif a == "chans":
         await safe_edit(q, *channels_view())
@@ -1339,14 +1339,14 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
 
     elif a == "bcast":
         STATE[uid] = {"action": "bcast"}
-        await safe_edit(q, *prompt("📣 <b>Herkese Mesaj</b>", "Bütün kullanıcılara gidecek mesajı yaz.", "admin"))
+        await safe_edit(q, *prompt("📣 <b>Herkese Mesaj</b>", "Bütün kullanıcılara gidecek mesajı yaz.", "menu"))
 
     elif a == "bcast_yes":
         st = STATE.pop(uid, None)
         if not st or st.get("action") != "bcast_ok":
-            await safe_edit(q, "⚠️ Süre geçti, baştan başla.", back("admin")); return
+            await safe_edit(q, "⚠️ Süre geçti, baştan başla.", back("menu", "◀️ Menü")); return
         c.application.create_task(broadcast(c.application, st["text"], uid))
-        await safe_edit(q, "📣 Gönderiliyor... Bitince bildirim gelecek.", back("admin"))
+        await safe_edit(q, "📣 Gönderiliyor... Bitince bildirim gelecek.", back("menu", "◀️ Menü"))
 
     elif a.startswith(("ord_ok:", "ord_no:")):
         msg = await fulfill_order(c, a.split(":", 1)[1], a.startswith("ord_ok:"), uid)
@@ -1791,7 +1791,7 @@ def pub_menu(db, uid):
     kb = KB([[B(tr(lang, "b_free"), "u_free", "success"), B(tr(lang, "b_mine"), "u_mine", "primary")],
              [B(tr(lang, "b_prof"), "u_prof"), B(tr(lang, "b_market"), "u_market")],
              [B(tr(lang, "b_lang"), "u_lang")]]
-            + ([[B("🖥 Panel", "menu", "primary")]] if is_admin(uid) else []))
+            + ([[B("◀️ Geri", "menu")]] if is_admin(uid) else []))
     return t, kb
 
 def home(uid):
@@ -2066,7 +2066,7 @@ def ulog_view(page=None):
     t = f"👥 <b>Kullanıcı Logları</b>  <code>{len(lines)}</code>\n<blockquote expandable>{body}</blockquote>"
     nav = [B("⏮", "ul:0"), B("◀️", f"ul:{max(0, page - 1)}"), B(f"{page + 1}/{pages}", f"ul:{page}"),
            B("▶️", f"ul:{min(pages - 1, page + 1)}"), B("⏭", f"ul:{pages - 1}")]
-    return t, KB([nav, [B("◀️ Admin", "admin")]])
+    return t, KB([nav, [B("◀️ Menü", "menu")]])
 
 def pool_count():
     try:
