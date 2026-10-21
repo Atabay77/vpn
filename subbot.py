@@ -939,8 +939,8 @@ def main_kb(uid):
     if uid in ADMINS:
         on = not os.path.exists(STOP_FLAG)
         rows += [[B("🔗 Abonelikler", "sources"), B("📜 Loglar", "logs")],
-                 [B("📢 Toplu Duyuru", "bulk_ann"), B("🏷 Toplu Başlık", "bulk_title")],
-                 [B("🛑 Durdur", "toggle_sys", "danger") if on else B("▶️ Başlat", "toggle_sys", "success"), B("⚙️ Admin", "admin")]]
+                 [B("🏷 Toplu Başlık", "bulk_title"), B("⚙️ Admin", "admin")],
+                 [B("🛑 Durdur", "toggle_sys", "danger") if on else B("▶️ Başlat", "toggle_sys", "success")]]
     return KB(rows)
 
 def admin_kb():
