@@ -343,8 +343,11 @@ def loop():
         time.sleep(INTERVAL)
 
 def running():
+    """Kayıtlı PID gerçekten tmtest mi? (yeniden başlatmadan sonra aynı numara başka programa geçebilir)"""
     try:
-        pid = int(open(PIDF).read()); os.kill(pid, 0); return pid
+        pid = int(open(PIDF).read())
+        with open("/proc/%d/cmdline" % pid, "rb") as f:
+            return pid if b"tmtest" in f.read() else None
     except Exception: return None
 
 def main():
