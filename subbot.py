@@ -36,7 +36,7 @@ NEW_IP_LIMIT = 3       # bundan FAZLA yeni IP görülürse kodlar yenilenir
 SUB_LIMIT = 10         # alt admin için varsayılan kod limiti (eklerken değiştirilebilir)
 SUB_DAYS = 7
 DEFAULT_DB = {"subs": {}, "template": [], "sources": [], "free_files": [], "sub_admins": {}, "seen_ips": []}
-AUTO_ANN = {23: "🌙 Спокойной ночи — мы на связи", 6: "☕ Доброе утро! Всё уже работает"}   # saat (Aşkabat): duyuru
+AUTO_ANN = {0: "🌙 Спокойной ночи — мы на связи", 6: "☕ Доброе утро! Всё уже работает", 8: "🛡 Мы следим за серверами круглосуточно"}   # saat (Aşkabat): duyuru
 try:
     from zoneinfo import ZoneInfo
     TM_TZ = ZoneInfo("Asia/Ashgabat")
@@ -839,23 +839,24 @@ async def watchdog(app):
                 try: await app.bot.send_message(chat_id=int(sid), text="🔒 Alt admin yetkinin süresi doldu.")
                 except Exception: pass
         except Exception: log.exception("watchdog expiry")
-        # 23:00 / 06:00 (Aşkabat) otomatik genel duyuru
+        # AUTO_ANN saatlerinde (Aşkabat) otomatik genel duyuru; bot o saatte kapalıysa açılınca yazar
         try:
             now = datetime.datetime.now(TM_TZ)
-            if now.hour in AUTO_ANN:
-                slot = f"{now:%Y-%m-%d} {now.hour}"
-                db0 = load_db()
-                if db0.get("auto_ann_on", True) and db0.get("auto_ann_last") != slot:
-                    text = AUTO_ANN[now.hour]
-                    def ajob():
-                        def f(d):
-                            d["auto_ann_last"], d["g_announce"] = slot, text
-                            return [(x["file_id"], name_of(x, k), eff_ann(d, x)) for k, x in d["subs"].items() if x.get("file_id") and not is_exp(x)], list(d["template"])
-                        items, tpl = mutate(f)
-                        return push_all(items, tpl), len(items)
-                    async with CHECK_LOCK:
-                        (ok, bad), n = await asyncio.to_thread(ajob)
-                    vlog(f"🕰 Otomatik duyuru ({now:%H:%M}): {text} → Drive {ok}/{n}")
+            past = [h for h in sorted(AUTO_ANN) if h <= now.hour]
+            h, day = (past[-1], now.date()) if past else (max(AUTO_ANN), now.date() - datetime.timedelta(days=1))
+            slot = f"{day:%Y-%m-%d} {h}"
+            db0 = load_db()
+            if db0.get("auto_ann_on", True) and db0.get("auto_ann_last") != slot:
+                text = AUTO_ANN[h]
+                def ajob():
+                    def f(d):
+                        d["auto_ann_last"], d["g_announce"] = slot, text
+                        return [(x["file_id"], name_of(x, k), eff_ann(d, x)) for k, x in d["subs"].items() if x.get("file_id") and not is_exp(x)], list(d["template"])
+                    items, tpl = mutate(f)
+                    return push_all(items, tpl), len(items)
+                async with CHECK_LOCK:
+                    (ok, bad), n = await asyncio.to_thread(ajob)
+                vlog(f"🕰 Otomatik duyuru ({now:%H:%M}): {text} → Drive {ok}/{n}")
         except Exception: log.exception("auto announce")
         # her gün 03:00 otomatik yedek
         try:
@@ -1294,7 +1295,7 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
     elif a == "auto_ann":
         on = mutate(lambda d: d.__setitem__("auto_ann_on", not d.get("auto_ann_on", True)) or d["auto_ann_on"])
         audit(uid, f"auto_ann {'on' if on else 'off'}")
-        await safe_edit(q, "⚙️ <b>Admin</b>\n<blockquote>🕰 Otomatik duyuru " + ("<b>açık</b>: 23:00 ve 06:00'da genel duyuru değişir." if on else "<b>kapalı</b>.") + "</blockquote>", admin_kb())
+        await safe_edit(q, "⚙️ <b>Admin</b>\n<blockquote>🕰 Otomatik duyuru " + ("<b>açık</b>: " + ", ".join(f"{h:02d}:00" for h in sorted(AUTO_ANN)) + "'da genel duyuru değişir." if on else "<b>kapalı</b>.") + "</blockquote>", admin_kb())
 
     elif a == "upd_now":
         if CHECK_LOCK.locked():
