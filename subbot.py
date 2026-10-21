@@ -27,6 +27,7 @@ LOCK_FILE = "/root/subbot.lock"
 VIP_LOG = "/root/vip.log"
 AUDIT_LOG = "/root/audit.log"
 GEO_FILE = "/root/geo_cache.json"
+EXIT_FILE = "/root/exit_cache.json"   # telefonun ÖLÇTÜĞÜ gerçek çıkış ülkeleri (kod anahtarı -> ülke)
 BACKUP_DIR = "/root/backups"
 LINE = "──────────────"
 PAGE = 16
@@ -501,7 +502,7 @@ def _pick_name(cc, used_names, used_emojis):
             n = random.choice(free); used_names.add(n); used_emojis.add(_emoji(n))
             return n
 
-def rename_all(codes, geo, ms=None, fresh=False):
+def rename_all(codes, geo, ms=None, fresh=False, exits=None):
     """Kuralar:
     - Rusya tek: birden fazla Rusya varsa en iyi ms'li kalır, her zaman 2. sırada.
     - Telefon testinde ms'i olanlar ms'e göre sıralanır; test edilmemişler en altta, rastgele bayrakla.
@@ -509,11 +510,13 @@ def rename_all(codes, geo, ms=None, fresh=False):
       sadece onlar kalır; azsa geri kalan kodlar onların altına rastgele bayrakla eklenir.
     - Hiçbir bayrak (Rusya dahil) iki kez kullanılmaz; isim/emoji de tekrar etmez.
     Dönüş: (yeni kodlar, log satırları)."""
-    ms = ms or {}
+    ms, exits = ms or {}, exits or {}
     info = []
     for i, c in enumerate(codes):
-        ex, _ = exit_country(c, geo)
         k = code_key(c)
+        # Gerçek ülke = telefonun bağlanıp ÖLÇTÜĞÜ çıkış ülkesi. Sağlayıcının isimdeki bayrağı yanlış olabiliyor,
+        # o yüzden isme sadece hiç ölçüm yokken bakılır.
+        ex = exits.get(k) if exits else exit_country(c, geo)[0]
         info.append({"c": c, "ex": ex if ex in COUNTRIES else None, "ms": ms.get(k), "tested": (not fresh) or k in ms, "i": i})
     order = lambda x: (x["ms"] is None, x["ms"] or 0, x["i"])
     tested = sorted([x for x in info if x["tested"]], key=order)
@@ -578,6 +581,11 @@ def _tm_create(svc, db, data):
     _tm_write(svc, fid, data, TM_NAME)
     return fid
 
+def load_exits():
+    try:
+        with open(EXIT_FILE, encoding="utf-8") as f: return json.load(f)
+    except Exception: return {}
+
 def tm_sync(db, sources):
     """Kanal dosyasını hazır tutar, telefonun son sonucunu okur. Dönüş: TM'de çalışmayan kod anahtarları."""
     try:
@@ -604,7 +612,7 @@ def tm_sync(db, sources):
         if msg != RUN["tm_err"]: vlog(f"⚠️ Telefon testi okunamadı: {msg}")
         RUN["tm_err"] = msg
         RUN["tm_line"] = "📱 Telefon testi: okunamadı"
-        return set(), {}, False
+        return set(), {}, False, load_exits()
     ts, res = int(ch.get("ts") or 0), ch.get("results") or {}
     good = sum(1 for v in res.values() if isinstance(v, (int, float)) and v > 0)
     stale = bool(ts) and time.time() - ts > TM_MAX_AGE
@@ -618,15 +626,23 @@ def tm_sync(db, sources):
         RUN["tm_line"] = f"📱 Telefon testi: {ago(ts)} · {good}/{len(res)} çalışıyor"
     else:
         RUN["tm_line"] = "📱 Telefon testi: henüz sonuç yok (tmtest start)"
+    if ch.get("exits"):
+        cache = load_exits()
+        if any(cache.get(k) != v for k, v in ch["exits"].items()):
+            cache.update(ch["exits"])
+            RUN["exits_changed"] = True   # ülke bilgisi değişti -> bayraklar yeniden yazılsın
+            try:
+                with open(EXIT_FILE, "w", encoding="utf-8") as f: json.dump(cache, f)
+            except Exception: pass
     if ts and ts != RUN["tm_ts"]:
         RUN["tm_ts"] = ts
         vlog(f"📱 Telefon testi (TM): {good} çalışıyor, {len(res) - good} çalışmıyor, {ch.get('skipped', 0)} test edilmedi")
     if ts and time.time() - ts > TM_ALERT and RUN.get("tm_alerted") != ts:
         RUN["tm_alerted"] = ts
         RUN["tm_alert"] = f"📱 Telefon testinden sonuç gelmiyor (son sonuç: {ago(ts)}). Termux'u aç, test kendiliğinden başlar."
-    if not ts or stale: return set(), {}, False
+    if not ts or stale: return set(), {}, False, load_exits()
     return ({k for k, v in res.items() if isinstance(v, (int, float)) and v < 0},
-            {k: v for k, v in res.items() if isinstance(v, (int, float)) and v > 0}, True)
+            {k: v for k, v in res.items() if isinstance(v, (int, float)) and v > 0}, True, load_exits())
 
 
 # ───────── KONTROL DÖNGÜSÜ ─────────
@@ -665,9 +681,9 @@ def check_cycle(force=False):
     ips = {h for h in (code_host(c) for c in codes) if h}
     old = set(db.get("seen_ips", []))
     new = ips - old
-    dead_tm, tm_ms, tm_fresh = tm_sync(db, sources)
+    dead_tm, tm_ms, tm_fresh, tm_exits = tm_sync(db, sources)
     dead_tm &= {code_key(c) for c in codes}
-    tm_changed = sorted(dead_tm) != sorted(db.get("tm_dead_pushed", []))
+    tm_changed = sorted(dead_tm) != sorted(db.get("tm_dead_pushed", [])) or RUN.pop("exits_changed", False)
     if not force and old and len(new) <= NEW_IP_LIMIT and not tm_changed:
         RUN["last_msg"] = f"✅ {len(codes)} kod, {len(new)} yeni IP → değişiklik yok"
         vlog(f"ℹ️ {len(codes)} kod · {len(new)} yeni IP (eşik: {NEW_IP_LIMIT}'ten fazla) → değişiklik yok")
@@ -683,9 +699,9 @@ def check_cycle(force=False):
         else:
             vlog("⚠️ Telefon testine göre hiçbir kod çalışmıyor; test yok sayıldı")
     codes = dead_filter(codes)
-    need_ip = [code_host(c) for c in codes if exit_country(c, {})[0] is None]   # isminde ülke olmayanlar
+    need_ip = [] if tm_exits else [code_host(c) for c in codes if exit_country(c, {})[0] is None]   # ölçüm yoksa: isminde ülke olmayanlar
     geo = geo_lookup([h for h in need_ip if h]) if need_ip else {}
-    renamed, notes = rename_all(codes, geo, tm_ms, tm_fresh)
+    renamed, notes = rename_all(codes, geo, tm_ms, tm_fresh, tm_exits)
     for n in notes: vlog(n)
     targets = [(s["file_id"], name_of(s, k), s.get("announce", "")) for k, s in db["subs"].items() if s.get("file_id") and not is_exp(s)]
     ok, bad = push_all(targets, renamed)

@@ -14,7 +14,7 @@ CFG = H + "/.tmtest_xray.json"
 CHANNEL = "tmtest.txt"
 INTERVAL = 10 * 60
 API = "127.0.0.1:9095"
-TEST_URL = "https://www.gstatic.com/generate_204"
+TEST_URL = "https://www.cloudflare.com/cdn-cgi/trace"   # hem ms ölçer hem çıkış ülkesini söyler (loc=DE)
 PROTOS = ("vless://", "vmess://", "trojan://", "ss://", "hysteria2://", "hy2://")
 
 
@@ -261,7 +261,7 @@ def run_tests(groups):
                 try: socket.create_connection(("127.0.0.1", BASE_PORT), 1).close(); break
                 except Exception: time.sleep(0.2)
             with ThreadPoolExecutor(32) as ex:
-                for i, ms in zip(idx, ex.map(delay, [BASE_PORT + j for j in range(len(cur))])): out[i] = ms
+                for i, r in zip(idx, ex.map(delay, [BASE_PORT + j for j in range(len(cur))])): out[i] = r
         finally:
             p.terminate()
             try: p.wait(5)
@@ -269,17 +269,21 @@ def run_tests(groups):
     return out
 
 def delay(port):
+    """Kod üzerinden Cloudflare trace açar. Dönüş: (ms, çıkış ülkesi) — çalışmıyorsa (-1, None)."""
     op = urllib.request.build_opener(urllib.request.ProxyHandler({"http": "http://127.0.0.1:%d" % port, "https": "http://127.0.0.1:%d" % port}))
-    best = -1
+    best, cc = -1, None
     for _ in range(2):
         t = time.time()
         try:
             with op.open(TEST_URL, timeout=6) as r:
-                if r.status in (200, 204):
+                body = r.read(2000).decode("utf-8", "ignore")
+                if r.status == 200:
                     ms = int((time.time() - t) * 1000)
                     best = ms if best < 0 else min(best, ms)
+                    m = re.search(r"^loc=([A-Z]{2})$", body, re.M)
+                    if m: cc = m.group(1).lower()
         except Exception: pass
-    return best
+    return best, cc
 
 def country():
     """IP kontrol siteleri TM'de çoğunlukla engelli: açılmazsa '?' döner (= doğrudan TM bağlantısı sayılır)."""
@@ -322,12 +326,13 @@ def cycle():
         if ob: obs.append(ob); keys_of.append(code_key(c))
     log("📥 %d kod çekildi, test başlıyor..." % len(codes))
     t0 = time.time()
-    try: ms_list = run_tests(obs)
+    try: res_list = run_tests(obs)
     except RuntimeError as e:
         log("❌ %s" % e); return
-    results = {k: ms for k, ms in zip(keys_of, ms_list) if ms is not None}
+    results = {k: r[0] for k, r in zip(keys_of, res_list) if r is not None}
+    exits = {k: r[1] for k, r in zip(keys_of, res_list) if r is not None and r[1]}   # gerçek çıkış ülkesi (ölçülen)
     good = sum(1 for v in results.values() if v > 0)
-    ch.update({"results": results, "ts": int(time.time()), "status": "ok", "status_ts": int(time.time()),
+    ch.update({"results": results, "exits": exits, "ts": int(time.time()), "status": "ok", "status_ts": int(time.time()),
                "country": cname, "tested": len(results), "good": good, "skipped": len(codes) - len(results)})
     write_channel(svc, fid, ch)
     log("✅ %d kod test edildi (%d sn): %d çalışıyor, %d çalışmıyor, %d desteklenmiyor (test edilmedi)"
