@@ -304,7 +304,7 @@ def create_vip(name, owner=None, days=None, check_limit=True, extra=None):
         if from_free: db["free_files"].remove(fid)
         kid = "vip_" + uuid.uuid4().hex[:8]
         db["subs"][kid] = {"name": name, "title": name, "file_id": fid, "announce": "", "owner_id": owner}
-        if days: db["subs"][kid]["expires"] = time.time() + int(days) * 86400
+        if days: db["subs"][kid]["expires"] = time.time() + float(days) * 86400   # kesirli gün: deneme kodu 3 saat
         if extra: db["subs"][kid].update(extra)
         save_db(db)
         return (kid, fid), ""
@@ -865,8 +865,26 @@ async def watchdog(app):
             for kid, s in gone:
                 if await asyncio.to_thread(delete_vip, kid):
                     ow = s.get("owner_id"); e = load_db().get("users", {}).get(str(ow), {})
-                    ulog("del", f"🗑 Kod silindi (süre doldu): {e.get('name', '?')} ({ow}) · {kid} · {'ücretsiz' if s['pub'] == 'free' else 'satın alınan'}")
-                    try: await app.bot.send_message(ow, tr(e.get("lang", "tr"), "expired", name=name_of(s, kid)))
+                    kind_tr = {"free": "ücretsiz", "trial": "deneme", "gift": "hediye"}.get(s["pub"], "satın alınan")
+                    ulog("del", f"🗑 Kod silindi (süre doldu): {e.get('name', '?')} ({ow}) · {kid} · {kind_tr}")
+                    lg = e.get("lang", "tr")
+                    try:
+                        if s["pub"] == "trial": await app.bot.send_message(ow, tr(lg, "trial_end"), reply_markup=KB([[B(tr(lg, "b_market"), "u_market", "success")]]))
+                        else: await app.bot.send_message(ow, tr(lg, "expired", name=name_of(s, kid)))
+                    except Exception: pass
+            # satın alınan / hediye kodlar: bitmesine 24 saat kala hatırlat (bir kez)
+            due = [k for k, s in load_db()["subs"].items() if s.get("pub") in ("paid", "gift") and s.get("expires") and not s.get("reminded") and 0 < float(s["expires"]) - time.time() < 86400]
+            if due:
+                def rf(d):
+                    out = []
+                    for k in due:
+                        s = d["subs"].get(k)
+                        if s and not s.get("reminded"): s["reminded"] = True; out.append((k, dict(s)))
+                    return out
+                for kid, s in mutate(rf):
+                    ow = s.get("owner_id"); lg = lang_of(load_db(), ow)
+                    try: await app.bot.send_message(ow, tr(lg, "remind", name=esc(name_of(s, kid)), left=left_txt(s.get("expires"), lg == "ru")), parse_mode="HTML",
+                                                    reply_markup=KB([[B(tr(lg, "b_ext"), f"u_ext:{kid}", "success")]]))
                     except Exception: pass
             for fid, nm, owner in hit:
                 audit(0, f"expired {nm}")
@@ -907,6 +925,14 @@ async def watchdog(app):
                     (ok, bad), n = await asyncio.to_thread(ajob)
                 vlog(f"🕰 Otomatik duyuru ({now:%H:%M}): {text} → Drive {ok}/{n}")
         except Exception: log.exception("auto announce")
+        # her sabah günlük rapor (dünün özeti)
+        try:
+            now = tm_now()
+            if now.hour >= REPORT_HOUR and load_db().get("report_last") != now.strftime("%Y-%m-%d"):
+                mutate(lambda d: d.__setitem__("report_last", now.strftime("%Y-%m-%d")))
+                a0, a1, lbl = day_bounds(-1)
+                await notify_founders(app, await asyncio.to_thread(report_text, a0, a1, f"Günlük rapor · {lbl}"))
+        except Exception: log.exception("daily report")
         # her gün 03:00 otomatik yedek
         try:
             now = datetime.datetime.now(); d = now.strftime("%Y-%m-%d")
@@ -1019,8 +1045,10 @@ def admin_kb():
         [B("🏷 Toplu Başlık", "bulk_title"), B(f"🎫 Destek ({sum(1 for t in load_db().get('tickets', {}).values() if t.get('status') == 'open')})", "tickets")],
         [B("⚡ Güncelle", "upd_now"), B("📦 Yedek", "get_zip")],
         [B("👥 Kullanıcı Logları", "ul_open")],
-        [B("📊 İstatistik", "stats"), B("📢 Kanallar", "chans")],
-        [B("🪙 CryptoBot", "cp"), B("💳 TMT 🔜", "pay_set")],
+        [B("🔎 Kullanıcı Ara", "usearch")],
+        [B("📈 Rapor", "rep_today"), B("📊 İstatistik", "stats")],
+        [B("📢 Kanallar", "chans"), B("🪙 CryptoBot", "cp")],
+        [B("💳 TMT 🔜", "pay_set")],
         [B("📣 Herkese Mesaj", "bcast")],
         [B("👮 Alt Adminler", "sa_menu")],
         [B(f"🕰 Oto. Duyuru: {'Açık' if on else 'Kapalı'}", "auto_ann")],
@@ -1158,6 +1186,27 @@ async def on_num(c, uid, st, n, send, who=""):
         old = mutate(f)
         audit(uid, f"sa_add {nid} {days}g limit={n}")
         await send(f"✅ <b>Alt admin {'güncellendi' if old else 'eklendi'}</b>\n<blockquote>👮 <code>{nid}</code>\n⏳ {days} gün  ·  🎟 en fazla {n} kod</blockquote>", back("sa_menu"))
+    elif what == "gift_days" and uid in ADMINS:
+        tid_ = st["target"]
+        e = load_db().get("users", {}).get(str(tid_), {})
+        res, err = await asyncio.to_thread(make_code_for, tid_, f"{short(e.get('name') or 'VPN', 20)} 🎁", n, "gift")
+        if not res: await send(f"⚠️ {esc(err)}", back("admin")); return
+        ulog("gift", f"🎁 Admin kod verdi: {e.get('name')} ({tid_}) · {n} gün")
+        audit(uid, f"gift {tid_} {n}g")
+        lg = lang_of(load_db(), tid_)
+        try: await c.bot.send_message(tid_, tr(lg, "gift", left=left_txt(load_db()["subs"][res[0]].get("expires"), lg == "ru"), link=esc(sub_link(res[1]))), parse_mode="HTML")
+        except Exception: pass
+        await send(f"✅ <b>{n} günlük kod verildi</b> ve kullanıcıya gönderildi.", KB([[B("👤 Kullanıcıya Dön", f"uv:{tid_}")]]))
+    elif what == "add_days" and uid in ADMINS:
+        s_ = await asyncio.to_thread(extend_code, st["kid"], n)
+        if not s_: await send("⚠️ Kod bulunamadı.", back("admin")); return
+        ow = s_.get("owner_id"); lg = lang_of(load_db(), ow)
+        ulog("add", f"⏳ Admin süre ekledi: {name_of(s_, st['kid'])} · +{n} gün")
+        audit(uid, f"add_days {st['kid']} {n}")
+        if ow and ow not in ADMINS:
+            try: await c.bot.send_message(ow, tr(lg, "added", name=name_of(s_, st["kid"]), left=left_txt(s_.get("expires"), lg == "ru")))
+            except Exception: pass
+        await send(f"✅ +{n} gün eklendi. Kalan: <b>{left_txt(s_.get('expires'))}</b>", KB([[B("👤 Kullanıcıya Dön", f"uv:{ow}")]] if ow else [[B("◀️ Admin", "admin")]]))
     elif what in ("sa_ext", "sa_lim"):
         sid = st["sid"]
         def f(d):
@@ -1195,7 +1244,7 @@ def bulk_apply(field, val):
 # ───────── HANDLERS ─────────
 async def start(u: Update, c: ContextTypes.DEFAULT_TYPE):
     uid = u.effective_user.id
-    if not is_admin(uid): return await pub_start(u, c)
+    if not is_admin(uid) or is_banned(uid): return await pub_start(u, c)
     STATE.pop(uid, None)
     if uid not in ADMINS:
         await asyncio.to_thread(touch_user, u.effective_user)
@@ -1213,7 +1262,7 @@ async def cmd_id(u: Update, c: ContextTypes.DEFAULT_TYPE):
 
 async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
     uid = u.effective_user.id
-    if not is_admin(uid) or (uid not in ADMINS and STATE.get(uid, {}).get("action") == "u_panel"): return await pub_msg(u, c)
+    if not is_admin(uid) or is_banned(uid) or (uid not in ADMINS and STATE.get(uid, {}).get("action") == "u_panel"): return await pub_msg(u, c)
     if uid not in STATE: return
     txt = (u.message.text or "").strip()
     st = STATE.pop(uid)
@@ -1293,6 +1342,18 @@ async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
             msg = await add_channel(c, txt, getattr(fo, "chat", None))
             await u.message.reply_text(msg, parse_mode="HTML", reply_markup=back("chans"))
 
+        elif act == "u_search":
+            found = find_users(txt)
+            if not found:
+                STATE[uid] = {"action": "u_search"}
+                await u.message.reply_text("⚠️ Bulunamadı. Başka bir ID / @kullanıcıadı / isim dene.", reply_markup=back("admin")); return
+            if len(found) == 1:
+                t, kb = user_view(found[0])
+                await u.message.reply_text(t, parse_mode="HTML", reply_markup=kb); return
+            us = load_db()["users"]
+            await u.message.reply_text(f"🔎 <b>{len(found)} sonuç</b>", parse_mode="HTML",
+                                       reply_markup=KB([[B(f"{short(us[k].get('name') or k, 20)} · {k}", f"uv:{k}")] for k in found] + [[B("◀️ Admin", "admin")]]))
+
         elif act == "cp_set":
             try: await u.message.delete()   # token sohbette kalmasın
             except Exception: pass
@@ -1341,7 +1402,7 @@ async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
         log.exception("msg_handler")
         await send_error(c, uid, f"mesaj:{act}", e)
 
-FOUNDER_ONLY = {"tickets_bug", "t_cancel", "tickets", "cp_test", "cp", "cp_set", "cp_del", "ul_open", "stats", "chans", "ch_add", "pay_set", "bcast", "bcast_yes", "rollback", "rollback_yes", "auto_ann", "toggle_sys", "admin", "sources", "s_add", "logs", "upd_now", "get_zip", "sa_menu", "sa_add", "bulk_ann", "bulk_title", "bulk_yes"}
+FOUNDER_ONLY = {"usearch", "rep_today", "rep_yday", "tickets_bug", "t_cancel", "tickets", "cp_test", "cp", "cp_set", "cp_del", "ul_open", "stats", "chans", "ch_add", "pay_set", "bcast", "bcast_yes", "rollback", "rollback_yes", "auto_ann", "toggle_sys", "admin", "sources", "s_add", "logs", "upd_now", "get_zip", "sa_menu", "sa_add", "bulk_ann", "bulk_title", "bulk_yes"}
 OWNED = ("kv", "kt", "kn", "ka", "kd", "kdy")   # alt admin sadece kendi kodunda
 def src_find(db, h): return next((s for s in db["sources"] if hashlib.md5(s.encode()).hexdigest()[:8] == h), None)
 
@@ -1349,12 +1410,12 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
     q = u.callback_query
     uid = q.from_user.id
     a = q.data
-    if a.startswith("u_") or not is_admin(uid): return await pub_cb(u, c)
+    if a.startswith("u_") or not is_admin(uid) or is_banned(uid): return await pub_cb(u, c)
     if uid not in ADMINS:
         miss = await missing_channels(c.bot, uid)
         if miss:
             await q.answer(); await safe_edit(q, *join_view(lang_of(load_db(), uid), miss)); return
-    if uid not in ADMINS and (a in FOUNDER_ONLY or a.startswith(("sv:", "se:", "sd:", "sa_del:", "sa_ext:", "sa_lim:", "kx:", "kxs:", "ul:", "chd:", "ord_ok:", "ord_no:", "t_rep:", "t_close:", "tv:"))):
+    if uid not in ADMINS and (a in FOUNDER_ONLY or a.startswith(("sv:", "se:", "sd:", "sa_del:", "sa_ext:", "sa_lim:", "kx:", "kxs:", "ul:", "chd:", "ord_ok:", "ord_no:", "t_rep:", "t_close:", "tv:", "ug:", "ux:", "uxc:", "ub:", "uv:"))):
         await q.answer(L(uid, "⛔ Erişim yok", "⛔ Нет доступа"), show_alert=True); return
     if a not in ("toggle_sys", "upd_now"):
         await q.answer()
@@ -1401,6 +1462,44 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         ch = mutate(f); JOINED.clear()
         if ch: audit(uid, f"channel_del {ch['id']}")
         await safe_edit(q, *channels_view())
+
+    elif a in ("rep_today", "rep_yday"):
+        a0, a1, lbl = day_bounds(0 if a == "rep_today" else -1)
+        t = await asyncio.to_thread(report_text, a0, a1, ("Bugün · " if a == "rep_today" else "Dün · ") + lbl)
+        await safe_edit(q, t, KB([[B("📅 Dün" if a == "rep_today" else "📅 Bugün", "rep_yday" if a == "rep_today" else "rep_today"), B("◀️ Admin", "admin")]]))
+
+    elif a == "usearch":
+        STATE[uid] = {"action": "u_search"}
+        await safe_edit(q, *prompt("🔎 <b>Kullanıcı Ara</b>", "Telegram ID, @kullanıcıadı ya da isim yaz.", "admin"))
+
+    elif a.startswith("uv:"):
+        await safe_edit(q, *user_view(a.split(":", 1)[1]))
+
+    elif a.startswith("ug:"):
+        tid_ = int(a.split(":", 1)[1])
+        await safe_edit(q, *ask_num(uid, "gift_days", f"👤 <code>{tid_}</code>\n", target=tid_))
+
+    elif a.startswith("ux:"):
+        tid_ = int(a.split(":", 1)[1])
+        codes = user_codes(db, tid_)
+        if not codes: await safe_edit(q, "ℹ️ Aktif kodu yok. <b>🎁 Kod Ver</b> ile yeni kod verebilirsin.", KB([[B("◀️ Geri", f"uv:{tid_}")]])); return
+        await safe_edit(q, "⏳ <b>Hangi koda süre eklensin?</b>", KB([[B(f"⏳ {short(name_of(s_, k), 18)} · {left_txt(s_.get('expires'))}", f"uxc:{k}")] for k, s_ in codes[:10]] + [[B("◀️ Geri", f"uv:{tid_}")]]))
+
+    elif a.startswith("uxc:"):
+        kid = a.split(":", 1)[1]
+        await safe_edit(q, *ask_num(uid, "add_days", f"🎟 <b>{esc(name_of(db['subs'].get(kid, {}), kid))}</b>\n", kid=kid))
+
+    elif a.startswith("ub:"):
+        tid_ = a.split(":", 1)[1]
+        def f(d):
+            e = d.get("users", {}).get(tid_)
+            if not e: return None
+            e["banned"] = not e.get("banned"); return e["banned"]
+        st_ = mutate(f)
+        if st_ is not None:
+            ulog("ban", f"{'🚫 Engellendi' if st_ else '✅ Engel kaldırıldı'}: {load_db()['users'][tid_].get('name')} ({tid_})")
+            audit(uid, f"{'ban' if st_ else 'unban'} {tid_}")
+        await safe_edit(q, *user_view(tid_))
 
     elif a in ("tickets", "tickets_bug"):
         await safe_edit(q, *tickets_view(a == "tickets_bug"))
@@ -1994,6 +2093,8 @@ async def pub_gate(c, uid, lang, send):
 
 async def pub_start(u: Update, c: ContextTypes.DEFAULT_TYPE):
     user = u.effective_user
+    if is_banned(user.id):
+        await u.message.reply_text(tr(lang_of(load_db(), user.id), "banned")); return
     arg = (c.args[0] if getattr(c, "args", None) else "") or ""
     ref = int(arg[1:]) if re.fullmatch(r"r\d{3,15}", arg) else None
     new, e = await asyncio.to_thread(touch_user, user, ref)
@@ -2014,6 +2115,8 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
     q = u.callback_query
     user = q.from_user; uid = user.id
     a = q.data
+    if is_banned(uid):
+        await q.answer(tr(lang_of(load_db(), uid), "banned"), show_alert=True); return
     await asyncio.to_thread(touch_user, user)
     db = load_db(); lang = lang_of(db, uid)
     async def send(t, kb=None): await safe_edit(q, t, kb)
@@ -2091,7 +2194,8 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
             await send(tr(lang, "free_today"), menu_btn); return
         if avail_refs(e) < REF_NEED:
             await send(tr(lang, "free_need", need=REF_NEED, avail=max(0, avail_refs(e)), link=esc(ref_link(uid))),
-                       KB([[B(tr(lang, "b_share"), url=share_url(lang, uid), style="success")], [B(tr(lang, "b_menu"), "u_menu")]])); return
+                       KB([[B(tr(lang, "b_share"), url=share_url(lang, uid), style="success")]]
+                          + ([[B(tr(lang, "b_trial"), "u_trial", "primary")]] if not e.get("trial_used") else []) + [[B(tr(lang, "b_menu"), "u_menu")]])); return
         # yer ayır (aynı anda iki kez basılırsa iki kod çıkmasın)
         def take(d):
             x = d["users"][str(uid)]
@@ -2113,11 +2217,38 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         ulog("free", f"🎁 Ücretsiz kod aldı: {who(user)} · {kid} · {FREE_DAYS} gün")
         await send(tr(lang, "free_ok", left=left_txt(load_db()["subs"][kid].get("expires"), lang == "ru"), link=esc(sub_link(fid))), menu_btn)
 
+    elif a == "u_trial":
+        def take(d):
+            x = d["users"][str(uid)]
+            if x.get("trial_used"): return False
+            x["trial_used"] = time.time(); return True
+        if not mutate(take): await send(tr(lang, "trial_used"), menu_btn); return
+        res, err = await asyncio.to_thread(make_code_for, uid, f"{short(user.first_name or 'VPN', 20)} 🧪", TRIAL_HOURS / 24, "trial")
+        if not res:
+            mutate(lambda d: d["users"][str(uid)].pop("trial_used", None))
+            await send(tr(lang, "no_slot"), menu_btn)
+            await notify_founders(c.application, f"⚠️ <b>Deneme kodu verilemedi</b>\n<blockquote>{esc(who(user))}\n{esc(err)}</blockquote>")
+            return
+        ulog("trial", f"🧪 Deneme kodu aldı: {who(user)} · {res[0]} · {TRIAL_HOURS} saat")
+        await send(tr(lang, "trial_ok", link=esc(sub_link(res[1]))), menu_btn)
+
+    elif a.startswith("u_ext:"):
+        kid = a.split(":", 1)[1]; s_ = db["subs"].get(kid)
+        if not s_ or s_.get("owner_id") != uid: await send(tr(lang, "mine_none"), menu_btn); return
+        await send(*ext_view(lang, kid, s_))
+
+    elif a.startswith("u_xb:"):
+        _, kid, item = a.split(":")
+        s_ = db["subs"].get(kid)
+        if not s_ or s_.get("owner_id") != uid or item not in PRICES: await send(tr(lang, "mine_none"), menu_btn); return
+        await send(*new_order(uid, user, lang, item, ext=kid))
+
     elif a == "u_mine":
         mine = user_codes(db, uid)
         if not mine: await send(tr(lang, "mine_none"), menu_btn); return
         body = "\n".join(tr(lang, "mine_item", name=esc(short(name_of(s, k), 30)), left=left_txt(s.get("expires"), lang == "ru"), link=esc(sub_link(s.get("file_id", "")))) for k, s in mine[:8])
-        await send(tr(lang, "mine") + "\n" + body, menu_btn)
+        ext_rows = [[B(f"{tr(lang, 'b_ext')} · {short(name_of(s_, k), 18)}", f"u_ext:{k}")] for k, s_ in mine[:8] if s_.get("pub") in ("paid", "gift")]
+        await send(tr(lang, "mine") + "\n" + body, KB(ext_rows + [[B(tr(lang, "b_menu"), "u_menu")]]))
 
     elif a == "u_prof":
         inv = db["users"].get(str(e.get("ref_by")), {}) if e.get("ref_by") else {}
@@ -2207,16 +2338,21 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
 
 def item_tr(o):
     if o["item"] == "panel": return f"Panel · {o['n']} kullanıcı · {PANEL_DAYS} gün"
+    if o.get("ext"): return f"Uzatma · {PRICES[o['item']][0]} gün"
     return f"Kod · {PRICES[o['item']][0]} gün"
 
-def new_order(uid, user, lang, item, n=0):
+def new_order(uid, user, lang, item, n=0, ext=None):
     if item == "panel":
         if n < PANEL_MIN: return tr(lang, "panel_min"), KB([[B(tr(lang, "b_back"), "u_buy:panel")]])
         price, it = n * PANEL_PRICE, tr(lang, "it_panel", n=n)
+    elif item in PRICES and ext:
+        price = PRICES[item][1]
+        it = tr(lang, "it_ext", days=PRICES[item][0], name=name_of(load_db()["subs"].get(ext, {}), ext))
     elif item in PRICES: price, it = PRICES[item][1], tr(lang, "it_" + item)
     else: return pub_menu(load_db(), uid)
     oid = uuid.uuid4().hex[:6].upper()
     o = {"uid": uid, "item": item, "n": n, "price": price, "ts": time.time(), "status": "new", "who": who(user)}
+    if ext: o["ext"] = ext
     def f(d): d.setdefault("orders", {})[oid] = o
     mutate(f)
     ulog("order", f"🧾 Sipariş açtı: {who(user)} · #{oid} · {item_tr(o)} · {price} TMT")
@@ -2230,6 +2366,7 @@ def new_order(uid, user, lang, item, n=0):
 async def pub_msg(u: Update, c: ContextTypes.DEFAULT_TYPE):
     """Kullanıcının yazdığı mesaj: şimdilik sadece panel kullanıcı sayısı."""
     uid = u.effective_user.id
+    if is_banned(uid): return
     st = STATE.get(uid)
     db = load_db(); lang = lang_of(db, uid)
     async def send(t, kb): await u.message.reply_text(t, parse_mode="HTML", reply_markup=kb, disable_web_page_preview=True)
@@ -2267,11 +2404,18 @@ async def fulfill_order(c, oid, approve, admin_uid):
             e.setdefault("added", time.time()); e["name"] = d.get("users", {}).get(str(uid), {}).get("name", "")
             e.pop("warned", None); e.pop("ended", None)
             d["sub_admins"][str(uid)] = e
-            d["orders"][oid]["status"] = "done"
+            d["orders"][oid]["status"] = "done"; d["orders"][oid]["done_ts"] = time.time()
             d.setdefault("users", {}).setdefault(str(uid), {})["buys"] = int(d["users"][str(uid)].get("buys", 0)) + 1
             return e
         e = mutate(p)
         msg = tr(lang, "order_ok_panel", oid=oid, n=e["limit"], days=PANEL_DAYS)
+    elif o.get("ext") and db["subs"].get(o["ext"], {}).get("owner_id") == uid:   # aynı kodu uzat (link değişmez)
+        s_ = await asyncio.to_thread(extend_code, o["ext"], PRICES[o["item"]][0])
+        def p(d):
+            d["orders"][oid]["status"] = "done"; d["orders"][oid]["done_ts"] = time.time()
+            d.setdefault("users", {}).setdefault(str(uid), {})["buys"] = int(d["users"][str(uid)].get("buys", 0)) + 1
+        mutate(p)
+        msg = tr(lang, "order_ok_ext", oid=oid, name=esc(name_of(s_, o["ext"])), left=left_txt(s_.get("expires"), lang == "ru"))
     else:
         days = PRICES[o["item"]][0]
         nm = db.get("users", {}).get(str(uid), {}).get("name") or str(uid)
@@ -2281,7 +2425,7 @@ async def fulfill_order(c, oid, approve, admin_uid):
             return f"⚠️ Kod oluşturulamadı: {esc(err)}\nSipariş bekliyor, sonra tekrar onayla."
         kid, fid = res
         def p(d):
-            d["orders"][oid]["status"] = "done"; d["orders"][oid]["kid"] = kid
+            d["orders"][oid]["status"] = "done"; d["orders"][oid]["kid"] = kid; d["orders"][oid]["done_ts"] = time.time()
             d.setdefault("users", {}).setdefault(str(uid), {})["buys"] = int(d["users"][str(uid)].get("buys", 0)) + 1
         mutate(p)
         msg = tr(lang, "order_ok_code", oid=oid, left=left_txt(load_db()["subs"][kid].get("expires"), lang == "ru"), link=esc(sub_link(fid)))
@@ -2552,7 +2696,7 @@ async def support_router(u: Update, c: ContextTypes.DEFAULT_TYPE):
         if st.get("action") == "t_reply": STATE.pop(uid, None)
         await admin_reply(c, uid, tid, m)
         raise ApplicationHandlerStop
-    if uid in STATE: return                      # başka bir işlem bekleniyor (ör. panel kullanıcı sayısı)
+    if uid in STATE or is_banned(uid): return    # başka bir işlem bekleniyor (ör. panel kullanıcı sayısı) / engelli
     tid = open_ticket(load_db(), uid)
     if not tid: return
     await user_to_ticket(c, u, tid)
@@ -2579,6 +2723,122 @@ async def send_error(c, uid, where, err):
     lang = lang_of(load_db(), uid)
     try: await c.bot.send_message(uid, tr(lang, "err"), parse_mode="HTML", reply_markup=KB([[B(tr(lang, "b_report"), f"u_rep:{eid}", "danger")]]))
     except Exception: pass
+
+# ───────── DENEME KODU · SÜRE HATIRLATMA · GÜNLÜK RAPOR · KULLANICI ARA / ENGELLE ─────────
+TRIAL_HOURS = 3
+REPORT_HOUR = 9          # günlük rapor saati (Aşkabat)
+
+T["tr"].update({
+  "b_trial": "🎁 3 saatlik deneme al",
+  "trial_ok": "🎁 <b>Deneme kodun hazır!</b>\n<blockquote>⏳ 3 saat geçerli\n📲 Linki kopyala, VPN uygulamana (Happ) abonelik olarak ekle.</blockquote>\n🔗 <b>Abonelik linki</b> <i>(dokun → kopyala)</i>\n<code>{link}</code>",
+  "trial_used": "ℹ️ Deneme kodunu daha önce kullandın.",
+  "trial_end": "⏳ Deneme süren bitti. Beğendiysen 🛒 Market'ten kod alabilirsin.",
+  "remind": "⏳ <b>Kodun yarın bitiyor</b>\n<blockquote>🎟 {name}\n⏳ Kalan  <b>{left}</b></blockquote>\nUzatırsan link aynı kalır, hiçbir şey değiştirmen gerekmez.",
+  "b_ext": "🔄 Uzat",
+  "ext_ask": "🔄 <b>Kodu uzat</b>\n<blockquote>🎟 {name}\n⏳ Kalan  <b>{left}</b></blockquote>\nNe kadar uzatılsın?",
+  "it_ext": "🔄 Uzatma · {days} gün · {name}",
+  "order_ok_ext": "✅ <b>Sipariş #{oid} onaylandı!</b>\n<blockquote>🎟 {name} uzatıldı\n⏳ Kalan  <b>{left}</b></blockquote>\nLink aynı, bir şey yapmana gerek yok.",
+  "banned": "⛔ Bu botu kullanman engellendi.",
+  "gift": "🎁 <b>Admin sana kod verdi!</b>\n<blockquote>⏳ Süre  <b>{left}</b></blockquote>\n🔗 <b>Abonelik linki</b> <i>(dokun → kopyala)</i>\n<code>{link}</code>",
+  "added": "⏳ Kodunun süresi uzatıldı: {name} · kalan {left}",
+})
+T["ru"].update({
+  "b_trial": "🎁 Пробный на 3 часа",
+  "trial_ok": "🎁 <b>Пробный код готов!</b>\n<blockquote>⏳ Действует 3 часа\n📲 Скопируйте ссылку и добавьте её как подписку в VPN-приложение (Happ).</blockquote>\n🔗 <b>Ссылка подписки</b> <i>(нажмите → скопировать)</i>\n<code>{link}</code>",
+  "trial_used": "ℹ️ Пробный код вы уже использовали.",
+  "trial_end": "⏳ Пробный период закончился. Если понравилось — код можно купить в 🛒 Магазине.",
+  "remind": "⏳ <b>Ваш код заканчивается завтра</b>\n<blockquote>🎟 {name}\n⏳ Осталось  <b>{left}</b></blockquote>\nПри продлении ссылка останется прежней, ничего менять не нужно.",
+  "b_ext": "🔄 Продлить",
+  "ext_ask": "🔄 <b>Продлить код</b>\n<blockquote>🎟 {name}\n⏳ Осталось  <b>{left}</b></blockquote>\nНа сколько продлить?",
+  "it_ext": "🔄 Продление · {days} дн. · {name}",
+  "order_ok_ext": "✅ <b>Заказ #{oid} подтверждён!</b>\n<blockquote>🎟 {name} продлён\n⏳ Осталось  <b>{left}</b></blockquote>\nСсылка та же, ничего делать не нужно.",
+  "banned": "⛔ Вам закрыт доступ к этому боту.",
+  "gift": "🎁 <b>Администратор выдал вам код!</b>\n<blockquote>⏳ Срок  <b>{left}</b></blockquote>\n🔗 <b>Ссылка подписки</b> <i>(нажмите → скопировать)</i>\n<code>{link}</code>",
+  "added": "⏳ Срок вашего кода продлён: {name} · осталось {left}",
+})
+NUM_ASK.update({
+    "gift_days": ("🎁 <b>Kod ver</b>", "Kaç günlük kod verilsin?", DAYS, "g"),
+    "add_days":  ("⏳ <b>Süre ekle</b>", "Kaç gün eklensin?", DAYS, "g"),
+})
+
+def is_banned(uid):
+    if uid in ADMINS: return False
+    try: return bool(load_db().get("users", {}).get(str(uid), {}).get("banned"))
+    except Exception: return False
+
+def ext_view(lang, kid, s):
+    rows = [[B(tr(lang, "b_c7"), f"u_xb:{kid}:c7", "primary")], [B(tr(lang, "b_c30"), f"u_xb:{kid}:c30", "primary")], [B(tr(lang, "b_menu"), "u_menu")]]
+    return tr(lang, "ext_ask", name=esc(name_of(s, kid)), left=left_txt(s.get("expires"), lang == "ru")), KB(rows)
+
+def extend_code(kid, days):
+    """Kodun süresini uzatır (bitmişse şimdiden başlar). Dönüş: kod kaydı ya da None."""
+    def f(d):
+        s = d["subs"].get(kid)
+        if not s: return None
+        s["expires"] = max(time.time(), float(s.get("expires") or time.time())) + days * 86400
+        s.pop("reminded", None); s.pop("exp_done", None)
+        return dict(s)
+    return mutate(f)
+
+# ── günlük rapor ──
+def report_text(start, end, title):
+    db = load_db()
+    lines = [x for x in ulog_lines() if start <= x.get("t", 0) < end]
+    k = lambda kind: sum(1 for x in lines if x.get("k") == kind)
+    done = [o for o in db.get("orders", {}).values() if o.get("status") == "done" and not o.get("test") and start <= o.get("done_ts", 0) < end]
+    tmt = sum(o["price"] for o in done)
+    usdt = sum(o["price"] for o in done if o.get("via") == "usdt") / USDT_RATE
+    pub = [s for s in db["subs"].values() if s.get("pub") and not is_exp(s)]
+    op = sum(1 for t in db.get("tickets", {}).values() if t.get("status") == "open")
+    return (f"📈 <b>{title}</b>\n<blockquote>"
+            f"🆕 Yeni kullanıcı  <b>{k('join')}</b>\n"
+            f"🤝 Sayılan davet  <b>{k('credit')}</b>\n"
+            f"🎁 Ücretsiz kod  <b>{k('free')}</b>  ·  🧪 Deneme  <b>{k('trial')}</b>\n"
+            f"💰 Satış  <b>{len(done)}</b>  ·  <b>{tmt} TMT</b>  ·  💵 <b>{usdt:g} USDT</b>\n"
+            f"🆘 Açılan talep  <b>{k('t_open')}</b>  ·  📨 Hata bildirimi  <b>{k('err')}</b></blockquote>\n"
+            f"<blockquote>👥 Toplam kullanıcı  <b>{len(db.get('users', {}))}</b>\n"
+            f"🎟 Aktif kullanıcı kodu  <b>{len(pub)}</b>\n"
+            f"📡 Çalışan sunucu kodu  <b>{len(db.get('template', []))}</b>\n"
+            f"{esc(RUN.get('tm_line', ''))}\n"
+            f"🎫 Açık talep  <b>{op}</b>\n"
+            f"📂 Boş kod yeri  <b>{pool_count()}</b></blockquote>")
+
+def day_bounds(offset=0):
+    d0 = tm_now().replace(hour=0, minute=0, second=0, microsecond=0) + datetime.timedelta(days=offset)
+    return d0.timestamp(), (d0 + datetime.timedelta(days=1)).timestamp(), d0.strftime("%d.%m.%Y")
+
+# ── kullanıcı ara ──
+def find_users(q):
+    q = q.strip().lstrip("@").lower()
+    us = load_db().get("users", {})
+    if q.isdigit() and q in us: return [q]
+    exact = [k for k, e in us.items() if (e.get("un") or "").lower() == q]
+    if exact: return exact
+    return [k for k, e in us.items() if q and (q in (e.get("name") or "").lower() or q in (e.get("un") or "").lower())][:10]
+
+def user_view(tid):
+    db = load_db(); e = db.get("users", {}).get(str(tid))
+    if not e: return "⚠️ Kullanıcı bulunamadı.", back("admin")
+    tid = int(tid)
+    inv = db["users"].get(str(e.get("ref_by")), {}).get("name") if e.get("ref_by") else None
+    codes = user_codes(db, tid)
+    orders = [o for o in db.get("orders", {}).values() if o["uid"] == tid]
+    sa = db.get("sub_admins", {}).get(str(tid))
+    t = (f"👤 <b>{esc(e.get('name') or '—')}</b>\n<blockquote>"
+         f"🪪 ID  <code>{tid}</code>\n🔗 {('@' + esc(e['un'])) if e.get('un') else '—'}\n"
+         f"📅 Katılma  {tm_fmt(e.get('joined', time.time()))}\n🌐 Dil  {e.get('lang', 'tr')}\n"
+         f"🙋 Davet eden  {esc(inv) if inv else '—'}\n"
+         f"🤝 Davet  <b>{len(e.get('refs', []))}</b> · kullanılabilir <b>{max(0, avail_refs(e))}</b>\n"
+         f"🎁 Ücretsiz kod  <b>{e.get('free_n', 0)}</b> · 🧪 Deneme  <b>{'kullandı' if e.get('trial_used') else 'yok'}</b>\n"
+         f"🛒 Sipariş  <b>{len(orders)}</b> · tamamlanan <b>{sum(1 for o in orders if o['status'] == 'done')}</b>\n"
+         + (f"🖥 Panel  <b>{left_txt(sa.get('expires'))}</b> · limit {sa.get('limit')}\n" if sa else "")
+         + ("🚫 <b>ENGELLİ</b>\n" if e.get("banned") else "")
+         + "</blockquote>\n"
+         + ("\n".join(f"🎟 {esc(short(name_of(s, k), 26))} · ⏳ {left_txt(s.get('expires'))}" for k, s in codes) or "<i>Aktif kodu yok.</i>"))
+    kb = KB([[B("🎁 Kod Ver", f"ug:{tid}", "success"), B("⏳ Süre Ekle", f"ux:{tid}")],
+             [B("✅ Engeli Kaldır", f"ub:{tid}") if e.get("banned") else B("🚫 Engelle", f"ub:{tid}", "danger")],
+             [B("🔎 Başka Ara", "usearch"), B("◀️ Admin", "admin")]])
+    return t, kb
 
 # ───────── KENDİNİ GÜNCELLEME (dosyayı bota atınca; sadece kurucular) ─────────
 SELF = os.path.abspath(__file__)
