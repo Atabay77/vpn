@@ -246,7 +246,8 @@ def run_tests(groups):
         while len(rounds) <= r: rounds.append([])
         rounds[r].append(i)
     out = [None] * len(groups)   # None = test edilemedi (Xray kabul etmedi)
-    for idx in rounds:
+    for rn, idx in enumerate(rounds, 1):
+        log("   tur %d/%d: %d kod test ediliyor..." % (rn, len(rounds), len(idx)))
         cur = [groups[i] for i in idx]
         if not xray_check(build_config(cur))[0]:   # biri bozuksa tek tek ayıkla
             good = [i for i in idx if xray_check(build_config([groups[i]]))[0]]
@@ -259,7 +260,7 @@ def run_tests(groups):
             for _ in range(50):
                 try: socket.create_connection(("127.0.0.1", BASE_PORT), 1).close(); break
                 except Exception: time.sleep(0.2)
-            with ThreadPoolExecutor(12) as ex:
+            with ThreadPoolExecutor(32) as ex:
                 for i, ms in zip(idx, ex.map(delay, [BASE_PORT + j for j in range(len(cur))])): out[i] = ms
         finally:
             p.terminate()
@@ -273,7 +274,7 @@ def delay(port):
     for _ in range(2):
         t = time.time()
         try:
-            with op.open(TEST_URL, timeout=8) as r:
+            with op.open(TEST_URL, timeout=6) as r:
                 if r.status in (200, 204):
                     ms = int((time.time() - t) * 1000)
                     best = ms if best < 0 else min(best, ms)
@@ -299,6 +300,7 @@ def cycle():
         ch = read_channel(svc, fid)
     except Exception as e:
         log("❌ Drive'a ulaşılamadı: %s" % str(e)[:150]); return
+    log("📂 Drive OK, %d abonelik okunuyor..." % len(ch.get("sources", [])))
     if cc not in ("TM", "?"):
         log("⚠️ Termux TM'den çıkmıyor (%s). Happ → Per-app Proxy → Bypass + Termux, VPN'i yeniden bağla." % cname)
         ch.update({"status": "not_tm", "status_ts": int(time.time()), "country": cname})
@@ -318,6 +320,7 @@ def cycle():
     for i, c in enumerate(codes):
         ob = to_outbound(c, "c%d" % i)
         if ob: obs.append(ob); keys_of.append(code_key(c))
+    log("📥 %d kod çekildi, test başlıyor..." % len(codes))
     t0 = time.time()
     try: ms_list = run_tests(obs)
     except RuntimeError as e:
