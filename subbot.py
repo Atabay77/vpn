@@ -329,10 +329,34 @@ def delete_vip(kid):
 # ───────── KOD ÇEKME ─────────
 PROTOS = ("vless://", "vmess://", "trojan://", "ss://", "hysteria://", "hysteria2://", "hy2://", "tuic://")
 
+DRIVE_ID_RE = re.compile(r"(?:googleapis\.com/drive/v3/files/|drive\.google\.com/(?:uc\?(?:export=download&)?id=|file/d/))([-\w]{20,})")
+
+def http_reason(e):
+    """HTTP hatasının kısa sebebi (Google'ın JSON hatasındaki reason/message). Anahtar gizlenir."""
+    try: body = e.read().decode("utf-8", "ignore")
+    except Exception: return ""
+    try:
+        j = json.loads(body).get("error", {})
+        why = (j.get("errors") or [{}])[0].get("reason") or j.get("status") or ""
+        txt = f"{why} {j.get('message') or ''}"
+    except Exception:   # JSON değil (ör. Google'ın "olağandışı trafik" sayfası): başlığı / ilk kelimeler
+        m = re.search(r"<title>(.*?)</title>", body, re.I | re.S)
+        txt = m.group(1) if m else re.sub(r"<[^>]+>", " ", body)
+    return re.sub(r"key=[^&\s\"]+", "key=***", " ".join(txt.split()))[:120]
+
 def fetch_codes(url):
     req = urllib.request.Request(url, headers={"User-Agent": "v2rayN/6.42"})
-    with urllib.request.urlopen(req, timeout=15) as r:
-        content = r.read().decode("utf-8", "ignore")
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            content = r.read().decode("utf-8", "ignore")
+    except urllib.error.HTTPError as e:
+        why = http_reason(e)
+        m = DRIVE_ID_RE.search(url)
+        if e.code not in (403, 429) or not m: raise RuntimeError(f"HTTP {e.code} {why}".strip())
+        # Google API anahtarıyla indirme reddedildi (kota / IP sınırı): dosyayı servis hesabıyla indir
+        try: content = new_service().files().get_media(fileId=m.group(1)).execute(num_retries=1).decode("utf-8", "ignore")
+        except Exception as e2: raise RuntimeError(f"HTTP {e.code} {why} · servis hesabıyla da olmadı: {str(e2)[:60]}".strip())
+        RUN["src_via_sa"] = f"HTTP {e.code} {why}".strip()
     lines = content.splitlines()
     flat = "".join(content.split())
     for alt in (None, b"-_"):
@@ -740,7 +764,7 @@ def check_cycle(force=False):
         except Exception as e:   # zaman aşımı vb.: 2 sn sonra bir kez daha dene
             time.sleep(2)
             try: return i, fetch_codes(url), None, time.time() - t
-            except Exception as e2: return i, [], str(e2 or e)[:80], time.time() - t
+            except Exception as e2: return i, [], str(e2 or e)[:140], time.time() - t
 
     codes, keys = [], set()
     with ThreadPoolExecutor(max(1, min(8, len(sources)))) as ex:
@@ -752,6 +776,8 @@ def check_cycle(force=False):
         for c in got:
             k = code_key(c)
             if k not in keys: keys.add(k); codes.append(c)
+    via = RUN.pop("src_via_sa", None)
+    if via: vlog(f"⚠️ Google indirmeyi reddetti ({via}) → abonelik servis hesabıyla okundu")
     if not codes:
         RUN["last_msg"] = "❌ Hiç kod alınamadı"
         vlog("❌ Hiç kod alınamadı, Drive'a dokunulmadı.")
