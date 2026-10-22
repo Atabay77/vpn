@@ -1054,7 +1054,9 @@ def crash_info():
     return re.sub(r"bot\d+:[\w-]+", "bot***", txt)
 
 async def check_restart_loop(app):
-    """Bot kısa sürede çok kez yeniden açıldıysa kuruculara sebebiyle bildirir (saatte en fazla bir kez)."""
+    """Bot kısa sürede çok kez yeniden açıldıysa kuruculara sebebiyle bildirir (saatte en fazla bir kez).
+    Güncelleme / geri alma ile yapılan planlı yeniden açılışlar sayılmaz."""
+    if os.path.exists(UPDATE_NOTE): return
     now = time.time()
     try:
         with open(STARTS_FILE) as f: st = json.load(f)
@@ -1252,15 +1254,26 @@ async def live_log(q, uid):
             cur = "\n".join(tail(VIP_LOG, 35))
             if cur != last:
                 last = cur
-                await q.edit_message_text(log_text()[:4000], parse_mode="HTML", reply_markup=LOG_KB, disable_web_page_preview=True)
+                await q.edit_message_text(html_cut(log_text()), parse_mode="HTML", reply_markup=LOG_KB, disable_web_page_preview=True)
     except asyncio.CancelledError: pass
     except Exception as e: log.info("live log stopped: %s", e)   # flood/silinen mesaj -> sessizce dur
     finally:
         if LIVE.get(uid) is asyncio.current_task(): LIVE.pop(uid, None)
 
+def html_cut(t, n=4000):
+    """Telegram sınırı için kısaltır; açık kalan HTML etiketlerini kapatır."""
+    if len(t) <= n: return t
+    t = t[:n - 60]
+    if "<" in t[t.rfind(">") + 1:]: t = t[:t.rfind("<")]   # yarım etiket
+    stack = []
+    for m in re.finditer(r"<(/?)([a-z\-]+)[^>]*>", t):
+        if m.group(1): stack and stack[-1] == m.group(2) and stack.pop()
+        else: stack.append(m.group(2))
+    return t + "…" + "".join(f"</{x}>" for x in reversed(stack))
+
 async def safe_edit(q, text, kb=None):
     try:
-        await q.edit_message_text(text[:4000], parse_mode="HTML", reply_markup=kb, disable_web_page_preview=True)
+        await q.edit_message_text(html_cut(text), parse_mode="HTML", reply_markup=kb, disable_web_page_preview=True)
     except BadRequest as e:
         if "not modified" not in str(e).lower(): log.warning("edit: %s", e)
 
@@ -2899,6 +2912,14 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         if not s_ or s_.get("owner_id") != uid or item not in PRICES: await send(tr(lang, "mine_none"), menu_btn); return
         await send(*new_order(uid, user, lang, item, ext=kid))
 
+    elif a.startswith(("u_lnk:", "u_lnm:")):   # tek kodun linki ayrı mesajda (kopyalamak için)
+        k = a.split(":", 1)[1]
+        if a.startswith("u_lnk:"): s_ = db["subs"].get(k); fid_, nm_ = (s_ or {}).get("file_id"), name_of(s_ or {}, k); ok_ = s_ and s_.get("owner_id") == uid
+        else: x_ = db.get("msess", {}).get(k, {}); fid_, nm_ = x_.get("fid"), db["market"].get(x_.get("lid"), {}).get("title", "?"); ok_ = x_.get("buyer") == uid
+        if not ok_ or not fid_: return
+        lnk = await asyncio.to_thread(user_link, fid_)
+        await c.bot.send_message(uid, f"🎟 <b>{esc(short(nm_, 40))}</b>\n<code>{esc(lnk)}</code>", parse_mode="HTML")
+
     elif a.startswith("u_kdq:"):   # kodu silmeden önce sor
         kid = a.split(":", 1)[1]; s_ = db["subs"].get(kid)
         if not s_ or s_.get("owner_id") != uid: await send(tr(lang, "mine_none"), menu_btn); return
@@ -2928,7 +2949,16 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
             if len(sess) == 1: stop_rows += [[B(tr(lang, "b_live"), f"u_live:{sid}", "primary"), B(tr(lang, "b_stop"), f"u_msq:{sid}", "danger")]]
             else: stop_rows += [[B(f"📊 {short(nm_, 9)}", f"u_live:{sid}", "primary"), B(f"⏹ {short(nm_, 9)}", f"u_msq:{sid}", "danger")]]   # birden çok kod: adıyla
         del_rows = [[B(f"🗑 {short(name_of(s_, k), 18)}", f"u_kdq:{k}")] for k, s_ in mine[:8]]
-        await send(tr(lang, "mine") + "\n" + "\n".join(x for x in (body, body2) if x), KB(ext_rows + stop_rows + del_rows + [[B(tr(lang, "b_menu"), "u_menu")]]))
+        t_ = tr(lang, "mine") + "\n" + "\n".join(x for x in (body, body2) if x); link_rows = []
+        if len(t_) > 3900:   # şifreli linkler uzun: liste linksiz, her link butonla ayrı mesajda
+            hint = tr(lang, "link_below")
+            body = "\n".join(tr(lang, "mine_item", name=esc(short(name_of(s, k), 30)), left=left_txt(s.get("expires"), lang == "ru"), link=hint) for k, s in mine[:8])
+            body2 = "\n".join(tr(lang, "mine_m", title=esc(short(db["market"].get(x["lid"], {}).get("title", "?"), 26)), dur=dur_txt(time.time() - x["start"], lang == "ru"),
+                                 usdt=fmt_u(x["total"]), link=hint) for sid, x in sess[:5])
+            t_ = tr(lang, "mine") + "\n" + "\n".join(x for x in (body, body2) if x)
+            link_rows = [[B(f"🔗 {short(name_of(s_, k), 20)}", f"u_lnk:{k}")] for k, s_ in mine[:8]] + \
+                        [[B(f"🔗 {short(db['market'].get(x['lid'], {}).get('title', '?'), 20)}", f"u_lnm:{sid}")] for sid, x in sess[:5]]
+        await send(t_, KB(link_rows + ext_rows + stop_rows + del_rows + [[B(tr(lang, "b_menu"), "u_menu")]]))
 
     elif a == "u_prof":
         inv = db["users"].get(str(e.get("ref_by")), {}) if e.get("ref_by") else {}
@@ -3978,6 +4008,7 @@ T["ru"].update({
 })
 
 T["tr"].update({
+  "link_below": "🔗 linki almak için aşağıdaki butona bas",
   "del_q": "🗑 <b>Bu kod silinsin mi?</b>\n<blockquote>🎟 {name}\nAbonelik linki artık çalışmaz.</blockquote>", "b_yes_del": "🗑 Evet, sil", "deleted": "🗑 Kod silindi",
   "menu_bal": "\n💰 Bakiye  <b>{bal} USDT</b>  <i>≈ {tmt} TMT</i>",
   "sell_1": "➕ <b>Kodumu Sat · 1/5</b>\n<blockquote>🔗 Abonelik linkini gönder\n<b>(GB limiti ya da süre sınırı olmamalı!)</b></blockquote>",
@@ -4002,6 +4033,7 @@ T["tr"].update({
   "b_back": "◀️ Geri",
 })
 T["ru"].update({
+  "link_below": "🔗 ссылка — кнопкой ниже",
   "del_q": "🗑 <b>Удалить этот код?</b>\n<blockquote>🎟 {name}\nСсылка подписки перестанет работать.</blockquote>", "b_yes_del": "🗑 Да, удалить", "deleted": "🗑 Код удалён",
   "menu_bal": "\n💰 Баланс  <b>{bal} USDT</b>  <i>≈ {tmt} TMT</i>",
   "sell_1": "➕ <b>Продать код · 1/5</b>\n<blockquote>🔗 Отправьте ссылку подписки\n<b>(без лимита ГБ и без ограничения срока!)</b></blockquote>",
@@ -4028,6 +4060,7 @@ T["ru"].update({
 
 # Türkmençe (eksik anahtar olursa Türkçesi görünür)
 T["tk"] = {
+ "link_below": "🔗 linki almak üçin aşakdaky knopka bas",
  "del_q": "🗑 <b>Bu kod pozulsynmy?</b>\n<blockquote>🎟 {name}\nPodpiska linki indi işlemez.</blockquote>", "b_yes_del": "🗑 Hawa, poz", "deleted": "🗑 Kod pozuldy",
  "menu_bal": "\n💰 Balans  <b>{bal} USDT</b>  <i>≈ {tmt} TMT</i>",
  "sell_1": "➕ <b>Kodumy sat · 1/5</b>\n<blockquote>🔗 Podpiska linkini iber\n<b>(GB limiti ýa-da möhlet çägi bolmaly däl!)</b></blockquote>",
