@@ -2495,21 +2495,23 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         if uid not in ADMINS and left > 0:
             await q.answer(tr(lang, "chk_wait", m=int(left // 60) + 1), show_alert=True); return
         CHK["user"][uid] = now
-        ch = await asyncio.to_thread(_read_channel, load_db())
-        if ch.get("ts") and now - ch["ts"] < CHK_FRESH: state = "fresh"   # telefon az önce test etti: tekrar test yok
-        elif CHK["req"] and now - CHK["req"] < 900 and CHK["wait"]: state = "run"   # test zaten sürüyor
-        else:
-            async with CHECK_LOCK: ch2, asked = await asyncio.to_thread(request_phone_test, load_db())
-            if asked: CHK["req"] = now; state = "run"
-            else: state = "timeout"
-        kb = chk_kb(lang, lid); t = check_text(load_db(), lid, lang, ch, state)
+        kb = chk_kb(lang, lid); t = check_text(load_db(), lid, lang, None, "run")
         msg = getattr(q, "message", None)
-        if msg is not None:   # aynı kutu güncellenir
+        if msg is not None:   # aynı kutu hemen "Kontrol ediliyor..." olur
             is_photo = bool(getattr(msg, "photo", None)); mid = msg.message_id
             if not await edit_box(c.bot, uid, mid, is_photo, t, kb):
                 is_photo = False; mid = (await c.bot.send_message(uid, t, parse_mode="HTML", reply_markup=kb)).message_id
         else: is_photo = False; mid = (await c.bot.send_message(uid, t, parse_mode="HTML", reply_markup=kb)).message_id
+        ch = await asyncio.to_thread(_read_channel, load_db()); ts = ch.get("ts") or 0
+        if ts and now - ts < CHK_FRESH: state = "fresh"   # telefon az önce test etti: tekrar test yok
+        elif not ts or now - ts > PHONE_OFF: state = "off"   # telefon uzun süredir sonuç göndermiyor: boşuna bekletme
+        elif CHK["req"] and now - CHK["req"] < CHK_WAIT and CHK["wait"]: state = "run"   # test zaten sürüyor
+        else:
+            async with CHECK_LOCK: _, asked = await asyncio.to_thread(request_phone_test, load_db())
+            if asked: CHK["req"] = now; state = "run"
+            else: state = "timeout"
         if state == "run": CHK["wait"].setdefault(lid, {})[uid] = (lang, mid, is_photo)
+        else: await edit_box(c.bot, uid, mid, is_photo, check_text(load_db(), lid, lang, ch, state), kb)
         ulog("m_check", f"🔍 Kontrol etti: {who(user)} · {db.get('market', {}).get(lid, {}).get('title', lid)}")
 
     elif a.startswith("u_mph:"):
@@ -2610,7 +2612,7 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         if r == "ban": await send(tr(lang, "sell_banned", left="—"), KB([[B(tr(lang, "b_back_mkt"), "u_mkt")]])); return
         ulog("m_list", f"📤 Pazara ilan verdi: {who(user)} · {st_['title']} · {fmt_u(st_['price'])} USDT/dk")
         await send(tr(lang, "sell_sent"), KB([[B(tr(lang, "b_myl"), "u_myl")], [B(tr(lang, "b_back_mkt"), "u_mkt")]]))
-        await notify_founders(c.application, f"📤 <b>Yeni pazar ilanı</b> (incelemede)\n<blockquote>{esc(who(user))}\n🏷 {esc(st_['title'])} · {fmt_u(st_['price'])} USDT/dk</blockquote>")
+        await notify_founders(c.application, f"📤 <b>Yeni pazar ilanı</b> (incelemede)\n<blockquote>{esc(who(user))}\n🏷 {esc(st_['title'])} · {money_tmt(float(st_['price']) * 43200)} TMT/ay</blockquote>\n<i>⏳ Telefon testi bekleniyor; sonuç gelince bildirilecek.</i>")
 
     elif a == "u_myl":
         mine_l = sorted([(lid, L) for lid, L in db.get("market", {}).items() if L.get("owner") == uid], key=lambda x: -x[1].get("created", 0))[:10]
@@ -3787,6 +3789,10 @@ T["ru"].update({
 })
 
 T["tr"].update({
+  "chk_el": "\n⌛ Geçen süre: <b>{m} dk</b>",
+  "chk_off": "\n📱 <i>Telefon testi şu an çalışmıyor; yukarıda son bilinen durum.</i>",
+  "sell_5": "➕ <b>Kodumu Sat · 5/5</b>\n<blockquote>Bir aylık kodu kaç <b>TMT</b>'ye satıyorsun? <i>(ör. 100)</i></blockquote>",
+  "sell_bal": "\n💰 Bakiyen  <b>{bal} USDT</b>",
   "head_own": "🏆 <b>BOTUN RESMİ KODU</b> 🏆", "head_vip": "💎 <b>VIP Sunucu</b>", "head_std": "🏷 <b>Standart Sunucu</b>",
   "card2": "{head}\n\n🏪 <b>{title}</b>\n\n💰 <b>Fiyat</b>\n<blockquote>{prices}</blockquote>\n\n{payline}\n\n<i>🔍 Sunucular ve ülkeler için «Kontrol Et»e bas.</i>",
   "card_own": "<blockquote>🛡 7/24 kontrol altında\n🇹🇲 Türkmenistan'dan sürekli test edilir\n⚡ IP değişince kendini yeniler\n🧹 Çalışmayan sunucu otomatik çıkarılır</blockquote>\n",
@@ -3798,6 +3804,10 @@ T["tr"].update({
   "b_back": "◀️ Geri",
 })
 T["ru"].update({
+  "chk_el": "\n⌛ Прошло: <b>{m} мин</b>",
+  "chk_off": "\n📱 <i>Телефонный тест сейчас не работает; выше — последнее известное состояние.</i>",
+  "sell_5": "➕ <b>Продать код · 5/5</b>\n<blockquote>За сколько <b>TMT</b> продаёшь код на месяц? <i>(напр. 100)</i></blockquote>",
+  "sell_bal": "\n💰 Баланс  <b>{bal} USDT</b>",
   "head_own": "🏆 <b>ОФИЦИАЛЬНЫЙ КОД БОТА</b> 🏆", "head_vip": "💎 <b>VIP сервер</b>", "head_std": "🏷 <b>Стандартный сервер</b>",
   "card2": "{head}\n\n🏪 <b>{title}</b>\n\n💰 <b>Цена</b>\n<blockquote>{prices}</blockquote>\n\n{payline}\n\n<i>🔍 Серверы и страны — кнопка «Проверить».</i>",
   "card_own": "<blockquote>🛡 Под контролем 24/7\n🇹🇲 Постоянно проверяется из Туркменистана\n⚡ При смене IP обновляется сам\n🧹 Неработающие серверы убираются автоматически</blockquote>\n",
@@ -3811,6 +3821,10 @@ T["ru"].update({
 
 # Türkmençe (eksik anahtar olursa Türkçesi görünür)
 T["tk"] = {
+ "chk_el": "\n⌛ Geçen wagt: <b>{m} min</b>",
+ "chk_off": "\n📱 <i>Telefon testi häzir işlänok; ýokarda soňky belli ýagdaý.</i>",
+ "sell_5": "➕ <b>Kodumy sat · 5/5</b>\n<blockquote>Bir aýlyk kody näçe <b>TMT</b>-a satýaň? <i>(mysal: 100)</i></blockquote>",
+ "sell_bal": "\n💰 Balansyň  <b>{bal} USDT</b>",
  "menu": "✦ <b>VPN</b> ✦\n<blockquote>👥 Çakylyk  <b>{avail}/{need}</b>\n🎟 Işleýän kod  <b>{codes}</b></blockquote>\n<i>Birini saýla</i> 👇",
  "b_free": "✨ Kod döret",
  "b_mine": "🎟 Kodlarym",
@@ -3925,7 +3939,6 @@ T["tk"] = {
  "sell_3": "➕ <b>Kodumy sat · 3/5</b>\n<blockquote>Kodyňyň <b>skrinşotyny</b> iber (surat görnüşinde).</blockquote>",
  "sell_need_photo": "⚠️ Skrinşoty surat görnüşinde iber.",
  "sell_4": "➕ <b>Kodumy sat · 4/5</b>\n<blockquote>Düşündiriş ýaz (tizligi, aýratynlyklary, habarlaşmak üçin...). Geçmek üçin <code>-</code> iber.</blockquote>",
- "sell_5": "➕ <b>Kodumy sat · 5/5</b>\n<blockquote>Aýlyk (30 gün) bahaň näçe <b>TMT</b>? Diňe san ýaz, mysal: <code>100</code>\nBot minutlyk bahany we USDT-däki bahasyny özi hasaplaýar.</blockquote>",
  "sell_badprice": "⚠️ 1 bilen 10000 arasynda san ýaz (aýlyk TMT), mysal: <code>100</code>.",
  "sell_confirm": "🧾 <b>Bildiriş barada gysgaça</b>\n<blockquote>🏷 {title}\n📡 {n} serwer · {protos}\n📝 {desc}</blockquote>\n💲 <b>Baha hasaplaýjy</b>\n<blockquote>{calc}</blockquote>\n<i>Tassyklasaň, balansyňdan <b>0.1$</b> bildiriş tölegi alynýar (yzyna gaýtarylmaýar). Bot kodlaryňy barlaýar; düzgünlere laýyk bolsa, birnäçe minutdan bazara çykýar.</i>",
  "b_sellok": "✅ Limitsiz, tassyklaýaryn · 0.1$ töle",
@@ -4038,13 +4051,15 @@ def code_label(c):
     return urllib.parse.unquote(c.split("#", 1)[1]) if "#" in c else (code_host(c) or "?")
 
 CHK_FRESH = 300   # son TM testi bundan yeniyse yeniden test istenmez, sonuç hemen gösterilir
+CHK_WAIT = 600    # telefon bu kadar sürede sonuç göndermezse son bilinen durum gösterilir
+PHONE_OFF = 1800  # telefonun son sonucu bundan eskiyse telefon kapalı sayılır (test istenmez)
 
-def check_text(db, lid, lang, ch=None, state="done"):
+def check_text(db, lid, lang, ch=None, state="done", el=0):
     """Kontrol Et kutusu. state: run (test sürüyor) / done (yeni sonuç) / fresh (son test zaten yeni) / timeout."""
     L = db.get("market", {}).get(lid)
     if not L: return tr(lang, "m_gone")
     top = card_head(L, lang) + f"\n\n🏪 <b>{esc(short(L['title'], 40))}</b>\n"
-    if state == "run": return top + tr(lang, "chk_run")
+    if state == "run": return top + tr(lang, "chk_run") + (tr(lang, "chk_el", m=el) if el else "")
     if L.get("own"):
         top += tr(lang, "card_own")
         if L.get("desc") and L["desc"] != OWN_DESC: top += "📝 " + esc(short(L["desc"], 200)) + "\n"
@@ -4067,7 +4082,7 @@ def check_text(db, lid, lang, ch=None, state="done"):
         elif real: acc = " " + tr(lang, "chk_line_real", f=flag_of(real), n=cname(real))
         else: acc = ""
         lines.append(f"{ic} · {name}{acc}")
-    foot = {"done": tr(lang, "chk_upd", t=datetime.datetime.now(TM_TZ).strftime("%H:%M")), "timeout": tr(lang, "chk_timeout")}.get(state, "")
+    foot = {"done": tr(lang, "chk_upd", t=datetime.datetime.now(TM_TZ).strftime("%H:%M")), "timeout": tr(lang, "chk_timeout"), "off": tr(lang, "chk_off")}.get(state, "")
     for n in (len(lines), 15, 10, 5):   # foto altı yazı en çok 1024 karakter
         more = f"\n… +{len(lines) - n}" if len(lines) > n else ""
         t = top + tr(lang, "chk_head2", lines="\n".join(lines[:n]) + more or "—", work=w, dead=dd, wait=wt, ago=ago_l((ch or {}).get("ts"), lang)) + foot
@@ -4343,7 +4358,13 @@ async def check_waiters(app):
     now = time.time()
     db = load_db(); ts = ((db.get("market", {}).get(OWN_LID) or {}).get("st") or {}).get("ts") or 0
     done = ts > CHK["req"]
-    if not done and now - CHK["req"] < 900: return
+    if not done and now - CHK["req"] < CHK_WAIT:   # hâlâ bekleniyor: geçen süreyi göster (takıldı sanılmasın)
+        el = int((now - CHK["req"]) // 60)
+        if el >= 1:
+            for lid, users_ in CHK["wait"].items():
+                for uid, (lang, mid, is_photo) in users_.items():
+                    await edit_box(app.bot, uid, mid, is_photo, check_text(db, lid, lang, None, "run", el), chk_kb(lang, lid))
+        return
     ch = await asyncio.to_thread(_read_channel, db)
     wait, CHK["wait"] = CHK["wait"], {}
     for lid, users_ in wait.items():
@@ -4450,7 +4471,8 @@ async def market_input(c, u, st):
         if not (1 <= v <= 10000): await say(tr(lang, "sell_badprice")); return
         p = price_from_month_tmt(v)
         st.update({"step": "confirm", "price": p})
-        await say(tr(lang, "sell_confirm", title=esc(st["title"]), n=len(st["codes"]), protos=protos_txt(st["protos"]), desc=esc(st.get("desc") or "—"), calc=calc_text(p, lang == "ru")),
+        await say(tr(lang, "sell_confirm", title=esc(st["title"]), n=len(st["codes"]), protos=protos_txt(st["protos"]), desc=esc(st.get("desc") or "—"), calc=calc_text(p, lang == "ru"))
+                  + tr(lang, "sell_bal", bal=fmt_u(load_db()["users"].get(str(uid), {}).get("bal", 0))),
                   KB([[B(tr(lang, "b_sellok"), "u_sellok", "success")], [B(tr(lang, "b_sellp"), "u_sellp")], [B(tr(lang, "b_cancel"), "u_mkt", "danger")]]))
 
 # ── kurucu ekranları ──
