@@ -151,7 +151,7 @@ def left_txt(exp, ru=False):
     if d <= 0: return "истёк" if ru else "bitti"
     return f"{int(d // 86400)}{'д' if ru else 'g'} {int(d % 86400 // 3600)}{'ч' if ru else 's'}"
 
-LANGC = {}   # uid -> "tr"/"ru" (her ekranda veritabanı okunmasın)
+LANGC = {}   # uid -> "tr"/"tk"/"ru" (her ekranda veritabanı okunmasın)
 def is_ru(uid):
     if uid not in LANGC:
         try: LANGC[uid] = load_db().get("users", {}).get(str(uid), {}).get("lang") or "tr"
@@ -1071,7 +1071,7 @@ def menu_text(uid):
             f"📡 <b>{n}</b> kod  ·  🔗 <b>{src}</b> abonelik  ·  👥 <b>{vip}</b> VIP  ·  🙋 <b>{len(db.get('users', {})) if db else '?'}</b> kullanıcı")
 
 def main_kb(uid):
-    lang_btn = B(L(uid, "🌐 Dil: Türkçe", "🌐 Язык: Русский"), "lang")
+    is_ru(uid); lang_btn = B({"ru": "🌐 Язык: Русский", "tk": "🌐 Dil: Türkmençe"}.get(LANGC.get(uid), "🌐 Dil: Türkçe"), "lang")
     if uid not in ADMINS:   # panel sahibi: kendi panelinde kod oluşturur
         return KB([[B(L(uid, "🏪 Pazar", "🏪 Биржа"), "u_mkt", "success")],
                    [B(L(uid, "✨ Kod Oluştur", "✨ Создать код"), "create_key"), B(L(uid, "👥 Kodlarım", "👥 Мои коды"), "my_keys", "primary")],
@@ -1113,6 +1113,7 @@ def admin_kb():
         [B("📣 Herkese Mesaj", "bcast")],
         [B("👮 Alt Adminler", "sa_menu")],
         [B("🧪 Davet Testi", "ref_test")],
+        [B("🔒 Happ Limitli Kod", "hp")],
         [B(f"🕰 Oto. Duyuru: {'Açık' if on else 'Kapalı'}", "auto_ann")],
         [B("♻️ Önceki Sürüme Dön", "rollback")],
         [B("▶️ Başlat", "toggle_sys", "success") if stop else B("🛑 Durdur", "toggle_sys", "danger")],
@@ -1142,12 +1143,13 @@ def code_card(s, kid, uid):
             f"⏳ {'Срок' if ru else 'Süre'}  <b>{left_txt(s.get('expires'), ru)}</b>"
             + (f"\n👮 Sahibi  <code>{s.get('owner_id')}</code>" if uid in ADMINS and s.get("owner_id") and s.get("owner_id") not in ADMINS else "")
             + "</blockquote>\n"
-            + L(uid, "🔗 <b>Abonelik linki</b> <i>(dokun → kopyala)</i>", "🔗 <b>Ссылка подписки</b> <i>(нажмите → скопировать)</i>") + f"\n<code>{esc(sub_link(fid) if fid else 'Drive dosyası yok')}</code>")
+            + L(uid, "🔗 <b>Abonelik linki</b> <i>(dokun → kopyala)</i>", "🔗 <b>Ссылка подписки</b> <i>(нажмите → скопировать)</i>") + f"\n<code>{esc(sub_link(fid) if fid else 'Drive dosyası yok')}</code>"
+            + (f"\n\n🔒 <b>Happ limitli link</b> · 📱 {s['happ']['limit']} cihaz\n<code>{esc(s['happ']['link'])}</code>" if s.get("happ") and uid in ADMINS else ""))
 
 def code_kb(kid, uid):
     rows = [[B(L(uid, "🏷 Başlık", "🏷 Заголовок"), f"kt:{kid}"), B(L(uid, "🔘 Buton Adı", "🔘 Имя кнопки"), f"kn:{kid}")],
             [B(L(uid, "📢 Duyuru", "📢 Объявление"), f"ka:{kid}")] + ([B("⏳ Süre", f"kx:{kid}")] if uid in ADMINS else []),
-            [B(L(uid, "🗑 Sil", "🗑 Удалить"), f"kd:{kid}", "danger")],
+            ([B("🔒 Happ Limit", f"hl:{kid}")] if uid in ADMINS else []) + [B(L(uid, "🗑 Sil", "🗑 Удалить"), f"kd:{kid}", "danger")],
             [B(L(uid, "◀️ Kodlarım", "◀️ Мои коды"), "my_keys")]]
     return KB(rows)
 
@@ -1188,6 +1190,7 @@ NUM_ASK = {   # ne soruluyor: (başlık, soru, hazır butonlar, birim)
     "sa_limit": ("🎟 <b>Kod limiti</b>", "En fazla kaç kod oluşturabilsin?", [1, 3, 5, 10, 20], ""),
     "sa_ext":   ("⏳ <b>Süre uzat</b>", "Kaç gün uzatılsın?", DAYS, "g"),
     "sa_lim":   ("🎟 <b>Kod limiti</b>", "Yeni limit kaç olsun?", [1, 3, 5, 10, 20], ""),
+    "hp_limit": ("🔒 <b>Cihaz limiti</b>", "Bu kod en fazla kaç cihaza kurulabilsin? (1–100)", [1, 2, 3, 5, 10], "📱"),
 }
 
 def ask_num(uid, what, info="", **ctx):
@@ -1223,16 +1226,27 @@ async def on_num(c, uid, st, n, send, who=""):
     what = st["what"]
     if what.startswith("sa_") and uid not in ADMINS: return
     lo = 0 if what == "nk_days" and uid in ADMINS else 1
-    hi = 500 if what in ("sa_limit", "sa_lim") else 3650
+    hi = 500 if what in ("sa_limit", "sa_lim") else 100 if what == "hp_limit" else 3650
     if not (lo <= n <= hi):   # butonlarla birlikte tekrar sor
         ctx = {k: v for k, v in st.items() if k not in ("action", "what")}
         await send(*ask_num(uid, what, L(uid, f"⚠️ {lo} ile {hi} arasında bir sayı.\n", f"⚠️ Число от {lo} до {hi}.\n"), **ctx)); return
     if what == "nk_days":
         res, err = await asyncio.to_thread(create_vip, st["name"], uid, n or None)
         if res: audit(uid, f"create {res[0]} {st['name']} {n or '∞'}g")
+        if res and st.get("happ"):   # limitli kod: süreden sonra cihaz limiti
+            await send(*ask_num(uid, "hp_limit", f"✅ <b>{esc(st['name'])}</b> oluşturuldu.\n", kid=res[0])); return
         await send(*create_result(res, err, st["name"], uid))
         if res and uid not in ADMINS:
             await notify_founders(c.application, f"🔔 Alt admin <b>{esc(who)}</b> (<code>{uid}</code>) kod oluşturdu: <code>{esc(st['name'])}</code> · {n} gün")
+    elif what == "hp_limit" and uid in ADMINS:
+        kid = st["kid"]
+        try: link, enc = await asyncio.to_thread(happ_make, kid, n)
+        except RuntimeError as e:
+            await send(f"⚠️ <b>Happ limitli link oluşturulamadı</b>\n<blockquote>{esc(str(e))}</blockquote>" + ("\n<i>Happ'ta ücretli plan gerekiyor (happ-proxy.com → Your Plan → Change).</i>" if "subscription" in str(e).lower() else ""),
+                       KB([[B("🎟 Koda Git", f"kv:{kid}", "primary"), B("◀️ Admin", "admin")]])); return
+        audit(uid, f"happ limit {kid} {n}")
+        await send(f"✅ <b>Limitli link hazır</b>\n<blockquote>📱 En fazla <b>{n}</b> cihaz" + ("" if enc else "\n⚠️ Şifrelenemedi: kullanıcı limiti linkten silebilir.") + "</blockquote>\n"
+                   f"🔗 <b>Happ linki</b> <i>(dokun → kopyala)</i>\n<code>{esc(link)}</code>", KB([[B("🎟 Koda Git", f"kv:{kid}", "primary"), B("◀️ Admin", "admin")]]))
     elif what == "sa_days":
         t, kb = ask_num(uid, "sa_limit", f"👮 <code>{st['nid']}</code> · ⏳ {n} gün\n", nid=st["nid"], days=n)
         await send(t, kb)
@@ -1333,7 +1347,7 @@ async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
         if act == "new_key":
             name = txt[:60]
             if not name: return
-            t, kb = ask_num(uid, "nk_days", f"🎟 <b>{esc(name)}</b>\n", name=name)
+            t, kb = ask_num(uid, "nk_days", f"🎟 <b>{esc(name)}</b>\n", name=name, **({"happ": True} if st.get("happ") else {}))
             await u.message.reply_text(t, parse_mode="HTML", reply_markup=kb)
 
         elif act == "num":
@@ -1447,6 +1461,22 @@ async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
             await u.message.reply_text(f"🔎 <b>{len(found)} sonuç</b>", parse_mode="HTML",
                                        reply_markup=KB([[B(f"{short(us[k].get('name') or k, 20)} · {k}", f"uv:{k}")] for k in found] + [[B("◀️ Admin", "admin")]]))
 
+        elif act == "hp_set":
+            try: await u.message.delete()   # anahtar sohbette kalmasın
+            except Exception: pass
+            m_ = re.fullmatch(r"\s*([A-Za-z0-9]{8})\s+([-_A-Za-z0-9]{32})\s*", txt)
+            if not m_:
+                STATE[uid] = st; await u.message.reply_text("⚠️ Biçim: <code>Provider_ID Auth_key</code> (8 + 32 karakter, arada boşluk).", parse_mode="HTML", reply_markup=back("hp")); return
+            prov, key = m_.groups()
+            try: await asyncio.to_thread(happ_call, "list-install", prov, key, id=1); note = ""
+            except RuntimeError as e:
+                if "auth" in str(e).lower():
+                    await u.message.reply_text("⚠️ Happ bu bilgileri kabul etmedi (Auth error).", reply_markup=back("hp")); return
+                note = f"\n⚠️ Happ: <code>{esc(str(e))}</code>"
+            await asyncio.to_thread(set_env, "HAPP_PROVIDER", prov); await asyncio.to_thread(set_env, "HAPP_AUTH", key)
+            audit(uid, "happ set")
+            t, kb = happ_view(); await u.message.reply_text("✅ Happ hesabı bağlandı." + note + "\n\n" + t, parse_mode="HTML", reply_markup=kb)
+
         elif act == "cp_set":
             try: await u.message.delete()   # token sohbette kalmasın
             except Exception: pass
@@ -1495,7 +1525,7 @@ async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
         log.exception("msg_handler")
         await send_error(c, uid, f"mesaj:{act}", e)
 
-FOUNDER_ONLY = {"ref_test", "mk_admin", "mk_price", "mk_oph", "mk_ods", "mk_odr", "bal_find", "usearch", "rep_today", "rep_yday", "tickets_bug", "t_cancel", "tickets", "cp_test", "cp", "cp_set", "cp_del", "ul_open", "stats", "chans", "ch_add", "pay_set", "bcast", "bcast_yes", "rollback", "rollback_yes", "auto_ann", "toggle_sys", "admin", "sources", "s_add", "logs", "upd_now", "get_zip", "sa_menu", "sa_add", "bulk_ann", "bulk_title", "bulk_yes"}
+FOUNDER_ONLY = {"hp", "hp_set", "hp_del", "hp_new", "ref_test", "mk_admin", "mk_price", "mk_oph", "mk_ods", "mk_odr", "bal_find", "usearch", "rep_today", "rep_yday", "tickets_bug", "t_cancel", "tickets", "cp_test", "cp", "cp_set", "cp_del", "ul_open", "stats", "chans", "ch_add", "pay_set", "bcast", "bcast_yes", "rollback", "rollback_yes", "auto_ann", "toggle_sys", "admin", "sources", "s_add", "logs", "upd_now", "get_zip", "sa_menu", "sa_add", "bulk_ann", "bulk_title", "bulk_yes"}
 OWNED = ("kv", "kt", "kn", "ka", "kd", "kdy")   # alt admin sadece kendi kodunda
 def src_find(db, h): return next((s for s in db["sources"] if hashlib.md5(s.encode()).hexdigest()[:8] == h), None)
 
@@ -1508,7 +1538,7 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         miss = await missing_channels(c.bot, uid)
         if miss:
             await q.answer(); await safe_edit(q, *join_view(lang_of(load_db(), uid), miss)); return
-    if uid not in ADMINS and (a in FOUNDER_ONLY or a.startswith(("sv:", "se:", "sd:", "sa_del:", "sa_ext:", "sa_lim:", "kx:", "kxs:", "ul:", "chd:", "ord_ok:", "ord_no:", "t_rep:", "t_close:", "tv:", "ug:", "ux:", "uxc:", "ub:", "uv:", "ubal:", "mk_l:", "mk_ok:", "mk_rm:", "mk_ph:"))):
+    if uid not in ADMINS and (a in FOUNDER_ONLY or a.startswith(("sv:", "se:", "sd:", "sa_del:", "sa_ext:", "sa_lim:", "kx:", "kxs:", "ul:", "chd:", "ord_ok:", "ord_no:", "t_rep:", "t_close:", "tv:", "ug:", "ux:", "uxc:", "ub:", "uv:", "ubal:", "mk_l:", "mk_ok:", "mk_rm:", "mk_ph:", "hl:"))):
         await q.answer(L(uid, "⛔ Erişim yok", "⛔ Нет доступа"), show_alert=True); return
     if a not in ("toggle_sys", "upd_now"):
         await q.answer()
@@ -1528,11 +1558,7 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         await safe_edit(q, menu_text(uid), main_kb(uid))
 
     elif a == "lang":
-        nl = "tr" if is_ru(uid) else "ru"
-        await asyncio.to_thread(touch_user, q.from_user)
-        mutate(lambda d: d.setdefault("users", {}).setdefault(str(uid), {}).__setitem__("lang", nl))
-        LANGC[uid] = nl
-        await safe_edit(q, menu_text(uid), main_kb(uid))
+        await safe_edit(q, *lang_pick("p"))
 
     elif a == "ul_open" or a.startswith("ul:"):
         await safe_edit(q, *ulog_view(None if a == "ul_open" else int(a.split(":", 1)[1])))
@@ -1558,6 +1584,27 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
 
     elif a == "mk_admin":
         await safe_edit(q, *mkt_admin_view())
+
+    elif a == "hp":
+        await safe_edit(q, *happ_view())
+
+    elif a == "hp_set":
+        STATE[uid] = {"action": "hp_set"}
+        await safe_edit(q, *prompt("🔑 <b>Happ Bilgileri</b>", "happ-proxy.com → Profil sayfasındaki <b>Provider ID</b> ve <b>Auth key</b>'i aralarında boşluk bırakarak tek mesajda yaz:\n<code>Provider_ID Auth_key</code>\n<i>Mesajın hemen silinir.</i>", "hp"))
+
+    elif a == "hp_del":
+        await asyncio.to_thread(set_env, "HAPP_PROVIDER", ""); await asyncio.to_thread(set_env, "HAPP_AUTH", "")
+        audit(uid, "happ del"); await safe_edit(q, *happ_view())
+
+    elif a == "hp_new":
+        STATE[uid] = {"action": "new_key", "happ": True}
+        await safe_edit(q, *prompt("🔒 <b>Limitli Kod Oluştur</b>", "Kod için bir isim gönder. Sonra süre, en son cihaz limiti sorulacak.", "hp"))
+
+    elif a.startswith("hl:"):
+        kid = a.split(":", 1)[1]
+        if not all(happ_creds()): await safe_edit(q, *happ_view()); return
+        t, kb = ask_num(uid, "hp_limit", f"🎟 <b>{esc(short(btn_name(db['subs'].get(kid, {}), kid), 40))}</b>\n", kid=kid)
+        await safe_edit(q, t, kb)
 
     elif a == "ref_test":   # davetle gelen kullanıcının gördüğü soruyu dene
         await safe_edit(q, *captcha_view(lang_of(load_db(), uid), uid, test=True))
@@ -2088,6 +2135,51 @@ def crypto_call(method, token=None, **params):
     if not j.get("ok"): raise RuntimeError(str(j.get("error"))[:200])
     return j["result"]
 
+# ── Happ limitli link (happ-proxy.com): kod en fazla N cihaza kurulabilir ──
+HAPP_API = "https://api.happ-proxy.com/api/"
+HAPP_CRYPT = "https://crypto.happ.su/api-v2.php"
+
+def happ_creds(): return os.environ.get("HAPP_PROVIDER", ""), os.environ.get("HAPP_AUTH", "")
+
+def happ_call(method, prov=None, key=None, **params):
+    """happ-proxy API. Hata olursa RuntimeError (Happ'ın mesajıyla). Auth key loglara yazılmaz."""
+    p0, k0 = happ_creds()
+    q = {"provider_code": prov or p0, "auth_key": key or k0, **{k: v for k, v in params.items() if v is not None}}
+    req = urllib.request.Request(HAPP_API + method + "?" + urllib.parse.urlencode(q), headers={"accept": "application/json", "User-Agent": "subbot/1.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r: j = json.loads(r.read().decode("utf-8"))
+    except Exception as e: raise RuntimeError(f"Happ'a ulaşılamadı: {type(e).__name__}")
+    if j.get("rc") != 1: raise RuntimeError(str(j.get("msg") or j)[:200])
+    return j
+
+def happ_encrypt(url):
+    """Linki happ://crypt5/ olarak şifreler (kullanıcı installid'yi silemesin). Olmazsa None."""
+    req = urllib.request.Request(HAPP_CRYPT, data=json.dumps({"url": url}).encode(), headers={"Content-Type": "application/json", "User-Agent": "subbot/1.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r: return json.loads(r.read().decode("utf-8")).get("encrypted_link") or None
+    except Exception as e:
+        log.warning("happ encrypt: %s", type(e).__name__); return None
+
+def happ_make(kid, limit):
+    """Koda limitli Happ linki üretir. Dönüş: (link, şifreli mi) ya da RuntimeError."""
+    db = load_db(); s = db["subs"].get(kid)
+    if not s or not s.get("file_id"): raise RuntimeError("Kod bulunamadı.")
+    j = happ_call("add-install", install_limit=limit, note=short(name_of(s, kid), 200))
+    plain = sub_link(s["file_id"]) + "#" + urllib.parse.quote(name_of(s, kid)) + "?installid=" + j["install_code"]
+    enc = happ_encrypt(plain)
+    mutate(lambda d: d["subs"].get(kid, {}).__setitem__("happ", {"code": j["install_code"], "id": j.get("id"), "limit": limit, "link": enc or plain, "enc": bool(enc), "ts": time.time()}))
+    return enc or plain, bool(enc)
+
+def happ_view():
+    p, k = happ_creds()
+    t = ("🔒 <b>Happ Limitli Kod</b>\n<blockquote>Kod en fazla seçtiğin sayıda cihaza kurulabilir (1–100). Link şifrelenir, kullanıcı limiti silemez.\n"
+         f"🔑 Happ hesabı  <b>{('bağlı · ' + esc(p)) if p and k else 'bağlı değil'}</b>\n"
+         "⚠️ Happ'ta ücretli plan gerekir (Free planda Happ «active subscription» hatası verir).</blockquote>\n"
+         "<i>Var olan bir koda da limit eklenebilir: Kodlarım → kod → 🔒 Happ Limit.</i>")
+    rows = ([[B("✨ Limitli Kod Oluştur", "hp_new", "primary")]] if p and k else []) + [[B("🔑 Happ Bilgileri", "hp_set")]] + \
+           ([[B("🗑 Bağlantıyı Kaldır", "hp_del", "danger")]] if p else []) + [[B("◀️ Admin", "admin")]]
+    return t, KB(rows)
+
 def set_env(key, val):
     """env.txt'de bir satırı değiştirir/ekler/siler (val boşsa siler)."""
     lines = open(ENV_FILE, encoding="utf-8").read().splitlines() if os.path.exists(ENV_FILE) else []
@@ -2098,7 +2190,14 @@ def set_env(key, val):
     if val: os.environ[key] = val
     else: os.environ.pop(key, None)
 
-def lang_of(db, uid): return "ru" if is_ru(uid) else "tr"   # tek kaynak: LANGC (menüler arasında tutarsızlık olmasın)
+def lang_of(db, uid):   # tek kaynak: LANGC (menüler arasında tutarsızlık olmasın)
+    is_ru(uid)   # LANGC'yi doldurur
+    return LANGC.get(uid) if LANGC.get(uid) in ("tr", "tk", "ru") else "tr"
+LANG_NAMES = {"tr": "🇹🇷 Türkçe", "tk": "🇹🇲 Türkmençe", "ru": "🇷🇺 Русский"}
+
+def lang_pick(back_to):
+    return ("🌐 <b>Dil seç · Dil saýlaň · Выберите язык</b>",
+            KB([[B(LANG_NAMES[x], f"u_setlang:{x}:{back_to}")] for x in ("tk", "tr", "ru")]))
 def tr(lang, key, **kw):
     s = T.get(lang, T["tr"]).get(key) or T["tr"][key]
     return s.format(**kw) if kw else s
@@ -2356,18 +2455,21 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         if uid not in ADMINS and left > 0:
             await q.answer(tr(lang, "chk_wait", m=int(left // 60) + 1), show_alert=True); return
         CHK["user"][uid] = now
-        pending = bool(CHK["req"] and now - CHK["req"] < 900 and CHK["wait"])
-        if pending: ch = await asyncio.to_thread(_read_channel, load_db()); asked = False
+        ch = await asyncio.to_thread(_read_channel, load_db())
+        if ch.get("ts") and now - ch["ts"] < CHK_FRESH: state = "fresh"   # telefon az önce test etti: tekrar test yok
+        elif CHK["req"] and now - CHK["req"] < 900 and CHK["wait"]: state = "run"   # test zaten sürüyor
         else:
-            async with CHECK_LOCK: ch, asked = await asyncio.to_thread(request_phone_test, load_db())
-            if asked: CHK["req"] = now
-        t = check_text(load_db(), lid, lang, ch) + (tr(lang, "chk_run") if asked or pending else "")
-        kb = chk_kb(lang, lid)
+            async with CHECK_LOCK: ch2, asked = await asyncio.to_thread(request_phone_test, load_db())
+            if asked: CHK["req"] = now; state = "run"
+            else: state = "timeout"
+        kb = chk_kb(lang, lid); t = check_text(load_db(), lid, lang, ch, state)
         msg = getattr(q, "message", None)
-        if msg is not None and not getattr(msg, "photo", None) and getattr(msg, "text", None):   # "Tekrar Kontrol": aynı kutu güncellenir
-            await safe_edit(q, t, kb); mid = msg.message_id
-        else: mid = (await c.bot.send_message(uid, t, parse_mode="HTML", reply_markup=kb)).message_id
-        if asked or pending: CHK["wait"].setdefault(lid, {})[uid] = (lang, mid)
+        if msg is not None:   # aynı kutu güncellenir
+            is_photo = bool(getattr(msg, "photo", None)); mid = msg.message_id
+            if not await edit_box(c.bot, uid, mid, is_photo, t, kb):
+                is_photo = False; mid = (await c.bot.send_message(uid, t, parse_mode="HTML", reply_markup=kb)).message_id
+        else: is_photo = False; mid = (await c.bot.send_message(uid, t, parse_mode="HTML", reply_markup=kb)).message_id
+        if state == "run": CHK["wait"].setdefault(lid, {})[uid] = (lang, mid, is_photo)
         ulog("m_check", f"🔍 Kontrol etti: {who(user)} · {db.get('market', {}).get(lid, {}).get('title', lid)}")
 
     elif a.startswith("u_mph:"):
@@ -2524,10 +2626,14 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         await send(tr(lang, "wd_ok", usdt=fmt_u(amt)), menu_btn)
 
     elif a == "u_lang":
-        nl = "ru" if lang == "tr" else "tr"
-        mutate(lambda d: d["users"][str(uid)].__setitem__("lang", nl))
+        await send(*lang_pick("u"))
+
+    elif a.startswith("u_setlang:"):
+        _, nl, to = a.split(":")
+        if nl not in LANG_NAMES: return
+        mutate(lambda d: d["users"].setdefault(str(uid), {}).__setitem__("lang", nl))
         LANGC[uid] = nl
-        await send(*pub_menu(load_db(), uid))
+        await send(*(home(uid) if to == "p" else pub_menu(load_db(), uid)))
 
     elif a == "u_free":
         if e.get("free_day") == tm_day():
@@ -3568,7 +3674,7 @@ T["tr"].update({
   "tm_ok": "🇹🇲 TM testi: ✅ <b>{work}</b> çalışıyor · ❌ {dead}\n🕒 Son test: {ago}",
   "tm_wait": "🇹🇲 TM testi: ⏳ yeni sunucular test ediliyor",
   "cc_line": "\n🌍 {n} ülke  {flags}",
-  "b_check": "🔍 Kontrol Et",
+  "b_mcheck": "🔍 Kontrol Et",
   "chk_wait": "⏳ 5 dakikada bir kontrol edebilirsin. {m} dk sonra tekrar dene.",
   "chk_head": "🔍 <b>{title}</b> · sunucu durumu\n<blockquote>{lines}</blockquote>\n✅ {work} çalışıyor · ❌ {dead} çalışmıyor · ⏳ {wait} test bekliyor\n🕒 Son TM testi: {ago}",
   "chk_req": "\n\n📱 <i>Türkmenistan'dan yeni test başlatıldı. Sonuç gelince (1–5 dk) sana gönderilecek.</i>",
@@ -3583,7 +3689,7 @@ T["ru"].update({
   "tm_ok": "🇹🇲 Тест в TM: ✅ <b>{work}</b> работают · ❌ {dead}\n🕒 Последний тест: {ago}",
   "tm_wait": "🇹🇲 Тест в TM: ⏳ новые серверы проверяются",
   "cc_line": "\n🌍 {n} стран  {flags}",
-  "b_check": "🔍 Проверить",
+  "b_mcheck": "🔍 Проверить",
   "chk_wait": "⏳ Проверять можно раз в 5 минут. Попробуйте через {m} мин.",
   "chk_head": "🔍 <b>{title}</b> · состояние серверов\n<blockquote>{lines}</blockquote>\n✅ {work} работают · ❌ {dead} не работают · ⏳ {wait} ждут теста\n🕒 Последний тест в TM: {ago}",
   "chk_req": "\n\n📱 <i>Запущен новый тест из Туркменистана. Результат придёт сюда (1–5 мин).</i>",
@@ -3596,6 +3702,10 @@ T["ru"].update({
 def ago_l(ts, lang):
     if not ts: return tr(lang, "never")
     d = time.time() - ts
+    if lang == "tk":
+        if d < 60: return "1 minutdan az öň"
+        m = int(d // 60); h, m = divmod(m, 60); g, h = divmod(h, 24)
+        return " ".join(([f"{g} gün"] if g else []) + ([f"{h} sag"] if h else []) + [f"{m} min"]) + " öň"
     if d < 60: return "<1 мин назад" if lang == "ru" else "1 dk'dan az önce"
     return dur_txt(d, lang == "ru") + (" назад" if lang == "ru" else " önce")
 
@@ -3636,31 +3746,247 @@ T["ru"].update({
   "b_recheck": "🔄 Обновить",
 })
 
+T["tr"].update({
+  "head_own": "🏆 <b>BOTUN RESMİ KODU</b> 🏆", "head_vip": "💎 <b>VIP Sunucu</b>", "head_std": "🏷 <b>Standart Sunucu</b>",
+  "card2": "{head}\n\n🏪 <b>{title}</b>\n\n💰 <b>Fiyat</b>\n<blockquote>{prices}</blockquote>\n\n{payline}\n\n<i>🔍 Sunucular ve ülkeler için «Kontrol Et»e bas.</i>",
+  "card_own": "<blockquote>🛡 7/24 kontrol altında\n🇹🇲 Türkmenistan'dan sürekli test edilir\n⚡ IP değişince kendini yeniler\n🧹 Çalışmayan sunucu otomatik çıkarılır</blockquote>\n",
+  "chk_run": "\n⏳ <b>Kontrol ediliyor...</b>\n<i>Türkmenistan'dan test yapılıyor (1–5 dk). Sonuç bu kutuda görünecek.</i>",
+  "chk_head2": "\n🔍 <b>Sunucular</b>\n<blockquote>{lines}</blockquote>\n✅ {work} çalışıyor · ❌ {dead} çalışmıyor · ⏳ {wait} bekliyor\n🎯 ülke doğru · ⚠️ ülke yanlış\n🕒 Son TM testi: {ago}",
+  "chk_upd": "\n✅ <i>Güncellendi · {t}</i>",
+  "chk_timeout": "\n⚠️ <i>Telefon testi şu an cevap vermiyor; yukarıda son bilinen durum.</i>",
+  "payline": "💡 <b>Pul doly alynmaýar</b> — töleg diňe ulanan minudyňyza / sagadyňyza görä alynýar.\n▶️ Kody açanyňyzda bir gezek 0.1$. Islän wagtyňyz kody yzyna gowşuryp bilersiňiz — galan puluňyz balansyňyzda galýar (diňe ulanylan wagtyň puly alynýar).",
+  "b_back": "◀️ Geri",
+})
+T["ru"].update({
+  "head_own": "🏆 <b>ОФИЦИАЛЬНЫЙ КОД БОТА</b> 🏆", "head_vip": "💎 <b>VIP сервер</b>", "head_std": "🏷 <b>Стандартный сервер</b>",
+  "card2": "{head}\n\n🏪 <b>{title}</b>\n\n💰 <b>Цена</b>\n<blockquote>{prices}</blockquote>\n\n{payline}\n\n<i>🔍 Серверы и страны — кнопка «Проверить».</i>",
+  "card_own": "<blockquote>🛡 Под контролем 24/7\n🇹🇲 Постоянно проверяется из Туркменистана\n⚡ При смене IP обновляется сам\n🧹 Неработающие серверы убираются автоматически</blockquote>\n",
+  "chk_run": "\n⏳ <b>Проверяется...</b>\n<i>Идёт тест из Туркменистана (1–5 мин). Результат появится здесь.</i>",
+  "chk_head2": "\n🔍 <b>Серверы</b>\n<blockquote>{lines}</blockquote>\n✅ {work} работают · ❌ {dead} не работают · ⏳ {wait} ждут\n🎯 страна верна · ⚠️ страна неверна\n🕒 Последний тест в TM: {ago}",
+  "chk_upd": "\n✅ <i>Обновлено · {t}</i>",
+  "chk_timeout": "\n⚠️ <i>Телефонный тест сейчас не отвечает; выше — последнее известное состояние.</i>",
+  "payline": "💡 <b>Деньги не списываются сразу</b> — оплата только за использованные минуты / часы.\n▶️ При запуске один раз 0.1$. Код можно вернуть в любой момент — остаток останется на балансе (списывается только за использованное время).",
+  "b_back": "◀️ Назад",
+})
+
+# Türkmençe (eksik anahtar olursa Türkçesi görünür)
+T["tk"] = {
+ "menu": "✦ <b>VPN</b> ✦\n<blockquote>👥 Çakylyk  <b>{avail}/{need}</b>\n🎟 Işleýän kod  <b>{codes}</b></blockquote>\n<i>Birini saýla</i> 👇",
+ "b_free": "✨ Kod döret",
+ "b_mine": "🎟 Kodlarym",
+ "b_prof": "👤 Profil",
+ "b_market": "🛒 Market",
+ "b_lang": "🌐 Dil: Türkmençe",
+ "b_menu": "◀️ Menýu",
+ "b_share": "📤 Dostlaryňa iber",
+ "b_check": "🔍 Barla",
+ "b_paid": "✅ TMT töledim",
+ "b_cancel": "✖️ Ýatyr",
+ "b_back": "◀️ Yza",
+ "free_need": "🎁 <b>Mugt kod</b>\n<blockquote>Her kod üçin <b>{need}</b> sany täze dostuňy çagyr.\nHäzir  <b>{avail}/{need}</b></blockquote>\n🔗 <b>Çakylyk linkiň</b> <i>(bas → kopiýala)</i>\n<code>{link}</code>",
+ "free_today": "⏳ <b>Şu günki mugt kodyňy aldyň.</b>\n<blockquote>Ertir ýene alyp bilersiň (Aşgabat wagty bilen 00:00-dan soň).</blockquote>",
+ "free_ok": "✅ <b>Kodyň taýýar!</b>\n<blockquote>⏳ Möhlet  <b>{left}</b>\n📲 Linki kopiýala-da, VPN programmaňa (Happ) podpiska edip goş.</blockquote>\n🔗 <b>Podpiska linki</b> <i>(bas → kopiýala)</i>\n<code>{link}</code>",
+ "no_slot": "⚠️ Häzir boş kod ýeri ýok. Biraz soňrak ýene synanyş.",
+ "mine_none": "🎟 <b>Kodlarym</b>\n<blockquote>Işleýän kodyň ýok.</blockquote>",
+ "mine": "🎟 <b>Kodlarym</b>",
+ "mine_item": "<blockquote>🎟 <b>{name}</b>  ·  ⏳ {left}\n<code>{link}</code></blockquote>",
+ "prof": "👤 <b>Profil</b>\n<blockquote>🪪 ID  <code>{id}</code>\n👤 Adyň  {name}\n🔗 Ulanyjy ady  {un}\n🌐 Dil  Türkmençe\n📅 Goşulan güni  {joined}\n🕒 Häzir  {now}</blockquote>\n<blockquote>👥 Çagyranlaryň  <b>{total}</b>\n✅ Ulanyp boljak çakylyk  <b>{avail}/{need}</b>\n🎁 Alan mugt kodlaryň  <b>{free}</b>\n🎟 Işleýän kod  <b>{active}</b>\n🛒 Satyn alanlaryň  <b>{buys}</b>\n🙋 Seni çagyran  {inviter}</blockquote>\n🔗 <b>Çakylyk linkiň</b> <i>(bas → kopiýala)</i>\n<code>{link}</code>",
+ "share_text": "Mugt VPN kody al 👇",
+ "market": "🛒 <b>Market</b>\n<blockquote>🎟 Kod · 7 gün  —  <b>30 TMT</b> · 1.5 USDT\n🎟 Kod · 30 gün  —  <b>100 TMT</b> · 5 USDT\n🖥 Panel  —  her ulanyjy üçin <b>20 TMT</b> · 1 USDT <i>(iň az 20)</i></blockquote>\n💵 USDT bilen töleg (CryptoBot) awtomatik tassyklanýar.\n💳 TMT bilen töleg ýakyn wagtda 🔜\n<i>Näme satyn aljagyňy saýla</i> 👇",
+ "b_c7": "🎟 Kod 7 gün · 30 TMT",
+ "b_c30": "🎟 Kod 30 gün · 100 TMT",
+ "b_panel": "🖥 Panel · 20 TMT/ulanyjy",
+ "panel_ask": "🖥 <b>Panel</b>\n<blockquote>Öz ulanyjylaryň üçin kod döredip, olary dolandyryp bilýän paneliň.\nHer ulanyjy üçin <b>20 TMT</b> · iň az <b>20</b> ulanyjy · <b>30 gün</b></blockquote>\nNäçe ulanyjy? Knopka bas ýa-da san ýaz:",
+ "panel_min": "⚠️ Iň az 20 ulanyjy.",
+ "it_c7": "🎟 Kod · 7 gün",
+ "it_c30": "🎟 Kod · 30 gün",
+ "it_panel": "🖥 Panel · {n} ulanyjy · 30 gün",
+ "order": "🧾 <b>Sargyt #{oid}</b>\n<blockquote>{item}\n💰 Bahasy  <b>{price} TMT</b>  ·  <b>{usdt} USDT</b></blockquote>\n{usdt_line}💳 <b>TMT bilen töleg</b>\n<blockquote>{pay}</blockquote>\n<i>TMT bilen töleseň «✅ TMT töledim» knopkasyna bas, admin tassyklandan soň kodyň geler.</i>",
+ "usdt_line": "💵 <b>USDT bilen töleg</b> <i>(CryptoBot, awtomatik tassyklanýar)</i> → aşakdaky knopka bas.\n\n",
+ "b_usdt": "💵 USDT-de töle ({usdt} USDT)",
+ "b_pay": "💸 CryptoBotda töle",
+ "b_chk": "🔄 Tölegi barla",
+ "inv": "💵 <b>USDT bilen töleg · #{oid}</b>\n<blockquote>{item}\n💰 <b>{usdt} USDT</b>\n⏳ 1 sagat işleýär</blockquote>\n«💸 CryptoBotda töle» knopkasyna bas-da, töle. Töleg gelende kodyň <b>awtomatik</b> iberiler.",
+ "inv_wait": "Töleg entek gelmedi. Tölän bolsaň, 1 minutdan soň ýene barla.",
+ "inv_err": "⚠️ USDT töleg hasaby döredip bolmady. Biraz soňrak ýene synanyş ýa-da TMT bilen töle.",
+ "pay_default": "Töleg barada bilmek üçin admin bilen habarlaş.",
+ "order_sent": "⏳ <b>Sargyt #{oid} admine iberildi.</b>\n<blockquote>Tassyklanandan soň şu ýere habar geler.</blockquote>",
+ "order_old": "ℹ️ Bu sargyt eýýäm barlanýar.",
+ "order_ok_code": "✅ <b>Sargyt #{oid} tassyklandy!</b>\n<blockquote>⏳ Möhlet  <b>{left}</b></blockquote>\n🔗 <b>Podpiska linki</b> <i>(bas → kopiýala)</i>\n<code>{link}</code>",
+ "order_ok_panel": "✅ <b>Sargyt #{oid} tassyklandy!</b>\n<blockquote>🖥 Paneliň taýýar: <b>{n}</b> ulanyjy · <b>{days}</b> gün</blockquote>\nPaneli açmak üçin /start ýaz.",
+ "order_no": "❌ <b>Sargyt #{oid} tassyklanmady.</b>\n<blockquote>Bir mesele bar bolsa, admin bilen habarlaş.</blockquote>",
+ "cap": "👋 <b>Hoş geldiň!</b>\n<blockquote>VPN satyn almaga geldiňmi, ýa-da özüň VPN satyjysyňmy?</blockquote>",
+ "cap_wrong": "❌ Ýalňyş, ýene synanyş.",
+ "join": "📢 <b>Boty ulanmak üçin kanala podpiska bol</b>\n<blockquote>Podpiska bolandan soň «✅ Barla» bas.</blockquote>",
+ "join_no": "Sen entek podpiska bolmadyň.",
+ "ref_new": "🎉 <b>{name}</b> seniň çakylygyň bilen goşuldy!\n<blockquote>Çakylyk  <b>{avail}/{need}</b></blockquote>",
+ "ref_ready": "🎁 Çakylyklar doldy! Mugt kodyňy alyp bilersiň.",
+ "expired": "⏳ Kodyňyň möhleti gutardy, ol pozuldy: {name}",
+ "nobody": "—",
+ "b_sup": "🆘 Goldaw",
+ "b_bug": "🐞 Ýalňyşlyk",
+ "b_tclose": "🔒 Soragy ýap",
+ "b_report": "📨 Admine ýaz",
+ "bug_new": "🐞 <b>Ýalňyşlyk ýaz · #{tid}</b>\n<blockquote>Tapan ýalňyşlygyňy düşündirip ýaz. Skrinşot ýa-da wideo goşup bilersiň.\n📷 Surat iň köp 5 MB · 🎬 Wideo/faýl iň köp 10 MB</blockquote>\n<i>Admin jogap berse, şu ýerde görersiň; sen hem jogap ýazyp bilersiň.</i>",
+ "sup_new": "🆘 <b>Goldaw · #{tid}</b>\n<blockquote>Meseläňi ýaz. Surat, wideo ýa-da faýl hem iberip bilersiň.\n📷 Surat iň köp 5 MB · 🎬 Wideo/faýl iň köp 10 MB</blockquote>\n<i>Admin jogap berse, şu ýerde görersiň; sen hem jogap ýazyp bilersiň. Sorag ýapylýança gürrüňdeşlik dowam edýär.</i>",
+ "sup_open": "🆘 <b>Goldaw · #{tid}</b>\n<blockquote>Soragyň açyk. Habar ýazyp bilersiň; admin jogap berse, şu ýerde görersiň.</blockquote>",
+ "sup_sent": "✅ Iberildi. Adminiň jogabyna garaş.",
+ "sup_wait": "⏳ Ilki adminiň jogabyna garaş (jogapsyz iň köp 3 habar).",
+ "sup_big": "⚠️ Faýl gaty uly. Surat iň köp 5 MB, wideo/faýl iň köp 10 MB.",
+ "sup_reply": "💬 <b>Goldawyň jogaby</b> · #{tid}",
+ "sup_closed_admin": "🔒 Goldaw soragyň #{tid} ýapyldy. Täze mesele çyksa, 🆘 Goldaw düwmesine bas.",
+ "sup_closed": "🔒 Sorag #{tid} ýapyldy.",
+ "err": "⚠️ <b>Ýalňyşlyk çykdy.</b>\n<blockquote>Edip bolmady. Gaýtadan synanyş; düzelmese, admine ýaz.</blockquote>",
+ "reported": "✅ Admine habar berildi, sag bol.",
+ "tmt_soon": "💳 <b>TMT bilen töleg</b> — <i>ýakynda 🔜</i>",
+ "pay_off": "⚠️ Onlaýn töleg häzir işlänok.\n\n",
+ "b_trial": "🎁 3 sagatlyk synag",
+ "trial_ok": "🎁 <b>Synag kodyň taýýar!</b>\n<blockquote>⏳ 3 sagat işleýär\n📲 Linki göçür-de, VPN programmaňa (Happ) podpiska edip goş.</blockquote>\n🔗 <b>Podpiska linki</b> <i>(bas → göçür)</i>\n<code>{link}</code>",
+ "trial_used": "ℹ️ Synag koduny öň ulanypsyň.",
+ "trial_end": "⏳ Synag möhletiň gutardy. Halan bolsaň, 🛒 Marketden kod alyp bilersiň.",
+ "remind": "⏳ <b>Kodyň ertir gutarýar</b>\n<blockquote>🎟 {name}\n⏳ Galan  <b>{left}</b></blockquote>\nUzatsaň, link şol bolşy ýaly galýar, hiç zat üýtgetmeli däl.",
+ "b_ext": "🔄 Uzat",
+ "ext_ask": "🔄 <b>Kody uzat</b>\n<blockquote>🎟 {name}\n⏳ Galan  <b>{left}</b></blockquote>\nNäçe wagt uzadylsyn?",
+ "it_ext": "🔄 Uzatmak · {days} gün · {name}",
+ "order_ok_ext": "✅ <b>Sargyt #{oid} tassyklandy!</b>\n<blockquote>🎟 {name} uzadyldy\n⏳ Galan  <b>{left}</b></blockquote>\nLink şol bir, hiç zat etmeli däl.",
+ "banned": "⛔ Sen bu botda bloklandyň.",
+ "gift": "🎁 <b>Admin saňa kod berdi!</b>\n<blockquote>⏳ Möhlet  <b>{left}</b></blockquote>\n🔗 <b>Podpiska linki</b> <i>(bas → göçür)</i>\n<code>{link}</code>",
+ "added": "⏳ Kodyňyň möhleti uzadyldy: {name} · galan {left}",
+ "b_mkt": "🏪 Bazar (minutlaýyn)",
+ "b_sell": "➕ Kodumy sat",
+ "b_myl": "📦 Satuwym",
+ "b_rules": "📜 Düzgün",
+ "b_start": "▶️ Başla",
+ "b_shot": "📷 Skrinşot",
+ "b_back_mkt": "◀️ Bazar",
+ "b_stop": "⏹ Yzyna gowşur",
+ "b_top": "➕ Doldur",
+ "b_wd": "💸 Gazanjy çek",
+ "b_other": "✏️ Başga summa",
+ "mkt": "🏪 <b>Bazar</b>\n<blockquote>Satyjylaryň VPN kodlary. Minutlaýyn tölersiň, islän wagtyň yzyna gowşuryp bilersiň.\nKodlary bot her minut barlaýar.\n💰 Balansyň  <b>{bal} USDT</b></blockquote>\n<i>Bir bildiriş saýla</i> 👇",
+ "mkt_empty": "<i>Häzir başga bildiriş ýok.</i>",
+ "ml": "🏪 <b>{title}</b>\n<blockquote>{own}👤 Satyjy  {seller}\n📡 Serwer  <b>{total}</b>  ·  {protos}\n🇹🇲 TM barlagy  <b>{work}/{tested}</b> işleýär  ·  ❌ {dead}\n🌍 Hakyky ýurt  <b>{ncc}</b>  {flags}\n🔌 Açyk port (VPS)  {tcp}\n🕒 Soňky barlag  {chk}\n✅ Soňky işlän wagty  {good}</blockquote>\n💲 <b>Baha</b>\n<blockquote>{calc}</blockquote>{desc}\n<i>Başlanyňda 0.1$ başlangyç töleg alynýar, soň her minut balansyňdan tutulýar.</i>",
+ "ml_own": "⭐ Resmi bildiriş\n",
+ "m_need": "⚠️ <b>Balans ýetenok</b>\n<blockquote>Başlamak üçin iň az <b>{need} USDT</b> gerek (0.1$ + 60 minut).\n💰 Balansyň  <b>{bal} USDT</b></blockquote>",
+ "m_started": "✅ <b>Kod başlady!</b>\n<blockquote>🏪 {title}\n💲 {p}  ·  💰 Balans {bal} USDT</blockquote>\n🔗 <b>Podpiska linki</b> <i>(bas → göçür)</i>\n<code>{link}</code>\n<i>Yzyna gowşurmak üçin: 🎟 Kodlarym → ⏹ Yzyna gowşur</i>",
+ "m_already": "ℹ️ Bu bildiriş sende eýýäm açyk. 🎟 Kodlarym bölüminden görüp bilersiň.",
+ "m_gone": "⚠️ Bu bildiriş indi ýok.",
+ "m_stopped": "⏹ <b>Kod yzyna gowşuryldy</b>\n<blockquote>🏪 {title}\n⏱ Ulanylan wagt  {dur}\n💸 Jemi  {usdt} USDT</blockquote>{why}",
+ "why_nobal": "<i>Balansyň gutardy, şonuň üçin yzyna gowşuryldy.</i>",
+ "why_gone": "<i>Bildiriş bazardan aýryldy, şonuň üçin yzyna gowşuryldy.</i>",
+ "why_user": "",
+ "m_low": "⚠️ Balansyň azalýar: bazardan alan kodyň takmynan ýene <b>{m} minut</b> işlär.",
+ "mine_m": "<blockquote>🏪 <b>{title}</b>  ·  ⏱ {dur}  ·  💸 {usdt} USDT\n<code>{link}</code></blockquote>",
+ "sell_banned": "⛔ Bazarda bloklandyň: <b>{left}</b> soň täzeden bildiriş goýup bilersiň.",
+ "sell_1": "➕ <b>Kodumy sat · 1/5</b>\n<blockquote>Podpiska linkini iber. <b>Limitsiz</b> bolmaly (trafik we enjam).\nDüzgünler: azyndan 4 dürli hakyky ýurt (bot özi barlaýar, baýdaklara seredilmeýär), iň köp 3 sany işlemeýän serwer.</blockquote>",
+ "sell_badlink": "⚠️ Bu linkden kod alyp bolmady. Linki barla-da, täzeden iber.",
+ "sell_dup": "⚠️ Bu link eýýäm bazarda bar.",
+ "sell_2": "➕ <b>Kodumy sat · 2/5</b>\n<blockquote>✅ Linkde <b>{n}</b> serwer tapyldy ({protos}).\nBildirişiň adyny ýaz (mysal: <code>Fast VPN 🇩🇪</code>).</blockquote>",
+ "sell_3": "➕ <b>Kodumy sat · 3/5</b>\n<blockquote>Kodyňyň <b>skrinşotyny</b> iber (surat görnüşinde).</blockquote>",
+ "sell_need_photo": "⚠️ Skrinşoty surat görnüşinde iber.",
+ "sell_4": "➕ <b>Kodumy sat · 4/5</b>\n<blockquote>Düşündiriş ýaz (tizligi, aýratynlyklary, habarlaşmak üçin...). Geçmek üçin <code>-</code> iber.</blockquote>",
+ "sell_5": "➕ <b>Kodumy sat · 5/5</b>\n<blockquote>Aýlyk (30 gün) bahaň näçe <b>TMT</b>? Diňe san ýaz, mysal: <code>100</code>\nBot minutlyk bahany we USDT-däki bahasyny özi hasaplaýar.</blockquote>",
+ "sell_badprice": "⚠️ 1 bilen 10000 arasynda san ýaz (aýlyk TMT), mysal: <code>100</code>.",
+ "sell_confirm": "🧾 <b>Bildiriş barada gysgaça</b>\n<blockquote>🏷 {title}\n📡 {n} serwer · {protos}\n📝 {desc}</blockquote>\n💲 <b>Baha hasaplaýjy</b>\n<blockquote>{calc}</blockquote>\n<i>Tassyklasaň, balansyňdan <b>0.1$</b> bildiriş tölegi alynýar (yzyna gaýtarylmaýar). Bot kodlaryňy barlaýar; düzgünlere laýyk bolsa, birnäçe minutdan bazara çykýar.</i>",
+ "b_sellok": "✅ Limitsiz, tassyklaýaryn · 0.1$ töle",
+ "b_sellp": "✏️ Bahany üýtget",
+ "sell_nobal": "⚠️ Bildiriş tölegi üçin balansyň ýetenok (0.1$). Ilki balansy doldur.",
+ "sell_sent": "⏳ <b>Bildirişiň barlagda</b>\n<blockquote>Bot kodlaryňy Türkmenistandan barlaýar. Hemme zat düzgün bolsa, birnäçe minutdan bazara çykar, saňa habar geler.</blockquote>",
+ "m_approved": "✅ <b>Bildirişiň bazara çykdy!</b>\n<blockquote>🏪 {title}\n🌍 {ncc} hakyky ýurt · ✅ {work}/{tested} serwer işleýär</blockquote>",
+ "m_rejected": "❌ <b>Bildirişiň kabul edilmedi</b>\n<blockquote>🏪 {title}\n{why}</blockquote>",
+ "m_removed": "⛔ <b>Bildirişiň {h} sagatlyk bloklandy</b>\n<blockquote>🏪 {title}\n{why}</blockquote>\n<i>Blok wagtynda kodlaryň berilmeýär, pul yzyna gaýtarylmaýar. Blok gutarandan soň bildiriş özi täzeden barlanýar.</i>",
+ "r_dead": "4-den köp serwer 30 minutyň dowamynda N/A boldy.",
+ "r_lowc": "Hakyky ýurtlaryň sany 30 minutyň dowamynda 4-den az boldy.",
+ "r_link": "Podpiska linki 30 minutyň dowamynda açylmady.",
+ "rj_lowc": "Azyndan 4 dürli hakyky ýurt ýok (tapylany: {n}).",
+ "rj_dead": "{n} serwer işlemeýär (iň köp 3 bolup biler).",
+ "rj_link": "Podpiska linki açylmady.",
+ "m_paid_sent": "🎉 <b>Gutlaýarys!</b>\n<blockquote>🏪 {title}\n⏱ Alyjy kodyňy {dur} ulandy\n💰 Gazanjyň  <b>{usdt} USDT</b> (≈{tmt} TMT)</blockquote>\n💸 CryptoBot hasabyňa iberildi.",
+ "m_paid_bal": "🎉 <b>Gutlaýarys!</b>\n<blockquote>🏪 {title}\n⏱ Alyjy kodyňy {dur} ulandy\n💰 Gazanjyň  <b>{usdt} USDT</b> (≈{tmt} TMT)</blockquote>\n💼 Botdaky balansyňa goşuldy. Profil → 💸 Gazanjy çek.",
+ "myl": "📦 <b>Bildirişlerim</b>",
+ "myl_none": "📦 <b>Bildirişlerim</b>\n<blockquote>Bildirişiň ýok.</blockquote>",
+ "myl_item": "<blockquote>{st} <b>{title}</b>{vip}\n💲 {m} TMT/30 gün · 👥 {n} alyjy · 💰 {earned} USDT{extra}</blockquote>",
+ "st_pending": "⏳",
+ "st_live": "🟢",
+ "st_removed": "⛔",
+ "st_rejected": "❌",
+ "rules": "📜 <b>Bazaryň düzgünleri</b>\n<blockquote><b>Satyjy</b>\n• Her bildiriş 0.1$ (yzyna gaýtarylmaýar).\n• Podpiska limitsiz bolmaly; skrinşot hökman.\n• Bildiriş berlende azyndan 4 dürli hakyky ýurt bolmaly (bot özi ölçeýär, baýdaklara seredilmeýär).\n• 4-den köp serwer 30 minut N/A bolsa, bildiriş 3 sagat bloklanýar: blok wagtynda kodlaryň berilmeýär, pul gaýtarylmaýar. Blok gutaranda bildiriş täzeden barlanýar.\n• 💎 VIP: 0.2$ töläp, 36 sagat iň ýokarda durýar.\n• Gazanç: alyjy kody yzyna gowşuranda, uzak ulanylsa her 24 sagatda bir gezek iberilýär.</blockquote>\n<blockquote><b>Alyjy</b>\n• Her gezek başlamak 0.1$ (yzyna gaýtarylmaýar).\n• Minutlyk töleg balansyňdan aýrylýar (ulansaň-da, ulanmasaň-da).\n• Islän wagtyň yzyna gowşurup bilersiň; balans gutarsa, kod özi yzyna gowşurylýar.\n• Balans azyndan 1$ doldurylýar; doldurylan balansy yzyna çekip bolmaýar.</blockquote>",
+ "bal_line": "\n\n💰 <b>Balans</b>  {bal} USDT (≈{tmt} TMT)",
+ "earn_line": "\n💼 <b>Çekip boljak gazanç</b>  {earn} USDT",
+ "top": "➕ <b>Balansy doldur</b>\n<blockquote>CryptoBot arkaly USDT. Azyndan 1 USDT.\n💰 Balansyň  <b>{bal} USDT</b></blockquote>",
+ "top_ask": "✏️ Näçe USDT doldurmak isleýärsiň? (azyndan 1)",
+ "top_bad": "⚠️ Azyndan 1 USDT, san ýaz (mysal: 2.5).",
+ "top_order": "🧾 <b>Balansy doldurmak · #{oid}</b>\n<blockquote>💵 <b>{usdt} USDT</b></blockquote>\n«💵 USDT bilen töle» düwmesine bas.",
+ "it_top": "Balansy doldurmak · {usdt} USDT",
+ "top_ok": "✅ <b>Balansyňa {usdt} USDT goşuldy.</b>\n<blockquote>💰 Balans  <b>{bal} USDT</b></blockquote>",
+ "wd_min": "ℹ️ Çekmek üçin azyndan 1 USDT gazanç gerek. Häzir: {earn} USDT.",
+ "wd_ok": "✅ <b>{usdt} USDT</b> CryptoBot hasabyňa iberildi.",
+ "wd_err": "⚠️ Iberip bolmady: {err}\n<i>@CryptoBot-y azyndan bir gezek açan bolmaly. Düzelmese 🆘 Goldaw-a ýaz.</i>",
+ "b_pazar": "🏪 Bazar",
+ "b_live": "📊 Göni",
+ "b_vip": "💎 VIP · 36 sag. · 0.2$",
+ "b_yes_stop": "✅ Hawa",
+ "b_no": "✖️ Ýok",
+ "mkt_head": "🏪 <b>Bazar</b> 👇",
+ "mkt_foot": "🏪 <b>Bazar</b>\n<blockquote>💰 Balansyň  <b>{bal} USDT</b>\nBaşlanyňda 0.1$, soň her minut üçin tölärsiň; islän wagtyň yzyna gowşuryp bilersiň.</blockquote>",
+ "card": "🏪 <b>{title}</b>\n{own}\n📡 <b>Serwerler</b>\n<blockquote>🖥 {total} serwer · {protos}\n{tmline}{ccline}</blockquote>\n\n💰 <b>Bahasy</b>\n<blockquote>{prices}</blockquote>\n\n{payline}{desc}",
+ "card_own": "<blockquote>🛡 7/24 gözegçilik astynda\n🇹🇲 Türkmenistandan yzygiderli barlanýar\n⚡ IP üýtgände özi täzelenýär\n🧹 Işlemeýän serwer awtomatik aýrylýar</blockquote>\n",
+ "vip_badge": "  💎 VIP",
+ "stop_q": "⏹ <b>Yzyna gowşurulsynmy?</b>\n<blockquote>🏪 {title}\n⏱ {dur} · 💸 {usdt} USDT</blockquote>",
+ "live": "📊 <b>Göni</b> · {title}\n<blockquote>⏱ Wagt  {dur}\n💸 Harçlanan  <b>{spent}$</b>\n💰 Balans  <b>{bal}$</b>\n⏳ Galan  ≈ {left}\n💲 {m_tmt} TMT / 30 gün</blockquote>\n<i>⟳ Her 10 sekuntda täzelenýär · {t}</i>",
+ "live_off": "📊 <b>{title}</b>\n<blockquote>Bu kod yzyna gowşuruldy.</blockquote>",
+ "vip_ok": "💎 <b>Bildirişiň VIP boldy!</b>\n<blockquote>🏪 {title}\n⏳ {left} dowamynda bazaryň iň ýokarsynda.</blockquote>",
+ "vip_nobal": "⚠️ VIP üçin balansyň ýetmeýär (0.2$).",
+ "vip_notlive": "⚠️ Diňe bazarda görünýän bildiriş VIP bolup biler.",
+ "m_rereview": "🔄 Blok gutardy: «{title}» bildirişiň täzeden barlanýar. Hemme zat dogry bolsa, birnäçe minutdan ýene bazarda çykar.",
+ "rj_untested": "Telefon testi bu kodlary ölçäp bilmedi (protokol goldanmaýan bolmagy mümkin).",
+ "myl_pend": "\n⏳ Teste iberildi {ago} · test {a}/{b}",
+ "myl_susp": "\n⛔ Blok gutarýança: {left}",
+ "st_suspended": "⛔",
+ "tm_ok": "🇹🇲 TM testi: ✅ <b>{work}</b> işleýär · ❌ {dead}\n🕒 Soňky test: {ago}",
+ "tm_wait": "🇹🇲 TM testi: ⏳ täze serwerler barlanýar",
+ "cc_line": "\n🌍 {n} ýurt  {flags}",
+ "chk_wait": "⏳ 5 minutda bir gezek barlap bolýar. {m} min soň täzeden synanyş.",
+ "chk_head": "🔍 <b>{title}</b> · serwerleriň ýagdaýy\n<blockquote>{lines}</blockquote>\n✅ {work} işleýär · ❌ {dead} işlemeýär · ⏳ {wait} garaşýar\n🎯 ýurt dogry · ⚠️ ýurt nädogry (hakykysy ýanynda)\n🕒 Soňky TM testi: {ago}",
+ "chk_req": "\n\n📱 <i>Türkmenistandan täze test başlady. Netijesi gelende (1–5 min) saňa iberiler.</i>",
+ "chk_busy": "\n\n📱 <i>Türkmenistandan test eýýäm gidip dur. Netijesi gelende saňa iberiler.</i>",
+ "chk_done": "🆕 <b>Täze TM test netijesi</b>\n\n",
+ "chk_timeout": "\n⚠️ <i>Telefon testi häzir jogap bermeýär; ýokarda soňky belli ýagdaý.</i>",
+ "never": "entek ýok",
+ "b_cap_buy": "🛒 VPN almak isleýärin",
+ "b_cap_sell": "🏪 Men VPN satyjy",
+ "card_seller": "{head}\n\n🏪 <b>{title}</b>\n\n💰 <b>Bahasy</b>\n<blockquote>{prices}</blockquote>\n\n{payline}\n\n<i>🔍 Serwerleri we ýurtlary görmek üçin «Barla» düwmä bas.</i>",
+ "head_vip": "💎 <b>VIP serwer</b>",
+ "head_std": "🏷 <b>Standart serwer</b>",
+ "prices": "⏱ 1 minut  —  <b>{mi} TMT</b>\n🕐 1 sagat  —  <b>{h} TMT</b>\n📅 1 hepde  —  <b>{w} TMT</b>\n🗓 1 aý  —  <b>{m} TMT</b>",
+ "payline": "💡 <b>Pul doly alynmaýar</b> — töleg diňe ulanan minudyňyza / sagadyňyza görä alynýar.\n▶️ Kody açanyňyzda bir gezek 0.1$. Islän wagtyňyz kody yzyna gowşuryp bilersiňiz — galan puluňyz balansyňyzda galýar (diňe ulanylan wagtyň puly alynýar).",
+ "mkt_bal": "\n\n💰 Balansyň  <b>{bal} USDT</b>",
+ "mkt_none": "\n<i>Häzir başga satyjy ýok.</i>",
+ "b_sellers": "👥 Satyjylar ({n}) ▶️",
+ "chk_line_ok": "🎯",
+ "chk_line_bad": "⚠️ hakykatda: {f} {n}",
+ "chk_line_real": "→ {f} {n}",
+ "chk_run": "\n⏳ <b>Barlanýar...</b>\n<i>Türkmenistandan test edilýär (1–5 min). Netije şu ýerde görüner.</i>",
+ "chk_upd": "\n✅ <i>Täzelendi · {t}</i>",
+ "b_recheck": "🔄 Täzele",
+ "head_own": "🏆 <b>BOTUŇ RESMI KODY</b> 🏆",
+ "card2": "{head}\n\n🏪 <b>{title}</b>\n\n💰 <b>Bahasy</b>\n<blockquote>{prices}</blockquote>\n\n{payline}\n\n<i>🔍 Serwerleri we ýurtlary görmek üçin «Barla» bas.</i>",
+ "chk_head2": "\n🔍 <b>Serwerler</b>\n<blockquote>{lines}</blockquote>\n✅ {work} işleýär · ❌ {dead} işlemeýär · ⏳ {wait} garaşýar\n🎯 ýurt dogry · ⚠️ ýurt nädogry\n🕒 Soňky TM testi: {ago}",
+ "b_mcheck": "🔍 Barla"
+}
+
 def money_tmt(micro, d=2):
     v = micro * USDT_RATE / UM
     return f"{v:.{d}f}".rstrip("0").rstrip(".") or "0"
 
-def card_caption(db, L, lang):
-    st = L.get("st") or listing_stats(db, L)
-    vip = L.get("vip_until", 0) > time.time()
-    desc = L.get("desc") or ""
-    if L.get("own") and desc == OWN_DESC: desc = ""
-    p = float(L["price"])
-    tm = tr(lang, "tm_ok", work=st.get("work", 0), dead=st.get("dead", 0), ago=ago_l(st.get("ts"), lang)) if st.get("tested") else tr(lang, "tm_wait")
-    cc = st.get("cc", [])
-    for dl in (250, 120, 0):   # foto altı yazı en çok 1024 karakter (bakiye satırına da yer kalsın)
-        t = card_text(L, lang, vip, st, tm, cc, p, desc, dl)
-        if len(t) <= 900: return t
-    return t
+def card_head(L, lang):
+    return tr(lang, "head_own" if L.get("own") else "head_vip" if L.get("vip_until", 0) > time.time() else "head_std")
 
-def card_text(L, lang, vip, st, tm, cc, p, desc, dl):
+def card_caption(db, L, lang):
+    """Pazar kartı: sadece tür başlığı + ad + fiyat. Sunucular «Kontrol Et» ile aynı kutuda açılır."""
+    p = float(L["price"])
     prices = tr(lang, "prices", mi=money_tmt(p, 4), h=money_tmt(p * 60), w=money_tmt(p * 10080), m=money_tmt(p * 43200))
-    if not L.get("own"):   # satıcı: sadece fiyat + VIP/sıradan başlığı (sunucular "Kontrol Et"te)
-        return tr(lang, "card_seller", head=tr(lang, "head_vip" if vip else "head_std"), title=esc(short(L["title"], 40)), prices=prices, payline=tr(lang, "payline"))
-    return tr(lang, "card", title=esc(short(L["title"], 40)), own=tr(lang, "card_own"),
-              total=st.get("total", 0), protos=protos_txt(st.get("protos", {})), tmline=tm,
-              ccline=tr(lang, "cc_line", n=len(cc), flags="".join(flag_of(c) for c in cc[:10])) if cc else "",
-              prices=prices, payline=tr(lang, "payline"), desc=("\n\n📝 " + esc(short(desc, dl))) if desc and dl else "")
+    return tr(lang, "card2", head=card_head(L, lang), title=esc(short(L["title"], 40)), prices=prices, payline=tr(lang, "payline"))
 
 CHK = {"user": {}, "req": 0, "wait": {}}   # kullanıcı başına son kontrol, telefona son test isteği, sonucu bekleyenler
 CHK_EVERY = 300
@@ -3671,10 +3997,17 @@ def code_label(c):
         except Exception: return "vmess"
     return urllib.parse.unquote(c.split("#", 1)[1]) if "#" in c else (code_host(c) or "?")
 
-def check_text(db, lid, lang, ch=None):
-    """İlanın her sunucusu için son TM test sonucu."""
+CHK_FRESH = 300   # son TM testi bundan yeniyse yeniden test istenmez, sonuç hemen gösterilir
+
+def check_text(db, lid, lang, ch=None, state="done"):
+    """Kontrol Et kutusu. state: run (test sürüyor) / done (yeni sonuç) / fresh (son test zaten yeni) / timeout."""
     L = db.get("market", {}).get(lid)
     if not L: return tr(lang, "m_gone")
+    top = card_head(L, lang) + f"\n\n🏪 <b>{esc(short(L['title'], 40))}</b>\n"
+    if state == "run": return top + tr(lang, "chk_run")
+    if L.get("own"):
+        top += tr(lang, "card_own")
+        if L.get("desc") and L["desc"] != OWN_DESC: top += "📝 " + esc(short(L["desc"], 200)) + "\n"
     res = (ch or {}).get("results") or {}
     exits = dict(load_exits()); exits.update((ch or {}).get("exits") or {})
     cname = lambda cc: COUNTRIES[cc][1] if cc in COUNTRIES else cc.upper()
@@ -3693,11 +4026,25 @@ def check_text(db, lid, lang, ch=None):
         if real and said: acc = " " + (tr(lang, "chk_line_ok") if real == said else tr(lang, "chk_line_bad", f=flag_of(real), n=cname(real)))
         elif real: acc = " " + tr(lang, "chk_line_real", f=flag_of(real), n=cname(real))
         else: acc = ""
-        if len(lines) < 25: lines.append(f"{ic} · {name}{acc}")
-    return tr(lang, "chk_head", title=esc(L["title"]), lines="\n".join(lines) or "—", work=w, dead=dd, wait=wt, ago=ago_l((ch or {}).get("ts"), lang))
+        lines.append(f"{ic} · {name}{acc}")
+    foot = {"done": tr(lang, "chk_upd", t=datetime.datetime.now(TM_TZ).strftime("%H:%M")), "timeout": tr(lang, "chk_timeout")}.get(state, "")
+    for n in (len(lines), 15, 10, 5):   # foto altı yazı en çok 1024 karakter
+        more = f"\n… +{len(lines) - n}" if len(lines) > n else ""
+        t = top + tr(lang, "chk_head2", lines="\n".join(lines[:n]) + more or "—", work=w, dead=dd, wait=wt, ago=ago_l((ch or {}).get("ts"), lang)) + foot
+        if len(t) <= 1024: return t
+    return t[:1020]
 
 def chk_kb(lang, lid):
-    return KB([[B(tr(lang, "b_start"), f"u_ms:{lid}", "success"), B(tr(lang, "b_recheck"), f"u_mck:{lid}")], [B(tr(lang, "b_back_mkt"), "u_mkt")]])
+    return KB([[B(tr(lang, "b_start"), f"u_ms:{lid}", "success"), B(tr(lang, "b_recheck"), f"u_mck:{lid}")], [B(tr(lang, "b_back"), f"u_ml:{lid}")]])
+
+async def edit_box(bot, uid, mid, is_photo, t, kb):
+    """Pazar kutusunu yerinde günceller (fotoğraflıysa altındaki yazı)."""
+    try:
+        if is_photo: await bot.edit_message_caption(chat_id=uid, message_id=mid, caption=t, parse_mode="HTML", reply_markup=kb)
+        else: await bot.edit_message_text(t, chat_id=uid, message_id=mid, parse_mode="HTML", reply_markup=kb, disable_web_page_preview=True)
+        return True
+    except BadRequest as e: return "not modified" in str(e).lower()
+    except Exception as e: log.info("box edit: %s", e); return False
 
 def request_phone_test(db):
     """Telefona 'hemen test et' der: kanaldaki codes_ts değişince telefon 1 dk içinde yeni test başlatır."""
@@ -3722,7 +4069,7 @@ def market_page(db, uid, lang, i=0):
     i = max(0, min(i, n - 1)); lid = order[i]; L = db["market"][lid]
     e = db["users"].get(str(uid), {})
     cap = card_caption(db, L, lang) + tr(lang, "mkt_bal", bal=fmt_u(e.get("bal", 0))) + (tr(lang, "mkt_none") if n == 1 else "")
-    rows = [[B(tr(lang, "b_start"), f"u_ms:{lid}", "success"), B(tr(lang, "b_check"), f"u_mck:{lid}")]]
+    rows = [[B(tr(lang, "b_start"), f"u_ms:{lid}", "success"), B(tr(lang, "b_mcheck"), f"u_mck:{lid}")]]
     if n > 1:
         if i == 0: rows.append([B(tr(lang, "b_sellers", n=n - 1), "u_mp:1", "primary")])
         else: rows.append([B("◀️", f"u_mp:{i - 1}"), B(f"{i}/{n - 1}", f"u_mp:{i}"), B("▶️", f"u_mp:{(i + 1) % n}")])
@@ -3959,12 +4306,10 @@ async def check_waiters(app):
     if not done and now - CHK["req"] < 900: return
     ch = await asyncio.to_thread(_read_channel, db)
     wait, CHK["wait"] = CHK["wait"], {}
-    hm = datetime.datetime.now(TM_TZ).strftime("%H:%M")
     for lid, users_ in wait.items():
-        for uid, (lang, mid) in users_.items():
-            t = check_text(db, lid, lang, ch) + (tr(lang, "chk_upd", t=hm) if done else tr(lang, "chk_timeout"))
-            try: await app.bot.edit_message_text(t, chat_id=uid, message_id=mid, parse_mode="HTML", reply_markup=chk_kb(lang, lid))
-            except Exception:
+        for uid, (lang, mid, is_photo) in users_.items():
+            t = check_text(db, lid, lang, ch, "done" if done else "timeout")
+            if not await edit_box(app.bot, uid, mid, is_photo, t, chk_kb(lang, lid)):
                 try: await app.bot.send_message(uid, t, parse_mode="HTML", reply_markup=chk_kb(lang, lid))
                 except Exception: pass
 
