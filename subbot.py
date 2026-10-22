@@ -205,6 +205,22 @@ def sub_link(fid):
 
 FILE_FMT = 3   # abonelik dosyası biçimi değişince (ör. #providerid kaldırıldı) dosyalar bir kez yeniden yazılır
 
+CODE_OFF_MSG = "Kodyňyz öçürildi, Admin bilen habarlaşyň"   # silinen / süresi dolan / durdurulan kodun Happ duyurusu
+
+def rewrite_off_files():
+    """Bir kez: daha önce silinmiş / süresi dolmuş kodların boş dosyalarına yeni duyuru metni (CODE_OFF_MSG)."""
+    try:
+        svc = new_service(); used = used_fids(load_db()); n, tok = 0, None
+        while True:
+            r = svc.files().list(q="name='Empty.txt' and trashed=false", fields="nextPageToken,files(id)", pageSize=200, pageToken=tok).execute()
+            for f in r.get("files", []):
+                if f["id"] not in used and sync_file(svc, f["id"], "Empty", CODE_OFF_MSG, [], exp=False): n += 1
+            tok = r.get("nextPageToken")
+            if not tok: break
+        mutate(lambda d: d.__setitem__("off_msg", CODE_OFF_MSG))
+        vlog(f"📝 Kapalı kod duyurusu güncellendi: {n} dosya")
+    except Exception as e: log.warning("rewrite off files: %s", e)
+
 def build_text(title, announce, servers):
     # Not: "#providerid" yazılmaz — Happ'ta aktif olmayan Provider ID varken "#hide-settings" çalışmıyor.
     lines = [f"#profile-title: {title}"]
@@ -220,7 +236,7 @@ def expired_fids():
 def sync_file(svc, fid, title, announce, servers, exp=None):
     if not svc or not fid: return False
     if (exp if exp is not None else fid in expired_fids()):
-        announce, servers = "Abonelik süresi doldu. Admin ile iletişime geçin.", []
+        announce, servers = CODE_OFF_MSG, []
     try:
         clean = re.sub(r"[^\w\s\-\.\(\)]", "", str(title)).strip() or "VIP"
         media = MediaIoBaseUpload(io.BytesIO(build_text(title, announce, servers)), mimetype="text/plain")
@@ -321,7 +337,7 @@ def delete_vip(kid):
         fid = s.get("file_id")
         if fid:
             if fid not in db["free_files"]: db["free_files"].append(fid)
-            sync_file(svc, fid, "Empty", "Abonelik iptal edildi", [], exp=False)  # eski link sunucu vermesin
+            sync_file(svc, fid, "Empty", CODE_OFF_MSG, [], exp=False)  # eski link sunucu vermesin
         save_db(db)
         return True
 
@@ -1074,6 +1090,7 @@ async def post_init(app):
     try: mutate(ensure_own)   # bizim ilan pazarda hep olsun
     except Exception: log.exception("market init")
     app.bot_data["mkt"] = asyncio.create_task(market_loop(app))
+    if load_db().get("off_msg") != CODE_OFF_MSG: asyncio.create_task(asyncio.to_thread(rewrite_off_files))
     if load_db().get("file_fmt") != FILE_FMT:   # dosya biçimi değişti: bütün abonelik dosyaları bir kez yeniden yazılsın
         mutate(lambda d: d.__setitem__("file_fmt", FILE_FMT)); start_refresh(app, "Abonelik dosyası biçimi güncellendi")
     try:
@@ -3715,7 +3732,7 @@ def mkt_stop(sid, reason):
         info = {"sid": sid, "buyer": s["buyer"], "lid": s["lid"], "owner": L.get("owner"), "own": bool(L.get("own")), "title": L.get("title", "?"),
                 "payout": payout, "span": int(now - s.get("settle_ts", s["start"])), "dur": int(now - s["start"]), "total": s["total"], "reason": reason}
         save_db(db)
-    try: sync_file(new_service(), s["fid"], "Empty", "Abonelik durduruldu", [], exp=False)
+    try: sync_file(new_service(), s["fid"], "Empty", CODE_OFF_MSG, [], exp=False)
     except Exception: pass
     return info
 
