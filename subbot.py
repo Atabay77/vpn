@@ -1214,6 +1214,7 @@ def code_card(s, kid, uid):
             + (f"\n👮 Sahibi  <code>{s.get('owner_id')}</code>" if uid in ADMINS and s.get("owner_id") and s.get("owner_id") not in ADMINS else "")
             + "</blockquote>\n"
             + L(uid, "🔗 <b>Abonelik linki</b> <i>(dokun → kopyala)</i>", "🔗 <b>Ссылка подписки</b> <i>(нажмите → скопировать)</i>") + f"\n<code>{esc(user_link(fid) if fid else 'Drive dosyası yok')}</code>"
+            + (f"\n<i>Düz link (sadece sen):</i> <code>{esc(sub_link(fid))}</code>" if fid and uid in ADMINS else "")
 
             + (f"\n\n🔒 <b>Happ limitli link</b> · 📱 {str(s['happ']['limit']) + ' cihaz' if s['happ'].get('limit') else 'limit sitede'}\n<code>{esc(s['happ']['link'])}</code>" if s.get("happ") and uid in ADMINS else ""))
 
@@ -1308,6 +1309,7 @@ async def on_num(c, uid, st, n, send, who=""):
             if all(happ_creds()): await send(*ask_num(uid, "hp_limit", f"✅ <b>{esc(st['name'])}</b> oluşturuldu.\n", kid=res[0]))
             else: await send(*happ_paste_prompt(uid, res[0]))
             return
+        if res: await asyncio.to_thread(user_link, res[1])   # şifreli link önceden
         await send(*create_result(res, err, st["name"], uid))
         if res and uid not in ADMINS:
             await notify_founders(c.application, f"🔔 Alt admin <b>{esc(who)}</b> (<code>{uid}</code>) kod oluşturdu: <code>{esc(st['name'])}</code> · {n} gün")
@@ -2010,6 +2012,7 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         s = db["subs"].get(kid)
         if not s:
             await safe_edit(q, L(uid, "⚠️ Kod bulunamadı.", "⚠️ Код не найден."), back("my_keys")); return
+        await asyncio.to_thread(user_link, s.get("file_id"))   # şifreli link önceden hazır olsun
         await safe_edit(q, code_card(s, kid, uid), code_kb(kid, uid))
 
     elif a.startswith(("kt:", "kn:", "ka:")):
@@ -2291,13 +2294,25 @@ def happ_encrypt(url):
     """Linki happ://crypt5/ olarak şifreler (kullanıcı installid'yi silemesin). Olmazsa None."""
     req = urllib.request.Request(HAPP_CRYPT, data=json.dumps({"url": url}).encode(), headers={"Content-Type": "application/json", "User-Agent": "subbot/1.0"})
     try:
-        with urllib.request.urlopen(req, timeout=10) as r: return json.loads(r.read().decode("utf-8")).get("encrypted_link") or None
+        with urllib.request.urlopen(req, timeout=6) as r: return json.loads(r.read().decode("utf-8")).get("encrypted_link") or None
     except Exception as e:
         log.warning("happ encrypt: %s", type(e).__name__); return None
 
+ENC = {}
 def user_link(fid):
-    """Kullanıcıya verilen abonelik linki (gizleme dosyadaki #hide-settings ile yapılır)."""
-    return sub_link(fid) if fid else ""
+    """Kullanıcıya verilen link: Happ'ın şifreli linki (happ://crypt5/…) — Happ'ta sunucu ayarları görünmez.
+    Her dosya bir kez şifrelenir, sonuç kalıcı önbellekte (sonraki gösterimlerde ağ isteği yok). Olmazsa düz link."""
+    if not fid: return ""
+    if fid in ENC: return ENC[fid]
+    try: c_ = load_db().get("enc_links", {}).get(fid)
+    except Exception: c_ = None
+    if not c_:
+        c_ = happ_encrypt(sub_link(fid))
+        if c_:
+            try: mutate(lambda d: d.setdefault("enc_links", {}).__setitem__(fid, c_))
+            except Exception: pass
+    if c_: ENC[fid] = c_
+    return c_ or sub_link(fid)
 
 def happ_make(kid, limit):
     """Koda limitli Happ linki üretir. Dönüş: (link, şifreli mi) ya da RuntimeError."""
@@ -2884,6 +2899,7 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
     if a == "u_mine":
         mine = user_codes(db, uid)
         sess = [(sid, x) for sid, x in db.get("msess", {}).items() if x["buyer"] == uid and x["status"] == "on"]
+        await asyncio.to_thread(lambda: [user_link(f) for f in [s.get("file_id") for _, s in mine[:8]] + [x["fid"] for _, x in sess[:5]]])   # şifreli linkler önceden (bot beklemesin)
         if not mine and not sess: await send(tr(lang, "mine_none"), menu_btn); return
         body = "\n".join(tr(lang, "mine_item", name=esc(short(name_of(s, k), 30)), left=left_txt(s.get("expires"), lang == "ru"), link=esc(user_link(s.get("file_id", "")))) for k, s in mine[:8])
         body2 = "\n".join(tr(lang, "mine_m", title=esc(short(db["market"].get(x["lid"], {}).get("title", "?"), 26)), dur=dur_txt(time.time() - x["start"], lang == "ru"),
