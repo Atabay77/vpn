@@ -1,4 +1,4 @@
-import os, sys, io, re, json, html, uuid, base64, asyncio, zipfile, shutil, fcntl, logging, datetime, time, socket, random, hashlib, warnings, unicodedata
+import os, sys, io, re, json, html, uuid, base64, asyncio, zipfile, shutil, fcntl, logging, datetime, time, socket, random, hashlib, warnings, unicodedata, threading
 import urllib.request, urllib.parse, urllib.error
 from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor
@@ -669,7 +669,12 @@ def load_exits():
         with open(EXIT_FILE, encoding="utf-8") as f: return json.load(f)
     except Exception: return {}
 
+CH_WLOCK = threading.Lock()   # telefon kanalını oku-değiştir-yaz: aynı anda iki yazan birbirinin değişikliğini silmesin
+
 def tm_sync(db, sources, codes=None):
+    with CH_WLOCK: return _tm_sync(db, sources, codes)
+
+def _tm_sync(db, sources, codes=None):
     """Kanal dosyasını hazır tutar, telefonun son sonucunu okur. Dönüş: TM'de çalışmayan kod anahtarları."""
     try:
         svc = new_service()
@@ -2620,13 +2625,17 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
             if not await edit_box(c.bot, uid, mid, is_photo, t, kb):
                 is_photo = False; mid = (await c.bot.send_message(uid, t, parse_mode="HTML", reply_markup=kb)).message_id
         else: is_photo = False; mid = (await c.bot.send_message(uid, t, parse_mode="HTML", reply_markup=kb)).message_id
-        ch = await asyncio.to_thread(_read_channel, load_db()); ts = ch.get("ts") or 0
+        ch = await chk_run(_read_channel, load_db()); ts = ch.get("ts") or 0
+        if ch: RUN["phone_old"] = not ch.get("quick_ok")   # telefon hızlı kontrolü bilmiyor: tam test (birkaç dk)
         if ts and now - ts < CHK_FRESH and not force: state = "fresh"   # telefon az önce test etti: tekrar test yok
         elif not ts or now - max(ts, ch.get("quick_ts") or 0) > PHONE_OFF: state = "off"   # telefon uzun süredir sonuç göndermiyor: boşuna bekletme
         elif CHK["wait"].get(lid) and CHK["qid"]: qid, state = CHK["qid"], "run"   # bu ilan zaten test ediliyor
         else:
-            async with CHECK_LOCK: _, qid = await asyncio.to_thread(request_phone_test, load_db(), set(CHK["wait"]) | {lid})
-            if qid: CHK["qid"], CHK["req"], state = qid, now, "run"
+            _, qid = await chk_run(request_phone_test, load_db(), set(CHK["wait"]) | {lid})   # abonelik kontrolünü beklemez
+            if qid:
+                CHK["qid"], CHK["req"], state = qid, now, "run"
+                vlog(f"🔍 Hızlı kontrol telefona gönderildi: {db.get('market', {}).get(lid, {}).get('title', lid)}" + (" · ⚠️ telefon programı eski (tmtest.py'yi bota gönder)" if RUN.get("phone_old") else ""))
+                if RUN.get("phone_old"): await edit_box(c.bot, uid, mid, is_photo, check_text(load_db(), lid, lang, None, "run"), kb)
             else: state = "timeout"
         if state == "run":
             CHK["wait"].setdefault(lid, {})[uid] = (lang, mid, is_photo, qid, now)
@@ -3945,6 +3954,7 @@ T["tr"].update({
   "b_open": "🟢 Açık kodlarım ({n})",
   "m_remind": "⏰ <b>Pazar kodun hâlâ açık</b>\n<blockquote>🏪 {title}\n⏱ {dur} · 💸 {spent} TMT\n💰 Bakiye {bal} USDT</blockquote>\n<i>Kullanmıyorsan durdur; yoksa dakika başı para düşmeye devam eder.</i>",
   "chk_el": "\n⌛ Geçen süre: <b>{m} dk</b>",
+  "chk_old": "\n📱 <i>Telefon tam test yapıyor, birkaç dakika sürebilir.</i>",
   "chk_off": "\n📱 <i>Telefon testi şu an çalışmıyor; yukarıda son bilinen durum.</i>",
   "sell_5": "➕ <b>Kodumu Sat · 5/5</b>\n<blockquote>Bir aylık kodu kaç <b>TMT</b>'ye satıyorsun? <i>(ör. 100)</i></blockquote>",
   "sell_bal": "\n💰 Bakiyen  <b>{bal} USDT</b>",
@@ -3968,6 +3978,7 @@ T["ru"].update({
   "b_open": "🟢 Открытые коды ({n})",
   "m_remind": "⏰ <b>Код с биржи всё ещё открыт</b>\n<blockquote>🏪 {title}\n⏱ {dur} · 💸 {spent} TMT\n💰 Баланс {bal} USDT</blockquote>\n<i>Если не пользуетесь — остановите, иначе списание каждую минуту продолжится.</i>",
   "chk_el": "\n⌛ Прошло: <b>{m} мин</b>",
+  "chk_old": "\n📱 <i>Телефон делает полный тест, это может занять несколько минут.</i>",
   "chk_off": "\n📱 <i>Телефонный тест сейчас не работает; выше — последнее известное состояние.</i>",
   "sell_5": "➕ <b>Продать код · 5/5</b>\n<blockquote>За сколько <b>TMT</b> продаёшь код на месяц? <i>(напр. 100)</i></blockquote>",
   "sell_bal": "\n💰 Баланс  <b>{bal} USDT</b>",
@@ -3993,6 +4004,7 @@ T["tk"] = {
  "b_open": "🟢 Açyk kodlarym ({n})",
  "m_remind": "⏰ <b>Bazar kodyň henizem açyk</b>\n<blockquote>🏪 {title}\n⏱ {dur} · 💸 {spent} TMT\n💰 Balans {bal} USDT</blockquote>\n<i>Ulanmaýan bolsaň yzyna gowşur, ýogsa her minutda pul alynmagy dowam edýär.</i>",
  "chk_el": "\n⌛ Geçen wagt: <b>{m} min</b>",
+ "chk_old": "\n📱 <i>Telefon doly test edýär, birnäçe minut alyp biler.</i>",
  "chk_off": "\n📱 <i>Telefon testi häzir işlänok; ýokarda soňky belli ýagdaý.</i>",
  "sell_5": "➕ <b>Kodumy sat · 5/5</b>\n<blockquote>Bir aýlyk kody näçe <b>TMT</b>-a satýaň? <i>(mysal: 100)</i></blockquote>",
  "sell_bal": "\n💰 Balansyň  <b>{bal} USDT</b>",
@@ -4211,7 +4223,11 @@ def card_caption(db, L, lang):
     prices = tr(lang, "prices", mi=money_tmt(p, 4), h=money_tmt(p * 60), w=money_tmt(p * 10080), m=money_tmt(p * 43200))
     return tr(lang, "card2", head=card_head(L, lang), title=esc(short(L["title"], 40)), prices=prices, payline=tr(lang, "payline"))
 
-CHK = {"user": {}, "req": 0, "wait": {}, "qid": 0, "poll": None}   # kullanıcı başına son kontrol, telefona son test isteği, sonucu bekleyenler
+CHK = {"user": {}, "req": 0, "wait": {}, "qid": 0, "poll": None}
+CHK_EXEC = ThreadPoolExecutor(2, thread_name_prefix="chk")   # kontrol okumaları diğer işlerin (Drive yazımı vb.) arkasında beklemesin
+
+async def chk_run(fn, *a):
+    return await asyncio.get_running_loop().run_in_executor(CHK_EXEC, fn, *a)   # kullanıcı başına son kontrol, telefona son test isteği, sonucu bekleyenler
 CHK_EVERY = 300
 
 def code_label(c):
@@ -4233,7 +4249,7 @@ def check_text(db, lid, lang, ch=None, state="done", el=0):
     L = db.get("market", {}).get(lid)
     if not L: return tr(lang, "m_gone")
     top = card_head(L, lang) + f"\n\n🏪 <b>{esc(short(L['title'], 40))}</b>\n"
-    if state == "run": return top + tr(lang, "chk_run") + (tr(lang, "chk_el", m=el) if el else "")
+    if state == "run": return top + tr(lang, "chk_run") + (tr(lang, "chk_old") if RUN.get("phone_old") else "") + (tr(lang, "chk_el", m=el) if el else "")
     if L.get("own"):
         top += tr(lang, "card_own")
         if L.get("desc") and L["desc"] != OWN_DESC: top += "📝 " + esc(short(L["desc"], 200)) + "\n"
@@ -4276,6 +4292,9 @@ async def edit_box(bot, uid, mid, is_photo, t, kb):
     except Exception as e: log.info("box edit: %s", e); return False
 
 def request_phone_test(db, lids):
+    with CH_WLOCK: return _request_phone_test(db, lids)
+
+def _request_phone_test(db, lids):
     """Telefona hızlı kontrol isteği: sadece bu ilanların kodları, tekrar denemeden (~30 sn).
     Eski telefon programı hızlı kontrolü bilmiyorsa tam test başlatılır (codes_ts değişir)."""
     ch = _read_channel(db)
@@ -4468,6 +4487,9 @@ def market_scan():
     return events
 
 def market_push_phone():
+    with CH_WLOCK: return _market_push_phone()
+
+def _market_push_phone():
     """Satıcı kodlarını telefon test kanalına ekler (bizim kodlar korunur)."""
     db = load_db()
     mk = market_codes(db); mkeys = [code_key(c) for c in mk]
@@ -4563,13 +4585,16 @@ async def check_waiters(app):
     """Bir tur: telefonun hızlı kontrol sonucu geldiyse aynı kutuya yazar; gelmediyse geçen süreyi gösterir, 10 dk'da son durumu."""
     if not CHK["wait"]: return
     now = time.time(); db = load_db()
-    ch = await asyncio.to_thread(_read_channel, db)
+    ch = await chk_run(_read_channel, db)
     qd, ts = ch.get("quick_done") or 0, ch.get("ts") or 0
     for lid in list(CHK["wait"]):
         for uid, (lang, mid, is_photo, qid, t0) in list(CHK["wait"][lid].items()):
             done = qd >= qid or ts > t0
             if done or now - t0 >= CHK_WAIT:
                 CHK["wait"][lid].pop(uid, None)
+                if CHK.get("logged") != qid:
+                    CHK["logged"] = qid
+                    vlog(f"⚡ Hızlı kontrol sonucu geldi ({int(now - t0)} sn)" if done else f"⚠️ Hızlı kontrol: telefon {CHK_WAIT // 60} dk içinde cevap vermedi")
                 t = check_text(db, lid, lang, ch, "done" if done else "timeout")
                 if not await edit_box(app.bot, uid, mid, is_photo, t, chk_kb(lang, lid)):
                     try: await app.bot.send_message(uid, t, parse_mode="HTML", reply_markup=chk_kb(lang, lid))
@@ -4613,8 +4638,7 @@ async def market_tick(app):
     if MKT["lock"] is None: MKT["lock"] = asyncio.Lock()
     async with MKT["lock"]:
         events = await asyncio.to_thread(market_scan)
-        async with CHECK_LOCK:   # test kanalına botun kontrolüyle aynı anda yazılmasın
-            await asyncio.to_thread(market_push_phone)
+        await asyncio.to_thread(market_push_phone)   # kanal yazımı CH_WLOCK ile korunur
         await remind_open(app)
         db = load_db()
         for kind, lid, why, n in events:
