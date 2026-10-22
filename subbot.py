@@ -855,7 +855,6 @@ def make_backup():
     return buf
 
 async def watchdog(app):
-    day = ""
     while True:
         await asyncio.sleep(60)
         # süresi dolan kodların Drive dosyası boşaltılır
@@ -953,11 +952,11 @@ async def watchdog(app):
                 a0, a1, lbl = day_bounds(-1)
                 await notify_founders(app, await asyncio.to_thread(report_text, a0, a1, f"Günlük rapor · {lbl}"))
         except Exception: log.exception("daily report")
-        # her gün 03:00 otomatik yedek
+        # her gün 03:00 otomatik yedek (gün diske yazılır: bot yeniden açılsa da günde bir kez)
         try:
             now = datetime.datetime.now(); d = now.strftime("%Y-%m-%d")
-            if now.hour == 3 and day != d:
-                day = d
+            if now.hour == 3 and load_db().get("backup_last") != d:
+                mutate(lambda x: x.__setitem__("backup_last", d))
                 data = (await asyncio.to_thread(make_backup)).getvalue()
                 fn = f"Backup_{now:%Y-%m-%d_%H%M}.zip"
                 os.makedirs(BACKUP_DIR, exist_ok=True)
@@ -989,8 +988,44 @@ def migrate_announce():
         if moved: vlog(f"📢 Ortak duyuru genel duyuruya taşındı: {short(moved, 50)}")
     except Exception: log.exception("migrate announce")
 
+STARTS_FILE = "/root/.subbot_starts"
+
+def crash_info():
+    """Son çökme satırları (systemd günlüğünden). Token gizlenir."""
+    import subprocess
+    try: out = subprocess.run(["journalctl", "-u", "subbot", "-n", "200", "--no-pager", "-o", "cat"], capture_output=True, text=True, timeout=15).stdout
+    except Exception as e: return f"(günlük okunamadı: {e})"
+    lines = out.splitlines()
+    idx = [i for i, l in enumerate(lines) if "Traceback" in l or "Killed" in l or "oom" in l.lower() or "MemoryError" in l or "status=" in l]
+    pick = lines[idx[-1]:idx[-1] + 25] if idx else lines[-15:]
+    txt = "\n".join(pick)[-1500:]
+    tok = os.environ.get("BOT_TOKEN", "")
+    if tok: txt = txt.replace(tok, "***")
+    return re.sub(r"bot\d+:[\w-]+", "bot***", txt)
+
+async def check_restart_loop(app):
+    """Bot kısa sürede çok kez yeniden açıldıysa kuruculara sebebiyle bildirir (saatte en fazla bir kez)."""
+    now = time.time()
+    try:
+        with open(STARTS_FILE) as f: st = json.load(f)
+    except Exception: st = {}
+    starts = [t for t in st.get("starts", []) if now - t < 3600] + [now]
+    st["starts"] = starts
+    recent = sum(1 for t in starts if now - t < 600)
+    alert = recent >= 3 and now - st.get("alert", 0) > 3600
+    if alert: st["alert"] = now
+    try:
+        with open(STARTS_FILE, "w") as f: json.dump(st, f)
+    except Exception: pass
+    if alert:
+        info = await asyncio.to_thread(crash_info)
+        vlog(f"🔁 Bot 10 dakikada {recent} kez yeniden açıldı")
+        await notify_founders(app, f"🔁 <b>Bot 10 dakikada {recent} kez yeniden açıldı</b>\n<i>Son 1 saatte {len(starts)} açılış. Çökme sebebi:</i>\n<pre>{esc(info)}</pre>")
+
 async def post_init(app):
     await asyncio.to_thread(migrate_announce)
+    try: await check_restart_loop(app)
+    except Exception: log.exception("restart loop check")
     if os.path.exists(UPDATE_NOTE):
         try:
             sha = open(UPDATE_NOTE).read().strip(); os.remove(UPDATE_NOTE)
