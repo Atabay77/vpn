@@ -2,7 +2,7 @@ import os, sys, io, re, json, html, uuid, base64, asyncio, zipfile, shutil, fcnt
 import urllib.request, urllib.parse, urllib.error
 from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor
-from telegram import Update, InlineKeyboardButton as _IKB, InlineKeyboardMarkup as KB
+from telegram import Update, InlineKeyboardButton as _IKB, InlineKeyboardMarkup as KB, InputMediaPhoto
 
 def B(text, callback_data=None, style=None, **kw):
     """Buton. style: "success" (yeşil), "primary" (mavi), "danger" (kırmızı) — eski Telegram'da yok sayılır."""
@@ -817,7 +817,7 @@ async def run_check(app, force=False):
     if r and "error" in r:
         if force or time.time() - FAIL["t"] > 3600:   # otomatik hatalar saatte en fazla 1 bildirim
             FAIL["t"] = time.time()
-            await notify_founders(app, f"❌ <b>Kontrol başarısız</b>\n{esc(r['error'])}")
+            await notify_founders(app, f"❌ <b>Abonelik kontrolü başarısız</b>\n{esc(r['error'])}\n<i>Abonelik linklerinden kod okunamadı; Drive'daki kodlara dokunulmadı.</i>")
     elif r:
         # kodlar sohbete yazılmaz; ayrıntı 📜 Loglar'da
         head = (f"🔄 Kodlar güncellendi{' (elle)' if r['force'] else ''}: {len(r['codes'])} kod · "
@@ -1074,13 +1074,13 @@ def main_kb(uid):
     lang_btn = B(L(uid, "🌐 Dil: Türkçe", "🌐 Язык: Русский"), "lang")
     if uid not in ADMINS:   # panel sahibi: kendi panelinde kod oluşturur
         return KB([[B(L(uid, "🏪 Pazar", "🏪 Биржа"), "u_mkt", "success")],
-                   [B(L(uid, "✨ Kod Oluştur", "✨ Создать код"), "create_key", "success"), B(L(uid, "👥 Kodlarım", "👥 Мои коды"), "my_keys", "primary")],
+                   [B(L(uid, "✨ Kod Oluştur", "✨ Создать код"), "create_key"), B(L(uid, "👥 Kodlarım", "👥 Мои коды"), "my_keys", "primary")],
                    [B(L(uid, "👤 Profil", "👤 Профиль"), "u_prof"), B(L(uid, "🛒 Market", "🛒 Магазин"), "u_market")],
                    [B(L(uid, "🆘 Destek", "🆘 Поддержка"), "u_sup"), B(L(uid, "🐞 Hata Bildir", "🐞 Баг-репорт"), "u_bug")],
                    [lang_btn]])
     # kurucu: kullanıcıların gördüğü butonlar + tek bir Admin butonu (geri kalan her şey Admin'in içinde)
     return KB([[B(L(uid, "🏪 Pazar", "🏪 Биржа"), "u_mkt", "success")],
-               [B(L(uid, "✨ Kod Oluştur", "✨ Создать код"), "u_free", "success"), B(L(uid, "👥 Kodlarım", "👥 Мои коды"), "my_keys")],
+               [B(L(uid, "✨ Kod Oluştur", "✨ Создать код"), "u_free"), B(L(uid, "👥 Kodlarım", "👥 Мои коды"), "my_keys")],
                [B(L(uid, "👤 Profil", "👤 Профиль"), "u_prof"), B(L(uid, "🛒 Market", "🛒 Магазин"), "u_market")],
                [B(L(uid, "🆘 Destek", "🆘 Поддержка"), "tickets"), B(L(uid, "🐞 Hata Bildir", "🐞 Баг-репорт"), "tickets_bug")],
                [lang_btn],
@@ -1112,6 +1112,7 @@ def admin_kb():
         [B("🏪 Pazar", "mk_admin"), B("💳 TMT 🔜", "pay_set")],
         [B("📣 Herkese Mesaj", "bcast")],
         [B("👮 Alt Adminler", "sa_menu")],
+        [B("🧪 Davet Testi", "ref_test")],
         [B(f"🕰 Oto. Duyuru: {'Açık' if on else 'Kapalı'}", "auto_ann")],
         [B("♻️ Önceki Sürüme Dön", "rollback")],
         [B("▶️ Başlat", "toggle_sys", "success") if stop else B("🛑 Durdur", "toggle_sys", "danger")],
@@ -1494,7 +1495,7 @@ async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
         log.exception("msg_handler")
         await send_error(c, uid, f"mesaj:{act}", e)
 
-FOUNDER_ONLY = {"mk_admin", "mk_price", "mk_oph", "mk_ods", "mk_odr", "bal_find", "usearch", "rep_today", "rep_yday", "tickets_bug", "t_cancel", "tickets", "cp_test", "cp", "cp_set", "cp_del", "ul_open", "stats", "chans", "ch_add", "pay_set", "bcast", "bcast_yes", "rollback", "rollback_yes", "auto_ann", "toggle_sys", "admin", "sources", "s_add", "logs", "upd_now", "get_zip", "sa_menu", "sa_add", "bulk_ann", "bulk_title", "bulk_yes"}
+FOUNDER_ONLY = {"ref_test", "mk_admin", "mk_price", "mk_oph", "mk_ods", "mk_odr", "bal_find", "usearch", "rep_today", "rep_yday", "tickets_bug", "t_cancel", "tickets", "cp_test", "cp", "cp_set", "cp_del", "ul_open", "stats", "chans", "ch_add", "pay_set", "bcast", "bcast_yes", "rollback", "rollback_yes", "auto_ann", "toggle_sys", "admin", "sources", "s_add", "logs", "upd_now", "get_zip", "sa_menu", "sa_add", "bulk_ann", "bulk_title", "bulk_yes"}
 OWNED = ("kv", "kt", "kn", "ka", "kd", "kdy")   # alt admin sadece kendi kodunda
 def src_find(db, h): return next((s for s in db["sources"] if hashlib.md5(s.encode()).hexdigest()[:8] == h), None)
 
@@ -1557,6 +1558,9 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
 
     elif a == "mk_admin":
         await safe_edit(q, *mkt_admin_view())
+
+    elif a == "ref_test":   # davetle gelen kullanıcının gördüğü soruyu dene
+        await safe_edit(q, *captcha_view(lang_of(load_db(), uid), uid, test=True))
 
     elif a == "mk_price":
         STATE[uid] = {"action": "mk_price"}
@@ -2178,19 +2182,13 @@ def join_view(lang, miss):
     return tr(lang, "join"), KB(rows)
 
 # ── doğrulama (sadece davetle gelenler) ──
-def new_captcha(uid):
-    a, b = random.randint(2, 9), random.randint(2, 9)
-    op = random.choice(["+", "×"])
-    ans = a + b if op == "+" else a * b
-    opts = {ans}
-    while len(opts) < 4: opts.add(max(1, ans + random.randint(-6, 6)))
-    opts = list(opts); random.shuffle(opts)
-    mutate(lambda d: d["users"].get(str(uid), {}).__setitem__("cap", ans))
-    return a, op, b, opts
-
-def captcha_view(lang, uid):
-    a, op, b, opts = new_captcha(uid)
-    return tr(lang, "cap", a=a, op=op, b=b), KB([[B(str(o), f"u_cap:{o}") for o in opts]])
+def captcha_view(lang, uid, test=False):
+    """Davetle gelene soru: alıcı mı, satıcı mı? (butona basmak = bot değil)"""
+    def f(d):
+        e = d["users"].setdefault(str(uid), {}); e["cap"] = "role"
+        if test: e["cap_test"] = True
+    mutate(f)
+    return tr(lang, "cap"), KB([[B(tr(lang, "b_cap_buy"), "u_cap:buyer")], [B(tr(lang, "b_cap_sell"), "u_cap:seller")]])
 
 # ── ana menü ──
 def pub_menu(db, uid):
@@ -2198,7 +2196,7 @@ def pub_menu(db, uid):
     e = db.get("users", {}).get(str(uid), {})
     t = tr(lang, "menu", avail=max(0, avail_refs(e)), need=REF_NEED, codes=len(user_codes(db, uid)))
     kb = KB([[B(tr(lang, "b_pazar"), "u_mkt", "success")],
-             [B(tr(lang, "b_free"), "u_free", "success"), B(tr(lang, "b_mine"), "u_mine", "primary")],
+             [B(tr(lang, "b_free"), "u_free"), B(tr(lang, "b_mine"), "u_mine", "primary")],
              [B(tr(lang, "b_prof"), "u_prof"), B(tr(lang, "b_market"), "u_market")],
              [B(tr(lang, "b_sup"), "u_sup"), B(tr(lang, "b_bug"), "u_bug")],
              [B(tr(lang, "b_lang"), "u_lang")]])
@@ -2288,16 +2286,18 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         return
 
     if a.startswith("u_cap:"):
-        e = db["users"].get(str(uid), {})
+        e = db["users"].get(str(uid), {}); role = a.split(":", 1)[1]
+        if role not in ("buyer", "seller"):   # eski matematik sorusunun butonu
+            await q.answer(); await send(*captcha_view(lang, uid)); return
+        if e.get("cap_test"):   # kurucunun davet testi: sadece akışı görür, sayım yok
+            mutate(lambda d: (d["users"][str(uid)].pop("cap", None), d["users"][str(uid)].pop("cap_test", None)))
+            await q.answer("✅"); ulog("verify", f"🧪 Davet testi: {who(user)} · {'satıcı' if role == 'seller' else 'alıcı'}")
+            await send(*home(uid)); return
         if e.get("ok") or "cap" not in e:
             await q.answer(); await send(*pub_menu(db, uid)); return
-        if str(e.get("cap")) != a.split(":", 1)[1]:
-            await q.answer(tr(lang, "cap_wrong"), show_alert=True)
-            ulog("cap_bad", f"🤖 Yanlış cevap: {who(user)}")
-            await send(*captcha_view(lang, uid)); return
         await q.answer("✅")
-        mutate(lambda d: (d["users"][str(uid)].pop("cap", None), d["users"][str(uid)].__setitem__("cap_ok", True)))
-        ulog("verify", f"✅ Doğrulamayı geçti: {who(user)}")
+        mutate(lambda d: (d["users"][str(uid)].pop("cap", None), d["users"][str(uid)].update({"cap_ok": True, "role": role})))
+        ulog("verify", f"{'🏪 Satıcı olarak geldi' if role == 'seller' else '🛒 Alıcı olarak geldi'}: {who(user)}")
         if not await pub_gate(c, uid, lang, send): return
         await send(*pub_menu(load_db(), uid)); return
 
@@ -2340,12 +2340,15 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
 
     elif a == "u_mkt":
         STATE.pop(uid, None)
-        await show_market(c, uid, lang, send)
+        await show_market(c, q, uid, lang)
+
+    elif a.startswith("u_mp:"):   # pazarda sonraki / önceki ilan
+        await show_market(c, q, uid, lang, int(a.split(":", 1)[1]))
 
     elif a.startswith("u_ml:"):
-        lid = a.split(":", 1)[1]; d_ = load_db(); L_ = d_.get("market", {}).get(lid)
-        if not L_ or L_.get("status") != "live": await send(tr(lang, "m_gone"), KB([[B(tr(lang, "b_back_mkt"), "u_mkt")]])); return
-        await send_card(c.bot, uid, card_photo(L_), card_caption(d_, L_, lang), KB([[B(tr(lang, "b_start"), f"u_ms:{lid}", "success"), B(tr(lang, "b_check"), f"u_mck:{lid}")], [B(tr(lang, "b_back_mkt"), "u_mkt")]]))
+        lid = a.split(":", 1)[1]; order = mkt_order(load_db())
+        if lid not in order: await send(tr(lang, "m_gone"), KB([[B(tr(lang, "b_back_mkt"), "u_mkt")]])); return
+        await show_market(c, q, uid, lang, order.index(lid))
 
     elif a.startswith("u_mck:"):   # anlık kontrol (kullanıcı 5 dk'da bir, kurucu sınırsız)
         lid = a.split(":", 1)[1]; now = time.time()
@@ -2353,14 +2356,18 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         if uid not in ADMINS and left > 0:
             await q.answer(tr(lang, "chk_wait", m=int(left // 60) + 1), show_alert=True); return
         CHK["user"][uid] = now
-        pending = CHK["req"] and now - CHK["req"] < 900 and CHK["wait"]
+        pending = bool(CHK["req"] and now - CHK["req"] < 900 and CHK["wait"])
         if pending: ch = await asyncio.to_thread(_read_channel, load_db()); asked = False
         else:
             async with CHECK_LOCK: ch, asked = await asyncio.to_thread(request_phone_test, load_db())
             if asked: CHK["req"] = now
-        if asked or pending: CHK["wait"].setdefault(lid, {})[uid] = lang
-        t = check_text(load_db(), lid, lang, ch) + (tr(lang, "chk_req") if asked else tr(lang, "chk_busy") if pending else "")
-        await c.bot.send_message(uid, t, parse_mode="HTML", reply_markup=KB([[B(tr(lang, "b_start"), f"u_ms:{lid}", "success")], [B(tr(lang, "b_back_mkt"), "u_mkt")]]))
+        t = check_text(load_db(), lid, lang, ch) + (tr(lang, "chk_run") if asked or pending else "")
+        kb = chk_kb(lang, lid)
+        msg = getattr(q, "message", None)
+        if msg is not None and not getattr(msg, "photo", None) and getattr(msg, "text", None):   # "Tekrar Kontrol": aynı kutu güncellenir
+            await safe_edit(q, t, kb); mid = msg.message_id
+        else: mid = (await c.bot.send_message(uid, t, parse_mode="HTML", reply_markup=kb)).message_id
+        if asked or pending: CHK["wait"].setdefault(lid, {})[uid] = (lang, mid)
         ulog("m_check", f"🔍 Kontrol etti: {who(user)} · {db.get('market', {}).get(lid, {}).get('title', lid)}")
 
     elif a.startswith("u_mph:"):
@@ -2390,7 +2397,7 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
 
     elif a.startswith("u_msq:"):   # durdurmadan önce sor (yanlışlıkla durmasın)
         sid = a.split(":", 1)[1]; s_ = db.get("msess", {}).get(sid)
-        if not s_ or s_["buyer"] != uid or s_["status"] != "on": await send(*mkt_list_view(load_db(), uid, lang)); return
+        if not s_ or s_["buyer"] != uid or s_["status"] != "on": await show_market(c, q, uid, lang); return
         await send(tr(lang, "stop_q", title=esc(db["market"].get(s_["lid"], {}).get("title", "?")), dur=dur_txt(time.time() - s_["start"], lang == "ru"), usdt=fmt_u(s_["total"])),
                    KB([[B(tr(lang, "b_yes_stop"), f"u_msx:{sid}", "danger")], [B(tr(lang, "b_no"), "u_mine")]]))
 
@@ -2423,7 +2430,7 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         s_ = db.get("msess", {}).get(sid)
         if not s_ or s_["buyer"] != uid: return
         await stop_session(c.application, sid, "user")
-        await send(*mkt_list_view(load_db(), uid, lang))
+        await show_market(c, q, uid, lang)
 
     elif a == "u_mrules":
         await send(tr(lang, "rules"), KB([[B(tr(lang, "b_back_mkt"), "u_mkt")]]))
@@ -2443,7 +2450,7 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
     elif a == "u_sellok":
         st_ = STATE.get(uid)
         if not st_ or st_.get("action") != "u_sell" or st_.get("step") != "confirm":
-            await send(*mkt_list_view(load_db(), uid, lang)); return
+            await show_market(c, q, uid, lang); return
         def f(d):
             x = d["users"].setdefault(str(uid), {})
             if x.get("mban", 0) > time.time(): return "ban"
@@ -2486,7 +2493,7 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
             if not L or L.get("owner") != uid or L.get("status") not in ("pending", "live"): return False
             L["status"] = "removed"; L["removed_ts"] = time.time(); L["removed_why"] = "seller"; return True
         if mutate(f): ulog("m_rm", f"🗑 Satıcı ilanını kaldırdı: {who(user)} · {lid}")
-        await send(*mkt_list_view(load_db(), uid, lang))
+        await show_market(c, q, uid, lang)
 
     elif a == "u_top":
         STATE.pop(uid, None)
@@ -3200,6 +3207,7 @@ def user_view(tid):
          + (f"🖥 Panel  <b>{left_txt(sa.get('expires'))}</b> · limit {sa.get('limit')}\n" if sa else "")
          + f"💰 Bakiye  <b>{fmt_u(e.get('bal', 0))} USDT</b>" + (f" · 💼 Kazanç <b>{fmt_u(e['earn'])}</b>" if e.get("earn") else "") + "\n"
          + (f"🏪 Pazar yasağı  {dur_txt(e['mban'] - time.time())}\n" if e.get("mban", 0) > time.time() else "")
+         + ({"buyer": "🛒 Alıcı olarak geldi\n", "seller": "🏪 Satıcı olarak geldi\n"}.get(e.get("role"), ""))
          + ("🚫 <b>ENGELLİ</b>\n" if e.get("banned") else "")
          + "</blockquote>\n"
          + ("\n".join(f"🎟 {esc(short(name_of(s, k), 26))} · ⏳ {left_txt(s.get('expires'))}" for k, s in codes) or "<i>Aktif kodu yok.</i>"))
@@ -3591,6 +3599,47 @@ def ago_l(ts, lang):
     if d < 60: return "<1 мин назад" if lang == "ru" else "1 dk'dan az önce"
     return dur_txt(d, lang == "ru") + (" назад" if lang == "ru" else " önce")
 
+T["tr"].update({
+  "cap": "👋 <b>Hoş geldin!</b>\n<blockquote>VPN satın almak için mi geldin, yoksa VPN satıcısı mısın?</blockquote>",
+  "b_cap_buy": "🛒 VPN almak istiyorum", "b_cap_sell": "🏪 VPN satıcısıyım",
+  "card": "🏪 <b>{title}</b>\n{own}\n📡 <b>Sunucular</b>\n<blockquote>🖥 {total} sunucu · {protos}\n{tmline}{ccline}</blockquote>\n\n💰 <b>Fiyat</b>\n<blockquote>{prices}</blockquote>\n\n{payline}{desc}",
+  "card_seller": "{head}\n\n🏪 <b>{title}</b>\n\n💰 <b>Fiyat</b>\n<blockquote>{prices}</blockquote>\n\n{payline}\n\n<i>🔍 Sunucuları ve ülkeleri görmek için «Kontrol Et»e bas.</i>",
+  "head_vip": "💎💎 <b>VIP SATICI</b> 💎💎", "head_std": "🏷 <b>Satıcı ilanı</b>",
+  "prices": "⏱ 1 dakika  —  <b>{mi} TMT</b>\n🕐 1 saat  —  <b>{h} TMT</b>\n📅 1 hafta  —  <b>{w} TMT</b>\n🗓 1 ay  —  <b>{m} TMT</b>",
+  "payline": "💡 <b>Pul doly alynmaýar</b> — töleg diňe ulanan minudyňyza / sagadyňyza görä alynýar.\n▶️ Başlanda bir gezek 0.1$ · islän wagtyňyz togtadyp bilersiňiz.",
+  "mkt_bal": "\n\n💰 Bakiyen  <b>{bal} USDT</b>",
+  "mkt_none": "\n<i>Şu an başka satıcı yok.</i>",
+  "b_sellers": "👥 Satıcılar ({n}) ▶️",
+  "chk_line_ok": "🎯", "chk_line_bad": "⚠️ gerçek: {f} {n}", "chk_line_real": "→ {f} {n}",
+  "chk_head": "🔍 <b>{title}</b> · sunucu durumu\n<blockquote>{lines}</blockquote>\n✅ {work} çalışıyor · ❌ {dead} çalışmıyor · ⏳ {wait} bekliyor\n🎯 ülke doğru · ⚠️ ülke yanlış (gerçeği yanında)\n🕒 Son TM testi: {ago}",
+  "chk_run": "\n\n⏳ <b>Kontrol ediliyor...</b>\n<i>Türkmenistan'dan yeni test yapılıyor (1–5 dk). Bu mesaj kendiliğinden güncellenecek.</i>",
+  "chk_upd": "\n\n✅ <i>Güncellendi · {t}</i>",
+  "chk_timeout": "\n\n⚠️ <i>Telefon testi şu an cevap vermiyor; yukarıdaki son bilinen durum.</i>",
+  "b_recheck": "🔄 Yenile",
+})
+T["ru"].update({
+  "cap": "👋 <b>Добро пожаловать!</b>\n<blockquote>Вы пришли купить VPN или вы продавец VPN?</blockquote>",
+  "b_cap_buy": "🛒 Хочу купить VPN", "b_cap_sell": "🏪 Я продавец VPN",
+  "card": "🏪 <b>{title}</b>\n{own}\n📡 <b>Серверы</b>\n<blockquote>🖥 {total} серверов · {protos}\n{tmline}{ccline}</blockquote>\n\n💰 <b>Цена</b>\n<blockquote>{prices}</blockquote>\n\n{payline}{desc}",
+  "card_seller": "{head}\n\n🏪 <b>{title}</b>\n\n💰 <b>Цена</b>\n<blockquote>{prices}</blockquote>\n\n{payline}\n\n<i>🔍 Чтобы увидеть серверы и страны, нажмите «Проверить».</i>",
+  "head_vip": "💎💎 <b>VIP ПРОДАВЕЦ</b> 💎💎", "head_std": "🏷 <b>Объявление продавца</b>",
+  "prices": "⏱ 1 минута  —  <b>{mi} TMT</b>\n🕐 1 час  —  <b>{h} TMT</b>\n📅 1 неделя  —  <b>{w} TMT</b>\n🗓 1 месяц  —  <b>{m} TMT</b>",
+  "payline": "💡 <b>Деньги не списываются сразу</b> — оплата только за использованные минуты / часы.\n▶️ При запуске один раз 0.1$ · остановить можно в любой момент.",
+  "mkt_bal": "\n\n💰 Баланс  <b>{bal} USDT</b>",
+  "mkt_none": "\n<i>Других продавцов пока нет.</i>",
+  "b_sellers": "👥 Продавцы ({n}) ▶️",
+  "chk_line_ok": "🎯", "chk_line_bad": "⚠️ на деле: {f} {n}", "chk_line_real": "→ {f} {n}",
+  "chk_head": "🔍 <b>{title}</b> · состояние серверов\n<blockquote>{lines}</blockquote>\n✅ {work} работают · ❌ {dead} не работают · ⏳ {wait} ждут\n🎯 страна верна · ⚠️ страна неверна (настоящая рядом)\n🕒 Последний тест в TM: {ago}",
+  "chk_run": "\n\n⏳ <b>Проверяется...</b>\n<i>Идёт новый тест из Туркменистана (1–5 мин). Это сообщение обновится само.</i>",
+  "chk_upd": "\n\n✅ <i>Обновлено · {t}</i>",
+  "chk_timeout": "\n\n⚠️ <i>Телефонный тест сейчас не отвечает; выше — последнее известное состояние.</i>",
+  "b_recheck": "🔄 Обновить",
+})
+
+def money_tmt(micro, d=2):
+    v = micro * USDT_RATE / UM
+    return f"{v:.{d}f}".rstrip("0").rstrip(".") or "0"
+
 def card_caption(db, L, lang):
     st = L.get("st") or listing_stats(db, L)
     vip = L.get("vip_until", 0) > time.time()
@@ -3599,17 +3648,19 @@ def card_caption(db, L, lang):
     p = float(L["price"])
     tm = tr(lang, "tm_ok", work=st.get("work", 0), dead=st.get("dead", 0), ago=ago_l(st.get("ts"), lang)) if st.get("tested") else tr(lang, "tm_wait")
     cc = st.get("cc", [])
-    for dl in (250, 120, 0):   # foto altı yazı en çok 1024 karakter: sığmazsa açıklama kısalır
+    for dl in (250, 120, 0):   # foto altı yazı en çok 1024 karakter (bakiye satırına da yer kalsın)
         t = card_text(L, lang, vip, st, tm, cc, p, desc, dl)
-        if len(t) <= 1024: return t
-    return t[:1000]
+        if len(t) <= 900: return t
+    return t
 
 def card_text(L, lang, vip, st, tm, cc, p, desc, dl):
-    return tr(lang, "card", title=esc(short(L["title"], 40)), badge=tr(lang, "vip_badge") if vip else "", own=tr(lang, "card_own") if L.get("own") else "",
+    prices = tr(lang, "prices", mi=money_tmt(p, 4), h=money_tmt(p * 60), w=money_tmt(p * 10080), m=money_tmt(p * 43200))
+    if not L.get("own"):   # satıcı: sadece fiyat + VIP/sıradan başlığı (sunucular "Kontrol Et"te)
+        return tr(lang, "card_seller", head=tr(lang, "head_vip" if vip else "head_std"), title=esc(short(L["title"], 40)), prices=prices, payline=tr(lang, "payline"))
+    return tr(lang, "card", title=esc(short(L["title"], 40)), own=tr(lang, "card_own"),
               total=st.get("total", 0), protos=protos_txt(st.get("protos", {})), tmline=tm,
               ccline=tr(lang, "cc_line", n=len(cc), flags="".join(flag_of(c) for c in cc[:10])) if cc else "",
-              m_tmt=money2(p * 43200, True), m_usdt=money2(p * 43200), d_tmt=money2(p * 1440, True), d_usdt=money2(p * 1440), h_tmt=money2(p * 60, True),
-              desc=("\n\n📝 " + esc(short(desc, dl))) if desc and dl else "")
+              prices=prices, payline=tr(lang, "payline"), desc=("\n\n📝 " + esc(short(desc, dl))) if desc and dl else "")
 
 CHK = {"user": {}, "req": 0, "wait": {}}   # kullanıcı başına son kontrol, telefona son test isteği, sonucu bekleyenler
 CHK_EVERY = 300
@@ -3625,14 +3676,28 @@ def check_text(db, lid, lang, ch=None):
     L = db.get("market", {}).get(lid)
     if not L: return tr(lang, "m_gone")
     res = (ch or {}).get("results") or {}
+    exits = dict(load_exits()); exits.update((ch or {}).get("exits") or {})
+    cname = lambda cc: COUNTRIES[cc][1] if cc in COUNTRIES else cc.upper()
     lines, w, dd, wt = [], 0, 0, 0
     for c in listing_codes(db, L):
-        v = res.get(code_key(c))
-        if isinstance(v, (int, float)) and v > 0: w += 1; ic = f"✅ {int(v)} ms"
+        k = code_key(c); v = res.get(k); lab = code_label(c)
+        if isinstance(v, (int, float)) and v > 0: w += 1; ic = f"✅ {int(v)}ms"
         elif isinstance(v, (int, float)): dd += 1; ic = "❌"
         else: wt += 1; ic = "⏳"
-        if len(lines) < 25: lines.append(f"{ic} · {esc(short(code_label(c), 30))}")
+        fm = re.search(r"[\U0001F1E6-\U0001F1FF]{2}", lab)
+        said = "".join(chr(ord(x) - 0x1F1E6 + 97) for x in fm.group(0)) if fm else None
+        real = (exits.get(k) or "").lower() if isinstance(v, (int, float)) and v > 0 else ""
+        real = real if len(real) == 2 and real != "??" else ""
+        if said: name = f"{flag_of(said)} {cname(said)}"
+        else: name = esc(short(lab, 16))
+        if real and said: acc = " " + (tr(lang, "chk_line_ok") if real == said else tr(lang, "chk_line_bad", f=flag_of(real), n=cname(real)))
+        elif real: acc = " " + tr(lang, "chk_line_real", f=flag_of(real), n=cname(real))
+        else: acc = ""
+        if len(lines) < 25: lines.append(f"{ic} · {name}{acc}")
     return tr(lang, "chk_head", title=esc(L["title"]), lines="\n".join(lines) or "—", work=w, dead=dd, wait=wt, ago=ago_l((ch or {}).get("ts"), lang))
+
+def chk_kb(lang, lid):
+    return KB([[B(tr(lang, "b_start"), f"u_ms:{lid}", "success"), B(tr(lang, "b_recheck"), f"u_mck:{lid}")], [B(tr(lang, "b_back_mkt"), "u_mkt")]])
 
 def request_phone_test(db):
     """Telefona 'hemen test et' der: kanaldaki codes_ts değişince telefon 1 dk içinde yeni test başlatır."""
@@ -3642,43 +3707,70 @@ def request_phone_test(db):
     _tm_write(new_service(), db["tm_fid"], ch)
     return ch, True
 
-def mkt_cards(db, lang):
+def mkt_order(db):
+    """Pazar sırası: bizim ilan, VIP'ler (en yeni VIP önce), sonra diğerleri."""
     ensure_own(db); now = time.time()
     lst = [(lid, L) for lid, L in db["market"].items() if L.get("status") == "live"]
     own = [x for x in lst if x[1].get("own")]
     vip = sorted([x for x in lst if not x[1].get("own") and x[1].get("vip_until", 0) > now], key=lambda x: -x[1]["vip_until"])
     rest = sorted([x for x in lst if not x[1].get("own") and x[1].get("vip_until", 0) <= now], key=lambda x: (-(x[1].get("st") or {}).get("work", 0), x[1]["price"]))
-    return [(lid, card_photo(L), card_caption(db, L, lang), KB([[B(tr(lang, "b_start"), f"u_ms:{lid}", "success"), B(tr(lang, "b_check"), f"u_mck:{lid}")]])) for lid, L in (own + vip + rest)[:12]]
+    return [lid for lid, _ in own + vip + rest]
+
+def market_page(db, uid, lang, i=0):
+    """Pazarın tek kutusu: i. ilan (fotoğraf + yazı) + gezinme + pazar butonları."""
+    order = mkt_order(db); n = len(order)
+    i = max(0, min(i, n - 1)); lid = order[i]; L = db["market"][lid]
+    e = db["users"].get(str(uid), {})
+    cap = card_caption(db, L, lang) + tr(lang, "mkt_bal", bal=fmt_u(e.get("bal", 0))) + (tr(lang, "mkt_none") if n == 1 else "")
+    rows = [[B(tr(lang, "b_start"), f"u_ms:{lid}", "success"), B(tr(lang, "b_check"), f"u_mck:{lid}")]]
+    if n > 1:
+        if i == 0: rows.append([B(tr(lang, "b_sellers", n=n - 1), "u_mp:1", "primary")])
+        else: rows.append([B("◀️", f"u_mp:{i - 1}"), B(f"{i}/{n - 1}", f"u_mp:{i}"), B("▶️", f"u_mp:{(i + 1) % n}")])
+    rows += [[B(tr(lang, "b_sell"), "u_sell", "primary"), B(tr(lang, "b_myl"), "u_myl")],
+             [B(tr(lang, "b_top"), "u_top")],
+             [B(tr(lang, "b_rules"), "u_mrules"), B(tr(lang, "b_menu"), "u_menu")]]
+    return card_photo(L), cap, KB(rows)
 
 OWN_IMG = "own_default"   # bizim ilanın varsayılan fotoğrafı (dosyanın sonunda gömülü)
 
 def card_photo(L):
     return L.get("photo") or (OWN_IMG if L.get("own") else None)
 
-async def send_card(bot, uid, photo, cap, kb):
-    try:
-        if photo == OWN_IMG:   # ilk gönderimde dosya yüklenir, sonra Telegram'daki kopyası kullanılır
-            h = hashlib.sha256(_OWN_IMG_B64.encode()).hexdigest()[:12]
-            c_ = load_db().get("own_img_fid") or {}
-            if c_.get("h") == h:
-                try: await bot.send_photo(uid, c_["id"], caption=cap, parse_mode="HTML", reply_markup=kb); return
-                except Exception: pass
-            m = await bot.send_photo(uid, base64.b64decode(_OWN_IMG_B64), caption=cap, parse_mode="HTML", reply_markup=kb)
-            try:
-                fid = m.photo[-1].file_id
-                mutate(lambda d: d.__setitem__("own_img_fid", {"h": h, "id": fid}))
-            except Exception: pass
-        elif photo: await bot.send_photo(uid, photo, caption=cap, parse_mode="HTML", reply_markup=kb)
-        else: await bot.send_message(uid, cap, parse_mode="HTML", reply_markup=kb, disable_web_page_preview=True)
-    except Exception as ex: log.warning("market card: %s", ex)
+async def photo_media(photo):
+    """Bizim varsayılan foto: Telegram'daki kopyası varsa o, yoksa gömülü dosya."""
+    if photo != OWN_IMG: return photo, None
+    h = hashlib.sha256(_OWN_IMG_B64.encode()).hexdigest()[:12]
+    c_ = load_db().get("own_img_fid") or {}
+    return (c_["id"], None) if c_.get("h") == h else (base64.b64decode(_OWN_IMG_B64), h)
 
-async def show_market(c, uid, lang, send):
-    """Pazar: her ilan fotoğraf + açıklama + Başlat kartı, en altta pazar menüsü."""
-    await send(tr(lang, "mkt_head"), None)
-    db = load_db()
-    for lid, photo, cap, kb in mkt_cards(db, lang): await send_card(c.bot, uid, photo, cap, kb)
-    t, kb = mkt_list_view(load_db(), uid, lang)
-    await c.bot.send_message(uid, t, parse_mode="HTML", reply_markup=kb)
+def remember_own(m, h):
+    if not h: return
+    try:
+        fid = m.photo[-1].file_id
+        mutate(lambda d: d.__setitem__("own_img_fid", {"h": h, "id": fid}))
+    except Exception: pass
+
+async def show_market(c, q, uid, lang, i=0):
+    """Pazar tek mesajda: fotoğraflı mesajsa yerinde değişir, değilse eski mesaj silinip yenisi gelir."""
+    photo, cap, kb = market_page(load_db(), uid, lang, i)
+    msg = getattr(q, "message", None) if q else None
+    media, h = await photo_media(photo)
+    if msg is not None and getattr(msg, "photo", None) and photo:
+        try:
+            m = await c.bot.edit_message_media(chat_id=uid, message_id=msg.message_id, media=InputMediaPhoto(media, caption=cap, parse_mode="HTML"), reply_markup=kb)
+            remember_own(m, h); return
+        except BadRequest as ex:
+            if "not modified" in str(ex).lower(): return
+            log.info("market edit: %s", ex)
+        except Exception as ex: log.info("market edit: %s", ex)
+    if msg is not None:
+        try: await msg.delete()
+        except Exception: pass
+    try:
+        if photo:
+            m = await c.bot.send_photo(uid, media, caption=cap, parse_mode="HTML", reply_markup=kb); remember_own(m, h)
+        else: await c.bot.send_message(uid, cap, parse_mode="HTML", reply_markup=kb, disable_web_page_preview=True)
+    except Exception as ex: log.warning("market: %s", ex)
 
 def live_view(sid, lang):
     db = load_db(); s = db.get("msess", {}).get(sid)
@@ -3709,16 +3801,6 @@ async def live_loop(q, uid, sid, lang):
 def protos_txt(p):
     names = {"hysteria": "Hysteria", "vless": "VLESS", "vmess": "VMess", "trojan": "Trojan", "ss": "SS", "tuic": "TUIC"}
     return " · ".join(f"{names.get(k, k)} {v}" for k, v in sorted(p.items(), key=lambda x: -x[1])) or "—"
-
-def mkt_list_view(db, uid, lang):
-    ensure_own(db)
-    e = db["users"].get(str(uid), {})
-    rest = [L for L in db["market"].values() if L.get("status") == "live" and not L.get("own")]
-    rows = [[B(tr(lang, "b_sell"), "u_sell", "primary"), B(tr(lang, "b_myl"), "u_myl")],
-            [B(tr(lang, "b_top"), "u_top")],
-            [B(tr(lang, "b_rules"), "u_mrules"), B(tr(lang, "b_menu"), "u_menu")]]
-    t = tr(lang, "mkt_foot", bal=fmt_u(e.get("bal", 0))) + ("" if rest else "\n" + tr(lang, "mkt_empty"))
-    return t, KB(rows)   # ilanlar kart olarak (show_market) gösterilir; bu, alttaki pazar menüsü
 
 # ── her dakika: linkler, telefon sonuçları, kurallar ──
 def _read_channel(db):
@@ -3875,15 +3957,16 @@ async def check_waiters(app):
     db = load_db(); ts = ((db.get("market", {}).get(OWN_LID) or {}).get("st") or {}).get("ts") or 0
     done = ts > CHK["req"]
     if not done and now - CHK["req"] < 900: return
-    ch = await asyncio.to_thread(_read_channel, db) if done else None
+    ch = await asyncio.to_thread(_read_channel, db)
     wait, CHK["wait"] = CHK["wait"], {}
+    hm = datetime.datetime.now(TM_TZ).strftime("%H:%M")
     for lid, users_ in wait.items():
-        for uid, lang in users_.items():
-            try:
-                if done: await app.bot.send_message(uid, tr(lang, "chk_done") + check_text(db, lid, lang, ch), parse_mode="HTML",
-                                                     reply_markup=KB([[B(tr(lang, "b_start"), f"u_ms:{lid}", "success")], [B(tr(lang, "b_back_mkt"), "u_mkt")]]))
-                else: await app.bot.send_message(uid, tr(lang, "chk_timeout"))
-            except Exception: pass
+        for uid, (lang, mid) in users_.items():
+            t = check_text(db, lid, lang, ch) + (tr(lang, "chk_upd", t=hm) if done else tr(lang, "chk_timeout"))
+            try: await app.bot.edit_message_text(t, chat_id=uid, message_id=mid, parse_mode="HTML", reply_markup=chk_kb(lang, lid))
+            except Exception:
+                try: await app.bot.send_message(uid, t, parse_mode="HTML", reply_markup=chk_kb(lang, lid))
+                except Exception: pass
 
 async def market_tick(app):
     if MKT["lock"] is None: MKT["lock"] = asyncio.Lock()
