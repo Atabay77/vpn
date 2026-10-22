@@ -2345,7 +2345,23 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
     elif a.startswith("u_ml:"):
         lid = a.split(":", 1)[1]; d_ = load_db(); L_ = d_.get("market", {}).get(lid)
         if not L_ or L_.get("status") != "live": await send(tr(lang, "m_gone"), KB([[B(tr(lang, "b_back_mkt"), "u_mkt")]])); return
-        await send_card(c.bot, uid, card_photo(L_), card_caption(d_, L_, lang), KB([[B(tr(lang, "b_start"), f"u_ms:{lid}", "success")], [B(tr(lang, "b_back_mkt"), "u_mkt")]]))
+        await send_card(c.bot, uid, card_photo(L_), card_caption(d_, L_, lang), KB([[B(tr(lang, "b_start"), f"u_ms:{lid}", "success"), B(tr(lang, "b_check"), f"u_mck:{lid}")], [B(tr(lang, "b_back_mkt"), "u_mkt")]]))
+
+    elif a.startswith("u_mck:"):   # anlık kontrol (kullanıcı 5 dk'da bir, kurucu sınırsız)
+        lid = a.split(":", 1)[1]; now = time.time()
+        left = CHK_EVERY - (now - CHK["user"].get(uid, 0))
+        if uid not in ADMINS and left > 0:
+            await q.answer(tr(lang, "chk_wait", m=int(left // 60) + 1), show_alert=True); return
+        CHK["user"][uid] = now
+        pending = CHK["req"] and now - CHK["req"] < 900 and CHK["wait"]
+        if pending: ch = await asyncio.to_thread(_read_channel, load_db()); asked = False
+        else:
+            async with CHECK_LOCK: ch, asked = await asyncio.to_thread(request_phone_test, load_db())
+            if asked: CHK["req"] = now
+        if asked or pending: CHK["wait"].setdefault(lid, {})[uid] = lang
+        t = check_text(load_db(), lid, lang, ch) + (tr(lang, "chk_req") if asked else tr(lang, "chk_busy") if pending else "")
+        await c.bot.send_message(uid, t, parse_mode="HTML", reply_markup=KB([[B(tr(lang, "b_start"), f"u_ms:{lid}", "success")], [B(tr(lang, "b_back_mkt"), "u_mkt")]]))
+        ulog("m_check", f"🔍 Kontrol etti: {who(user)} · {db.get('market', {}).get(lid, {}).get('title', lid)}")
 
     elif a.startswith("u_mph:"):
         L_ = db.get("market", {}).get(a.split(":", 1)[1], {})
@@ -3538,17 +3554,93 @@ T["ru"].update({
   "rules": "📜 <b>Правила биржи</b>\n<blockquote><b>Продавец</b>\n• Каждое объявление 0.1$ (не возвращается).\n• Подписка должна быть безлимитной; скриншот обязателен.\n• При подаче минимум 4 разные реальные страны (бот измеряет сам, флаги не учитываются).\n• Если больше 4 серверов N/A 30 мин — бан объявления на 3 ч: во время бана коды не выдаются, возврата нет. После бана — повторная проверка.\n• 💎 VIP: 0.2$ — 36 часов на самом верху.\n• Выплата: после остановки покупателем, при долгом использовании — каждые 24 ч.</blockquote>\n<blockquote><b>Покупатель</b>\n• Каждый запуск 0.1$ (не возвращается).\n• Поминутная оплата списывается с баланса (пользуетесь или нет).\n• Остановить можно в любой момент; при нулевом балансе код останавливается.\n• Пополнение от 1$; пополненный баланс не выводится.</blockquote>",
 })
 
+T["tr"].update({
+  "card": "🏪 <b>{title}</b>{badge}\n{own}\n📡 <b>Sunucular</b>\n<blockquote>🖥 {total} sunucu · {protos}\n{tmline}{ccline}</blockquote>\n\n💰 <b>Fiyat</b>\n<blockquote>📅 30 gün  —  <b>{m_tmt} TMT</b>  <i>({m_usdt} $)</i>\n📆 1 gün  —  <b>{d_tmt} TMT</b>  <i>({d_usdt} $)</i>\n⏱ 1 saat  —  <b>{h_tmt} TMT</b></blockquote>\n<i>▶️ Başlatma 0.1$, sonra kullandığın dakika kadar ödersin · istediğin an durdurursun</i>{desc}",
+  "card_own": "\n🏆 <b>RESMİ KOD — BOTUN KENDİ SUNUCULARI</b> 🏆\n<blockquote>🛡 7/24 kontrol altında\n🇹🇲 Türkmenistan'dan sürekli test edilir\n⚡ IP değişince kendini yeniler\n🧹 Çalışmayan sunucu otomatik çıkarılır</blockquote>\n",
+  "tm_ok": "🇹🇲 TM testi: ✅ <b>{work}</b> çalışıyor · ❌ {dead}\n🕒 Son test: {ago}",
+  "tm_wait": "🇹🇲 TM testi: ⏳ yeni sunucular test ediliyor",
+  "cc_line": "\n🌍 {n} ülke  {flags}",
+  "b_check": "🔍 Kontrol Et",
+  "chk_wait": "⏳ 5 dakikada bir kontrol edebilirsin. {m} dk sonra tekrar dene.",
+  "chk_head": "🔍 <b>{title}</b> · sunucu durumu\n<blockquote>{lines}</blockquote>\n✅ {work} çalışıyor · ❌ {dead} çalışmıyor · ⏳ {wait} test bekliyor\n🕒 Son TM testi: {ago}",
+  "chk_req": "\n\n📱 <i>Türkmenistan'dan yeni test başlatıldı. Sonuç gelince (1–5 dk) sana gönderilecek.</i>",
+  "chk_busy": "\n\n📱 <i>Türkmenistan'dan test zaten sürüyor. Sonuç gelince sana gönderilecek.</i>",
+  "chk_done": "🆕 <b>Yeni TM test sonucu</b>\n\n",
+  "chk_timeout": "⚠️ Telefon testi şu an cevap vermiyor. Son bilinen durum yukarıdaki gibi.",
+  "never": "henüz yok",
+})
+T["ru"].update({
+  "card": "🏪 <b>{title}</b>{badge}\n{own}\n📡 <b>Серверы</b>\n<blockquote>🖥 {total} серверов · {protos}\n{tmline}{ccline}</blockquote>\n\n💰 <b>Цена</b>\n<blockquote>📅 30 дней  —  <b>{m_tmt} TMT</b>  <i>({m_usdt} $)</i>\n📆 1 день  —  <b>{d_tmt} TMT</b>  <i>({d_usdt} $)</i>\n⏱ 1 час  —  <b>{h_tmt} TMT</b></blockquote>\n<i>▶️ Запуск 0.1$, далее платите только за использованные минуты · остановить можно в любой момент</i>{desc}",
+  "card_own": "\n🏆 <b>ОФИЦИАЛЬНЫЙ КОД — СЕРВЕРЫ САМОГО БОТА</b> 🏆\n<blockquote>🛡 Под контролем 24/7\n🇹🇲 Постоянно проверяется из Туркменистана\n⚡ При смене IP обновляется сам\n🧹 Неработающие серверы убираются автоматически</blockquote>\n",
+  "tm_ok": "🇹🇲 Тест в TM: ✅ <b>{work}</b> работают · ❌ {dead}\n🕒 Последний тест: {ago}",
+  "tm_wait": "🇹🇲 Тест в TM: ⏳ новые серверы проверяются",
+  "cc_line": "\n🌍 {n} стран  {flags}",
+  "b_check": "🔍 Проверить",
+  "chk_wait": "⏳ Проверять можно раз в 5 минут. Попробуйте через {m} мин.",
+  "chk_head": "🔍 <b>{title}</b> · состояние серверов\n<blockquote>{lines}</blockquote>\n✅ {work} работают · ❌ {dead} не работают · ⏳ {wait} ждут теста\n🕒 Последний тест в TM: {ago}",
+  "chk_req": "\n\n📱 <i>Запущен новый тест из Туркменистана. Результат придёт сюда (1–5 мин).</i>",
+  "chk_busy": "\n\n📱 <i>Тест из Туркменистана уже идёт. Результат придёт сюда.</i>",
+  "chk_done": "🆕 <b>Новый результат теста в TM</b>\n\n",
+  "chk_timeout": "⚠️ Телефонный тест сейчас не отвечает. Последнее известное состояние — выше.",
+  "never": "ещё нет",
+})
+
+def ago_l(ts, lang):
+    if not ts: return tr(lang, "never")
+    d = time.time() - ts
+    if d < 60: return "<1 мин назад" if lang == "ru" else "1 dk'dan az önce"
+    return dur_txt(d, lang == "ru") + (" назад" if lang == "ru" else " önce")
+
 def card_caption(db, L, lang):
     st = L.get("st") or listing_stats(db, L)
     vip = L.get("vip_until", 0) > time.time()
     desc = L.get("desc") or ""
     if L.get("own") and desc == OWN_DESC: desc = ""
     p = float(L["price"])
-    return tr(lang, "card", title=esc(L["title"]), badge=tr(lang, "vip_badge") if vip else "", own=tr(lang, "card_own") if L.get("own") else "",
-              total=st.get("total", 0), protos=protos_txt(st.get("protos", {})), work=st.get("work", 0), tested=st.get("tested", 0),
-              ncc=len(st.get("cc", [])), flags="".join(flag_of(c) for c in st.get("cc", [])[:10]), chk=ago(L.get("last_fetch") or st.get("ts")),
-              m_tmt=money2(p * 43200, True), m_usdt=money2(p * 43200), d_tmt=money2(p * 1440, True),
-              desc=("\n📝 " + esc(short(desc, 300))) if desc else "")[:1024]
+    tm = tr(lang, "tm_ok", work=st.get("work", 0), dead=st.get("dead", 0), ago=ago_l(st.get("ts"), lang)) if st.get("tested") else tr(lang, "tm_wait")
+    cc = st.get("cc", [])
+    for dl in (250, 120, 0):   # foto altı yazı en çok 1024 karakter: sığmazsa açıklama kısalır
+        t = card_text(L, lang, vip, st, tm, cc, p, desc, dl)
+        if len(t) <= 1024: return t
+    return t[:1000]
+
+def card_text(L, lang, vip, st, tm, cc, p, desc, dl):
+    return tr(lang, "card", title=esc(short(L["title"], 40)), badge=tr(lang, "vip_badge") if vip else "", own=tr(lang, "card_own") if L.get("own") else "",
+              total=st.get("total", 0), protos=protos_txt(st.get("protos", {})), tmline=tm,
+              ccline=tr(lang, "cc_line", n=len(cc), flags="".join(flag_of(c) for c in cc[:10])) if cc else "",
+              m_tmt=money2(p * 43200, True), m_usdt=money2(p * 43200), d_tmt=money2(p * 1440, True), d_usdt=money2(p * 1440), h_tmt=money2(p * 60, True),
+              desc=("\n\n📝 " + esc(short(desc, dl))) if desc and dl else "")
+
+CHK = {"user": {}, "req": 0, "wait": {}}   # kullanıcı başına son kontrol, telefona son test isteği, sonucu bekleyenler
+CHK_EVERY = 300
+
+def code_label(c):
+    if c.lower().startswith("vmess://"):
+        try: return json.loads(b64d(c[8:].split("#", 1)[0])).get("ps") or "vmess"
+        except Exception: return "vmess"
+    return urllib.parse.unquote(c.split("#", 1)[1]) if "#" in c else (code_host(c) or "?")
+
+def check_text(db, lid, lang, ch=None):
+    """İlanın her sunucusu için son TM test sonucu."""
+    L = db.get("market", {}).get(lid)
+    if not L: return tr(lang, "m_gone")
+    res = (ch or {}).get("results") or {}
+    lines, w, dd, wt = [], 0, 0, 0
+    for c in listing_codes(db, L):
+        v = res.get(code_key(c))
+        if isinstance(v, (int, float)) and v > 0: w += 1; ic = f"✅ {int(v)} ms"
+        elif isinstance(v, (int, float)): dd += 1; ic = "❌"
+        else: wt += 1; ic = "⏳"
+        if len(lines) < 25: lines.append(f"{ic} · {esc(short(code_label(c), 30))}")
+    return tr(lang, "chk_head", title=esc(L["title"]), lines="\n".join(lines) or "—", work=w, dead=dd, wait=wt, ago=ago_l((ch or {}).get("ts"), lang))
+
+def request_phone_test(db):
+    """Telefona 'hemen test et' der: kanaldaki codes_ts değişince telefon 1 dk içinde yeni test başlatır."""
+    ch = _read_channel(db)
+    if not ch or not db.get("tm_fid"): return ch, False
+    ch["codes_ts"] = int(time.time())
+    _tm_write(new_service(), db["tm_fid"], ch)
+    return ch, True
 
 def mkt_cards(db, lang):
     ensure_own(db); now = time.time()
@@ -3556,7 +3648,7 @@ def mkt_cards(db, lang):
     own = [x for x in lst if x[1].get("own")]
     vip = sorted([x for x in lst if not x[1].get("own") and x[1].get("vip_until", 0) > now], key=lambda x: -x[1]["vip_until"])
     rest = sorted([x for x in lst if not x[1].get("own") and x[1].get("vip_until", 0) <= now], key=lambda x: (-(x[1].get("st") or {}).get("work", 0), x[1]["price"]))
-    return [(lid, card_photo(L), card_caption(db, L, lang), KB([[B(tr(lang, "b_start"), f"u_ms:{lid}", "success")]])) for lid, L in (own + vip + rest)[:12]]
+    return [(lid, card_photo(L), card_caption(db, L, lang), KB([[B(tr(lang, "b_start"), f"u_ms:{lid}", "success"), B(tr(lang, "b_check"), f"u_mck:{lid}")]])) for lid, L in (own + vip + rest)[:12]]
 
 OWN_IMG = "own_default"   # bizim ilanın varsayılan fotoğrafı (dosyanın sonunda gömülü)
 
@@ -3776,12 +3868,30 @@ async def stop_session(app, sid, reason):
     await notify_payout(app, info)
     return info
 
+async def check_waiters(app):
+    """Kontrol Et'e basanlara: telefonun yeni sonucu gelince gönder; 15 dk gelmezse haber ver."""
+    if not CHK["wait"]: return
+    now = time.time()
+    db = load_db(); ts = ((db.get("market", {}).get(OWN_LID) or {}).get("st") or {}).get("ts") or 0
+    done = ts > CHK["req"]
+    if not done and now - CHK["req"] < 900: return
+    ch = await asyncio.to_thread(_read_channel, db) if done else None
+    wait, CHK["wait"] = CHK["wait"], {}
+    for lid, users_ in wait.items():
+        for uid, lang in users_.items():
+            try:
+                if done: await app.bot.send_message(uid, tr(lang, "chk_done") + check_text(db, lid, lang, ch), parse_mode="HTML",
+                                                     reply_markup=KB([[B(tr(lang, "b_start"), f"u_ms:{lid}", "success")], [B(tr(lang, "b_back_mkt"), "u_mkt")]]))
+                else: await app.bot.send_message(uid, tr(lang, "chk_timeout"))
+            except Exception: pass
+
 async def market_tick(app):
     if MKT["lock"] is None: MKT["lock"] = asyncio.Lock()
     async with MKT["lock"]:
         events = await asyncio.to_thread(market_scan)
         async with CHECK_LOCK:   # test kanalına botun kontrolüyle aynı anda yazılmasın
             await asyncio.to_thread(market_push_phone)
+        await check_waiters(app)
         db = load_db()
         for kind, lid, why, n in events:
             L = db["market"].get(lid, {}); ow = L.get("owner"); lg = lang_of(db, ow) if ow else "tr"; st = L.get("st") or {}
