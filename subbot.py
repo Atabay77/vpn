@@ -1173,7 +1173,7 @@ def _main_kb(uid):
                [B(L(uid, "👤 Profil", "👤 Профиль"), "u_prof"), B(L(uid, "🛒 Market", "🛒 Магазин"), "u_market")],
                [B(L(uid, "🆘 Support", "🆘 Поддержка"), "tickets"), B(L(uid, "🐞 Hata Bildir", "🐞 Баг-репорт"), "tickets_bug")],
                [lang_btn],
-               [B("🟡 Admin", "admin", "primary")]])
+               [B("🟡 Admin", "admin", "danger")]])
 
 def admin_text():
     on = not os.path.exists(STOP_FLAG)
