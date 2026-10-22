@@ -2822,8 +2822,10 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
 
     elif a == "u_top":
         STATE.pop(uid, None)
-        await send(tr(lang, "top", bal=fmt_u(e.get("bal", 0))),
-                   KB([[B(f"{n} USDT", f"u_topa:{n}", "primary") for n in (1, 3, 5, 10)], [B(tr(lang, "b_other"), "u_topc")], [B(tr(lang, "b_menu"), "u_menu")]]))
+        await send(tr(lang, "top", bal=fmt_u(e.get("bal", 0))) + tr(lang, "top_sellers", sellers=" · ".join(USDT_SELLERS)),
+                   KB([[B(f"{n} USDT", f"u_topa:{n}", "primary") for n in (1, 3, 5, 10)],
+                       [B(f"{n * USDT_RATE} TMT", f"u_topa:{n}") for n in (1, 3, 5, 10)],   # aynı tutar, TMT karşılığıyla (ödeme yine CryptoBot)
+                       [B(tr(lang, "b_other"), "u_topc")], [B(tr(lang, "b_menu"), "u_menu")]]))
 
     elif a.startswith("u_topa:"):
         await send(*topup_order(uid, user, lang, float(a.split(":", 1)[1])))
@@ -4008,6 +4010,7 @@ T["ru"].update({
 })
 
 T["tr"].update({
+  "top_sellers": "\n💱 <b>CryptoBot ile ödeyemiyor musun?</b>\n<i>Bu satıcılardan TMT karşılığında CryptoBot için USDT alabilirsin:</i>\n{sellers}",
   "link_below": "🔗 linki almak için aşağıdaki butona bas",
   "del_q": "🗑 <b>Bu kod silinsin mi?</b>\n<blockquote>🎟 {name}\nAbonelik linki artık çalışmaz.</blockquote>", "b_yes_del": "🗑 Evet, sil", "deleted": "🗑 Kod silindi",
   "menu_bal": "\n💰 Bakiye  <b>{bal} USDT</b>  <i>≈ {tmt} TMT</i>",
@@ -4033,6 +4036,7 @@ T["tr"].update({
   "b_back": "◀️ Geri",
 })
 T["ru"].update({
+  "top_sellers": "\n💱 <b>Не получается оплатить через CryptoBot?</b>\n<i>У этих продавцов можно купить USDT для CryptoBot за TMT:</i>\n{sellers}",
   "link_below": "🔗 ссылка — кнопкой ниже",
   "del_q": "🗑 <b>Удалить этот код?</b>\n<blockquote>🎟 {name}\nСсылка подписки перестанет работать.</blockquote>", "b_yes_del": "🗑 Да, удалить", "deleted": "🗑 Код удалён",
   "menu_bal": "\n💰 Баланс  <b>{bal} USDT</b>  <i>≈ {tmt} TMT</i>",
@@ -4060,6 +4064,7 @@ T["ru"].update({
 
 # Türkmençe (eksik anahtar olursa Türkçesi görünür)
 T["tk"] = {
+ "top_sellers": "\n💱 <b>CryptoBot bilen töläp bilmeýärsiňizmi?</b>\n<i>Şu satyjylardan TMT-a CryptoBot üçin USDT satyn alyp bilersiňiz:</i>\n{sellers}",
  "link_below": "🔗 linki almak üçin aşakdaky knopka bas",
  "del_q": "🗑 <b>Bu kod pozulsynmy?</b>\n<blockquote>🎟 {name}\nPodpiska linki indi işlemez.</blockquote>", "b_yes_del": "🗑 Hawa, poz", "deleted": "🗑 Kod pozuldy",
  "menu_bal": "\n💰 Balans  <b>{bal} USDT</b>  <i>≈ {tmt} TMT</i>",
@@ -4745,6 +4750,8 @@ async def market_loop(app):
         except Exception: log.exception("market tick")
 
 # ── yükleme / ilan girişi (mesajla gelenler) ──
+USDT_SELLERS = ["@iam_Romeo", "@BoT34m1", "@tanyshmy", "@telekeci"]   # TMT karşılığında CryptoBot için USDT satanlar
+
 def topup_order(uid, user, lang, usdt):
     usdt = round(float(usdt), 2)
     oid = uuid.uuid4().hex[:6].upper()
