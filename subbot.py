@@ -2967,14 +2967,14 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
                total=len(e.get("refs", [])), avail=max(0, avail_refs(e)), need=REF_NEED, free=e.get("free_n", 0),
                active=len(user_codes(db, uid)), buys=e.get("buys", 0), inviter=esc(inv.get("name") or tr(lang, "nobody")),
                link=esc(ref_link(uid)))
-        t += tr(lang, "bal_line", bal=fmt_u(e.get("bal", 0)), tmt=tmt_u(e.get("bal", 0))) + (tr(lang, "earn_line", earn=fmt_u(e["earn"])) if e.get("earn") else "")
+        t += tr(lang, "bal_line", bal=f"{e.get('bal', 0) / UM:.2f}", tmt=f"{e.get('bal', 0) * USDT_RATE / UM:.2f}") + (tr(lang, "earn_line", earn=fmt_u(e["earn"])) if e.get("earn") else "")
         await send(t, KB([[B(tr(lang, "b_share"), url=share_url(lang, uid), style="success")],
                           [B(tr(lang, "b_top"), "u_top", "primary")]] + ([[B(tr(lang, "b_wd"), "u_wd")]] if e.get("earn") else []) + [
                           [B(tr(lang, "b_menu"), "u_menu")]]))
 
     elif a == "u_market":
         STATE.pop(uid, None)
-        await send(tr(lang, "market"), KB([[B(tr(lang, "b_mkt"), "u_mkt")], [B(tr(lang, "b_c7"), "u_buy:c7")], [B(tr(lang, "b_c30"), "u_buy:c30")],
+        await send(tr(lang, "market"), KB([[B(tr(lang, "b_c7"), "u_buy:c7")], [B(tr(lang, "b_c30"), "u_buy:c30")],
                                            [B(tr(lang, "b_panel"), "u_buy:panel")], [B(tr(lang, "b_menu"), "u_menu")]]))
 
     elif a == "u_buy:panel":
@@ -3823,7 +3823,7 @@ T["tr"].update({
   "myl_item": "<blockquote>{st} <b>{title}</b>\n💲 {p} USDT/dk · 👥 {n} alıcı · 💰 {earned} USDT kazanç</blockquote>",
   "st_pending": "⏳", "st_live": "🟢", "st_removed": "⛔", "st_rejected": "❌",
   "rules": "📜 <b>Pazar kuralları</b>\n<blockquote><b>Satıcı</b>\n• Her ilan 0.1$ (iade edilmez).\n• Abonelik limitsiz olmalı; ekran görüntüsü zorunlu.\n• En az 4 farklı gerçek ülke (bot ölçer, bayraklara bakılmaz).\n• 3'ten fazla sunucu 30 dk çalışmazsa ilan kaldırılır + 3 saat yasak.\n• Gerçek ülke 30 dk 4'ün altına düşerse ilan kaldırılır + 6 saat yasak.\n• Link 30 dk açılmazsa ilan kaldırılır + 3 saat yasak.\n• Kazanç: alıcı durdurunca, uzun kullanımda her 24 saatte bir gönderilir.</blockquote>\n<blockquote><b>Alıcı</b>\n• Her başlatma 0.1$ (iade edilmez).\n• Dakika başı ücret bakiyenden düşer (kullansan da kullanmasan da).\n• İstediğin an durdurursun; bakiye bitince kod durur.\n• Bakiye en az 1$ yüklenir; yüklenen bakiye geri çekilmez.</blockquote>",
-  "bal_line": "\n\n💰 <b>Bakiye</b>  {bal} USDT (≈{tmt} TMT)" , "earn_line": "\n💼 <b>Çekilebilir kazanç</b>  {earn} USDT",
+  "bal_line": "\n\n💰 <b>Bakiye</b> {bal} USDT ≈ {tmt} TMT" , "earn_line": "\n💼 <b>Çekilebilir kazanç</b>  {earn} USDT",
   "top": "➕ <b>Bakiye Yükle</b>\n<blockquote>CryptoBot ile USDT. En az 1 USDT.\n💰 Bakiyen  <b>{bal} USDT</b></blockquote>",
   "top_ask": "✏️ Kaç USDT yüklemek istiyorsun? (en az 1)", "top_bad": "⚠️ En az 1 USDT, sayı yaz (ör. 2.5).",
   "top_order": "🧾 <b>Bakiye yükleme · #{oid}</b>\n<blockquote>💵 <b>{usdt} USDT</b></blockquote>\n«💵 USDT ile öde»ye bas.",
@@ -3874,7 +3874,7 @@ T["ru"].update({
   "myl": "📦 <b>Мои объявления</b>", "myl_none": "📦 <b>Мои объявления</b>\n<blockquote>Объявлений нет.</blockquote>",
   "myl_item": "<blockquote>{st} <b>{title}</b>\n💲 {p} USDT/мин · 👥 {n} покуп. · 💰 {earned} USDT доход</blockquote>",
   "rules": "📜 <b>Правила биржи</b>\n<blockquote><b>Продавец</b>\n• Каждое объявление 0.1$ (не возвращается).\n• Подписка должна быть безлимитной; скриншот обязателен.\n• Минимум 4 разные реальные страны (бот измеряет сам, флаги не учитываются).\n• Если больше 3 серверов не работают 30 мин — снятие + бан 3 ч.\n• Если реальных стран меньше 4 в течение 30 мин — снятие + бан 6 ч.\n• Если ссылка не открывается 30 мин — снятие + бан 3 ч.\n• Выплата: после остановки покупателем, при долгом использовании — каждые 24 ч.</blockquote>\n<blockquote><b>Покупатель</b>\n• Каждый запуск 0.1$ (не возвращается).\n• Поминутная оплата списывается с баланса (пользуетесь или нет).\n• Остановить можно в любой момент; при нулевом балансе код останавливается.\n• Пополнение от 1$; пополненный баланс не выводится.</blockquote>",
-  "bal_line": "\n\n💰 <b>Баланс</b>  {bal} USDT (≈{tmt} TMT)", "earn_line": "\n💼 <b>Доход к выводу</b>  {earn} USDT",
+  "bal_line": "\n\n💰 <b>Баланс</b> {bal} USDT ≈ {tmt} TMT", "earn_line": "\n💼 <b>Доход к выводу</b>  {earn} USDT",
   "top": "➕ <b>Пополнение</b>\n<blockquote>USDT через CryptoBot. Минимум 1 USDT.\n💰 Баланс  <b>{bal} USDT</b></blockquote>",
   "top_ask": "✏️ Сколько USDT пополнить? (минимум 1)", "top_bad": "⚠️ Минимум 1 USDT, напишите число (напр. 2.5).",
   "top_order": "🧾 <b>Пополнение · #{oid}</b>\n<blockquote>💵 <b>{usdt} USDT</b></blockquote>\nНажмите «💵 Оплатить USDT».",
@@ -4212,7 +4212,7 @@ T["tk"] = {
  "st_removed": "⛔",
  "st_rejected": "❌",
  "rules": "📜 <b>Bazaryň düzgünleri</b>\n<blockquote><b>Satyjy</b>\n• Her bildiriş 0.1$ (yzyna gaýtarylmaýar).\n• Podpiska limitsiz bolmaly; skrinşot hökman.\n• Bildiriş berlende azyndan 4 dürli hakyky ýurt bolmaly (bot özi ölçeýär, baýdaklara seredilmeýär).\n• 4-den köp serwer 30 minut N/A bolsa, bildiriş 3 sagat bloklanýar: blok wagtynda kodlaryň berilmeýär, pul gaýtarylmaýar. Blok gutaranda bildiriş täzeden barlanýar.\n• 💎 VIP: 0.2$ töläp, 36 sagat iň ýokarda durýar.\n• Gazanç: alyjy kody yzyna gowşuranda, uzak ulanylsa her 24 sagatda bir gezek iberilýär.</blockquote>\n<blockquote><b>Alyjy</b>\n• Her gezek başlamak 0.1$ (yzyna gaýtarylmaýar).\n• Minutlyk töleg balansyňdan aýrylýar (ulansaň-da, ulanmasaň-da).\n• Islän wagtyň yzyna gowşurup bilersiň; balans gutarsa, kod özi yzyna gowşurylýar.\n• Balans azyndan 1$ doldurylýar; doldurylan balansy yzyna çekip bolmaýar.</blockquote>",
- "bal_line": "\n\n💰 <b>Balans</b>  {bal} USDT (≈{tmt} TMT)",
+ "bal_line": "\n\n💰 <b>Balans</b> {bal} USDT ≈ {tmt} TMT",
  "earn_line": "\n💼 <b>Çekip boljak gazanç</b>  {earn} USDT",
  "top": "➕ <b>Balansy doldur</b>\n<blockquote>CryptoBot arkaly USDT. Azyndan 1 USDT.\n💰 Balansyň  <b>{bal} USDT</b></blockquote>",
  "top_ask": "✏️ Näçe USDT doldurmak isleýärsiň? (azyndan 1)",
