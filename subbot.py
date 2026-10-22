@@ -2944,7 +2944,7 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
 
     elif a == "u_market":
         STATE.pop(uid, None)
-        await send(tr(lang, "market"), KB([[B(tr(lang, "b_mkt"), "u_mkt", "success")], [B(tr(lang, "b_c7"), "u_buy:c7", "primary")], [B(tr(lang, "b_c30"), "u_buy:c30", "primary")],
+        await send(tr(lang, "market"), KB([[B(tr(lang, "b_mkt"), "u_mkt")], [B(tr(lang, "b_c7"), "u_buy:c7")], [B(tr(lang, "b_c30"), "u_buy:c30")],
                                            [B(tr(lang, "b_panel"), "u_buy:panel")], [B(tr(lang, "b_menu"), "u_menu")]]))
 
     elif a == "u_buy:panel":
