@@ -2883,7 +2883,8 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         stop_rows = []
         for sid, x in sess[:5]:
             nm_ = short(db["market"].get(x["lid"], {}).get("title", "?"), 14)
-            stop_rows += [[B(f"{tr(lang, 'b_live')} · {nm_}", f"u_live:{sid}", "primary")], [B(f"{tr(lang, 'b_stop')} · {nm_}", f"u_msq:{sid}", "danger")]]
+            if len(sess) == 1: stop_rows += [[B(tr(lang, "b_live"), f"u_live:{sid}", "primary"), B(tr(lang, "b_stop"), f"u_msq:{sid}", "danger")]]
+            else: stop_rows += [[B(f"📊 {short(nm_, 9)}", f"u_live:{sid}", "primary"), B(f"⏹ {short(nm_, 9)}", f"u_msq:{sid}", "danger")]]   # birden çok kod: adıyla
         del_rows = [[B(f"🗑 {short(name_of(s_, k), 18)}", f"u_kdq:{k}")] for k, s_ in mine[:8]]
         await send(tr(lang, "mine") + "\n" + "\n".join(x for x in (body, body2) if x), KB(ext_rows + stop_rows + del_rows + [[B(tr(lang, "b_menu"), "u_menu")]]))
 
@@ -3709,7 +3710,7 @@ def pay_seller(seller, amount, spend_id, comment):
 
 # ── metinler ──
 T["tr"].update({
-  "b_mkt": "🏪 Pazar (dakika başı)", "b_sell": "➕ Kodumu Sat", "b_myl": "📦 İlanlarım", "b_rules": "📜 Kurallar",
+  "b_mkt": "🏪 Pazar (dakika başı)", "b_sell": "Öz Kodyňyzy Satmak 🪪", "b_myl": "📦 İlanlarım", "b_rules": "📜 Kurallar",
   "b_start": "▶️ Başlat · 0.1$ + {p}/dk", "b_shot": "📷 Ekran Görüntüsü", "b_back_mkt": "◀️ Pazar", "b_stop": "⏹ Durdur",
   "b_top": "➕ Bakiye Yükle", "b_wd": "💸 Kazancı Çek", "b_other": "✏️ Başka tutar",
   "mkt": "🏪 <b>Pazar</b>\n<blockquote>Satıcıların VPN kodları. Dakika başı ödersin, istediğin an durdurursun.\nKodlar bot tarafından her dakika kontrol edilir.\n💰 Bakiyen  <b>{bal} USDT</b></blockquote>\n<i>Bir ilan seç</i> 👇",
@@ -4077,7 +4078,7 @@ T["tk"] = {
  "gift": "🎁 <b>Admin saňa kod berdi!</b>\n<blockquote>⏳ Möhlet  <b>{left}</b></blockquote>\n🔗 <b>Podpiska linki</b> <i>(bas → göçür)</i>\n<code>{link}</code>",
  "added": "⏳ Kodyňyň möhleti uzadyldy: {name} · galan {left}",
  "b_mkt": "🏪 Bazar (minutlaýyn)",
- "b_sell": "➕ Kodumy sat",
+ "b_sell": "Öz Kodyňyzy Satmak 🪪",
  "b_myl": "📦 Satuwym",
  "b_rules": "📜 Düzgün",
  "b_start": "▶️ Başla",
@@ -4309,9 +4310,9 @@ def market_page(db, uid, lang, i=0):
     cap = card_caption(db, L, lang) + tr(lang, "mkt_bal", bal=fmt_u(e.get("bal", 0))) + (tr(lang, "mkt_none") if n == 1 else "")
     rows = [[B(tr(lang, "b_start"), f"u_ms:{lid}", "success"), B(tr(lang, "b_mcheck"), f"u_mck:{lid}")]]
     if n > 1:
-        if i == 0: rows.append([B(tr(lang, "b_sellers", n=n - 1), "u_mp:1", "primary")])
+        if i == 0: rows.append([B(tr(lang, "b_sellers", n=n - 1), "u_mp:1")])
         else: rows.append([B("◀️", f"u_mp:{i - 1}"), B(f"{i}/{n - 1}", f"u_mp:{i}"), B("▶️", f"u_mp:{(i + 1) % n}")])
-    rows += [[B(tr(lang, "b_sell"), "u_sell", "primary"), B(tr(lang, "b_myl"), "u_myl")],
+    rows += [[B(tr(lang, "b_sell"), "u_sell")], [B(tr(lang, "b_myl"), "u_myl")],
              [B(tr(lang, "b_top"), "u_top")],
              [B(tr(lang, "b_rules"), "u_mrules"), B(tr(lang, "b_menu"), "u_menu")]]
     return card_photo(L), cap, KB(rows)
