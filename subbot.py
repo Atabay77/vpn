@@ -2858,7 +2858,21 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         if not s_ or s_.get("owner_id") != uid or item not in PRICES: await send(tr(lang, "mine_none"), menu_btn); return
         await send(*new_order(uid, user, lang, item, ext=kid))
 
-    elif a == "u_mine":
+    elif a.startswith("u_kdq:"):   # kodu silmeden önce sor
+        kid = a.split(":", 1)[1]; s_ = db["subs"].get(kid)
+        if not s_ or s_.get("owner_id") != uid: await send(tr(lang, "mine_none"), menu_btn); return
+        await send(tr(lang, "del_q", name=esc(short(name_of(s_, kid), 30))), KB([[B(tr(lang, "b_yes_del"), f"u_kdy:{kid}", "danger")], [B(tr(lang, "b_no"), "u_mine")]]))
+
+    elif a.startswith("u_kdy:"):
+        kid = a.split(":", 1)[1]; s_ = db["subs"].get(kid)
+        if s_ and s_.get("owner_id") == uid:
+            if await asyncio.to_thread(delete_vip, kid):
+                try: await q.answer(tr(lang, "deleted"))
+                except Exception: pass
+                ulog("del", f"🗑 Kodunu sildi: {who(user)} · {name_of(s_, kid)}")
+        a = "u_mine"; db = load_db()
+
+    if a == "u_mine":
         mine = user_codes(db, uid)
         sess = [(sid, x) for sid, x in db.get("msess", {}).items() if x["buyer"] == uid and x["status"] == "on"]
         if not mine and not sess: await send(tr(lang, "mine_none"), menu_btn); return
@@ -2870,7 +2884,8 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         for sid, x in sess[:5]:
             nm_ = short(db["market"].get(x["lid"], {}).get("title", "?"), 14)
             stop_rows += [[B(f"{tr(lang, 'b_live')} · {nm_}", f"u_live:{sid}", "primary")], [B(f"{tr(lang, 'b_stop')} · {nm_}", f"u_msq:{sid}", "danger")]]
-        await send(tr(lang, "mine") + "\n" + "\n".join(x for x in (body, body2) if x), KB(ext_rows + stop_rows + [[B(tr(lang, "b_menu"), "u_menu")]]))
+        del_rows = [[B(f"🗑 {short(name_of(s_, k), 18)}", f"u_kdq:{k}")] for k, s_ in mine[:8]]
+        await send(tr(lang, "mine") + "\n" + "\n".join(x for x in (body, body2) if x), KB(ext_rows + stop_rows + del_rows + [[B(tr(lang, "b_menu"), "u_menu")]]))
 
     elif a == "u_prof":
         inv = db["users"].get(str(e.get("ref_by")), {}) if e.get("ref_by") else {}
@@ -3920,6 +3935,7 @@ T["ru"].update({
 })
 
 T["tr"].update({
+  "del_q": "🗑 <b>Bu kod silinsin mi?</b>\n<blockquote>🎟 {name}\nAbonelik linki artık çalışmaz.</blockquote>", "b_yes_del": "🗑 Evet, sil", "deleted": "🗑 Kod silindi",
   "menu_bal": "\n💰 Bakiye  <b>{bal} USDT</b>  <i>≈ {tmt} TMT</i>",
   "sell_1": "➕ <b>Kodumu Sat · 1/5</b>\n<blockquote>🔗 Abonelik linkini gönder\n<b>(GB limiti ya da süre sınırı olmamalı!)</b></blockquote>",
   "m_photo_bad": "🔞 <b>İlanın kaldırıldı</b>\n<blockquote>🏪 {title}\nFotoğraf uygunsuz bulundu.</blockquote>\n⛔ {h} saat botu kullanamazsın. Ücret iade edilmez.",
@@ -3942,6 +3958,7 @@ T["tr"].update({
   "b_back": "◀️ Geri",
 })
 T["ru"].update({
+  "del_q": "🗑 <b>Удалить этот код?</b>\n<blockquote>🎟 {name}\nСсылка подписки перестанет работать.</blockquote>", "b_yes_del": "🗑 Да, удалить", "deleted": "🗑 Код удалён",
   "menu_bal": "\n💰 Баланс  <b>{bal} USDT</b>  <i>≈ {tmt} TMT</i>",
   "sell_1": "➕ <b>Продать код · 1/5</b>\n<blockquote>🔗 Отправьте ссылку подписки\n<b>(без лимита ГБ и без ограничения срока!)</b></blockquote>",
   "m_photo_bad": "🔞 <b>Объявление удалено</b>\n<blockquote>🏪 {title}\nФото признано неприемлемым.</blockquote>\n⛔ {h} ч вы не можете пользоваться ботом. Плата не возвращается.",
@@ -3966,6 +3983,7 @@ T["ru"].update({
 
 # Türkmençe (eksik anahtar olursa Türkçesi görünür)
 T["tk"] = {
+ "del_q": "🗑 <b>Bu kod pozulsynmy?</b>\n<blockquote>🎟 {name}\nPodpiska linki indi işlemez.</blockquote>", "b_yes_del": "🗑 Hawa, poz", "deleted": "🗑 Kod pozuldy",
  "menu_bal": "\n💰 Balans  <b>{bal} USDT</b>  <i>≈ {tmt} TMT</i>",
  "sell_1": "➕ <b>Kodumy sat · 1/5</b>\n<blockquote>🔗 Podpiska linkini iber\n<b>(GB limiti ýa-da möhlet çägi bolmaly däl!)</b></blockquote>",
  "m_photo_bad": "🔞 <b>Bildirişiň aýryldy</b>\n<blockquote>🏪 {title}\nSurat ýerliksiz diýlip tapyldy.</blockquote>\n⛔ {h} sagat boty ulanyp bilmersiň. Töleg yzyna gaýtarylmaýar.",
