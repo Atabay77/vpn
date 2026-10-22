@@ -203,8 +203,11 @@ def new_service():
 def sub_link(fid):
     return f"https://www.googleapis.com/drive/v3/files/{fid}?key={os.environ.get('API_KEY', '')}&alt=media"
 
+HAPP_DEFAULT_PROVIDER = "vAUH3NRg"   # happ-proxy.com Provider ID (gizli değil; Happ'ta "#hide-settings" bununla çalışır)
+
 def build_text(title, announce, servers):
-    lines = [f"#profile-title: {title}"]
+    prov = os.environ.get("HAPP_PROVIDER") or HAPP_DEFAULT_PROVIDER
+    lines = ([f"#providerid {prov}"] if prov else []) + [f"#profile-title: {title}"]
     ann = " ".join(str(announce or "").split())  # çok satırlı duyuru Happ'i bozuyor
     if ann: lines.append(f"#announce: {ann}")
     lines += ["#hide-settings: true", "#profile-update-interval: 1"] + list(servers)
@@ -1047,7 +1050,27 @@ async def post_init(app):
 
 
 # ───────── MENÜLER ─────────
+def open_sessions(db, uid):
+    return [(sid, x) for sid, x in db.get("msess", {}).items() if x.get("buyer") == uid and x.get("status") == "on"]
+
+def open_mkt_text(db, uid, lang):
+    """Ana menü: açık pazar kodu varsa dakikalık ücret ve harcama (unutulan kod para yemesin)."""
+    ss = open_sessions(db, uid)
+    if not ss: return ""
+    pm = sum(float(db["market"].get(x["lid"], {}).get("price", 0)) for _, x in ss)
+    spent = sum(x.get("total", 0) for _, x in ss)
+    return tr(lang, "open_line", n=len(ss), pm=money_tmt(pm, 4), spent=money_tmt(spent))
+
+def open_mkt_row(db, uid, lang):
+    n = len(open_sessions(db, uid))
+    return [[B(tr(lang, "b_open", n=n), "u_mine", "success")]] if n else []
+
 def menu_text(uid):
+    try: db = load_db()
+    except Exception: db = None
+    return _menu_text(uid) + (open_mkt_text(db, uid, lang_of(db, uid)) if db else "")
+
+def _menu_text(uid):
     try: db = load_db()
     except Exception: db = None
     if uid not in ADMINS:
@@ -1071,6 +1094,12 @@ def menu_text(uid):
             f"📡 <b>{n}</b> kod  ·  🔗 <b>{src}</b> abonelik  ·  👥 <b>{vip}</b> VIP  ·  🙋 <b>{len(db.get('users', {})) if db else '?'}</b> kullanıcı")
 
 def main_kb(uid):
+    kb = _main_kb(uid)
+    try: extra = open_mkt_row(load_db(), uid, lang_of(None, uid))
+    except Exception: extra = []
+    return KB([list(r) for r in kb.inline_keyboard[:1]] + extra + [list(r) for r in kb.inline_keyboard[1:]]) if extra else kb
+
+def _main_kb(uid):
     is_ru(uid); lang_btn = B({"ru": "🌐 Язык: Русский", "tk": "🌐 Dil: Türkmençe"}.get(LANGC.get(uid), "🌐 Dil: Türkçe"), "lang")
     if uid not in ADMINS:   # panel sahibi: kendi panelinde kod oluşturur
         return KB([[B(L(uid, "🏪 Pazar", "🏪 Биржа"), "u_mkt", "success")],
@@ -2333,8 +2362,8 @@ def captcha_view(lang, uid, test=False):
 def pub_menu(db, uid):
     lang = lang_of(db, uid)
     e = db.get("users", {}).get(str(uid), {})
-    t = tr(lang, "menu", avail=max(0, avail_refs(e)), need=REF_NEED, codes=len(user_codes(db, uid)))
-    kb = KB([[B(tr(lang, "b_pazar"), "u_mkt", "success")],
+    t = tr(lang, "menu", avail=max(0, avail_refs(e)), need=REF_NEED, codes=len(user_codes(db, uid))) + open_mkt_text(db, uid, lang)
+    kb = KB([[B(tr(lang, "b_pazar"), "u_mkt", "success")]] + open_mkt_row(db, uid, lang) + [
              [B(tr(lang, "b_free"), "u_free"), B(tr(lang, "b_mine"), "u_mine", "primary")],
              [B(tr(lang, "b_prof"), "u_prof"), B(tr(lang, "b_market"), "u_market")],
              [B(tr(lang, "b_sup"), "u_sup"), B(tr(lang, "b_bug"), "u_bug")],
@@ -3789,6 +3818,9 @@ T["ru"].update({
 })
 
 T["tr"].update({
+  "open_line": "\n\n🟢 <b>Açık pazar kodun: {n}</b>\n<i>Dakikada {pm} TMT düşüyor · şimdiye kadar {spent} TMT.\nKullanmıyorsan 🎟 Kodlarım → ⏹ Durdur.</i>",
+  "b_open": "🟢 Açık kodlarım ({n})",
+  "m_remind": "⏰ <b>Pazar kodun hâlâ açık</b>\n<blockquote>🏪 {title}\n⏱ {dur} · 💸 {spent} TMT\n💰 Bakiye {bal} USDT</blockquote>\n<i>Kullanmıyorsan durdur; yoksa dakika başı para düşmeye devam eder.</i>",
   "chk_el": "\n⌛ Geçen süre: <b>{m} dk</b>",
   "chk_off": "\n📱 <i>Telefon testi şu an çalışmıyor; yukarıda son bilinen durum.</i>",
   "sell_5": "➕ <b>Kodumu Sat · 5/5</b>\n<blockquote>Bir aylık kodu kaç <b>TMT</b>'ye satıyorsun? <i>(ör. 100)</i></blockquote>",
@@ -3804,6 +3836,9 @@ T["tr"].update({
   "b_back": "◀️ Geri",
 })
 T["ru"].update({
+  "open_line": "\n\n🟢 <b>Открытых кодов с биржи: {n}</b>\n<i>Списывается {pm} TMT в минуту · всего {spent} TMT.\nЕсли не пользуетесь: 🎟 Мои коды → ⏹ Стоп.</i>",
+  "b_open": "🟢 Открытые коды ({n})",
+  "m_remind": "⏰ <b>Код с биржи всё ещё открыт</b>\n<blockquote>🏪 {title}\n⏱ {dur} · 💸 {spent} TMT\n💰 Баланс {bal} USDT</blockquote>\n<i>Если не пользуетесь — остановите, иначе списание каждую минуту продолжится.</i>",
   "chk_el": "\n⌛ Прошло: <b>{m} мин</b>",
   "chk_off": "\n📱 <i>Телефонный тест сейчас не работает; выше — последнее известное состояние.</i>",
   "sell_5": "➕ <b>Продать код · 5/5</b>\n<blockquote>За сколько <b>TMT</b> продаёшь код на месяц? <i>(напр. 100)</i></blockquote>",
@@ -3821,6 +3856,9 @@ T["ru"].update({
 
 # Türkmençe (eksik anahtar olursa Türkçesi görünür)
 T["tk"] = {
+ "open_line": "\n\n🟢 <b>Açyk bazar kodyň: {n}</b>\n<i>Her minutda {pm} TMT alynýar · şu wagta çenli {spent} TMT.\nUlanmaýan bolsaň 🎟 Kodlarym → ⏹ Yzyna gowşur.</i>",
+ "b_open": "🟢 Açyk kodlarym ({n})",
+ "m_remind": "⏰ <b>Bazar kodyň henizem açyk</b>\n<blockquote>🏪 {title}\n⏱ {dur} · 💸 {spent} TMT\n💰 Balans {bal} USDT</blockquote>\n<i>Ulanmaýan bolsaň yzyna gowşur, ýogsa her minutda pul alynmagy dowam edýär.</i>",
  "chk_el": "\n⌛ Geçen wagt: <b>{m} min</b>",
  "chk_off": "\n📱 <i>Telefon testi häzir işlänok; ýokarda soňky belli ýagdaý.</i>",
  "sell_5": "➕ <b>Kodumy sat · 5/5</b>\n<blockquote>Bir aýlyk kody näçe <b>TMT</b>-a satýaň? <i>(mysal: 100)</i></blockquote>",
@@ -4374,6 +4412,25 @@ async def check_waiters(app):
                 try: await app.bot.send_message(uid, t, parse_mode="HTML", reply_markup=chk_kb(lang, lid))
                 except Exception: pass
 
+REMIND_EVERY = 12 * 3600
+
+async def remind_open(app):
+    """Uzun süredir açık pazar kodu: alıcıya hatırlat (para dakika başı düşmeye devam ediyor)."""
+    now = time.time()
+    def f(d):
+        out = []
+        for sid, x in d.get("msess", {}).items():
+            if x.get("status") == "on" and now - x.get("remind_ts", x["start"]) >= REMIND_EVERY:
+                x["remind_ts"] = now; out.append((sid, x["buyer"], x["lid"], now - x["start"], x.get("total", 0)))
+        return out
+    for sid, buyer, lid, dur, total in mutate(f):
+        db = load_db(); lg = lang_of(db, buyer)
+        try:
+            await app.bot.send_message(buyer, tr(lg, "m_remind", title=esc(db["market"].get(lid, {}).get("title", "?")), dur=dur_txt(dur, lg == "ru"),
+                                                 spent=money_tmt(total), bal=fmt_u(db["users"].get(str(buyer), {}).get("bal", 0))),
+                                       parse_mode="HTML", reply_markup=KB([[B(tr(lg, "b_stop"), f"u_msq:{sid}", "danger"), B(tr(lg, "b_mine"), "u_mine")]]))
+        except Exception: pass
+
 async def market_tick(app):
     if MKT["lock"] is None: MKT["lock"] = asyncio.Lock()
     async with MKT["lock"]:
@@ -4381,6 +4438,7 @@ async def market_tick(app):
         async with CHECK_LOCK:   # test kanalına botun kontrolüyle aynı anda yazılmasın
             await asyncio.to_thread(market_push_phone)
         await check_waiters(app)
+        await remind_open(app)
         db = load_db()
         for kind, lid, why, n in events:
             L = db["market"].get(lid, {}); ow = L.get("owner"); lg = lang_of(db, ow) if ow else "tr"; st = L.get("st") or {}
