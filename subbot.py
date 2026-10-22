@@ -2644,7 +2644,7 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         await notify_founders(c.application, f"📤 <b>Yeni pazar ilanı</b> (incelemede)\n<blockquote>{esc(who(user))}\n🏷 {esc(st_['title'])} · {money_tmt(float(st_['price']) * 43200)} TMT/ay</blockquote>\n<i>⏳ Telefon testi bekleniyor; sonuç gelince bildirilecek.</i>")
 
     elif a == "u_myl":
-        mine_l = sorted([(lid, L) for lid, L in db.get("market", {}).items() if L.get("owner") == uid], key=lambda x: -x[1].get("created", 0))[:10]
+        mine_l = sorted([(lid, L) for lid, L in db.get("market", {}).items() if L.get("owner") == uid and L.get("status") in ("pending", "live", "suspended")], key=lambda x: -x[1].get("created", 0))[:10]   # kaldırılan / reddedilen ilanlar görünmez
         if not mine_l: await send(tr(lang, "myl_none"), KB([[B(tr(lang, "b_sell"), "u_sell", "primary")], [B(tr(lang, "b_back_mkt"), "u_mkt")]])); return
         ss = db.get("msess", {}).values()
         def extra(L):
@@ -3784,7 +3784,7 @@ T["tr"].update({
   "cap": "👋 <b>Hoş geldin!</b>\n<blockquote>VPN satın almak için mi geldin, yoksa VPN satıcısı mısın?</blockquote>",
   "b_cap_buy": "🛒 VPN almak istiyorum", "b_cap_sell": "🏪 VPN satıcısıyım",
   "card": "🏪 <b>{title}</b>\n{own}\n📡 <b>Sunucular</b>\n<blockquote>🖥 {total} sunucu · {protos}\n{tmline}{ccline}</blockquote>\n\n💰 <b>Fiyat</b>\n<blockquote>{prices}</blockquote>\n\n{payline}{desc}",
-  "card_seller": "{head}\n\n🏪 <b>{title}</b>\n\n💰 <b>Fiyat</b>\n<blockquote>{prices}</blockquote>\n\n{payline}\n\n<i>🔍 Sunucuları ve ülkeleri görmek için «Kontrol Et»e bas.</i>",
+  "card_seller": "{head}\n\n🏪 <b>{title}</b>\n\n💰 <b>Fiyat</b>\n<blockquote>{prices}</blockquote>\n\n<i>🔍 Sunucuları ve ülkeleri görmek için «Kontrol Et»e bas.</i>",
   "head_vip": "💎💎 <b>VIP SATICI</b> 💎💎", "head_std": "🏷 <b>Satıcı ilanı</b>",
   "prices": "⏱ 1 dakika  —  <b>{mi} TMT</b>\n🕐 1 saat  —  <b>{h} TMT</b>\n📅 1 hafta  —  <b>{w} TMT</b>\n🗓 1 ay  —  <b>{m} TMT</b>",
   "payline": "💡 <b>Pul doly alynmaýar</b> — töleg diňe ulanan minudyňyza / sagadyňyza görä alynýar.\n▶️ Başlanda bir gezek 0.1$ · islän wagtyňyz togtadyp bilersiňiz.",
@@ -3802,7 +3802,7 @@ T["ru"].update({
   "cap": "👋 <b>Добро пожаловать!</b>\n<blockquote>Вы пришли купить VPN или вы продавец VPN?</blockquote>",
   "b_cap_buy": "🛒 Хочу купить VPN", "b_cap_sell": "🏪 Я продавец VPN",
   "card": "🏪 <b>{title}</b>\n{own}\n📡 <b>Серверы</b>\n<blockquote>🖥 {total} серверов · {protos}\n{tmline}{ccline}</blockquote>\n\n💰 <b>Цена</b>\n<blockquote>{prices}</blockquote>\n\n{payline}{desc}",
-  "card_seller": "{head}\n\n🏪 <b>{title}</b>\n\n💰 <b>Цена</b>\n<blockquote>{prices}</blockquote>\n\n{payline}\n\n<i>🔍 Чтобы увидеть серверы и страны, нажмите «Проверить».</i>",
+  "card_seller": "{head}\n\n🏪 <b>{title}</b>\n\n💰 <b>Цена</b>\n<blockquote>{prices}</blockquote>\n\n<i>🔍 Чтобы увидеть серверы и страны, нажмите «Проверить».</i>",
   "head_vip": "💎💎 <b>VIP ПРОДАВЕЦ</b> 💎💎", "head_std": "🏷 <b>Объявление продавца</b>",
   "prices": "⏱ 1 минута  —  <b>{mi} TMT</b>\n🕐 1 час  —  <b>{h} TMT</b>\n📅 1 неделя  —  <b>{w} TMT</b>\n🗓 1 месяц  —  <b>{m} TMT</b>",
   "payline": "💡 <b>Деньги не списываются сразу</b> — оплата только за использованные минуты / часы.\n▶️ При запуске один раз 0.1$ · остановить можно в любой момент.",
@@ -3826,7 +3826,7 @@ T["tr"].update({
   "sell_5": "➕ <b>Kodumu Sat · 5/5</b>\n<blockquote>Bir aylık kodu kaç <b>TMT</b>'ye satıyorsun? <i>(ör. 100)</i></blockquote>",
   "sell_bal": "\n💰 Bakiyen  <b>{bal} USDT</b>",
   "head_own": "🏆 <b>BOTUN RESMİ KODU</b> 🏆", "head_vip": "💎 <b>VIP Sunucu</b>", "head_std": "🏷 <b>Standart Sunucu</b>",
-  "card2": "{head}\n\n🏪 <b>{title}</b>\n\n💰 <b>Fiyat</b>\n<blockquote>{prices}</blockquote>\n\n{payline}\n\n<i>🔍 Sunucular ve ülkeler için «Kontrol Et»e bas.</i>",
+  "card2": "{head}\n\n🏪 <b>{title}</b>\n\n💰 <b>Fiyat</b>\n<blockquote>{prices}</blockquote>\n\n<i>🔍 Sunucular ve ülkeler için «Kontrol Et»e bas.</i>",
   "card_own": "<blockquote>🛡 7/24 kontrol altında\n🇹🇲 Türkmenistan'dan sürekli test edilir\n⚡ IP değişince kendini yeniler\n🧹 Çalışmayan sunucu otomatik çıkarılır</blockquote>\n",
   "chk_run": "\n⏳ <b>Kontrol ediliyor...</b>\n<i>Türkmenistan'dan test yapılıyor (1–5 dk). Sonuç bu kutuda görünecek.</i>",
   "chk_head2": "\n🔍 <b>Sunucular</b>\n<blockquote>{lines}</blockquote>\n✅ {work} çalışıyor · ❌ {dead} çalışmıyor · ⏳ {wait} bekliyor\n🎯 ülke doğru · ⚠️ ülke yanlış\n🕒 Son TM testi: {ago}",
@@ -3844,7 +3844,7 @@ T["ru"].update({
   "sell_5": "➕ <b>Продать код · 5/5</b>\n<blockquote>За сколько <b>TMT</b> продаёшь код на месяц? <i>(напр. 100)</i></blockquote>",
   "sell_bal": "\n💰 Баланс  <b>{bal} USDT</b>",
   "head_own": "🏆 <b>ОФИЦИАЛЬНЫЙ КОД БОТА</b> 🏆", "head_vip": "💎 <b>VIP сервер</b>", "head_std": "🏷 <b>Стандартный сервер</b>",
-  "card2": "{head}\n\n🏪 <b>{title}</b>\n\n💰 <b>Цена</b>\n<blockquote>{prices}</blockquote>\n\n{payline}\n\n<i>🔍 Серверы и страны — кнопка «Проверить».</i>",
+  "card2": "{head}\n\n🏪 <b>{title}</b>\n\n💰 <b>Цена</b>\n<blockquote>{prices}</blockquote>\n\n<i>🔍 Серверы и страны — кнопка «Проверить».</i>",
   "card_own": "<blockquote>🛡 Под контролем 24/7\n🇹🇲 Постоянно проверяется из Туркменистана\n⚡ При смене IP обновляется сам\n🧹 Неработающие серверы убираются автоматически</blockquote>\n",
   "chk_run": "\n⏳ <b>Проверяется...</b>\n<i>Идёт тест из Туркменистана (1–5 мин). Результат появится здесь.</i>",
   "chk_head2": "\n🔍 <b>Серверы</b>\n<blockquote>{lines}</blockquote>\n✅ {work} работают · ❌ {dead} не работают · ⏳ {wait} ждут\n🎯 страна верна · ⚠️ страна неверна\n🕒 Последний тест в TM: {ago}",
@@ -4046,7 +4046,7 @@ T["tk"] = {
  "never": "entek ýok",
  "b_cap_buy": "🛒 VPN almak isleýärin",
  "b_cap_sell": "🏪 Men VPN satyjy",
- "card_seller": "{head}\n\n🏪 <b>{title}</b>\n\n💰 <b>Bahasy</b>\n<blockquote>{prices}</blockquote>\n\n{payline}\n\n<i>🔍 Serwerleri we ýurtlary görmek üçin «Barla» düwmä bas.</i>",
+ "card_seller": "{head}\n\n🏪 <b>{title}</b>\n\n💰 <b>Bahasy</b>\n<blockquote>{prices}</blockquote>\n\n<i>🔍 Serwerleri we ýurtlary görmek üçin «Barla» düwmä bas.</i>",
  "head_vip": "💎 <b>VIP serwer</b>",
  "head_std": "🏷 <b>Standart serwer</b>",
  "prices": "⏱ 1 minut  —  <b>{mi} TMT</b>\n🕐 1 sagat  —  <b>{h} TMT</b>\n📅 1 hepde  —  <b>{w} TMT</b>\n🗓 1 aý  —  <b>{m} TMT</b>",
@@ -4061,7 +4061,7 @@ T["tk"] = {
  "chk_upd": "\n✅ <i>Täzelendi · {t}</i>",
  "b_recheck": "🔄 Täzele",
  "head_own": "🏆 <b>BOTUŇ RESMI KODY</b> 🏆",
- "card2": "{head}\n\n🏪 <b>{title}</b>\n\n💰 <b>Bahasy</b>\n<blockquote>{prices}</blockquote>\n\n{payline}\n\n<i>🔍 Serwerleri we ýurtlary görmek üçin «Barla» bas.</i>",
+ "card2": "{head}\n\n🏪 <b>{title}</b>\n\n💰 <b>Bahasy</b>\n<blockquote>{prices}</blockquote>\n\n<i>🔍 Serwerleri we ýurtlary görmek üçin «Barla» bas.</i>",
  "chk_head2": "\n🔍 <b>Serwerler</b>\n<blockquote>{lines}</blockquote>\n✅ {work} işleýär · ❌ {dead} işlemeýär · ⏳ {wait} garaşýar\n🎯 ýurt dogry · ⚠️ ýurt nädogry\n🕒 Soňky TM testi: {ago}",
  "b_mcheck": "🔍 Barla"
 }
