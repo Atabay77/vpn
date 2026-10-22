@@ -400,7 +400,7 @@ def quick_check(ch=None):
         if not q.get("id") or q["id"] == ch.get("quick_done") or not q.get("codes"): return
         t0 = time.time()
         obs, keys = [], []
-        for i, c in enumerate(q["codes"][:80]):
+        for i, c in enumerate(q["codes"][:120]):
             ob = to_outbound(c, "q%d" % i)
             if ob: obs.append(ob); keys.append(code_key(c))
         res = run_tests(obs) if obs else []
