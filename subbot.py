@@ -455,8 +455,8 @@ def set_name(link, name):
 
 # ───────── ÜLKE & İSİM ─────────
 COUNTRIES = {
-    "ru": ("🇷🇺", "Russia", ["⚡ Moscow Pulse", "🏰 Kremlin Bastion", "❄️ Siberian Frost", "🐻 Taiga Bear", "🌊 Neva Stream", "🚄 Volga Express",
-                            "🛡️ Ural Shield", "💎 Baikal Crystal", "🔥 Red Square Core", "🦅 Arctic Falcon", "🌉 Petersburg Gate", "🌋 Kamchatka Storm"]),
+    "ru": ("🇷🇺", "Russia", ["🎮 PUBG Arena", "🍗 Chicken Dinner", "🪂 Pochinki Drop", "🎯 Headshot Pro", "🔫 Erangel Sniper", "🏜️ Miramar Rush",
+                            "🪖 Level 3 Helmet", "🚗 Dacia Drive", "💥 Clutch King", "🕹️ Low Ping Gaming", "🏆 Esports Hub", "🗺️ Sanhok Zone"]),   # Rusya: oyun / PUBG isimleri
     "de": ("🇩🇪", "Germany", ["🏎️ Autobahn Express", "⚡ Cyber Autobahn", "🛡️ Berlin Aegis", "🏰 Bavaria Citadel", "🌲 Black Forest", "⚙️ Precision Core",
                              "🚄 Frankfurt Rail", "🦅 Rhine Eagle", "🔩 Munich Forge", "🌉 Hamburg Harbor", "💠 Cologne Matrix", "🏁 Nürburg Ring"]),
     "nl": ("🇳🇱", "Netherlands", ["🚲 Amsterdam Pulse", "🌷 Tulip Gateway", "🌊 Dutch Harbor", "⚡ Rotterdam Core", "🧡 Orange Express", "🌬️ Windmill Flow",
