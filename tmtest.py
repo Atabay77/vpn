@@ -347,7 +347,7 @@ def cycle():
         bad = [i for i, r in enumerate(res_list) if r is not None and r[0] < 0]
         if not bad: break
         log("🔁 %d kod çalışmadı, 1 dk sonra tekrar denenecek (%d/%d)" % (len(bad), attempt, TRIES))
-        time.sleep(TRY_WAIT)
+        wait_quick(TRY_WAIT)   # beklerken bottan gelen hızlı kontrol isteklerine bakar
         try: again = run_tests([obs[i] for i in bad])
         except RuntimeError as e:
             log("❌ %s" % e); break
@@ -358,7 +358,7 @@ def cycle():
     good = sum(1 for v in results.values() if v > 0)
     try: ch = read_channel(svc, fid)   # test sürerken bot kanala yazmış olabilir (kodlar, güncelleme): onları silme
     except Exception: pass
-    ch.update({"tmtest_ver": my_sha(), "results": results, "exits": exits, "ts": int(time.time()), "status": "ok", "status_ts": int(time.time()),
+    ch.update({"tmtest_ver": my_sha(), "quick_ok": 1, "results": results, "exits": exits, "ts": int(time.time()), "status": "ok", "status_ts": int(time.time()),
                "country": cname, "tested": len(results), "good": good, "skipped": len(codes) - len(results)})
     write_channel(svc, fid, ch)
     log("✅ %d kod test edildi (%d sn): %d çalışıyor, %d çalışmıyor, %d desteklenmiyor (test edilmedi)"
@@ -389,12 +389,51 @@ def self_update(ch):
     log("⬆️ Telefon programı güncellendi (%s), yeniden başlıyor" % sha)
     os.execv(sys.executable, [sys.executable, "-u", SELF, "_loop"])
 
+# ───────── hızlı kontrol (bottaki 🔍 Kontrol Et) ─────────
+QUICK_POLL = 15
+def quick_check(ch=None):
+    """Bot kanala {"quick": {"id", "codes"}} yazdıysa: sadece o kodları, tekrar denemeden hemen test eder."""
+    try:
+        svc = drive_cached(); fid = channel_id(svc)
+        if ch is None: ch = read_channel(svc, fid)
+        q = ch.get("quick") or {}
+        if not q.get("id") or q["id"] == ch.get("quick_done") or not q.get("codes"): return
+        t0 = time.time()
+        obs, keys = [], []
+        for i, c in enumerate(q["codes"][:80]):
+            ob = to_outbound(c, "q%d" % i)
+            if ob: obs.append(ob); keys.append(code_key(c))
+        res = run_tests(obs) if obs else []
+        bad = [i for i, r in enumerate(res) if r is not None and r[0] < 0]
+        if bad:   # tek hızlı tekrar (anlık kopma olmasın)
+            time.sleep(3)
+            for i, r in zip(bad, run_tests([obs[i] for i in bad])):
+                if r is not None and r[0] > 0: res[i] = r
+        ch = read_channel(svc, fid)   # test sürerken bot yazmış olabilir
+        results, exits = ch.get("results") or {}, ch.get("exits") or {}
+        for k, r in zip(keys, res):
+            if r is None: continue
+            results[k] = r[0]
+            if r[1]: exits[k] = r[1]
+        ch.update({"results": results, "exits": exits, "quick_done": q["id"], "quick_ts": int(time.time()), "quick_ok": 1})
+        write_channel(svc, fid, ch)
+        log("⚡ Hızlı kontrol: %d kod, %d çalışıyor (%d sn)" % (len(keys), sum(1 for r in res if r and r[0] > 0), time.time() - t0))
+    except Exception as e:
+        _SVC.clear(); log("❌ Hızlı kontrol: %s" % str(e)[:150])
+
+def wait_quick(sec):
+    end = time.time() + sec
+    while time.time() < end:
+        time.sleep(min(QUICK_POLL, max(0, end - time.time())))
+        quick_check()
+
 def codes_sig():
     """Kanaldaki kod listesinin imzası (değişti mi diye bakmak için). Hata olursa None.
     Ayrıca bot yeni program koyduysa kendini günceller."""
     try:
         ch = read_channel(drive_cached(), channel_id(drive_cached()))
         self_update(ch)
+        quick_check(ch)
         return ch.get("codes_ts") or 0
     except Exception:
         _SVC.clear()   # bağlantı koptuysa bir dahakine yenisini kur
@@ -417,7 +456,7 @@ def loop():
             except Exception as e: log("❌ Hata: %s" % str(e)[:200])
             last_run = time.time()
         if sig is not None: last_sig = sig
-        time.sleep(60)
+        time.sleep(QUICK_POLL)
 
 def running():
     """Kayıtlı PID gerçekten tmtest mi? (yeniden başlatmadan sonra aynı numara başka programa geçebilir)"""
