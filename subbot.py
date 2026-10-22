@@ -2663,7 +2663,8 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         if uid not in ADMINS and left > 0:
             await q.answer(tr(lang, "chk_wait", m=int(left // 60) + 1), show_alert=True); return
         CHK["user"][uid] = now
-        kb = chk_kb(lang, lid); t = check_text(load_db(), lid, lang, None, "run")
+        mode = "refresh" if force and CHK.get("last_ch") else "run"   # Yenile: eski sonuç hemen görünür, yeni test arkadan
+        kb = chk_kb(lang, lid); t = check_text(load_db(), lid, lang, CHK.get("last_ch"), mode)
         msg = getattr(q, "message", None)
         if msg is not None:   # aynı kutu hemen "Kontrol ediliyor..." olur
             is_photo = bool(getattr(msg, "photo", None)); mid = msg.message_id
@@ -2671,7 +2672,7 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
                 is_photo = False; mid = (await c.bot.send_message(uid, t, parse_mode="HTML", reply_markup=kb)).message_id
         else: is_photo = False; mid = (await c.bot.send_message(uid, t, parse_mode="HTML", reply_markup=kb)).message_id
         ch = await chk_run(_read_channel, load_db()); ts = ch.get("ts") or 0
-        if ch: RUN["phone_old"] = not ch.get("quick_ok")   # telefon hızlı kontrolü bilmiyor: tam test (birkaç dk)
+        if ch: RUN["phone_old"] = not ch.get("quick_ok"); CHK["last_ch"] = ch   # telefon hızlı kontrolü bilmiyor: tam test (birkaç dk)
         if ts and now - ts < CHK_FRESH and not force: state = "fresh"   # telefon az önce test etti: tekrar test yok
         elif not ts or now - max(ts, ch.get("quick_ts") or 0) > PHONE_OFF: state = "off"   # telefon uzun süredir sonuç göndermiyor: boşuna bekletme
         elif CHK["wait"].get(lid) and CHK["qid"]: qid, state = CHK["qid"], "run"   # bu ilan zaten test ediliyor
@@ -2680,10 +2681,10 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
             if qid:
                 CHK["qid"], CHK["req"], state = qid, now, "run"
                 vlog(f"🔍 Hızlı kontrol telefona gönderildi: {db.get('market', {}).get(lid, {}).get('title', lid)}" + (" · ⚠️ telefon programı eski (tmtest.py'yi bota gönder)" if RUN.get("phone_old") else ""))
-                if RUN.get("phone_old"): await edit_box(c.bot, uid, mid, is_photo, check_text(load_db(), lid, lang, None, "run"), kb)
+                if RUN.get("phone_old") or mode == "refresh": await edit_box(c.bot, uid, mid, is_photo, check_text(load_db(), lid, lang, ch, mode), kb)
             else: state = "timeout"
         if state == "run":
-            CHK["wait"].setdefault(lid, {})[uid] = (lang, mid, is_photo, qid, now)
+            CHK["wait"].setdefault(lid, {})[uid] = (lang, mid, is_photo, qid, now, mode)
             if not CHK.get("poll") or CHK["poll"].done(): CHK["poll"] = asyncio.create_task(chk_poll(c.application))
         else: await edit_box(c.bot, uid, mid, is_photo, check_text(load_db(), lid, lang, ch, state), kb)
         ulog("m_check", f"🔍 Kontrol etti: {who(user)} · {db.get('market', {}).get(lid, {}).get('title', lid)}")
@@ -4010,6 +4011,7 @@ T["ru"].update({
 })
 
 T["tr"].update({
+  "b_buy_m": "🛒 Satın Al", "chk_refresh": "\n⏳ <i>Yeni test yapılıyor (~1 dk), sonuç gelince bu kutu güncellenecek.</i>",
   "top_sellers": "\n💱 <b>CryptoBot ile ödeyemiyor musun?</b>\n<i>Bu satıcılardan TMT karşılığında CryptoBot için USDT alabilirsin:</i>\n{sellers}",
   "link_below": "🔗 linki almak için aşağıdaki butona bas",
   "del_q": "🗑 <b>Bu kod silinsin mi?</b>\n<blockquote>🎟 {name}\nAbonelik linki artık çalışmaz.</blockquote>", "b_yes_del": "🗑 Evet, sil", "deleted": "🗑 Kod silindi",
@@ -4036,6 +4038,7 @@ T["tr"].update({
   "b_back": "◀️ Geri",
 })
 T["ru"].update({
+  "b_buy_m": "🛒 Купить", "chk_refresh": "\n⏳ <i>Идёт новый тест (~1 мин), результат обновится здесь.</i>",
   "top_sellers": "\n💱 <b>Не получается оплатить через CryptoBot?</b>\n<i>У этих продавцов можно купить USDT для CryptoBot за TMT:</i>\n{sellers}",
   "link_below": "🔗 ссылка — кнопкой ниже",
   "del_q": "🗑 <b>Удалить этот код?</b>\n<blockquote>🎟 {name}\nСсылка подписки перестанет работать.</blockquote>", "b_yes_del": "🗑 Да, удалить", "deleted": "🗑 Код удалён",
@@ -4064,6 +4067,7 @@ T["ru"].update({
 
 # Türkmençe (eksik anahtar olursa Türkçesi görünür)
 T["tk"] = {
+ "b_buy_m": "🛒 Satyn al", "chk_refresh": "\n⏳ <i>Täze test edilýär (~1 min), netije gelende şu ýer täzelener.</i>",
  "top_sellers": "\n💱 <b>CryptoBot bilen töläp bilmeýärsiňizmi?</b>\n<i>Şu satyjylardan TMT-a CryptoBot üçin USDT satyn alyp bilersiňiz:</i>\n{sellers}",
  "link_below": "🔗 linki almak üçin aşakdaky knopka bas",
  "del_q": "🗑 <b>Bu kod pozulsynmy?</b>\n<blockquote>🎟 {name}\nPodpiska linki indi işlemez.</blockquote>", "b_yes_del": "🗑 Hawa, poz", "deleted": "🗑 Kod pozuldy",
@@ -4343,7 +4347,8 @@ def check_text(db, lid, lang, ch=None, state="done", el=0):
         elif real: acc = " " + tr(lang, "chk_line_real", f=flag_of(real), n=cname(real))
         else: acc = ""
         lines.append(f"{ic} · {name}{acc}")
-    foot = {"done": tr(lang, "chk_upd", t=datetime.datetime.now(TM_TZ).strftime("%H:%M")), "timeout": tr(lang, "chk_timeout"), "off": tr(lang, "chk_off")}.get(state, "")
+    foot = {"done": tr(lang, "chk_upd", t=datetime.datetime.now(TM_TZ).strftime("%H:%M")), "timeout": tr(lang, "chk_timeout"), "off": tr(lang, "chk_off"),
+            "refresh": tr(lang, "chk_refresh") + (tr(lang, "chk_el", m=el) if el else "")}.get(state, "")
     for n in (len(lines), 15, 10, 5):   # foto altı yazı en çok 1024 karakter
         more = f"\n… +{len(lines) - n}" if len(lines) > n else ""
         t = top + tr(lang, "chk_head2", lines="\n".join(lines[:n]) + more or "—", work=w, dead=dd, wait=wt, ago=ago_l((ch or {}).get("ts"), lang)) + foot
@@ -4351,7 +4356,7 @@ def check_text(db, lid, lang, ch=None, state="done", el=0):
     return t[:1020]
 
 def chk_kb(lang, lid):
-    return KB([[B(tr(lang, "b_start"), f"u_ms:{lid}", "success"), B(tr(lang, "b_recheck"), f"u_mck:{lid}:r")], [B(tr(lang, "b_back"), f"u_ml:{lid}")]])
+    return KB([[B(tr(lang, "b_buy_m"), f"u_ms:{lid}", "success"), B(tr(lang, "b_recheck"), f"u_mck:{lid}:r", "primary")], [B(tr(lang, "b_back"), f"u_ml:{lid}")]])
 
 async def edit_box(bot, uid, mid, is_photo, t, kb):
     """Pazar kutusunu yerinde günceller (fotoğraflıysa altındaki yazı)."""
@@ -4398,11 +4403,11 @@ def market_page(db, uid, lang, i=0):
     i = max(0, min(i, n - 1)); lid = order[i]; L = db["market"][lid]
     e = db["users"].get(str(uid), {})
     cap = card_caption(db, L, lang) + tr(lang, "mkt_bal", bal=fmt_u(e.get("bal", 0))) + (tr(lang, "mkt_none") if n == 1 else "")
-    rows = [[B(tr(lang, "b_start"), f"u_ms:{lid}", "success"), B(tr(lang, "b_mcheck"), f"u_mck:{lid}")]]
+    rows = [[B(tr(lang, "b_buy_m"), f"u_ms:{lid}", "success"), B(tr(lang, "b_mcheck"), f"u_mck:{lid}", "primary")]]
     if n > 1:
         if i == 0: rows.append([B(tr(lang, "b_sellers", n=n - 1), "u_mp:1")])
         else: rows.append([B("◀️", f"u_mp:{i - 1}"), B(f"{i}/{n - 1}", f"u_mp:{i}"), B("▶️", f"u_mp:{(i + 1) % n}")])
-    rows += [[B(tr(lang, "b_sell"), "u_sell")], [B(tr(lang, "b_myl"), "u_myl")],
+    rows += [[B(tr(lang, "b_sell"), "u_sell", "danger")], [B(tr(lang, "b_myl"), "u_myl")],
              [B(tr(lang, "b_top"), "u_top")],
              [B(tr(lang, "b_rules"), "u_mrules"), B(tr(lang, "b_menu"), "u_menu")]]
     return card_photo(L), cap, KB(rows)
@@ -4657,9 +4662,10 @@ async def check_waiters(app):
     if not CHK["wait"]: return
     now = time.time(); db = load_db()
     ch = await chk_run(_read_channel, db)
+    if ch: CHK["last_ch"] = ch
     qd, ts = ch.get("quick_done") or 0, ch.get("ts") or 0
     for lid in list(CHK["wait"]):
-        for uid, (lang, mid, is_photo, qid, t0) in list(CHK["wait"][lid].items()):
+        for uid, (lang, mid, is_photo, qid, t0, mode) in list(CHK["wait"][lid].items()):
             done = qd >= qid or ts > t0
             if done or now - t0 >= CHK_WAIT:
                 CHK["wait"][lid].pop(uid, None)
@@ -4674,7 +4680,7 @@ async def check_waiters(app):
                 el = int((now - t0) // 60)
                 if el >= 1 and CHK.setdefault("el", {}).get((uid, mid)) != el:   # dakikada bir "geçen süre"
                     CHK["el"][(uid, mid)] = el
-                    await edit_box(app.bot, uid, mid, is_photo, check_text(db, lid, lang, None, "run", el), chk_kb(lang, lid))
+                    await edit_box(app.bot, uid, mid, is_photo, check_text(db, lid, lang, ch if mode == "refresh" else None, mode, el), chk_kb(lang, lid))
         if not CHK["wait"][lid]: CHK["wait"].pop(lid, None)
 
 async def chk_poll(app):
