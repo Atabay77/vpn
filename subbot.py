@@ -1144,7 +1144,7 @@ def code_card(s, kid, uid):
             + (f"\n👮 Sahibi  <code>{s.get('owner_id')}</code>" if uid in ADMINS and s.get("owner_id") and s.get("owner_id") not in ADMINS else "")
             + "</blockquote>\n"
             + L(uid, "🔗 <b>Abonelik linki</b> <i>(dokun → kopyala)</i>", "🔗 <b>Ссылка подписки</b> <i>(нажмите → скопировать)</i>") + f"\n<code>{esc(sub_link(fid) if fid else 'Drive dosyası yok')}</code>"
-            + (f"\n\n🔒 <b>Happ limitli link</b> · 📱 {s['happ']['limit']} cihaz\n<code>{esc(s['happ']['link'])}</code>" if s.get("happ") and uid in ADMINS else ""))
+            + (f"\n\n🔒 <b>Happ limitli link</b> · 📱 {str(s['happ']['limit']) + ' cihaz' if s['happ'].get('limit') else 'limit sitede'}\n<code>{esc(s['happ']['link'])}</code>" if s.get("happ") and uid in ADMINS else ""))
 
 def code_kb(kid, uid):
     rows = [[B(L(uid, "🏷 Başlık", "🏷 Заголовок"), f"kt:{kid}"), B(L(uid, "🔘 Buton Adı", "🔘 Имя кнопки"), f"kn:{kid}")],
@@ -1233,8 +1233,10 @@ async def on_num(c, uid, st, n, send, who=""):
     if what == "nk_days":
         res, err = await asyncio.to_thread(create_vip, st["name"], uid, n or None)
         if res: audit(uid, f"create {res[0]} {st['name']} {n or '∞'}g")
-        if res and st.get("happ"):   # limitli kod: süreden sonra cihaz limiti
-            await send(*ask_num(uid, "hp_limit", f"✅ <b>{esc(st['name'])}</b> oluşturuldu.\n", kid=res[0])); return
+        if res and st.get("happ"):   # limitli kod: süreden sonra cihaz limiti (API yoksa siteden yapıştırma)
+            if all(happ_creds()): await send(*ask_num(uid, "hp_limit", f"✅ <b>{esc(st['name'])}</b> oluşturuldu.\n", kid=res[0]))
+            else: await send(*happ_paste_prompt(uid, res[0]))
+            return
         await send(*create_result(res, err, st["name"], uid))
         if res and uid not in ADMINS:
             await notify_founders(c.application, f"🔔 Alt admin <b>{esc(who)}</b> (<code>{uid}</code>) kod oluşturdu: <code>{esc(st['name'])}</code> · {n} gün")
@@ -1242,8 +1244,8 @@ async def on_num(c, uid, st, n, send, who=""):
         kid = st["kid"]
         try: link, enc = await asyncio.to_thread(happ_make, kid, n)
         except RuntimeError as e:
-            await send(f"⚠️ <b>Happ limitli link oluşturulamadı</b>\n<blockquote>{esc(str(e))}</blockquote>" + ("\n<i>Happ'ta ücretli plan gerekiyor (happ-proxy.com → Your Plan → Change).</i>" if "subscription" in str(e).lower() else ""),
-                       KB([[B("🎟 Koda Git", f"kv:{kid}", "primary"), B("◀️ Admin", "admin")]])); return
+            await send(f"⚠️ <b>Happ limitli link oluşturulamadı</b>\n<blockquote>{esc(str(e))}</blockquote>" + ("\n<i>Happ API'si Free planda kapalı. Linki happ-proxy.com'da oluşturup Install code'u «✍️ Siteden Yapıştır» ile ekle.</i>" if "subscription" in str(e).lower() else ""),
+                       KB([[B("✍️ Siteden Yapıştır", f"hlp:{kid}", "primary")], [B("🎟 Koda Git", f"kv:{kid}"), B("◀️ Admin", "admin")]])); return
         audit(uid, f"happ limit {kid} {n}")
         await send(f"✅ <b>Limitli link hazır</b>\n<blockquote>📱 En fazla <b>{n}</b> cihaz" + ("" if enc else "\n⚠️ Şifrelenemedi: kullanıcı limiti linkten silebilir.") + "</blockquote>\n"
                    f"🔗 <b>Happ linki</b> <i>(dokun → kopyala)</i>\n<code>{esc(link)}</code>", KB([[B("🎟 Koda Git", f"kv:{kid}", "primary"), B("◀️ Admin", "admin")]]))
@@ -1461,6 +1463,16 @@ async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
             await u.message.reply_text(f"🔎 <b>{len(found)} sonuç</b>", parse_mode="HTML",
                                        reply_markup=KB([[B(f"{short(us[k].get('name') or k, 20)} · {k}", f"uv:{k}")] for k in found] + [[B("◀️ Admin", "admin")]]))
 
+        elif act == "hp_paste":
+            kid = st["kid"]
+            try: link, enc = await asyncio.to_thread(happ_attach, kid, txt)
+            except RuntimeError as e:
+                STATE[uid] = st; await u.message.reply_text(f"⚠️ {esc(str(e))} Install code'u (ör. <code>6P0hVao1fG5e</code>) tekrar yapıştır.", parse_mode="HTML", reply_markup=back(f"kv:{kid}")); return
+            audit(uid, f"happ paste {kid}")
+            await u.message.reply_text("✅ <b>Limitli link hazır</b>" + ("" if enc else "\n⚠️ Şifrelenemedi: kullanıcı limiti linkten silebilir.") +
+                                       f"\n🔗 <b>Happ linki</b> <i>(dokun → kopyala)</i>\n<code>{esc(link)}</code>", parse_mode="HTML",
+                                       reply_markup=KB([[B("🎟 Koda Git", f"kv:{kid}", "primary"), B("◀️ Admin", "admin")]]))
+
         elif act == "hp_set":
             try: await u.message.delete()   # anahtar sohbette kalmasın
             except Exception: pass
@@ -1538,7 +1550,7 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         miss = await missing_channels(c.bot, uid)
         if miss:
             await q.answer(); await safe_edit(q, *join_view(lang_of(load_db(), uid), miss)); return
-    if uid not in ADMINS and (a in FOUNDER_ONLY or a.startswith(("sv:", "se:", "sd:", "sa_del:", "sa_ext:", "sa_lim:", "kx:", "kxs:", "ul:", "chd:", "ord_ok:", "ord_no:", "t_rep:", "t_close:", "tv:", "ug:", "ux:", "uxc:", "ub:", "uv:", "ubal:", "mk_l:", "mk_ok:", "mk_rm:", "mk_ph:", "hl:"))):
+    if uid not in ADMINS and (a in FOUNDER_ONLY or a.startswith(("sv:", "se:", "sd:", "sa_del:", "sa_ext:", "sa_lim:", "kx:", "kxs:", "ul:", "chd:", "ord_ok:", "ord_no:", "t_rep:", "t_close:", "tv:", "ug:", "ux:", "uxc:", "ub:", "uv:", "ubal:", "mk_l:", "mk_ok:", "mk_rm:", "mk_ph:", "hl:", "hlp:"))):
         await q.answer(L(uid, "⛔ Erişim yok", "⛔ Нет доступа"), show_alert=True); return
     if a not in ("toggle_sys", "upd_now"):
         await q.answer()
@@ -1602,9 +1614,13 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
 
     elif a.startswith("hl:"):
         kid = a.split(":", 1)[1]
-        if not all(happ_creds()): await safe_edit(q, *happ_view()); return
+        if not all(happ_creds()): await safe_edit(q, *happ_paste_prompt(uid, kid)); return
         t, kb = ask_num(uid, "hp_limit", f"🎟 <b>{esc(short(btn_name(db['subs'].get(kid, {}), kid), 40))}</b>\n", kid=kid)
+        kb = KB(kb.inline_keyboard[:-1] + ((B("✍️ Siteden Yapıştır", f"hlp:{kid}"),),) + kb.inline_keyboard[-1:])
         await safe_edit(q, t, kb)
+
+    elif a.startswith("hlp:"):
+        await safe_edit(q, *happ_paste_prompt(uid, a.split(":", 1)[1]))
 
     elif a == "ref_test":   # davetle gelen kullanıcının gördüğü soruyu dene
         await safe_edit(q, *captcha_view(lang_of(load_db(), uid), uid, test=True))
@@ -2170,15 +2186,39 @@ def happ_make(kid, limit):
     mutate(lambda d: d["subs"].get(kid, {}).__setitem__("happ", {"code": j["install_code"], "id": j.get("id"), "limit": limit, "link": enc or plain, "enc": bool(enc), "ts": time.time()}))
     return enc or plain, bool(enc)
 
+def happ_attach(kid, txt):
+    """happ-proxy.com sitesinde oluşturulan limitli linki koda bağlar (Free plan: API kapalı, site açık).
+    Kabul: 12 haneli install code, '...installid=XXX' içeren link ya da sitenin verdiği happ://crypt linki."""
+    db = load_db(); s = db["subs"].get(kid)
+    if not s or not s.get("file_id"): raise RuntimeError("Kod bulunamadı.")
+    t = txt.strip()
+    m = re.search(r"installid=([A-Za-z0-9]{6,32})", t, re.I) or re.fullmatch(r"([A-Za-z0-9]{6,32})", t)
+    if m:
+        code = m.group(1)
+        plain = sub_link(s["file_id"]) + "#" + urllib.parse.quote(name_of(s, kid)) + "?installid=" + code
+        enc = happ_encrypt(plain); link = enc or plain
+    elif re.fullmatch(r"happ://crypt\d?/\S+", t): code, enc, link = None, True, t
+    else: raise RuntimeError("Install code ya da link tanınmadı.")
+    mutate(lambda d: d["subs"].get(kid, {}).__setitem__("happ", {"code": code, "limit": None, "link": link, "enc": bool(enc), "ts": time.time(), "site": True}))
+    return link, bool(enc)
+
 def happ_view():
     p, k = happ_creds()
     t = ("🔒 <b>Happ Limitli Kod</b>\n<blockquote>Kod en fazla seçtiğin sayıda cihaza kurulabilir (1–100). Link şifrelenir, kullanıcı limiti silemez.\n"
          f"🔑 Happ hesabı  <b>{('bağlı · ' + esc(p)) if p and k else 'bağlı değil'}</b>\n"
-         "⚠️ Happ'ta ücretli plan gerekir (Free planda Happ «active subscription» hatası verir).</blockquote>\n"
-         "<i>Var olan bir koda da limit eklenebilir: Kodlarım → kod → 🔒 Happ Limit.</i>")
-    rows = ([[B("✨ Limitli Kod Oluştur", "hp_new", "primary")]] if p and k else []) + [[B("🔑 Happ Bilgileri", "hp_set")]] + \
+         "ℹ️ Happ API'si sadece ücretli planda çalışıyor. Free planda: linki happ-proxy.com → Limited links'ten oluştur (10 adet), çıkan Install code'u bota yapıştır.</blockquote>\n"
+         "<i>Kodlarım → kod → 🔒 Happ Limit → ✍️ Siteden Yapıştır.</i>")
+    rows = [[B("✨ Limitli Kod Oluştur", "hp_new", "primary")], [B("🔑 Happ Bilgileri", "hp_set")]] + \
            ([[B("🗑 Bağlantıyı Kaldır", "hp_del", "danger")]] if p else []) + [[B("◀️ Admin", "admin")]]
     return t, KB(rows)
+
+def happ_paste_prompt(uid, kid):
+    STATE[uid] = {"action": "hp_paste", "kid": kid}
+    s = load_db()["subs"].get(kid, {})
+    return prompt("✍️ <b>Happ limitli link (siteden)</b>",
+                  "1) happ-proxy.com → <b>Limited links</b> → yeni link oluştur, cihaz limitini seç.\n"
+                  "2) Çıkan <b>Install code</b>'u (ya da linkin tamamını) buraya yapıştır.\n"
+                  f"<i>Bot bunu bu kodun aboneliğine bağlar ve şifreler:</i>\n🎟 <b>{esc(short(btn_name(s, kid), 40))}</b>", f"kv:{kid}")
 
 def set_env(key, val):
     """env.txt'de bir satırı değiştirir/ekler/siler (val boşsa siler)."""
