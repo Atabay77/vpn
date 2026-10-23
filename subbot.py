@@ -1085,6 +1085,12 @@ async def post_init(app):
         except Exception: pass
     try: BOT["un"] = (await app.bot.get_me()).username or ""
     except Exception as e: log.warning("get_me: %s", e)
+    try:
+        sw = mutate(switch_bot)
+        if sw:
+            vlog(f"🔁 Bot değişti ({sw[0]} → {BOT_ID}): {sw[1]} ilan fotoğrafı silindi (eski botun fotoğrafları yenisinde açılmaz)")
+            await notify_founders(app, f"🔁 <b>Yeni bota geçildi</b> (@{esc(BOT['un'])})\n<blockquote>📷 Eski botun fotoğrafları yenisinde açılmadığı için {sw[1]} ilan fotoğrafı kaldırıldı; ilanlar fotoğrafsız görünür.\n📢 Zorunlu kanallarda bu botu admin yapmayı unutma.</blockquote>")
+    except Exception: log.exception("bot switch")
     global CHECK_LOCK, WAKE
     CHECK_LOCK, WAKE = asyncio.Lock(), asyncio.Event()
     app.bot_data["mon"] = asyncio.create_task(monitor(app))
@@ -4486,6 +4492,18 @@ def remember_own(m, h):
         fid = m.photo[-1].file_id
         mutate(lambda d: d.__setitem__("own_img_fid", {"h": h, "id": fid}))
     except Exception: pass
+
+def switch_bot(d):
+    """Token başka bota geçtiyse: eski bota ait Telegram fotoğraf kimlikleri yenisinde çalışmaz, temizlenir. Dönüş: (eski_id, silinen) ya da None."""
+    old = d.get("bot_id"); d["bot_id"] = BOT_ID
+    if not old or old == BOT_ID: return None
+    n = 0
+    for L in d.get("market", {}).values():
+        if L.get("photo"):
+            L["photo"] = None; n += 1
+            if not L.get("own"): L["photo_ok"] = False
+    for k in ("own_img_fid", "banner_fid", "banner_u"): d.pop(k, None)
+    return old, n
 
 # ── ana menü banner'ı (dile göre; fotoğraflar dosyanın sonunda gömülü) ──
 BOT_ID = os.environ.get("BOT_TOKEN", "").split(":")[0]   # file_id bota özel: token başka bota geçerse yeniden yüklenir
