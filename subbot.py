@@ -1196,6 +1196,7 @@ def admin_kb():
         [B("👥 Kullanıcı Logları", "ul_open")],
         [B("🔎 Kullanıcı Ara", "usearch")],
         [B("💰 Bakiye Ekle / Düş", "bal_find")],
+        [B("🚫 Ban / Unban", "ban_menu")],
         [B("📈 Rapor", "rep_today"), B("📊 İstatistik", "stats")],
         [B("📢 Kanallar", "chans"), B("🪙 CryptoBot", "cp")],
         [B("🏪 Pazar", "mk_admin"), B("💳 TMT 🔜", "pay_set")],
@@ -1566,6 +1567,14 @@ async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
             await u.message.reply_text(f"🔎 <b>{len(found)} sonuç</b>", parse_mode="HTML",
                                        reply_markup=KB([[B(f"{short(us[k].get('name') or k, 20)} · {k}", f"uv:{k}")] for k in found] + [[B("◀️ Admin", "admin")]]))
 
+        elif act == "ban_find":
+            found = [k for k in find_users(txt) if int(k) not in ADMINS]
+            if not found:
+                STATE[uid] = st; await u.message.reply_text("⚠️ Bulunamadı. Başka bir ID / @kullanıcıadı / isim dene.", reply_markup=back("ban_menu")); return
+            us = load_db()["users"]
+            await u.message.reply_text("🚫 <b>Kimi banlayalım?</b>", parse_mode="HTML",
+                                       reply_markup=KB([[B(f"{short(us[k].get('name') or k, 20)} · {k}", f"bnq:{k}")] for k in found[:10]] + [[B("◀️ Geri", "ban_menu")]]))
+
         elif act == "mk_rej":
             lid = st["lid"]; why = "" if txt.strip() == "-" else txt.strip()[:300]
             def f(d):
@@ -1656,7 +1665,7 @@ async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
         log.exception("msg_handler")
         await send_error(c, uid, f"mesaj:{act}", e)
 
-FOUNDER_ONLY = {"hp", "hp_set", "hp_del", "hp_new", "ref_test", "mk_admin", "mk_price", "mk_oph", "mk_ods", "mk_odr", "bal_find", "usearch", "rep_today", "rep_yday", "tickets_bug", "t_cancel", "tickets", "cp_test", "cp", "cp_set", "cp_del", "ul_open", "stats", "chans", "ch_add", "pay_set", "bcast", "bcast_yes", "rollback", "rollback_yes", "auto_ann", "toggle_sys", "admin", "sources", "s_add", "logs", "upd_now", "get_zip", "sa_menu", "sa_add", "bulk_ann", "bulk_title", "bulk_yes"}
+FOUNDER_ONLY = {"ban_menu", "ban_find", "hp", "hp_set", "hp_del", "hp_new", "ref_test", "mk_admin", "mk_price", "mk_oph", "mk_ods", "mk_odr", "bal_find", "usearch", "rep_today", "rep_yday", "tickets_bug", "t_cancel", "tickets", "cp_test", "cp", "cp_set", "cp_del", "ul_open", "stats", "chans", "ch_add", "pay_set", "bcast", "bcast_yes", "rollback", "rollback_yes", "auto_ann", "toggle_sys", "admin", "sources", "s_add", "logs", "upd_now", "get_zip", "sa_menu", "sa_add", "bulk_ann", "bulk_title", "bulk_yes"}
 OWNED = ("kv", "kt", "kn", "ka", "kd", "kdy")   # alt admin sadece kendi kodunda
 def src_find(db, h): return next((s for s in db["sources"] if hashlib.md5(s.encode()).hexdigest()[:8] == h), None)
 
@@ -1669,7 +1678,7 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         miss = await missing_channels(c.bot, uid)
         if miss:
             await q.answer(); await safe_edit(q, *join_view(lang_of(load_db(), uid), miss)); return
-    if uid not in ADMINS and (a in FOUNDER_ONLY or a.startswith(("sv:", "se:", "sd:", "sa_del:", "sa_ext:", "sa_lim:", "kx:", "kxs:", "ul:", "chd:", "ord_ok:", "ord_no:", "t_rep:", "t_close:", "tv:", "ug:", "ux:", "uxc:", "ub:", "uv:", "ubal:", "mk_l:", "mk_ok:", "mk_rm:", "mk_ph:", "mk_pok:", "mk_pno:", "mk_prj:", "hl:", "hlp:"))):
+    if uid not in ADMINS and (a in FOUNDER_ONLY or a.startswith(("sv:", "se:", "sd:", "sa_del:", "sa_ext:", "sa_lim:", "kx:", "kxs:", "ul:", "chd:", "ord_ok:", "ord_no:", "t_rep:", "t_close:", "tv:", "ug:", "ux:", "uxc:", "ub:", "uv:", "ubal:", "mk_l:", "mk_ok:", "mk_rm:", "mk_ph:", "mk_pok:", "mk_pno:", "mk_prj:", "hl:", "hlp:", "ubn:", "bnd:", "bnq:"))):
         await q.answer(L(uid, "⛔ Erişim yok", "⛔ Нет доступа"), show_alert=True); return
     if a not in ("toggle_sys", "upd_now"):
         await q.answer()
@@ -1857,12 +1866,45 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         kid = a.split(":", 1)[1]
         await safe_edit(q, *ask_num(uid, "add_days", f"🎟 <b>{esc(name_of(db['subs'].get(kid, {}), kid))}</b>\n", kid=kid))
 
+    elif a == "ban_menu":
+        await safe_edit(q, *ban_view())
+
+    elif a == "ban_find":
+        STATE[uid] = {"action": "ban_find"}
+        await safe_edit(q, *prompt("🚫 <b>Kullanıcı Banla</b>", "Telegram ID, @kullanıcıadı ya da isim yaz.", "ban_menu"))
+
+    elif a.startswith("bnq:"):   # banlamadan önce sor
+        tid_ = a.split(":", 1)[1]; e_ = db.get("users", {}).get(tid_, {})
+        await safe_edit(q, f"🚫 <b>Banlansın mı?</b>\n<blockquote>👤 {esc(e_.get('name') or '?')} <code>{tid_}</code>\nBotu hiç kullanamaz (açık pazar kodları da durur).</blockquote>",
+                        KB([[B("🚫 Evet, banla", f"bnd:{tid_}", "danger")], [B("✖️ Vazgeç", "ban_menu")]]))
+
+    elif a.startswith(("bnd:", "ubn:")):
+        tid_ = a.split(":", 1)[1]; ban_ = a.startswith("bnd:")
+        if ban_ and int(tid_) in ADMINS: await q.answer("⚠️ Kurucu banlanamaz.", show_alert=True); return
+        def f(d):
+            e = d.get("users", {}).get(tid_)
+            if e is None: return None
+            e["banned"] = ban_
+            if not ban_: e.pop("ban_until", None)
+            return e.get("name") or tid_
+        nm_ = mutate(f)
+        if nm_ is not None:
+            ulog("ban", f"{'🚫 Engellendi' if ban_ else '✅ Engel kaldırıldı'}: {nm_} ({tid_})"); audit(uid, f"{'ban' if ban_ else 'unban'} {tid_}")
+            if ban_:   # açık pazar kodları durur (para düşmeye devam etmesin)
+                for sid_, x_ in list(load_db().get("msess", {}).items()):
+                    if str(x_.get("buyer")) == tid_ and x_.get("status") == "on": await stop_session(c.application, sid_, "user")
+            try: await q.answer("🚫 Banlandı" if ban_ else "✅ Ban kaldırıldı")
+            except Exception: pass
+        await safe_edit(q, *ban_view())
+
     elif a.startswith("ub:"):
         tid_ = a.split(":", 1)[1]
         def f(d):
             e = d.get("users", {}).get(tid_)
             if not e: return None
-            e["banned"] = not e.get("banned"); return e["banned"]
+            e["banned"] = not (e.get("banned") or e.get("ban_until", 0) > time.time())
+            if not e["banned"]: e.pop("ban_until", None)
+            return e["banned"]
         st_ = mutate(f)
         if st_ is not None:
             ulog("ban", f"{'🚫 Engellendi' if st_ else '✅ Engel kaldırıldı'}: {load_db()['users'][tid_].get('name')} ({tid_})")
@@ -3556,6 +3598,14 @@ def find_users(q):
     exact = [k for k, e in us.items() if (e.get("un") or "").lower() == q]
     if exact: return exact
     return [k for k, e in us.items() if q and (q in (e.get("name") or "").lower() or q in (e.get("un") or "").lower())][:10]
+
+def ban_view():
+    """Admin → 🚫 Ban / Unban: banlılar listesi (kalıcı + süreli) ve yeni ban."""
+    db = load_db(); now = time.time()
+    bl = [(k, e) for k, e in db.get("users", {}).items() if e.get("banned") or e.get("ban_until", 0) > now]
+    lines = "\n".join(f"🚫 {esc(short(e.get('name') or '?', 22))} <code>{k}</code> · " + ("kalıcı" if e.get("banned") else f"{dur_txt(e['ban_until'] - now)} kaldı") for k, e in bl[:30]) or "Banlı kullanıcı yok."
+    rows = [[B("🚫 Kullanıcı Banla", "ban_find", "danger")]] + [[B(f"✅ Unban · {short(e.get('name') or k, 16)}", f"ubn:{k}")] for k, e in bl[:30]] + [[B("◀️ Admin", "admin")]]
+    return f"🚫 <b>Ban / Unban</b>  <code>{len(bl)}</code>\n<blockquote>{lines}</blockquote>", KB(rows)
 
 def user_view(tid):
     db = load_db(); e = db.get("users", {}).get(str(tid))
