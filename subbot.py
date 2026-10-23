@@ -32,7 +32,7 @@ BACKUP_DIR = "/root/backups"
 LINE = "──────────────"
 PAGE = 6               # Kodlarım: sayfa başına kod
 CHECK_EVERY = 120      # saniye: iki kontrol arası bekleme
-NEW_IP_LIMIT = 1       # bundan FAZLA yeni IP görülürse kodlar yenilenir
+NEW_IP_LIMIT = 1       # varsayılan: bundan FAZLA yeni IP görülürse kodlar yenilenir (Admin → 🚨 IP Eşiği ile değişir)
 SUB_LIMIT = 10         # alt admin için varsayılan kod limiti (eklerken değiştirilebilir)
 SUB_DAYS = 7
 DEFAULT_DB = {"subs": {}, "template": [], "sources": [], "free_files": [], "sub_admins": {}, "seen_ips": [], "users": {}, "orders": {}, "channels": []}
@@ -821,12 +821,13 @@ def check_cycle(force=False):
     dead_tm, tm_ms, tm_fresh, tm_exits = tm_sync(db, sources, codes)
     dead_tm &= {code_key(c) for c in codes}
     tm_changed = sorted(dead_tm) != sorted(db.get("tm_dead_pushed", [])) or RUN.pop("exits_changed", False)
-    if not force and old and len(new) <= NEW_IP_LIMIT and not tm_changed:
+    need = ip_need(db)
+    if not force and old and len(new) < need and not tm_changed:
         RUN["last_msg"] = f"✅ {len(codes)} kod, {len(new)} yeni IP → değişiklik yok"
-        vlog(f"ℹ️ {len(codes)} kod · {len(new)} yeni IP (eşik: en az {NEW_IP_LIMIT + 1}) → değişiklik yok")
+        vlog(f"ℹ️ {len(codes)} kod · {len(new)} yeni IP (eşik: en az {need}) → değişiklik yok")
         return None
 
-    why = "⚡ Elle güncelleme" if force else (f"🚨 {len(new)} yeni IP bulundu" if (not old or len(new) > NEW_IP_LIMIT) else "📱 Telefon testi değişti")
+    why = "⚡ Elle güncelleme" if force else (f"🚨 {len(new)} yeni IP bulundu" if (not old or len(new) >= need) else "📱 Telefon testi değişti")
     vlog(f"{why} → {len(codes)} kod yenileniyor...")
     if dead_tm:
         keep = [c for c in codes if code_key(c) not in dead_tm]
@@ -1181,12 +1182,17 @@ def _main_kb(uid):
                [lang_btn],
                [B("🟡 Admin", "admin", "danger")]])
 
+def ip_need(db=None):
+    """Kaç yeni IP görülünce bütün kodlar yenilenir (kurucu Admin'den değiştirir)."""
+    try: return int((db if db is not None else load_db()).get("ip_need") or NEW_IP_LIMIT + 1)
+    except Exception: return NEW_IP_LIMIT + 1
+
 def admin_text():
     on = not os.path.exists(STOP_FLAG)
     return ("⚙️ <b>Admin</b>\n"
             f"<blockquote>⚙️ Sistem  <b>{'🟢 Çalışıyor' if on else '🔴 Durduruldu'}</b>\n"
             f"🔍 Kontrol her <b>{CHECK_EVERY // 60} dk</b>\n"
-            f"🚨 En az <b>{NEW_IP_LIMIT + 1}</b> yeni IP → bütün kodlar yenilenir\n"
+            f"🚨 En az <b>{ip_need()}</b> yeni IP → bütün kodlar yenilenir\n"
             "📱 TM'de çalışmayan kodlar telefon testine göre çıkarılır\n"
             "🕰 Otomatik duyuru (Aşkabat saati):\n" + "\n".join(f"   {h:02d}:00  {esc(t)}" for h, t in sorted(AUTO_ANN.items())) + "</blockquote>")
 
@@ -1211,6 +1217,7 @@ def admin_kb():
         [B("🧪 Davet Testi", "ref_test")],
         [B("🔒 Happ Limitli Kod", "hp")],
         [B(f"🕰 Oto. Duyuru: {'Açık' if on else 'Kapalı'}", "auto_ann")],
+        [B(f"🚨 IP Eşiği: en az {ip_need()} yeni IP", "ip_need")],
         [B("♻️ Önceki Sürüme Dön", "rollback")],
         [B("▶️ Başlat", "toggle_sys", "success") if stop else B("🛑 Durdur", "toggle_sys", "danger")],
         [B("◀️ Menü", "menu")]])
@@ -1299,6 +1306,7 @@ NUM_ASK = {   # ne soruluyor: (başlık, soru, hazır butonlar, birim)
     "sa_limit": ("🎟 <b>Kod limiti</b>", "En fazla kaç kod oluşturabilsin?", [1, 3, 5, 10, 20], ""),
     "sa_ext":   ("⏳ <b>Süre uzat</b>", "Kaç gün uzatılsın?", DAYS, "g"),
     "sa_lim":   ("🎟 <b>Kod limiti</b>", "Yeni limit kaç olsun?", [1, 3, 5, 10, 20], ""),
+    "ip_need":  ("🚨 <b>Yeni IP eşiği</b>", "Kaç yeni IP görülünce bütün kodlar yenilensin? (1–50)", [1, 2, 3, 4, 5], ""),
     "hp_limit": ("🔒 <b>Cihaz limiti</b>", "Bu kod en fazla kaç cihaza kurulabilsin? (1–100)", [1, 2, 3, 5, 10], "📱"),
 }
 
@@ -1333,9 +1341,9 @@ def create_result(res, err, name, uid=None):
 async def on_num(c, uid, st, n, send, who=""):
     """send(text, kb): mesajı düzenler ya da yeni mesaj atar."""
     what = st["what"]
-    if what.startswith("sa_") and uid not in ADMINS: return
+    if (what.startswith("sa_") or what == "ip_need") and uid not in ADMINS: return
     lo = 0 if what == "nk_days" and uid in ADMINS else 1
-    hi = 500 if what in ("sa_limit", "sa_lim") else 100 if what == "hp_limit" else 3650
+    hi = 500 if what in ("sa_limit", "sa_lim") else 100 if what == "hp_limit" else 50 if what == "ip_need" else 3650
     if not (lo <= n <= hi):   # butonlarla birlikte tekrar sor
         ctx = {k: v for k, v in st.items() if k not in ("action", "what")}
         await send(*ask_num(uid, what, L(uid, f"⚠️ {lo} ile {hi} arasında bir sayı.\n", f"⚠️ Число от {lo} до {hi}.\n"), **ctx)); return
@@ -1350,6 +1358,9 @@ async def on_num(c, uid, st, n, send, who=""):
         await send(*create_result(res, err, st["name"], uid))
         if res and uid not in ADMINS:
             await notify_founders(c.application, f"🔔 Alt admin <b>{esc(who)}</b> (<code>{uid}</code>) kod oluşturdu: <code>{esc(st['name'])}</code> · {n} gün")
+    elif what == "ip_need":
+        mutate(lambda d: d.__setitem__("ip_need", n)); audit(uid, f"ip_need {n}"); vlog(f"🚨 IP eşiği değişti: en az {n} yeni IP")
+        await send("✅ <b>IP eşiği kaydedildi</b>\n<blockquote>En az <b>" + str(n) + "</b> yeni IP görülünce bütün kodlar yenilenir.</blockquote>\n\n" + admin_text(), admin_kb())
     elif what == "hp_limit" and uid in ADMINS:
         kid = st["kid"]
         try: link, enc = await asyncio.to_thread(happ_make, kid, n)
@@ -1671,7 +1682,7 @@ async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
         log.exception("msg_handler")
         await send_error(c, uid, f"mesaj:{act}", e)
 
-FOUNDER_ONLY = {"ban_menu", "ban_find", "hp", "hp_set", "hp_del", "hp_new", "ref_test", "mk_admin", "mk_price", "mk_oph", "mk_ods", "mk_odr", "bal_find", "usearch", "rep_today", "rep_yday", "tickets_bug", "t_cancel", "tickets", "cp_test", "cp", "cp_set", "cp_del", "ul_open", "stats", "chans", "ch_add", "pay_set", "bcast", "bcast_yes", "rollback", "rollback_yes", "auto_ann", "toggle_sys", "admin", "sources", "s_add", "logs", "upd_now", "get_zip", "sa_menu", "sa_add", "bulk_ann", "bulk_title", "bulk_yes"}
+FOUNDER_ONLY = {"ban_menu", "ban_find", "hp", "hp_set", "hp_del", "hp_new", "ref_test", "mk_admin", "mk_price", "mk_oph", "mk_ods", "mk_odr", "bal_find", "usearch", "rep_today", "rep_yday", "tickets_bug", "t_cancel", "tickets", "cp_test", "cp", "cp_set", "cp_del", "ul_open", "stats", "chans", "ch_add", "pay_set", "bcast", "bcast_yes", "rollback", "rollback_yes", "auto_ann", "toggle_sys", "ip_need", "admin", "sources", "s_add", "logs", "upd_now", "get_zip", "sa_menu", "sa_add", "bulk_ann", "bulk_title", "bulk_yes"}
 OWNED = ("kv", "kt", "kn", "ka", "kd", "kdy")   # alt admin sadece kendi kodunda
 def src_find(db, h): return next((s for s in db["sources"] if hashlib.md5(s.encode()).hexdigest()[:8] == h), None)
 
@@ -2027,6 +2038,9 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         with open(UPDATE_NOTE, "w") as nf: nf.write(sha + " (geri alındı)")
         await safe_edit(q, f"♻️ <b>Önceki sürüme dönüldü</b> <code>{sha}</code>\n<i>Bot yeniden açılıyor...</i>")
         asyncio.get_running_loop().call_later(2, restart_self)
+
+    elif a == "ip_need":
+        await safe_edit(q, *ask_num(uid, "ip_need", f"Şu an: <b>en az {ip_need()}</b> yeni IP\n"))
 
     elif a == "auto_ann":
         on = mutate(lambda d: d.__setitem__("auto_ann_on", not d.get("auto_ann_on", True)) or d["auto_ann_on"])
