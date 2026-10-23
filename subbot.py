@@ -4490,13 +4490,13 @@ async def photo_media(photo):
     if photo != OWN_IMG: return photo, None
     h = hashlib.sha256(_OWN_IMG_B64.encode()).hexdigest()[:12]
     c_ = load_db().get("own_img_fid") or {}
-    return (c_["id"], None) if c_.get("h") == h else (base64.b64decode(_OWN_IMG_B64), h)
+    return (c_["id"], None) if c_.get("h") == h and c_.get("bot") == BOT_ID else (base64.b64decode(_OWN_IMG_B64), h)
 
 def remember_own(m, h):
     if not h: return
     try:
         fid = m.photo[-1].file_id
-        mutate(lambda d: d.__setitem__("own_img_fid", {"h": h, "id": fid}))
+        mutate(lambda d: d.__setitem__("own_img_fid", {"h": h, "id": fid, "bot": BOT_ID}))
     except Exception: pass
 
 def switch_bot(d):
@@ -4590,6 +4590,19 @@ async def show_banner(c, uid, msg, kind, t, kb, send=None):
         log.warning("banner %s: %s", kind, ex)
         await c.bot.send_message(uid, t, parse_mode="HTML", reply_markup=kb, disable_web_page_preview=True)
 
+def forget_photo(fid):
+    """Bu botun açamadığı Telegram fotoğrafını ilanlardan siler. Dönüş: silindi mi."""
+    def f(d):
+        n = 0
+        for L in d.get("market", {}).values():
+            if L.get("photo") == fid:
+                L["photo"] = None; n += 1
+                if not L.get("own"): L["photo_ok"] = False
+        return n
+    n = mutate(f)
+    if n: vlog(f"📷 Açılamayan ilan fotoğrafı kaldırıldı ({n} ilan) — eski botun fotoğrafı olabilir")
+    return bool(n)
+
 async def show_market(c, q, uid, lang, i=0):
     """Pazar tek mesajda: fotoğraflı mesajsa yerinde değişir, değilse eski mesaj silinip yenisi gelir."""
     photo, cap, kb = market_page(load_db(), uid, lang, i)
@@ -4609,7 +4622,10 @@ async def show_market(c, q, uid, lang, i=0):
     try:
         if photo:
             try: m = await c.bot.send_photo(uid, media, caption=cap, parse_mode="HTML", reply_markup=kb); remember_own(m, h); return
-            except BadRequest as ex: log.warning("market foto: %s", ex)   # ör. eski botun fotoğrafı: kart fotoğrafsız gelsin
+            except BadRequest as ex:   # ör. eski botun fotoğrafı: bu bot açamıyor → kayıttan silinir
+                log.warning("market foto: %s", ex)
+                if photo != OWN_IMG and forget_photo(photo):
+                    return await show_market(c, None, uid, lang, i)   # bizim ilan varsayılan fotoğrafla, satıcı ilanı fotoğrafsız
         await c.bot.send_message(uid, cap, parse_mode="HTML", reply_markup=kb, disable_web_page_preview=True)
     except Exception as ex: log.warning("market: %s", ex)
 
