@@ -1690,7 +1690,7 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         await q.answer()
     if a != "logs" and uid in LIVE:
         LIVE.pop(uid).cancel()
-    if a != "menu": q = await off_banner(c, q)   # banner'lı menüden başka ekrana: yazı mesajına geç
+    if a not in ("menu", "tickets", "tickets_bug") and not a.startswith("my_keys"): q = await off_banner(c, q)   # banner'lı menüden başka ekrana: yazı mesajına geç
     try: db = load_db()
     except Exception as e:
         await safe_edit(q, f"❌ {esc(e)}", back("menu", "◀️ Menü")); return
@@ -1919,7 +1919,7 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         await safe_edit(q, *user_view(tid_))
 
     elif a in ("tickets", "tickets_bug"):
-        await safe_edit(q, *tickets_view(a == "tickets_bug"))
+        await show_banner(c, uid, getattr(q, "message", None), "sup", *tickets_view(a == "tickets_bug"), send=lambda t, kb: safe_edit(q, t, kb))
 
     elif a.startswith("tv:"):
         tid = a.split(":", 1)[1]; t = db.get("tickets", {}).get(tid)
@@ -2083,8 +2083,9 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
             rows.append(nav)
         rows.append([B(L(uid, "✨ Yeni Kod", "✨ Новый код"), "create_key", "success"), B(L(uid, "◀️ Menü", "◀️ Меню"), "menu")])
         expd = sum(1 for _, v in items if is_exp(v))
-        await safe_edit(q, L(uid, "👥 <b>Kodlarım</b>", "👥 <b>Мои коды</b>") + f"  <code>{len(items)}</code>\n"
-                        + "<blockquote>" + L(uid, "Yönetmek için bir koda dokun.", "Нажмите на код, чтобы управлять им.") + (L(uid, f"\n🔴 = süresi dolmuş ({expd})", f"\n🔴 = срок истёк ({expd})") if expd else "") + "</blockquote>", KB(rows))
+        await show_banner(c, uid, getattr(q, "message", None), "mine", L(uid, "👥 <b>Kodlarım</b>", "👥 <b>Мои коды</b>") + f"  <code>{len(items)}</code>\n"
+                          + "<blockquote>" + L(uid, "Yönetmek için bir koda dokun.", "Нажмите на код, чтобы управлять им.") + (L(uid, f"\n🔴 = süresi dolmuş ({expd})", f"\n🔴 = срок истёк ({expd})") if expd else "") + "</blockquote>",
+                          KB(rows), send=lambda t, kb: safe_edit(q, t, kb))
 
     elif a.startswith("kv:"):
         kid = a.split(":", 1)[1]
