@@ -1443,7 +1443,7 @@ async def start(u: Update, c: ContextTypes.DEFAULT_TYPE):
     if uid not in ADMINS:
         nm = u.effective_user.full_name or ""
         mutate(lambda d: d["sub_admins"].get(str(uid), {}).__setitem__("name", nm) if d["sub_admins"].get(str(uid), {}).get("name") != nm else None)
-    await u.message.reply_text(menu_text(uid), parse_mode="HTML", reply_markup=main_kb(uid))
+    await show_home(c, uid)
 
 async def cmd_id(u: Update, c: ContextTypes.DEFAULT_TYPE):
     await u.message.reply_text(f"ID: {u.effective_user.id}")
@@ -1690,6 +1690,7 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         await q.answer()
     if a != "logs" and uid in LIVE:
         LIVE.pop(uid).cancel()
+    if a != "menu": q = await off_banner(c, q)   # banner'lı menüden başka ekrana: yazı mesajına geç
     try: db = load_db()
     except Exception as e:
         await safe_edit(q, f"❌ {esc(e)}", back("menu", "◀️ Menü")); return
@@ -1701,7 +1702,7 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
 
     if a == "menu":
         STATE.pop(uid, None)
-        await safe_edit(q, menu_text(uid), main_kb(uid))
+        await show_home(c, uid, getattr(q, "message", None), send=lambda t, kb: safe_edit(q, t, kb))
 
     elif a == "lang":
         await safe_edit(q, *lang_pick("p"))
@@ -4547,13 +4548,12 @@ async def off_banner(c, q):
     return QProxy(q, await c.bot.send_message(q.from_user.id, "⏳"))
 
 async def show_home(c, uid, msg=None, pub=False, send=None):
-    """Ana menü. Kullanıcı menüsü: dile göre banner + altında menü yazısı. Kurucu/alt admin paneli eskisi gibi."""
+    """Ana menü: dile göre banner + altında menü yazısı (kullanıcı menüsü ya da kurucu/alt admin paneli)."""
     async def plain(t, kb):
         if send: await send(t, kb)
         else: await c.bot.send_message(uid, html_cut(t), parse_mode="HTML", reply_markup=kb, disable_web_page_preview=True)
-    if not pub and is_admin(uid): return await plain(*home(uid))
     db = load_db(); lang = lang_of(db, uid)
-    t, kb = pub_menu(db, uid)
+    t, kb = pub_menu(db, uid) if pub or not is_admin(uid) else home(uid)
     if tg_len(t) > 1024:   # foto altına sığmıyor: banner'sız
         if is_banner(msg):
             try: await msg.delete()
@@ -4596,8 +4596,9 @@ async def show_market(c, q, uid, lang, i=0):
         except Exception: pass
     try:
         if photo:
-            m = await c.bot.send_photo(uid, media, caption=cap, parse_mode="HTML", reply_markup=kb); remember_own(m, h)
-        else: await c.bot.send_message(uid, cap, parse_mode="HTML", reply_markup=kb, disable_web_page_preview=True)
+            try: m = await c.bot.send_photo(uid, media, caption=cap, parse_mode="HTML", reply_markup=kb); remember_own(m, h); return
+            except BadRequest as ex: log.warning("market foto: %s", ex)   # ör. eski botun fotoğrafı: kart fotoğrafsız gelsin
+        await c.bot.send_message(uid, cap, parse_mode="HTML", reply_markup=kb, disable_web_page_preview=True)
     except Exception as ex: log.warning("market: %s", ex)
 
 def live_view(sid, lang):
