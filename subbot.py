@@ -32,7 +32,7 @@ BACKUP_DIR = "/root/backups"
 LINE = "──────────────"
 PAGE = 6               # Kodlarım: sayfa başına kod
 CHECK_EVERY = 120      # saniye: iki kontrol arası bekleme
-NEW_IP_LIMIT = 3       # bundan FAZLA yeni IP görülürse kodlar yenilenir
+NEW_IP_LIMIT = 2       # bundan FAZLA yeni IP görülürse kodlar yenilenir
 SUB_LIMIT = 10         # alt admin için varsayılan kod limiti (eklerken değiştirilebilir)
 SUB_DAYS = 7
 DEFAULT_DB = {"subs": {}, "template": [], "sources": [], "free_files": [], "sub_admins": {}, "seen_ips": [], "users": {}, "orders": {}, "channels": []}
@@ -823,7 +823,7 @@ def check_cycle(force=False):
     tm_changed = sorted(dead_tm) != sorted(db.get("tm_dead_pushed", [])) or RUN.pop("exits_changed", False)
     if not force and old and len(new) <= NEW_IP_LIMIT and not tm_changed:
         RUN["last_msg"] = f"✅ {len(codes)} kod, {len(new)} yeni IP → değişiklik yok"
-        vlog(f"ℹ️ {len(codes)} kod · {len(new)} yeni IP (eşik: {NEW_IP_LIMIT}'ten fazla) → değişiklik yok")
+        vlog(f"ℹ️ {len(codes)} kod · {len(new)} yeni IP (eşik: en az {NEW_IP_LIMIT + 1}) → değişiklik yok")
         return None
 
     why = "⚡ Elle güncelleme" if force else (f"🚨 {len(new)} yeni IP bulundu" if (not old or len(new) > NEW_IP_LIMIT) else "📱 Telefon testi değişti")
@@ -1186,7 +1186,7 @@ def admin_text():
     return ("⚙️ <b>Admin</b>\n"
             f"<blockquote>⚙️ Sistem  <b>{'🟢 Çalışıyor' if on else '🔴 Durduruldu'}</b>\n"
             f"🔍 Kontrol her <b>{CHECK_EVERY // 60} dk</b>\n"
-            f"🚨 <b>{NEW_IP_LIMIT}</b>'ten fazla yeni IP → bütün kodlar yenilenir\n"
+            f"🚨 En az <b>{NEW_IP_LIMIT + 1}</b> yeni IP → bütün kodlar yenilenir\n"
             "📱 TM'de çalışmayan kodlar telefon testine göre çıkarılır\n"
             "🕰 Otomatik duyuru (Aşkabat saati):\n" + "\n".join(f"   {h:02d}:00  {esc(t)}" for h, t in sorted(AUTO_ANN.items())) + "</blockquote>")
 
