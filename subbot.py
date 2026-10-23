@@ -4453,6 +4453,10 @@ def market_page(db, uid, lang, i=0):
     i = max(0, min(i, n - 1)); lid = order[i]; L = db["market"][lid]
     e = db["users"].get(str(uid), {})
     cap = card_caption(db, L, lang) + tr(lang, "mkt_bal", bal=fmt_u(e.get("bal", 0))) + (tr(lang, "mkt_none") if n == 1 else "")
+    if uid in ADMINS and not L.get("own") and L.get("owner"):   # satıcı bilgisi sadece kuruculara
+        o = db["users"].get(str(L["owner"]), {})
+        un = f" · @{esc(o['un'])}" if o.get("un") else ""
+        cap += f"\n\n👤 <b>Satıcı:</b> <a href=\"tg://user?id={L['owner']}\">{esc(short(o.get('name') or 'Profil', 30))}</a>{un}\n🆔 <code>{L['owner']}</code>"
     rows = [[B(tr(lang, "b_buy_m"), f"u_ms:{lid}", "success"), B(tr(lang, "b_mcheck"), f"u_mck:{lid}", "primary")]]
     if n > 1:
         if i == 0: rows.append([B(tr(lang, "b_sellers", n=n - 1), "u_mp:1")])
