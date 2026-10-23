@@ -1247,7 +1247,7 @@ def code_card(s, kid, uid):
 def code_kb(kid, uid):
     rows = [[B(L(uid, "🏷 Başlık", "🏷 Заголовок"), f"kt:{kid}"), B(L(uid, "🔘 Buton Adı", "🔘 Имя кнопки"), f"kn:{kid}")],
             [B(L(uid, "📢 Duyuru", "📢 Объявление"), f"ka:{kid}")] + ([B("⏳ Süre", f"kx:{kid}")] if uid in ADMINS else []),
-            ([B("🔒 Happ Limit", f"hl:{kid}")] if uid in ADMINS else []) + [B(L(uid, "🗑 Sil", "🗑 Удалить"), f"kd:{kid}", "danger")],
+            [B(L(uid, "🗑 Sil", "🗑 Удалить"), f"kd:{kid}", "danger")],
             [B(L(uid, "◀️ Kodlarım", "◀️ Мои коды"), "my_keys")]]
     return KB(rows)
 
@@ -2424,8 +2424,7 @@ def happ_view():
     p, k = happ_creds()
     t = ("🔒 <b>Happ Limitli Kod</b>\n<blockquote>Kod en fazla seçtiğin sayıda cihaza kurulabilir (1–100). Link şifrelenir, kullanıcı limiti silemez.\n"
          f"🔑 Happ hesabı  <b>{('bağlı · ' + esc(p)) if p and k else 'bağlı değil'}</b>\n"
-         "ℹ️ Happ API'si sadece ücretli planda çalışıyor. Free planda: linki happ-proxy.com → Limited links'ten oluştur (10 adet), çıkan Install code'u bota yapıştır.</blockquote>\n"
-         "<i>Kodlarım → kod → 🔒 Happ Limit → ✍️ Siteden Yapıştır.</i>")
+         "ℹ️ Happ API'si sadece ücretli planda çalışıyor. Free planda: linki happ-proxy.com → Limited links'ten oluştur (10 adet), çıkan Install code'u bota yapıştır.</blockquote>")
     rows = [[B("✨ Limitli Kod Oluştur", "hp_new", "primary")], [B("🔑 Happ Bilgileri", "hp_set")]] + \
            ([[B("🗑 Bağlantıyı Kaldır", "hp_del", "danger")]] if p else []) + [[B("◀️ Admin", "admin")]]
     return t, KB(rows)
