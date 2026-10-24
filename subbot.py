@@ -1352,10 +1352,12 @@ def create_result(res, err, name, uid=None):
     left = left_txt(load_db()['subs'].get(kid, {}).get('expires'), ru)
     if ru:
         return (f"✅ <b>Код создан!</b>\n<blockquote>🎟 <b>{esc(name)}</b>\n⏳ Срок  <b>{left}</b></blockquote>\n"
-                f"🔗 <b>Ссылка подписки</b> <i>(нажмите → скопировать)</i>\n<code>{esc(user_link(fid))}</code>",
+                f"🔗 <b>Ссылка подписки</b> <i>(нажмите → скопировать)</i>\n<code>{esc(user_link(fid))}</code>"
+                + (f"\n\n🔓 <b>Открытая ссылка</b> <i>(только вы)</i>\n<code>{esc(sub_link(fid))}</code>" if uid in ADMINS else ""),
                 KB([[B("🎟 К коду", f"kv:{kid}", "primary"), B("◀️ Меню", "menu")]]))
     return (f"✅ <b>Kod oluşturuldu!</b>\n<blockquote>🎟 <b>{esc(name)}</b>\n⏳ Süre  <b>{left}</b></blockquote>\n"
-            f"🔗 <b>Abonelik linki</b> <i>(dokun → kopyala)</i>\n<code>{esc(user_link(fid))}</code>",
+            f"🔗 <b>Abonelik linki</b> <i>(dokun → kopyala)</i>\n<code>{esc(user_link(fid))}</code>"
+            + (f"\n\n🔓 <b>Açık link</b> <i>(sadece sen)</i>\n<code>{esc(sub_link(fid))}</code>" if uid in ADMINS else ""),
             KB([[B("🎟 Koda Git", f"kv:{kid}", "primary"), B("◀️ Menü", "menu")]]))
 
 async def on_num(c, uid, st, n, send, who=""):
