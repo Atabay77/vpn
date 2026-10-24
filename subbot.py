@@ -588,6 +588,8 @@ def eff_ann(db, s):
     return s.get("announce") or db.get("g_announce", "")
 
 REAL_SEP, RAND_SEP = " · ", " | "   # gerçek ülke bayrağı "·", rastgele bayrak "|" (sadece kurucu bilir)
+PING_MAX = 1500                        # varsayılan ping sınırı (ms, telefon ölçümü); Admin → ⏱ Ping Sınırı ile değişir
+PING_KEEP = 3                          # sınırın altında bundan az kod kalırsa en hızlı bu kadar kod tutulur
 REAL_MIN = 6                           # bu kadar farklı gerçek ülke varsa sadece onlar kalır
 
 def _emoji(n): return n.split(" ", 1)[0]
@@ -601,7 +603,11 @@ def _pick_name(cc, used_names, used_emojis):
             n = random.choice(free); used_names.add(n); used_emojis.add(_emoji(n))
             return n
 
-def rename_all(codes, geo, ms=None, fresh=False, exits=None):
+def ping_max(db=None):
+    try: return int((db if db is not None else load_db()).get("ping_max") or PING_MAX)
+    except Exception: return PING_MAX
+
+def rename_all(codes, geo, ms=None, fresh=False, exits=None, cap=None):
     """Kuralar:
     - Rusya tek: birden fazla Rusya varsa en iyi ms'li kalır, her zaman 2. sırada.
     - Telefon testinde ms'i olanlar ms'e göre sıralanır (düşük ping önce).
@@ -622,9 +628,13 @@ def rename_all(codes, geo, ms=None, fresh=False, exits=None):
     order = lambda x: (x["ms"] is None, x["ms"] or 0, x["i"])
     tested = sorted([x for x in info if x["tested"]], key=order)
     untested = [x for x in info if not x["tested"]]
-    skip_u = 0
+    skip_u = slow = 0
     if fresh and tested and untested:
         skip_u = len(untested); untested = []
+    if fresh and cap and tested:   # ping sınırı: yavaş kodlar Happ'te n/a görünüyor
+        fast = [x for x in tested if x["ms"] is not None and x["ms"] <= cap]
+        keep = fast if len(fast) >= PING_KEEP else tested[:PING_KEEP]
+        slow = len(tested) - len(keep); tested = keep
     ru_all = [x for x in tested if x["ex"] == "ru"] + [x for x in untested if x["ex"] == "ru"]
     ru = ru_all[0] if ru_all else None
     real, seen, others = [], {"ru"}, []
@@ -647,7 +657,7 @@ def rename_all(codes, geo, ms=None, fresh=False, exits=None):
         flag, cname, _ = COUNTRIES[cc]
         out.append(set_name(x["c"], f"{flag} {cname}{REAL_SEP if is_real else RAND_SEP}{_pick_name(cc, used_names, used_emojis)}"))
     notes = [f"🧩 Liste: {len(real)} gerçek ülke · Rusya {'2. sırada' if ru else 'yok'} · {len(plan) - len(real) - (1 if ru else 0)} rastgele"
-             + (f" · {dropped} elendi" if dropped else "") + (f" · {skip_u} test edilmemiş kod eklenmedi" if skip_u else "") + (f" · {skipped} bayrak bitti" if skipped else "")]
+             + (f" · {dropped} elendi" if dropped else "") + (f" · {skip_u} test edilmemiş kod eklenmedi" if skip_u else "") + (f" · {slow} yavaş kod (>{cap} ms) eklenmedi" if slow else "") + (f" · {skipped} bayrak bitti" if skipped else "")]
     return out, notes
 
 
@@ -825,7 +835,8 @@ def check_cycle(force=False):
     new = ips - old
     dead_tm, tm_ms, tm_fresh, tm_exits = tm_sync(db, sources, codes)
     dead_tm &= {code_key(c) for c in codes}
-    ok_tm = sorted(k for k in {code_key(c) for c in codes} if k in tm_ms) if tm_fresh else []   # telefonda çalışan kodlarımız
+    cap = ping_max(db)
+    ok_tm = sorted(k for k in {code_key(c) for c in codes} if k in tm_ms and tm_ms[k] <= cap) if tm_fresh else []   # telefonda çalışan, sınırın altındaki kodlarımız
     tm_changed = sorted(dead_tm) != sorted(db.get("tm_dead_pushed", [])) or ok_tm != db.get("tm_ok_pushed") or RUN.pop("exits_changed", False)
     need = ip_need(db)
     if not force and old and len(new) < need and not tm_changed:
@@ -845,7 +856,7 @@ def check_cycle(force=False):
     codes = dead_filter(codes)
     need_ip = [] if tm_exits else [code_host(c) for c in codes if exit_country(c, {})[0] is None]   # ölçüm yoksa: isminde ülke olmayanlar
     geo = geo_lookup([h for h in need_ip if h]) if need_ip else {}
-    renamed, notes = rename_all(codes, geo, tm_ms, tm_fresh, tm_exits)
+    renamed, notes = rename_all(codes, geo, tm_ms, tm_fresh, tm_exits, cap)
     for n in notes: vlog(n)
     targets = [(s["file_id"], name_of(s, k), eff_ann(db, s)) for k, s in db["subs"].items() if s.get("file_id") and not is_exp(s)]
     ok, bad = push_all(targets, renamed)
@@ -1225,6 +1236,7 @@ def admin_kb():
         [B("🔒 Happ Limitli Kod", "hp")],
         [B(f"🕰 Oto. Duyuru: {'Açık' if on else 'Kapalı'}", "auto_ann")],
         [B(f"🚨 IP Eşiği: en az {ip_need()} yeni IP", "ip_need")],
+        [B(f"⏱ Ping Sınırı: {ping_max()} ms", "ping_max")],
         [B("♻️ Önceki Sürüme Dön", "rollback")],
         [B("▶️ Başlat", "toggle_sys", "success") if stop else B("🛑 Durdur", "toggle_sys", "danger")],
         [B("◀️ Menü", "menu")]])
@@ -1313,6 +1325,7 @@ NUM_ASK = {   # ne soruluyor: (başlık, soru, hazır butonlar, birim)
     "sa_limit": ("🎟 <b>Kod limiti</b>", "En fazla kaç kod oluşturabilsin?", [1, 3, 5, 10, 20], ""),
     "sa_ext":   ("⏳ <b>Süre uzat</b>", "Kaç gün uzatılsın?", DAYS, "g"),
     "sa_lim":   ("🎟 <b>Kod limiti</b>", "Yeni limit kaç olsun?", [1, 3, 5, 10, 20], ""),
+    "ping_max": ("⏱ <b>Ping sınırı</b>", "Telefon testinde en fazla kaç ms ping'li kodlar listeye girsin? (300–6000)\nDaha yavaşlar Happ'te çoğu zaman n/a görünür.", [800, 1000, 1500, 2000, 3000], " ms"),
     "ip_need":  ("🚨 <b>Yeni IP eşiği</b>", "Kaç yeni IP görülünce bütün kodlar yenilensin? (1–50)", [1, 2, 3, 4, 5], ""),
     "hp_limit": ("🔒 <b>Cihaz limiti</b>", "Bu kod en fazla kaç cihaza kurulabilsin? (1–100)", [1, 2, 3, 5, 10], "📱"),
 }
@@ -1348,9 +1361,9 @@ def create_result(res, err, name, uid=None):
 async def on_num(c, uid, st, n, send, who=""):
     """send(text, kb): mesajı düzenler ya da yeni mesaj atar."""
     what = st["what"]
-    if (what.startswith("sa_") or what == "ip_need") and uid not in ADMINS: return
-    lo = 0 if what == "nk_days" and uid in ADMINS else 1
-    hi = 500 if what in ("sa_limit", "sa_lim") else 100 if what == "hp_limit" else 50 if what == "ip_need" else 3650
+    if (what.startswith("sa_") or what in ("ip_need", "ping_max")) and uid not in ADMINS: return
+    lo = 0 if what == "nk_days" and uid in ADMINS else 300 if what == "ping_max" else 1
+    hi = 500 if what in ("sa_limit", "sa_lim") else 100 if what == "hp_limit" else 50 if what == "ip_need" else 6000 if what == "ping_max" else 3650
     if not (lo <= n <= hi):   # butonlarla birlikte tekrar sor
         ctx = {k: v for k, v in st.items() if k not in ("action", "what")}
         await send(*ask_num(uid, what, L(uid, f"⚠️ {lo} ile {hi} arasında bir sayı.\n", f"⚠️ Число от {lo} до {hi}.\n"), **ctx)); return
@@ -1365,6 +1378,10 @@ async def on_num(c, uid, st, n, send, who=""):
         await send(*create_result(res, err, st["name"], uid))
         if res and uid not in ADMINS:
             await notify_founders(c.application, f"🔔 Alt admin <b>{esc(who)}</b> (<code>{uid}</code>) kod oluşturdu: <code>{esc(st['name'])}</code> · {n} gün")
+    elif what == "ping_max":
+        mutate(lambda d: d.__setitem__("ping_max", n)); audit(uid, f"ping_max {n}")
+        start_refresh(c.application, f"⏱ Ping sınırı {n} ms oldu")
+        await send(f"✅ <b>Ping sınırı kaydedildi</b>\n<blockquote>Telefon testinde <b>{n} ms</b>'den yavaş kodlar listeye girmez (en az {PING_KEEP} kod hep kalır). Kodlar şimdi yeniden yazılıyor.</blockquote>\n\n" + admin_text(), admin_kb())
     elif what == "ip_need":
         mutate(lambda d: d.__setitem__("ip_need", n)); audit(uid, f"ip_need {n}"); vlog(f"🚨 IP eşiği değişti: en az {n} yeni IP")
         await send("✅ <b>IP eşiği kaydedildi</b>\n<blockquote>En az <b>" + str(n) + "</b> yeni IP görülünce bütün kodlar yenilenir.</blockquote>\n\n" + admin_text(), admin_kb())
@@ -1689,7 +1706,7 @@ async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
         log.exception("msg_handler")
         await send_error(c, uid, f"mesaj:{act}", e)
 
-FOUNDER_ONLY = {"ban_menu", "ban_find", "hp", "hp_set", "hp_del", "hp_new", "ref_test", "mk_admin", "mk_price", "mk_oph", "mk_ods", "mk_odr", "bal_find", "usearch", "rep_today", "rep_yday", "tickets_bug", "t_cancel", "tickets", "cp_test", "cp", "cp_set", "cp_del", "ul_open", "stats", "chans", "ch_add", "pay_set", "bcast", "bcast_yes", "rollback", "rollback_yes", "auto_ann", "toggle_sys", "ip_need", "admin", "sources", "s_add", "logs", "upd_now", "get_zip", "sa_menu", "sa_add", "bulk_ann", "bulk_title", "bulk_yes"}
+FOUNDER_ONLY = {"ban_menu", "ban_find", "hp", "hp_set", "hp_del", "hp_new", "ref_test", "mk_admin", "mk_price", "mk_oph", "mk_ods", "mk_odr", "bal_find", "usearch", "rep_today", "rep_yday", "tickets_bug", "t_cancel", "tickets", "cp_test", "cp", "cp_set", "cp_del", "ul_open", "stats", "chans", "ch_add", "pay_set", "bcast", "bcast_yes", "rollback", "rollback_yes", "auto_ann", "toggle_sys", "ip_need", "ping_max", "admin", "sources", "s_add", "logs", "upd_now", "get_zip", "sa_menu", "sa_add", "bulk_ann", "bulk_title", "bulk_yes"}
 OWNED = ("kv", "kt", "kn", "ka", "kd", "kdy")   # alt admin sadece kendi kodunda
 def src_find(db, h): return next((s for s in db["sources"] if hashlib.md5(s.encode()).hexdigest()[:8] == h), None)
 
@@ -2048,6 +2065,9 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
 
     elif a == "ip_need":
         await safe_edit(q, *ask_num(uid, "ip_need", f"Şu an: <b>en az {ip_need()}</b> yeni IP\n"))
+
+    elif a == "ping_max":
+        await safe_edit(q, *ask_num(uid, "ping_max", f"Şu an: <b>{ping_max()} ms</b>\n"))
 
     elif a == "auto_ann":
         on = mutate(lambda d: d.__setitem__("auto_ann_on", not d.get("auto_ann_on", True)) or d["auto_ann_on"])
