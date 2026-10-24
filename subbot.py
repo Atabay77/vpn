@@ -604,7 +604,9 @@ def _pick_name(cc, used_names, used_emojis):
 def rename_all(codes, geo, ms=None, fresh=False, exits=None):
     """Kuralar:
     - Rusya tek: birden fazla Rusya varsa en iyi ms'li kalır, her zaman 2. sırada.
-    - Telefon testinde ms'i olanlar ms'e göre sıralanır; test edilmemişler en altta, rastgele bayrakla.
+    - Telefon testinde ms'i olanlar ms'e göre sıralanır (düşük ping önce).
+    - Telefon testi yeniyse ve çalışan kod varsa test edilmemiş kodlar EKLENMEZ (az olsun, hepsi çalışsın).
+      Hiç ölçülmüş kod yoksa (test yok/eski) eskisi gibi hepsi kalır.
     - En üstte gerçek ülkeler (her ülkeden en hızlısı, gerçek bayrakla). 6+ farklı gerçek ülke varsa
       sadece onlar kalır; azsa geri kalan kodlar onların altına rastgele bayrakla eklenir.
     - Hiçbir bayrak (Rusya dahil) iki kez kullanılmaz; isim/emoji de tekrar etmez.
@@ -620,6 +622,9 @@ def rename_all(codes, geo, ms=None, fresh=False, exits=None):
     order = lambda x: (x["ms"] is None, x["ms"] or 0, x["i"])
     tested = sorted([x for x in info if x["tested"]], key=order)
     untested = [x for x in info if not x["tested"]]
+    skip_u = 0
+    if fresh and tested and untested:
+        skip_u = len(untested); untested = []
     ru_all = [x for x in tested if x["ex"] == "ru"] + [x for x in untested if x["ex"] == "ru"]
     ru = ru_all[0] if ru_all else None
     real, seen, others = [], {"ru"}, []
@@ -642,7 +647,7 @@ def rename_all(codes, geo, ms=None, fresh=False, exits=None):
         flag, cname, _ = COUNTRIES[cc]
         out.append(set_name(x["c"], f"{flag} {cname}{REAL_SEP if is_real else RAND_SEP}{_pick_name(cc, used_names, used_emojis)}"))
     notes = [f"🧩 Liste: {len(real)} gerçek ülke · Rusya {'2. sırada' if ru else 'yok'} · {len(plan) - len(real) - (1 if ru else 0)} rastgele"
-             + (f" · {dropped} elendi" if dropped else "") + (f" · {skipped} bayrak bitti" if skipped else "")]
+             + (f" · {dropped} elendi" if dropped else "") + (f" · {skip_u} test edilmemiş kod eklenmedi" if skip_u else "") + (f" · {skipped} bayrak bitti" if skipped else "")]
     return out, notes
 
 
@@ -820,7 +825,8 @@ def check_cycle(force=False):
     new = ips - old
     dead_tm, tm_ms, tm_fresh, tm_exits = tm_sync(db, sources, codes)
     dead_tm &= {code_key(c) for c in codes}
-    tm_changed = sorted(dead_tm) != sorted(db.get("tm_dead_pushed", [])) or RUN.pop("exits_changed", False)
+    ok_tm = sorted(k for k in {code_key(c) for c in codes} if k in tm_ms) if tm_fresh else []   # telefonda çalışan kodlarımız
+    tm_changed = sorted(dead_tm) != sorted(db.get("tm_dead_pushed", [])) or ok_tm != db.get("tm_ok_pushed") or RUN.pop("exits_changed", False)
     need = ip_need(db)
     if not force and old and len(new) < need and not tm_changed:
         RUN["last_msg"] = f"✅ {len(codes)} kod, {len(new)} yeni IP → değişiklik yok"
@@ -851,6 +857,7 @@ def check_cycle(force=False):
         if not bad:   # hata varsa eskileri kalsın, sonraki turda tekrar dener
             d["seen_ips"] = sorted(ips)
             d["tm_dead_pushed"] = sorted(dead_tm)
+            d["tm_ok_pushed"] = ok_tm
     mutate(f)
     RUN["last_msg"] = f"🔄 Güncellendi: {len(renamed)} kod → {ok}/{len(targets)} Drive"
     return {"new": len(new), "codes": renamed, "ok": ok, "total": len(targets), "bad": bad, "force": force}
