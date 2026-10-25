@@ -589,6 +589,8 @@ def eff_ann(db, s):
 
 REAL_SEP, RAND_SEP = " · ", " | "   # gerçek ülke bayrağı "·", rastgele bayrak "|" (sadece kurucu bilir)
 PING_MAX = 1500                        # varsayılan ping sınırı (ms, telefon ölçümü); Admin → ⏱ Ping Sınırı ile değişir
+SLOW_OUT = 1.25                        # listedeki kod ancak sınırın %25 üstüne çıkınca atılır (gidip gelmesin)
+TM_ADD_EVERY = 3600                    # yeni çalışan kodlar listeye en çok saatte bir eklenir
 PING_KEEP = 3                          # sınırın altında bundan az kod kalırsa en hızlı bu kadar kod tutulur
 REAL_MIN = 6                           # bu kadar farklı gerçek ülke varsa sadece onlar kalır
 
@@ -607,7 +609,7 @@ def ping_max(db=None):
     try: return int((db if db is not None else load_db()).get("ping_max") or PING_MAX)
     except Exception: return PING_MAX
 
-def rename_all(codes, geo, ms=None, fresh=False, exits=None, cap=None):
+def rename_all(codes, geo, ms=None, fresh=False, exits=None, cap=None, listed=()):
     """Kuralar:
     - Rusya tek: birden fazla Rusya varsa en iyi ms'li kalır, her zaman 2. sırada.
     - Telefon testinde ms'i olanlar ms'e göre sıralanır (düşük ping önce).
@@ -632,7 +634,8 @@ def rename_all(codes, geo, ms=None, fresh=False, exits=None, cap=None):
     if fresh and tested and untested:
         skip_u = len(untested); untested = []
     if fresh and cap and tested:   # ping sınırı: yavaş kodlar Happ'te n/a görünüyor
-        fast = [x for x in tested if x["ms"] is not None and x["ms"] <= cap]
+        lim = lambda x: cap * SLOW_OUT if code_key(x["c"]) in listed else cap   # listedeki kod sınırı biraz aşınca hemen atılmaz
+        fast = [x for x in tested if x["ms"] is not None and x["ms"] <= lim(x)]
         keep = fast if len(fast) >= PING_KEEP else tested[:PING_KEEP]
         slow = len(tested) - len(keep); tested = keep
     ru_all = [x for x in tested if x["ex"] == "ru"] + [x for x in untested if x["ex"] == "ru"]
@@ -836,15 +839,24 @@ def check_cycle(force=False):
     dead_tm, tm_ms, tm_fresh, tm_exits = tm_sync(db, sources, codes)
     dead_tm &= {code_key(c) for c in codes}
     cap = ping_max(db)
-    ok_tm = sorted(k for k in {code_key(c) for c in codes} if k in tm_ms and tm_ms[k] <= cap) if tm_fresh else []   # telefonda çalışan, sınırın altındaki kodlarımız
-    tm_changed = sorted(dead_tm) != sorted(db.get("tm_dead_pushed", [])) or ok_tm != db.get("tm_ok_pushed") or RUN.pop("exits_changed", False)
+    # Liste gidip gelmesin: listedeki kod bozulunca/çok yavaşlayınca hemen yazılır; yeni çalışan kodlar en çok saatte bir eklenir.
+    listed = {code_key(c) for c in db.get("template", [])}
+    ours = {code_key(c) for c in codes}
+    planned = {code_key(c) for c in rename_all([c for c in codes if code_key(c) not in dead_tm], {}, tm_ms, tm_fresh, tm_exits, cap, listed)[0]}   # yazılsaydı liste bu olurdu
+    bad_listed = [k for k in listed if k not in ours or k in dead_tm or (k not in planned and tm_fresh and k in tm_ms and tm_ms[k] > cap * SLOW_OUT)]
+    gained = sorted(planned - listed)
+    add_due = time.time() - db.get("tm_add_ts", 0) >= TM_ADD_EVERY
+    exch = RUN.pop("exits_changed", False)
+    if exch and not add_due: RUN["exits_changed"] = True   # ülke değişikliği de saatlik eklemeyle yazılır
+    tm_changed = bool(bad_listed) or (bool(gained or exch) and add_due)
     need = ip_need(db)
     if not force and old and len(new) < need and not tm_changed:
         RUN["last_msg"] = f"✅ {len(codes)} kod, {len(new)} yeni IP → değişiklik yok"
         vlog(f"ℹ️ {len(codes)} kod · {len(new)} yeni IP (eşik: en az {need}) → değişiklik yok")
         return None
 
-    why = "⚡ Elle güncelleme" if force else (f"🚨 {len(new)} yeni IP bulundu" if (not old or len(new) >= need) else "📱 Telefon testi değişti")
+    why = "⚡ Elle güncelleme" if force else (f"🚨 {len(new)} yeni IP bulundu" if (not old or len(new) >= need) else
+                                            f"📱 Listedeki {len(bad_listed)} kod bozuldu/yavaşladı" if bad_listed else f"📱 {len(gained)} yeni çalışan kod eklenecek" if gained else "📱 Ülke bilgisi değişti")
     vlog(f"{why} → {len(codes)} kod yenileniyor...")
     if dead_tm:
         keep = [c for c in codes if code_key(c) not in dead_tm]
@@ -856,7 +868,7 @@ def check_cycle(force=False):
     codes = dead_filter(codes)
     need_ip = [] if tm_exits else [code_host(c) for c in codes if exit_country(c, {})[0] is None]   # ölçüm yoksa: isminde ülke olmayanlar
     geo = geo_lookup([h for h in need_ip if h]) if need_ip else {}
-    renamed, notes = rename_all(codes, geo, tm_ms, tm_fresh, tm_exits, cap)
+    renamed, notes = rename_all(codes, geo, tm_ms, tm_fresh, tm_exits, cap, listed)
     for n in notes: vlog(n)
     targets = [(s["file_id"], name_of(s, k), eff_ann(db, s)) for k, s in db["subs"].items() if s.get("file_id") and not is_exp(s)]
     ok, bad = push_all(targets, renamed)
@@ -868,7 +880,7 @@ def check_cycle(force=False):
         if not bad:   # hata varsa eskileri kalsın, sonraki turda tekrar dener
             d["seen_ips"] = sorted(ips)
             d["tm_dead_pushed"] = sorted(dead_tm)
-            d["tm_ok_pushed"] = ok_tm
+            d["tm_add_ts"] = time.time()
     mutate(f)
     RUN["last_msg"] = f"🔄 Güncellendi: {len(renamed)} kod → {ok}/{len(targets)} Drive"
     return {"new": len(new), "codes": renamed, "ok": ok, "total": len(targets), "bad": bad, "force": force}
