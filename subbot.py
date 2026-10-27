@@ -1116,6 +1116,7 @@ async def post_init(app):
         except Exception: pass
     try: BOT["un"] = (await app.bot.get_me()).username or ""
     except Exception as e: log.warning("get_me: %s", e)
+    asyncio.create_task(ad_photo_id(app.bot))   # reklam fotoğrafı önceden yüklensin (inline cevap hızlı olsun)
     try:
         sw = mutate(switch_bot)
         if sw:
@@ -4955,8 +4956,14 @@ async def ad_cb(q, lang):
 
 async def inline_ad(u: Update, c: ContextTypes.DEFAULT_TYPE):
     """@bot yazınca reklam postu (kanalda dil butonları çalışır)."""
-    fid = await ad_photo_id(c.bot)
-    if not fid: await u.inline_query.answer([], cache_time=10); return
+    try:
+        fid = await ad_photo_id(c.bot)
+        if not fid: vlog("⚠️ Inline reklam: fotoğraf yüklenemedi"); await u.inline_query.answer([], cache_time=10); return
+        await _inline_ad(u, fid)
+    except Exception as e:
+        vlog(f"⚠️ Inline reklam hatası: {str(e)[:150]}"); log.exception("inline ad")
+
+async def _inline_ad(u, fid):
     res = [InlineQueryResultCachedPhoto(id=f"ad_{l}", photo_file_id=fid, title=("📢 Reklama (Türkmençe)" if l == "tk" else "📢 Реклама (Русский)"),
                                         caption=ad_text(l), parse_mode="HTML", reply_markup=ad_kb(l)) for l in ("tk", "ru")]
     await u.inline_query.answer(res, cache_time=60, is_personal=False)
