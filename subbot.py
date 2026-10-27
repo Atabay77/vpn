@@ -2087,8 +2087,7 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         await safe_edit(q, *ask_num(uid, "ping_max", f"Şu an: <b>{ping_max()} ms</b>\n"))
 
     elif a == "ad_post":
-        v_ = mutate(lambda d: d.__setitem__("ad_admin_v", (d.get("ad_admin_v", -1) + 1) % 3) or d["ad_admin_v"])
-        await send_ad(c, uid, "tk", None, v_)
+        await send_ad(c, uid, "tk")
         await safe_edit(q, "📢 <b>Reklam postu</b>\n<blockquote>Post aşağıda. İstediğin kanala ilet (forward) ya da kanal sahibine gönder.\n\nKanalda dil butonu çalışsın istersen: kanala yazı yazarken <code>@" + esc(BOT.get("un") or "bot") + "</code> yaz, çıkan reklamı seç (BotFather'da /setinline açık olmalı).</blockquote>", back("admin"))
 
     elif a == "auto_ann":
@@ -2735,9 +2734,6 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         if not await pub_gate(c, uid, lang, send): return
         await show_home(c, uid, getattr(q, "message", None), send=send); return
 
-    if a == "u_myad":   # yeni reklam: 30 dakika dolmadıysa sadece uyarı
-        left_ = int(load_db()["users"].get(str(uid), {}).get("ad_ts", 0) + AD_EVERY - time.time())
-        if left_ > 0: await q.answer(tr(lang, "myad_wait2", m=(left_ + 59) // 60), show_alert=True); return
     await q.answer()
     if not await pub_gate(c, uid, lang, send): return
     db = load_db(); e = db["users"].get(str(uid), {})
@@ -3109,7 +3105,7 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
                           [B(tr(lang, "b_menu"), "u_menu")]]))
 
     elif a == "u_myad":   # kullanıcının kendi davet linkiyle reklam postu (30 dakikada bir yenisi)
-        v_ = mutate(lambda d: d["users"][str(uid)].__setitem__("ad_v", (d["users"][str(uid)].get("ad_v", -1) + 1) % 3) or d["users"][str(uid)].__setitem__("ad_ts", time.time()) or d["users"][str(uid)]["ad_v"])
+        v_ = 0
         steps = tr(lang, "myad_wait").split("|")
         pm_ = await c.bot.send_message(uid, steps[0], parse_mode="HTML")
         for st_ in steps[1:]:
@@ -3122,7 +3118,7 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         try: await send_ad(c, uid, "ru" if lang == "ru" else "tk", uid, v_)
         except Exception as ex_: log.warning("myad: %s", ex_)
         await c.bot.send_message(uid, tr(lang, "myad_done", un=esc(BOT.get("un") or "SuBDrive_bot"), link=esc(ref_link(uid))), parse_mode="HTML",
-                                 disable_web_page_preview=True, reply_markup=KB([[B(tr(lang, "b_myad2"), "u_myad", "success")], [B(tr(lang, "b_prof"), "u_prof"), B(tr(lang, "b_menu"), "u_menu")]]))
+                                 disable_web_page_preview=True, reply_markup=KB([[B(tr(lang, "b_prof"), "u_prof"), B(tr(lang, "b_menu"), "u_menu")]]))
 
     elif a == "u_market":
         STATE.pop(uid, None)
@@ -4456,13 +4452,13 @@ T["ru"].update({"b_mlh": "📜 История · {t}", "mlh_none": "Пока н�
     "mlh": "📜 <b>История использования</b> · {title}\n<blockquote>{lines}</blockquote>\n<i>🔒 Ваши коды записывались только в эти часы и только в файл купившего; после остановки файл очищается. В собственные коды бота и другие файлы они не попадают.\n🔎 Сравните со временем подключений/трафика в панели вашего провайдера; если видите использование вне этого списка — напишите в поддержку.\nПримечание: бот примерно раз в 10 минут на несколько секунд проверяет коды из Туркменистана (очень мало трафика).</i>"})
 
 # 🎨 Kendi reklamım (profil)
-T["tr"].update({"b_myad": "🎨 Kendi reklamımı hazırla", "b_myad2": "🔄 Yeni reklam oluştur (30 dk'da bir)", "myad_wait2": "⏳ Yeni reklamı {m} dakika sonra oluşturabilirsin.",
+T["tr"].update({"b_myad": "🎨 Kendi reklamımı hazırla",
     "myad_wait": "🎨 <b>Reklamın hazırlanıyor...</b>\n▱▱▱▱▱ 0%|🎨 <b>Reklamın hazırlanıyor...</b>\n▰▰▱▱▱ 40%\n<i>Davet linkin ekleniyor</i>|🎨 <b>Reklamın hazırlanıyor...</b>\n▰▰▰▰▱ 80%\n<i>Banner ve yazı birleştiriliyor</i>|✅ <b>Hazır!</b>\n▰▰▰▰▰ 100%",
     "myad_done": "✅ <b>Reklamın hazır!</b>\n<blockquote>Yukarıdaki reklam <b>senin davet linkinle</b> oluşturuldu — rahatça kullan. İstediğin kanala ya da gruba ilet.\n\n💡 Ya da reklam yapacağın yerde yazı kutusuna <code>@{un}</code> yaz — reklamın kendiliğinden çıkar.\n\n🔗 Davet linkin: {link}</blockquote>"})
-T["tk"].update({"b_myad": "🎨 Öz reklamamy taýýarla", "b_myad2": "🔄 Täze reklama döret (30 minutda bir)", "myad_wait2": "⏳ Täze reklamany {m} minutdan soň döredip bilersiňiz.",
+T["tk"].update({"b_myad": "🎨 Öz reklamamy taýýarla",
     "myad_wait": "🎨 <b>Reklamaňyz taýýarlanýar...</b>\n▱▱▱▱▱ 0%|🎨 <b>Reklamaňyz taýýarlanýar...</b>\n▰▰▱▱▱ 40%\n<i>Çagyryş linkiňiz goşulýar</i>|🎨 <b>Reklamaňyz taýýarlanýar...</b>\n▰▰▰▰▱ 80%\n<i>Banner we tekst birleşdirilýär</i>|✅ <b>Taýýar!</b>\n▰▰▰▰▰ 100%",
     "myad_done": "✅ <b>Reklamaňyz taýýar!</b>\n<blockquote>Ýokardaky reklama <b>siziň çagyryş linkiňiz bilen</b> döredildi — rahat ulanyň. Islän kanalyňyza ýa-da toparyňyza iberiň.\n\n💡 Ýa-da reklama berjek ýeriňizde ýazuw meýdançasyna <code>@{un}</code> ýazyň — reklamaňyz özi çykar.\n\n🔗 Çagyryş linkiňiz: {link}</blockquote>"})
-T["ru"].update({"b_myad": "🎨 Создать свою рекламу", "b_myad2": "🔄 Новая реклама (раз в 30 мин)", "myad_wait2": "⏳ Новую рекламу можно создать через {m} мин.",
+T["ru"].update({"b_myad": "🎨 Создать свою рекламу",
     "myad_wait": "🎨 <b>Ваша реклама создаётся...</b>\n▱▱▱▱▱ 0%|🎨 <b>Ваша реклама создаётся...</b>\n▰▰▱▱▱ 40%\n<i>Добавляем вашу реферальную ссылку</i>|🎨 <b>Ваша реклама создаётся...</b>\n▰▰▰▰▱ 80%\n<i>Собираем баннер и текст</i>|✅ <b>Готово!</b>\n▰▰▰▰▰ 100%",
     "myad_done": "✅ <b>Ваша реклама готова!</b>\n<blockquote>Реклама выше создана <b>с вашей реферальной ссылкой</b> — используйте смело. Перешлите в любой канал или группу.\n\n💡 Или там, где даёте рекламу, напишите в поле ввода <code>@{un}</code> — ваша реклама появится сама.\n\n🔗 Ваша ссылка: {link}</blockquote>"})
 
@@ -4942,20 +4938,7 @@ AD_TXT = {
    "<blockquote>📡 Serwerler TM-den barlanýar\n🎯 Diňe <b>hakyky ýurtlar</b> görkezilýär\n🔍 Almazdan öň «Barla» bilen görüň\n↩️ Islän wagtyňyz yzyna gowşuryň</blockquote>\n\n"
    "🪪 <b><u>SATÝANLAR ÜÇIN</u></b>\n"
    "<blockquote>💰 Bahany özüňiz goýýarsyňyz\n💸 Pul CryptoBot-a özi gelýär\n🤖 Satyşy bot özi ýöredýär\n📢 Reklama — bary-ýogy <b>0.05$</b></blockquote>\n\n"
-   "👇 <i>Başlamak üçin</i>\n{link}"),
-  ("🎯 <b>GALP BAÝDAKLARA ÝOL ÝOK!</b>\n\n"
-   "<i>«🇩🇪 Germaniýa» diýip satýarlar — serwer bolsa düýbünden başga ýerde…</i>\n\n"
-   "<blockquote><b>Drive Bot</b> her serweri Türkmenistandan özi barlaýar we <b>diňe hakyky ýurdy</b> görkezýär. Satyjynyň ýalan baýdagy derrew ýüze çykýar 🔎</blockquote>\n\n"
-   "🛒 <b><u>ALÝANLAR</u></b>\n<i>Diňe işleýän kod · diňe ulanan wagtyňyz üçin töleg</i>\n\n"
-   "🪪 <b><u>SATÝANLAR</u></b>\n<i>Bahany özüňiz goýuň · pul CryptoBot-a gelýär</i>\n\n"
-   "<code>📢 Reklama: bary-ýogy 0.05$</code>\n\n"
-   "👉 {link}"),
-  ("⚡️ <b>VPN satyn almak — indi howpsuz</b>\n\n"
-   "<blockquote expandable>✅ Her serwer TM-den her 10 minutda barlanýar\n✅ Diňe hakyky ýurtlar — ýalan baýdak ýok\n✅ Kod işlemese — islän wagtyňyz yzyna gowşuryň\n✅ Diňe ulanan wagtyňyz üçin tölärsiňiz</blockquote>\n\n"
-   "💼 <b><u>VPN satýarsyňyzmy?</u></b>\n"
-   "Kodlaryňyzy bazara goýuň — <b>klienti biz tapýarys</b>. Pul CryptoBot-a özi gelýär 💸\n\n"
-   "🎁 <tg-spoiler>3 dostuňyzy çagyryň — mugt kod!</tg-spoiler>\n\n"
-   "👇 {link}")],
+   "👇 <i>Başlamak üçin</i>\n{link}")],
  "ru": [
   ("🛡 <b>DRIVE BOT · БИРЖА VPN</b> 🌐\n\n"
    "<blockquote>❌ Заплатили, а код не получили?\n❌ Купленный код не работает?\n❌ Флаг одной страны, а сервер в другой?</blockquote>\n"
@@ -4964,21 +4947,7 @@ AD_TXT = {
    "<blockquote>📡 Серверы проверяются из ТМ\n🎯 Показываем <b>только реальные страны</b>\n🔍 Проверка перед покупкой\n↩️ Остановить можно в любой момент</blockquote>\n\n"
    "🪪 <b><u>ПРОДАВЦАМ</u></b>\n"
    "<blockquote>💰 Цену ставите сами\n💸 Доход сам приходит в CryptoBot\n🤖 Продажу ведёт бот\n📢 Размещение — всего <b>0.05$</b></blockquote>\n\n"
-   "👇 <i>Начать</i>\n{link}"),
-  ("🎯 <b>ФАЛЬШИВЫМ ФЛАГАМ — НЕТ!</b>\n\n"
-   "<i>Продают «🇩🇪 Германию» — а сервер на самом деле совсем в другом месте…</i>\n\n"
-   "<blockquote><b>Drive Bot</b> сам проверяет каждый сервер из Туркменистана и показывает <b>только реальную страну</b>. Ложь продавца сразу видна 🔎</blockquote>\n\n"
-   "🛒 <b><u>ПОКУПАТЕЛЯМ</u></b>\n<i>Только рабочие коды · оплата только за использование</i>\n\n"
-   "🪪 <b><u>ПРОДАВЦАМ</u></b>\n<i>Цену ставите сами · доход приходит в CryptoBot</i>\n\n"
-   "<code>📢 Размещение: всего 0.05$</code>\n\n"
-   "👉 {link}"),
-  ("⚡️ <b>Покупать VPN — теперь безопасно</b>\n\n"
-   "<blockquote expandable>✅ Каждый сервер проверяется из ТМ каждые 10 минут\n✅ Только реальные страны — без фальшивых флагов\n✅ Код не работает — остановите в любой момент\n✅ Платите только за время использования</blockquote>\n\n"
-   "💼 <b><u>Продаёте VPN?</u></b>\n"
-   "Выставьте коды на биржу — <b>клиентов найдём мы</b>. Деньги сами приходят в CryptoBot 💸\n\n"
-   "🎁 <tg-spoiler>Пригласите 3 друзей — бесплатный код!</tg-spoiler>\n\n"
-   "👇 {link}")]}
-AD_EVERY = 30 * 60   # kullanıcı yeni reklamı en erken 30 dakikada bir oluşturur
+   "👇 <i>Начать</i>\n{link}")]}
 
 def ad_link(uid=None):
     un = BOT.get("un") or "SuBDrive_bot"
@@ -5044,7 +5013,7 @@ async def _inline_ad(u, fid):
     uid = u.inline_query.from_user.id
     e_ = load_db().get("users", {}).get(str(uid))
     ref = uid if e_ else None   # botu kullanan kişi: kendi davet linki
-    v = (e_ or {}).get("ad_v", 0)   # kişinin son oluşturduğu reklam türü
+    v = 0
     # tek sonuç: Türkmençe post; Rusça için posttaki 🇷🇺 butonu
     res = [InlineQueryResultCachedPhoto(id=f"ad{v}", photo_file_id=fid, title="📢 Reklama", caption=ad_text("tk", ref, v), parse_mode="HTML", reply_markup=ad_kb("tk", ref, v))]
     await u.inline_query.answer(res, cache_time=30, is_personal=True)
