@@ -2773,7 +2773,7 @@ async def credit_ref(c, uid):
         e["ok"] = True; e.pop("cap", None)
         inv = d["users"].get(str(e.get("ref_by")))
         if not inv or uid in inv.setdefault("refs", []): return None
-        inv["refs"].append(uid)
+        inv["refs"].append(uid); inv["bonus"] = inv.get("bonus", 0) + REF_BONUS
         return e.get("ref_by"), inv.get("lang", "tr"), avail_refs(inv), inv.get("name", "")
     r = mutate(f)
     if not r: return
@@ -2781,7 +2781,7 @@ async def credit_ref(c, uid):
     db = load_db(); me = db["users"].get(str(uid), {})
     ulog("credit", f"🤝 Davet sayıldı: {iname} ({inv_id}) → {me.get('name')} ({uid}) · davet {av}/{REF_NEED}")
     try:
-        await c.bot.send_message(inv_id, tr(ilang, "ref_new", name=esc(me.get("name") or uid), avail=min(av, REF_NEED), need=REF_NEED), parse_mode="HTML")
+        await c.bot.send_message(inv_id, tr(ilang, "ref_new", name=esc(me.get("name") or uid), avail=min(av, REF_NEED), need=REF_NEED) + "\n" + tr(ilang, "ref_bonus"), parse_mode="HTML")
         if av == REF_NEED: await c.bot.send_message(inv_id, tr(ilang, "ref_ready"))
     except Exception: pass
 
@@ -2964,7 +2964,7 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         lid = a.split(":", 1)[1]; L_ = db.get("market", {}).get(lid)
         if not L_ or L_.get("status") != "live": await send(tr(lang, "m_gone"), KB([[B(tr(lang, "b_back_mkt"), "u_mkt")]])); return
         if L_.get("owner") == uid and uid not in ADMINS: await send(tr(lang, "m_own"), KB([[B(tr(lang, "b_back_mkt"), "u_mkt")]])); return
-        t_ = tr(lang, "ms_q", title=esc(short(L_["title"], 40)), fee=fmt_u(MKT_FEE), pm=money_tmt(float(L_["price"]), 4), ph=money_tmt(float(L_["price"]) * PREPAY_MIN), bal=fmt_u(e.get("bal", 0)))
+        t_ = tr(lang, "ms_q", title=esc(short(L_["title"], 40)), fee=fmt_u(MKT_FEE), pm=money_tmt(float(L_["price"]), 4), ph=money_tmt(float(L_["price"]) * PREPAY_MIN), bal=fmt_u(spendable(e, L_)))
         kb_ = KB([[B(tr(lang, "b_msy"), f"u_msy:{lid}", "success")], [B(tr(lang, "b_msn"), f"u_ml:{lid}")]])
         msg = getattr(q, "message", None)
         if msg is None or not await edit_box(c.bot, uid, msg.message_id, bool(getattr(msg, "photo", None)), t_, kb_): await c.bot.send_message(uid, t_, parse_mode="HTML", reply_markup=kb_)
@@ -2974,7 +2974,7 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         res, err = await asyncio.to_thread(mkt_start, uid, lid)
         if not res:
             if err.startswith("nobal:"):
-                await send(tr(lang, "m_need", need=fmt_u(int(err.split(":")[1])), bal=fmt_u(load_db()["users"].get(str(uid), {}).get("bal", 0))),
+                await send(tr(lang, "m_need", need=fmt_u(int(err.split(":")[1])), bal=fmt_u(spendable(load_db()["users"].get(str(uid), {}), load_db().get("market", {}).get(lid, {})))),
                            KB([[B(tr(lang, "b_top"), "u_top", "success")], [B(tr(lang, "b_back_mkt"), f"u_ml:{lid}")]]))
             elif err == "already": await send(tr(lang, "m_already"), KB([[B(tr(lang, "b_mine"), "u_mine")], [B(tr(lang, "b_back_mkt"), "u_mkt")]]))
             elif err == "limit": await send(tr(lang, "m_limit", n=MAX_STARTS_DAY), KB([[B(tr(lang, "b_back_mkt"), "u_mkt")]]))
@@ -3262,7 +3262,7 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
                total=len(e.get("refs", [])), avail=max(0, avail_refs(e)), need=REF_NEED, free=e.get("free_n", 0),
                active=len(user_codes(db, uid)), buys=e.get("buys", 0), inviter=esc(inv.get("name") or tr(lang, "nobody")),
                link=esc(ref_link(uid)))
-        t += tr(lang, "bal_line", bal=f"{e.get('bal', 0) / UM:.2f}", tmt=f"{e.get('bal', 0) * USDT_RATE / UM:.2f}") + (tr(lang, "earn_line", earn=(f"{e['earn'] / UM:.2f}" if e["earn"] >= UM // 100 else f"{e['earn'] / UM:.4f}")) if e.get("earn") else "")
+        t += tr(lang, "bal_line", bal=f"{e.get('bal', 0) / UM:.2f}", tmt=f"{e.get('bal', 0) * USDT_RATE / UM:.2f}") + tr(lang, "bonus_line", b=f"{e.get('bonus', 0) * USDT_RATE / UM:.2f}") + (tr(lang, "earn_line", earn=(f"{e['earn'] / UM:.2f}" if e["earn"] >= UM // 100 else f"{e['earn'] / UM:.4f}")) if e.get("earn") else "")
         await bsend("prof", t, KB([[B(tr(lang, "b_share"), switch_inline_query="", style="success")],
                           [B(tr(lang, "b_myad"), "u_myad", "success")], [B(tr(lang, "b_top"), "u_top", "primary")]] + ([[B(tr(lang, "b_wd"), "u_wd", "primary")]] if e.get("earn") or (uid in ADMINS and e.get("bal")) else []) + [
                           [B(tr(lang, "b_menu"), "u_menu")]]))
@@ -3969,6 +3969,17 @@ OWN_DESC = "✅ Botun resmi kodu\n🛡 7/24 kontrol altında: IP değişince oto
 SETTLE_EVERY = 86400             # alıcı durdurmazsa satıcıya günde bir ödeme
 START_MINUTES = 60               # başlatmak için bakiye en az 60 dakikaya yetmeli
 OWN_LID = "own"                  # bizim ilanımız (her zaman en üstte)
+REF_BONUS = UM // 80             # her sayılan davet: 0.25 TMT bonus (= 0.0125 USDT); çekilemez, sadece resmi ilan kiralamada harcanır
+
+def spendable(e, L):
+    """Bu ilanda harcanabilir para: bakiye (+ resmi ilansa bonus)."""
+    return e.get("bal", 0) + (e.get("bonus", 0) if L.get("own") else 0)
+
+def spend(e, L, amt):
+    """Önce bonustan (resmi ilansa), kalanı bakiyeden düşer."""
+    if L.get("own") and e.get("bonus"):
+        b = min(e["bonus"], amt); e["bonus"] -= b; amt -= b
+    e["bal"] = e.get("bal", 0) - amt
 OWN_PRICE = 100                  # bizim fiyat: 0.0001 USDT/dk (≈ 4.3 USDT / 30 gün)
 TM_FRESH = 40 * 60               # telefon sonucu bundan eskiyse kurallar uygulanmaz
 MKT = {"lock": None}
@@ -4079,18 +4090,18 @@ def mkt_start(uid, lid):
         if sum(1 for s in db.get("msess", {}).values() if s["buyer"] == uid and s["lid"] == lid and s["start"] > time.time() - 86400) >= MAX_STARTS_DAY:
             return None, "limit"   # aynı ilanı sık başlat-durdur (IP toplama) engeli
         need = MKT_FEE + int(round(L["price"] * max(START_MINUTES, PREPAY_MIN)))
-        if e.get("bal", 0) < need: return None, f"nobal:{need}"
+        if spendable(e, L) < need: return None, f"nobal:{need}"
         codes = listing_codes(db, L)
         if not codes: return None, "nocodes"
         fid, from_free = alloc_file(svc, db)
         if not fid or not make_public(svc, fid): return None, "noslot"
         if not sync_file(svc, fid, L["title"], mkt_ann(lang_of(db, uid)), codes, exp=False): return None, "drive"
         if from_free: db["free_files"].remove(fid)
-        e["bal"] = e.get("bal", 0) - MKT_FEE
+        spend(e, L, MKT_FEE)
         db["mkt_fees"] = db.get("mkt_fees", 0) + MKT_FEE
         sid = uuid.uuid4().hex[:8]
         now = time.time()
-        pre = int(round(L["price"] * PREPAY_MIN)); e["bal"] -= pre   # ilk saat peşin (iade edilmez); dakika başı ödeme 1 saat sonra başlar
+        pre = int(round(L["price"] * PREPAY_MIN)); spend(e, L, pre)   # ilk saat peşin (iade edilmez); dakika başı ödeme 1 saat sonra başlar
         db.setdefault("msess", {})[sid] = {"buyer": uid, "lid": lid, "fid": fid, "start": now, "last": now + PREPAY_MIN * 60, "settle_ts": now,
                                           "acc": pre, "total": pre, "status": "on", "hash": hashlib.md5("\n".join(codes).encode()).hexdigest()}
         save_db(db)
@@ -4103,9 +4114,9 @@ def charge(db, sid, now):
     if not L: return False
     price = float(L["price"]); mins = int((now - s["last"]) // 60)
     if mins <= 0: return True
-    can = int(min(mins, e.get("bal", 0) // price)) if price else mins
+    can = int(min(mins, spendable(e, L) // price)) if price else mins
     cost = int(round(can * price))
-    e["bal"] = e.get("bal", 0) - cost; s["acc"] += cost; s["total"] += cost; s["last"] += can * 60
+    spend(e, L, cost); s["acc"] += cost; s["total"] += cost; s["last"] += can * 60
     return can == mins
 
 def bill(db, now):
@@ -4116,7 +4127,7 @@ def bill(db, now):
         L = db.get("market", {}).get(s["lid"])
         if not L or L.get("status") != "live": stop.append((sid, "gone")); continue
         if not charge(db, sid, now): stop.append((sid, "nobal")); continue
-        price = float(L["price"]); bal = db["users"][str(s["buyer"])].get("bal", 0)
+        price = float(L["price"]); bal = spendable(db["users"][str(s["buyer"])], L)
         left_min = int(bal // price) if price else 10**9
         if left_min < 60 and not s.get("warned"): s["warned"] = True; warn.append((sid, s["buyer"], left_min))
         if left_min >= 60: s.pop("warned", None)
@@ -4691,6 +4702,12 @@ T["tk"].update({"b_pbal": "💰 Balansdan töle ({usdt} USDT)",
 T["ru"].update({"b_pbal": "💰 Оплатить с баланса ({usdt} USDT)",
   "pbal_need": "⚠️ <b>Недостаточно средств</b>\n<blockquote>Нужно  <b>{need} USDT</b>\n💰 Баланс  <b>{bal} USDT</b></blockquote>",
   "pbal_fail": "⚠️ Сейчас выдать не удалось. Деньги возвращены на баланс, админ уведомлён."})
+T["tr"].update({"bonus_line": "\n🎁 <b>Bonus</b>  {b} TMT\n<i>👥 Çağırdığın her dost için 0.25 TMT bonus alırsın.</i>",
+  "ref_bonus": "🎁 +0.25 TMT bonus hesabına eklendi."})
+T["tk"].update({"bonus_line": "\n🎁 <b>Bonus</b>  {b} TMT\n<i>👥 Çagyran her dostuňyz üçin 0.25 TMT bonus alýarsyňyz.</i>",
+  "ref_bonus": "🎁 +0.25 TMT bonus hasabyňyza goşuldy."})
+T["ru"].update({"bonus_line": "\n🎁 <b>Бонус</b>  {b} TMT\n<i>👥 За каждого приглашённого друга — 0.25 TMT бонуса.</i>",
+  "ref_bonus": "🎁 +0.25 TMT зачислено на бонусный счёт."})
 T["tr"]["m_own"] = "⚠️ <b>Kendi ilanını satın alamazsın.</b>"
 T["tk"]["m_own"] = "⚠️ <b>Öz bildirişiňizi satyn alyp bilmeýärsiňiz.</b>"
 T["ru"]["m_own"] = "⚠️ <b>Нельзя купить своё собственное объявление.</b>"
