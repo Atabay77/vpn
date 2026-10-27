@@ -3007,7 +3007,7 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         if avail_refs(e) < REF_NEED:
             await bsend("free", tr(lang, "free_need", need=REF_NEED, avail=max(0, avail_refs(e)), link=esc(ref_link(uid))),
                        KB([[B(tr(lang, "b_share"), url=share_url(lang, uid), style="success")]]
-                          + ([[B(tr(lang, "b_trial"), "u_trial", "primary")]] if not e.get("trial_used") else []) + [[B(tr(lang, "b_menu"), "u_menu")]])); return
+                          + [[B(tr(lang, "b_menu"), "u_menu")]])); return
         # yer ayır (aynı anda iki kez basılırsa iki kod çıkmasın)
         def take(d):
             x = d["users"][str(uid)]
@@ -3029,20 +3029,8 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         ulog("free", f"🎁 Ücretsiz kod aldı: {who(user)} · {kid} · {FREE_DAYS} gün")
         await send(tr(lang, "free_ok", left=left_txt(load_db()["subs"][kid].get("expires"), lang == "ru"), link=esc(await asyncio.to_thread(user_link, fid))), menu_btn)
 
-    elif a == "u_trial":
-        def take(d):
-            x = d["users"][str(uid)]
-            if x.get("trial_used"): return False
-            x["trial_used"] = time.time(); return True
-        if not mutate(take): await send(tr(lang, "trial_used"), menu_btn); return
-        res, err = await asyncio.to_thread(make_code_for, uid, f"{short(user.first_name or 'VPN', 20)} 🧪", TRIAL_HOURS / 24, "trial")
-        if not res:
-            mutate(lambda d: d["users"][str(uid)].pop("trial_used", None))
-            await send(tr(lang, "no_slot"), menu_btn)
-            await notify_founders(c.application, f"⚠️ <b>Deneme kodu verilemedi</b>\n<blockquote>{esc(who(user))}\n{esc(err)}</blockquote>")
-            return
-        ulog("trial", f"🧪 Deneme kodu aldı: {who(user)} · {res[0]} · {TRIAL_HOURS} saat")
-        await send(tr(lang, "trial_ok", link=esc(await asyncio.to_thread(user_link, res[1]))), menu_btn)
+    elif a == "u_trial":   # deneme kodu kaldırıldı (eski mesajlardaki buton menüye döner)
+        await show_home(c, uid, getattr(q, "message", None), True, send)
 
     elif a.startswith("u_ext:"):
         kid = a.split(":", 1)[1]; s_ = db["subs"].get(kid)
@@ -4917,26 +4905,34 @@ def market_bill():
 # ── 📢 Reklam postu: banner + yazı + 🇹🇲/🇷🇺 butonları (basınca yazı o dile döner) ──
 # Satırlar telefonda tek satıra sığacak kadar kısa. uid verilirse son satır + "Bota gir" o kişinin davet linki olur.
 AD_TXT = {
- "tk": ("🪪 — <b>VPN satyjylary üçin</b> 🌐\n\n"
-        "Kodlaryňyza klient tapyp bilmeýärsiňizmi?\n"
-        "Drive Bot bazaryna goýuň — klientler özleri gelýär ✅\n\n"
-        "💰 Bahany özüňiz goýýarsyňyz\n"
-        "⏱ Minutlyk, sagatlyk, aýlyk\n"
-        "💸 Pul CryptoBot-a özi gelýär\n"
+ "tk": ("🛡 — <b>Drive Bot · VPN bazary</b> 🌐\n\n"
+        "Pul töläp kod alyp bilmediňizmi?\n"
+        "Alan kodyňyz işlemedimi?\n"
+        "Drive Bot-da beýle zat ýok ✅\n\n"
+        "<b>🛒 Satyn alýanlar üçin</b>\n"
         "📡 Serwerler TM-den barlanýar\n"
+        "🔍 Almazdan öň «Barla» bilen görüň\n"
+        "⏱ Diňe ulanan wagtyňyz üçin töleg\n"
+        "↩️ Islän wagtyňyz yzyna gowşuryň\n\n"
+        "<b>🪪 Satýanlar üçin</b>\n"
+        "💰 Bahany özüňiz goýýarsyňyz\n"
+        "💸 Pul CryptoBot-a özi gelýär\n"
         "🤖 Satyşy bot özi ýöredýär\n"
-        "🔒 Kod diňe satyn alana berilýär\n\n"
-        "📢 Reklamaňyz — bary-ýogy <b>0.05$</b>\n\n"
+        "📢 Reklama — bary-ýogy <b>0.05$</b>\n\n"
         "Başlamak üçin 👇\n{link}"),
- "ru": ("🪪 — <b>Для продавцов VPN</b> 🌐\n\n"
-        "Не можете найти клиентов для кодов?\n"
-        "Выставьте их на бирже Drive Bot — клиенты придут сами ✅\n\n"
-        "💰 Цену ставите сами\n"
-        "⏱ Поминутно, почасово, помесячно\n"
-        "💸 Доход сам приходит в CryptoBot\n"
+ "ru": ("🛡 — <b>Drive Bot · биржа VPN</b> 🌐\n\n"
+        "Заплатили, а код не получили?\n"
+        "Купленный код не работает?\n"
+        "В Drive Bot такого нет ✅\n\n"
+        "<b>🛒 Покупателям</b>\n"
         "📡 Серверы проверяются из ТМ\n"
+        "🔍 Проверка перед покупкой\n"
+        "⏱ Оплата только за использование\n"
+        "↩️ Остановить можно в любой момент\n\n"
+        "<b>🪪 Продавцам</b>\n"
+        "💰 Цену ставите сами\n"
+        "💸 Доход сам приходит в CryptoBot\n"
         "🤖 Продажу ведёт бот\n"
-        "🔒 Код получает только покупатель\n\n"
         "📢 Размещение — всего <b>0.05$</b>\n\n"
         "Начать 👇\n{link}")}
 
