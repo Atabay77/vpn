@@ -2888,7 +2888,17 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         tid, new = mutate(f)
         if new: ulog("t_open", f"{'🐞 Hata raporu' if kind == 'bug' else '🆘 Destek talebi'} açtı: {who(user)} · #{tid}")
         key = ("bug_new" if kind == "bug" else "sup_new") if new else "sup_open"
-        await bsend(kind, tr(lang, key, tid=tid), KB([[B(tr(lang, "b_tclose"), "u_tclose", "danger")], [B(tr(lang, "b_menu"), "u_menu")]]))
+        await bsend(kind, tr(lang, key, tid=tid) + "\n" + tr(lang, "sup_rate"), KB([[B(tr(lang, "b_twrite"), "u_tw", "primary")], [B(tr(lang, "b_tclose"), "u_tclose", "danger")], [B(tr(lang, "b_menu"), "u_menu")]]))
+
+    elif a == "u_tw":   # ✍️ Yaz: sıradaki tek mesaj (yazı / foto / video) talebe gider
+        tid = open_ticket(load_db(), uid)
+        if not tid: await send(tr(lang, "sup_closed", tid="—"), KB([[B(tr(lang, "b_menu"), "u_menu")]])); return
+        STATE[uid] = {"action": "t_write", "tid": tid}
+        await send(tr(lang, "sup_ask") + "\n" + tr(lang, "sup_rate"), KB([[B(tr(lang, "b_cancel"), "u_twx")]]))
+
+    elif a == "u_twx":
+        STATE.pop(uid, None)
+        await show_home(c, uid, getattr(q, "message", None), send=send)
 
     elif a == "u_tclose":
         tid = open_ticket(load_db(), uid)
@@ -3107,7 +3117,7 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
 
     elif a == "u_wd":
         amt = e.get("earn", 0)
-        if amt < WITHDRAW_MIN: await send(tr(lang, "wd_min", earn=fmt_u(amt)), menu_btn); return
+        if amt < wd_min(uid): await send(tr(lang, "wd_min", earn=fmt_u(amt), min=fmt_u(wd_min(uid))), menu_btn); return
         def take(d):
             x = d["users"][str(uid)]
             if x.get("earn", 0) < amt: return False
@@ -3563,6 +3573,7 @@ async def broadcast(app, text, admin_uid):
 
 # ───────── DESTEK (talep) + HATA BİLDİRİMİ ─────────
 SUP_MAX = 3                      # admin cevap vermeden kullanıcının gönderebileceği mesaj sayısı
+SUP_EVERY = 60                   # destek / bug: kullanıcı 60 saniyede tek mesaj gönderebilir
 SUP_LIMIT_MB = {"photo": 5, "other": 10}
 ERRS = {}                        # hata no -> bilgi (Admine Bildir butonu için)
 ERR_SEEN = {}                    # uid -> son hata mesajı zamanı (aynı kişiye arka arkaya hata yağmasın)
@@ -3639,20 +3650,28 @@ async def user_to_ticket(c, u, tid):
     size, lim = media_size(m)
     if size > lim * 1024 * 1024:
         await m.reply_text(tr(lang, "sup_big")); return
+    mg = getattr(m, "media_group_id", None); now = time.time()
     def f(d):
         t = d["tickets"][tid]
+        if mg and t.get("mg") == mg and now - t.get("last_user", 0) < 60:   # aynı albümün devamı
+            t["last"] = now; return "album"
+        if now - t.get("last_user", 0) < SUP_EVERY: return int(SUP_EVERY - (now - t.get("last_user", 0))) + 1
         if t.get("pending", 0) >= SUP_MAX: return None
-        t["pending"] = t.get("pending", 0) + 1; t["n"] = t.get("n", 0) + 1; t["last"] = time.time()
+        t["pending"] = t.get("pending", 0) + 1; t["n"] = t.get("n", 0) + 1; t["last"] = now; t["last_user"] = now; t["mg"] = mg
         return True
-    if not mutate(f):
+    r_ = mutate(f)
+    if r_ is None:
         await m.reply_text(tr(lang, "sup_wait")); return
+    if isinstance(r_, int) and r_ is not True:
+        await m.reply_text(tr(lang, "sup_slow", s=r_)); return
     kind = load_db().get("tickets", {}).get(tid, {}).get("kind")
     hdr = f"{'🐞 <b>Hata Raporu' if kind == 'bug' else '🎫 <b>Destek'} #{tid}</b> · {esc(who(user))}"
     kb = KB([[B("✍️ Yanıtla", f"t_rep:{tid}", "primary"), B("🔒 Kapat", f"t_close:{tid}", "danger")]])
     for fid in ADMINS:
         try: remember_tmsg(await copy_with_header(c.bot, fid, uid, m, hdr, kb), tid)
         except Exception as e: log.warning("destek iletilemedi: %s", e)
-    await m.reply_text(tr(lang, "sup_sent"), reply_markup=KB([[B(tr(lang, "b_tclose"), "u_tclose", "danger")]]))
+    if r_ == "album": return
+    await m.reply_text(tr(lang, "sup_sent") + "\n" + tr(lang, "sup_rate"), parse_mode="HTML", reply_markup=KB([[B(tr(lang, "b_twrite"), "u_tw", "primary")], [B(tr(lang, "b_tclose"), "u_tclose", "danger")]]))
 
 async def admin_reply(c, admin_uid, tid, m):
     t = load_db().get("tickets", {}).get(tid)
@@ -3709,6 +3728,12 @@ async def support_router(u: Update, c: ContextTypes.DEFAULT_TYPE):
         if not tid: return
         if st.get("action") == "t_reply": STATE.pop(uid, None)
         await admin_reply(c, uid, tid, m)
+        raise ApplicationHandlerStop
+    if st0.get("action") == "t_write":   # ✍️ Yaz'a bastı: bu mesaj talebe gider
+        STATE.pop(uid, None)
+        if is_banned(uid): raise ApplicationHandlerStop
+        tid = open_ticket(load_db(), uid) or st0.get("tid")
+        if open_ticket(load_db(), uid): await user_to_ticket(c, u, tid)
         raise ApplicationHandlerStop
     if uid in STATE or is_banned(uid): return    # başka bir işlem bekleniyor (ör. panel kullanıcı sayısı) / engelli
     tid = open_ticket(load_db(), uid)
@@ -3879,7 +3904,9 @@ PREPAY_MIN = 300                 # başlatınca ilk 5 saat peşin alınır (heme
 MAX_STARTS_DAY = 3               # bir alıcı AYNI ilanı (başka ilanlar serbest) 24 saatte en fazla bu kadar başlatabilir
 MKT_FEE = 50_000                 # 0.05 USDT: satıcı ilan ücreti ve alıcı başlatma ücreti (bota kalır)
 TOPUP_MIN = 1                    # en az bakiye yükleme (USDT)
-WITHDRAW_MIN = 1 * UM            # en az kazanç çekme
+WITHDRAW_MIN = UM // 4           # en az kazanç çekme (kullanıcı 0.25 USDT)
+WITHDRAW_MIN_ADMIN = UM // 10    # kurucu 0.1 USDT
+def wd_min(uid): return WITHDRAW_MIN_ADMIN if uid in ADMINS else WITHDRAW_MIN
 MIN_COUNTRIES, MAX_DEAD = 4, 4   # başvuruda en az 4 gerçek ülke; 4'ten fazla çalışmayan (N/A) sunucu olmamalı
 BAD_WINDOW = 30 * 60             # kural ihlali bu kadar sürerse ilan kaldırılır
 BAN_DEAD_H = 3                   # N/A kuralı ihlalinde yasak (saat): yasakta kod verilmez, iade yok
@@ -4124,7 +4151,7 @@ T["tr"].update({
   "top_order": "🧾 <b>Bakiye yükleme · #{oid}</b>\n<blockquote>💵 <b>{usdt} USDT</b></blockquote>\n«💵 USDT ile öde»ye bas.",
   "it_top": "Bakiye yükleme · {usdt} USDT",
   "top_ok": "✅ <b>Bakiyene {usdt} USDT eklendi.</b>\n<blockquote>💰 Bakiye  <b>{bal} USDT</b></blockquote>",
-  "wd_min": "ℹ️ Çekmek için en az 1 USDT kazanç gerekli. Şu an: {earn} USDT.",
+  "wd_min": "ℹ️ Çekmek için en az {min} USDT kazanç gerekli. Şu an: {earn} USDT.",
   "wd_ok": "✅ <b>{usdt} USDT</b> CryptoBot hesabına gönderildi.",
   "wd_err": "⚠️ Gönderilemedi: {err}\n<i>@CryptoBot'u en az bir kez açmış olman gerekir. Sorun sürerse 🆘 Destek'e yaz.</i>",
 })
@@ -4175,7 +4202,7 @@ T["ru"].update({
   "top_order": "🧾 <b>Пополнение · #{oid}</b>\n<blockquote>💵 <b>{usdt} USDT</b></blockquote>\nНажмите «💵 Оплатить USDT».",
   "it_top": "Пополнение · {usdt} USDT",
   "top_ok": "✅ <b>На баланс зачислено {usdt} USDT.</b>\n<blockquote>💰 Баланс  <b>{bal} USDT</b></blockquote>",
-  "wd_min": "ℹ️ Для вывода нужно минимум 1 USDT дохода. Сейчас: {earn} USDT.",
+  "wd_min": "ℹ️ Для вывода нужно минимум {min} USDT дохода. Сейчас: {earn} USDT.",
   "wd_ok": "✅ <b>{usdt} USDT</b> отправлено на ваш счёт в CryptoBot.",
   "wd_err": "⚠️ Не удалось отправить: {err}\n<i>Нужно хотя бы раз открыть @CryptoBot. Если не получается — напишите в 🆘 Поддержку.</i>",
 })
@@ -4521,7 +4548,7 @@ T["tk"] = {
  "top_order": "🧾 <b>Balansy doldurmak · #{oid}</b>\n<blockquote>💵 <b>{usdt} USDT</b></blockquote>\n«💵 USDT bilen töle» düwmesine bas.",
  "it_top": "Balansy doldurmak · {usdt} USDT",
  "top_ok": "✅ <b>Balansyňa {usdt} USDT goşuldy.</b>\n<blockquote>💰 Balans  <b>{bal} USDT</b></blockquote>",
- "wd_min": "ℹ️ Çekmek üçin azyndan 1 USDT gazanç gerek. Häzir: {earn} USDT.",
+ "wd_min": "ℹ️ Çekmek üçin azyndan {min} USDT gazanç gerek. Häzir: {earn} USDT.",
  "wd_ok": "✅ <b>{usdt} USDT</b> CryptoBot hasabyňa iberildi.",
  "wd_err": "⚠️ Iberip bolmady: {err}\n<i>@CryptoBot-y azyndan bir gezek açan bolmaly. Düzelmese 🆘 Goldaw-a ýaz.</i>",
  "b_pazar": "🏪 Bazar",
@@ -4614,6 +4641,17 @@ T["ru"].update({"fake_rej": "🤥 <b>Объявление отклонено: ф
     "fake_warn": "⚠️ <i>Если это повторится, за следующее объявление будет взята двойная плата.</i>",
     "fake_x2": "⚠️ <b>Это уже второй раз: следующее объявление будет стоить {fee}$ (в 2 раза больше).</b> После оплаты цена снова обычная.",
     "fee_x2_note": "\n⚠️ <b>Штраф за фальшивый пинг:</b> это объявление в 2 раза дороже."})
+
+# Destek / Bug: ✍️ Yaz butonu + 60 sn sınırı
+T["tr"].update({"b_twrite": "✍️ Yaz", "sup_ask": "✍️ <b>Mesajını gönder</b>\n<blockquote>Yazı, fotoğraf ya da video — fark etmez.</blockquote>",
+  "sup_rate": "<i>⏱ 60 saniyede tek mesaj gönderebilirsin — hepsini tek mesajda yaz.</i>",
+  "sup_slow": "⏳ 60 saniyede tek mesaj gönderebilirsin. {s} sn sonra tekrar dene — hepsini tek mesajda yaz."})
+T["tk"].update({"b_twrite": "✍️ Ýaz", "sup_ask": "✍️ <b>Habaryňy iber</b>\n<blockquote>Tekst, surat ýa-da wideo — tapawudy ýok.</blockquote>",
+  "sup_rate": "<i>⏱ 60 sekuntda diňe 1 habar iberip bilersiňiz — hemmesini bir habarda ýazyň.</i>",
+  "sup_slow": "⏳ 60 sekuntda diňe 1 habar iberip bilersiňiz. {s} sek soň gaýtadan synanyşyň — hemmesini bir habarda ýazyň."})
+T["ru"].update({"b_twrite": "✍️ Написать", "sup_ask": "✍️ <b>Отправьте сообщение</b>\n<blockquote>Текст, фото или видео — неважно.</blockquote>",
+  "sup_rate": "<i>⏱ Можно отправить 1 сообщение в 60 секунд — пишите всё одним сообщением.</i>",
+  "sup_slow": "⏳ Можно отправить 1 сообщение в 60 секунд. Попробуйте через {s} сек — пишите всё одним сообщением."})
 
 # Sınırlı abonelik uyarısı (satış)
 T["tr"]["sell_limited"] = "⚠️ <b>Bu abonelik sınırlı</b>\n<blockquote>{lim}\nPazara sadece <b>GB ve süre sınırı olmayan</b> abonelik konabilir.</blockquote>"
