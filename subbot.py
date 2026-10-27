@@ -2805,7 +2805,15 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
             try: await c.bot.send_photo(uid, L_["photo"], caption=f"🏪 {L_.get('title', '')}"[:1000])
             except Exception: pass
 
-    elif a.startswith("u_ms:"):
+    elif a.startswith("u_ms:"):   # önce sor: emin misin?
+        lid = a.split(":", 1)[1]; L_ = db.get("market", {}).get(lid)
+        if not L_ or L_.get("status") != "live": await send(tr(lang, "m_gone"), KB([[B(tr(lang, "b_back_mkt"), "u_mkt")]])); return
+        t_ = tr(lang, "ms_q", title=esc(short(L_["title"], 40)), fee=fmt_u(MKT_FEE), pm=money_tmt(float(L_["price"]), 4), bal=fmt_u(e.get("bal", 0)))
+        kb_ = KB([[B(tr(lang, "b_msy"), f"u_msy:{lid}", "success")], [B(tr(lang, "b_msn"), f"u_ml:{lid}")]])
+        msg = getattr(q, "message", None)
+        if msg is None or not await edit_box(c.bot, uid, msg.message_id, bool(getattr(msg, "photo", None)), t_, kb_): await c.bot.send_message(uid, t_, parse_mode="HTML", reply_markup=kb_)
+
+    elif a.startswith("u_msy:"):
         lid = a.split(":", 1)[1]
         res, err = await asyncio.to_thread(mkt_start, uid, lid)
         if not res:
@@ -4425,6 +4433,14 @@ T["tk"].update({"b_mlh": "📜 Ulanyş taryhy · {t}", "mlh_none": "Entek hiç k
     "mlh": "📜 <b>Ulanyş taryhy</b> · {title}\n<blockquote>{lines}</blockquote>\n<i>🔒 Kodlaryňyz diňe şu wagtlarda, satyn alan adamyň faýlyna ýazyldy; yzyna gowşurylanda faýl boşadylýar. Botuň öz kodlaryna ýa-da başga faýla goşulmaýar.\n🔎 Üpjün edijiňiziň panelindäki birikme/trafik wagtlaryny şu sanaw bilen deňeşdirip bilersiňiz; sanawdan daşary ulanyş görseňiz Support-a ýazyň.\nBellik: bot kodlaryňyzy ~10 minutda bir gezek Türkmenistandan birnäçe sekunt test edýär (örän az trafik).</i>"})
 T["ru"].update({"b_mlh": "📜 История · {t}", "mlh_none": "Пока никто не пользовался.", "mlh_now": "сейчас открыт",
     "mlh": "📜 <b>История использования</b> · {title}\n<blockquote>{lines}</blockquote>\n<i>🔒 Ваши коды записывались только в эти часы и только в файл купившего; после остановки файл очищается. В собственные коды бота и другие файлы они не попадают.\n🔎 Сравните со временем подключений/трафика в панели вашего провайдера; если видите использование вне этого списка — напишите в поддержку.\nПримечание: бот примерно раз в 10 минут на несколько секунд проверяет коды из Туркменистана (очень мало трафика).</i>"})
+
+# 🛒 Satın Al onayı
+T["tr"].update({"b_msy": "✅ Evet, satın al", "b_msn": "✖️ Vazgeç",
+    "ms_q": "🛒 <b>Satın almak istediğine emin misin?</b>\n<blockquote>🏪 {title}\n💵 Başlatma ücreti  <b>{fee}$</b> (iade edilmez)\n⏱ Sonra her dakika  <b>{pm} TMT</b> bakiyenden düşer\n💰 Bakiyen  <b>{bal} USDT</b></blockquote>\n<i>İstediğin an durdurabilirsin.</i>"})
+T["tk"].update({"b_msy": "✅ Hawa, satyn al", "b_msn": "✖️ Ýatyr",
+    "ms_q": "🛒 <b>Hakykatdan hem satyn almak isleýärsiňizmi?</b>\n<blockquote>🏪 {title}\n💵 Başlamak tölegi  <b>{fee}$</b> (yzyna gaýtarylmaýar)\n⏱ Soňra her minutda  <b>{pm} TMT</b> balansyňyzdan aýrylýar\n💰 Balansyňyz  <b>{bal} USDT</b></blockquote>\n<i>Islän wagtyňyz kody yzyna gowşuryp bilersiňiz.</i>"})
+T["ru"].update({"b_msy": "✅ Да, купить", "b_msn": "✖️ Отмена",
+    "ms_q": "🛒 <b>Вы уверены, что хотите купить?</b>\n<blockquote>🏪 {title}\n💵 Плата за запуск  <b>{fee}$</b> (не возвращается)\n⏱ Затем каждую минуту  <b>{pm} TMT</b> списывается с баланса\n💰 Баланс  <b>{bal} USDT</b></blockquote>\n<i>Остановить можно в любой момент.</i>"})
 
 # ⚙️ Ayarlar ekranı (dil seçimi burada)
 T["tr"].update({"b_set": "⚙️ Ayarlar", "set_t": "⚙️ <b>Ayarlar</b>\n<blockquote>🌐 Dil  <b>{lname}</b>\n🆔 ID  <code>{id}</code></blockquote>\n<i>Dili değiştirmek için aşağıdan seç.</i>"})
