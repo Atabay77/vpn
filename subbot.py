@@ -386,6 +386,20 @@ def fetch_codes(url):
         if l.lower().startswith(PROTOS) and l not in out: out.append(l)
     return out
 
+def sub_limits(url):
+    """Abonelik sınırları (panelin 'subscription-userinfo' başlığı): {'total': bayt, 'expire': unix}. Bilinmiyorsa {}."""
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "v2rayN/6.42"})
+        with urllib.request.urlopen(req, timeout=15) as r:
+            h = r.headers.get("subscription-userinfo") or r.headers.get("Subscription-Userinfo") or ""
+    except Exception: return {}
+    out = {}
+    for part in h.split(";"):
+        k, _, v = part.strip().partition("=")
+        try: out[k.strip().lower()] = int(float(v.strip()))
+        except Exception: pass
+    return out
+
 def b64d(s):
     s = s.strip()
     return base64.urlsafe_b64decode(s.replace("+", "-").replace("/", "_") + "=" * (-len(s) % 4)).decode("utf-8", "ignore")
@@ -759,6 +773,7 @@ def _tm_sync(db, sources, codes=None):
         RUN["tm_line"] = f"📱 Telefon testi: {ago(ts)} (eski, kullanılmıyor)"
     elif ts:
         RUN["tm_line"] = f"📱 Telefon testi: {ago(ts)} · {good}/{len(ours)} çalışıyor"
+        RUN["tm_v"] = (ts, good, len(ours))
     else:
         RUN["tm_line"] = "📱 Telefon testi: henüz sonuç yok (tmtest start)"
     if ch.get("exits"):
@@ -1157,7 +1172,7 @@ def open_mkt_row(db, uid, lang):
 
 def with_bal(t, e, lang):
     """Ana menü kutusuna bakiye satırı (kutunun son satırı olarak)."""
-    line = tr(lang, "menu_bal", bal=fmt_u(e.get("bal", 0)), tmt=tmt_u(e.get("bal", 0)))
+    line = tr(lang, "menu_bal", bal=f"{e.get('bal', 0) / UM:.2f}", tmt=f"{e.get('bal', 0) * USDT_RATE / UM:.2f}")
     i = t.rfind("</blockquote>")
     return t[:i] + line + t[i:] if i >= 0 else t + line
 
@@ -1183,7 +1198,8 @@ def _menu_text(uid):
     src = len(db["sources"]) if db else "?"
     vip = len(db["subs"]) if db else "?"
     on = not os.path.exists(STOP_FLAG)
-    tm = RUN["tm_line"].replace("📱 Telefon testi: ", ""); lg = alang(uid)
+    lg = alang(uid); tv = RUN.get("tm_v")
+    tm = f"{ago_l(tv[0], lg)} · ✅ {tv[1]}/{tv[2]}" if tv and RUN["tm_line"].startswith("📱 Telefon testi: ") and "·" in RUN["tm_line"] else RUN["tm_line"].replace("📱 Telefon testi: ", "")
     return ("✦ <b>VPN PANEL</b> ✦\n"
             f"<blockquote>{at(lg, 'sys')}  <b>{at(lg, 'on') if on else at(lg, 'off')}</b>\n"
             f"{at(lg, 'lastchk')}  <i>{ago_l(RUN['last_check'], lg)}</i>\n"
@@ -1231,7 +1247,7 @@ AT = {
         "chans": "📢 Kanallar", "mk": "🏪 Pazar", "bcast": "📣 Herkese Mesaj", "ad": "📢 Reklam Postu", "sa": "👮 Alt Adminler", "ref": "🧪 Davet Testi", "hp": "🔒 Happ Limitli Kod",
         "autoann": "🕰 Oto. Duyuru: {s}", "aon": "Açık", "aoff": "Kapalı", "ipb": "🚨 IP Eşiği: en az {n} yeni IP", "ping": "⏱ Ping Sınırı: {n} ms", "rollback": "♻️ Önceki Sürüme Dön",
         "start": "▶️ Başlat", "stop": "🛑 Durdur", "menu": "◀️ Menü", "rev": "📥 İlanlar ({n})",
-        "lastchk": "🔍 Son kontrol", "lastupd": "🔄 Son güncelleme", "tm": "📱 Telefon testi", "stat": "📡 <b>{n}</b> kod  ·  🔗 <b>{s}</b> abonelik  ·  👥 <b>{v}</b> VIP  ·  🙋 <b>{u}</b> kullanıcı",
+        "lastchk": "🔍 Son kontrol", "lastupd": "🔄 Son güncelleme", "tm": "📱 Telefon testi", "stat": "📡 <b>{n}</b> kod  ·  🔗 <b>{s}</b> abonelik\n👥 <b>{v}</b> VIP  ·  🙋 <b>{u}</b> kullanıcı",
         "rev_t": "📥 <b>İnceleme bekleyen ilanlar</b>  <code>{n}</code>\n<blockquote>Bir ilana dokun: fotoğraf, gerçek ping ve onay butonları gelir.</blockquote>",
         "rev_none": "📥 <b>İnceleme bekleyen ilan yok</b> ✅",
         "rv_cap": "📥 <b>{title}</b>\n<blockquote>👤 {who}\n💲 {m} TMT/ay · 📡 {n} sunucu\n🧪 TM testi {w}/{t} · 🌍 {c} ülke\n⏳ {wait} bekliyor{ph}</blockquote>",
@@ -1244,7 +1260,7 @@ AT = {
         "chans": "📢 Kanallar", "mk": "🏪 Bazar", "bcast": "📣 Hemmelere habar", "ad": "📢 Reklama posty", "sa": "👮 Kömekçi adminler", "ref": "🧪 Çagyryş testi", "hp": "🔒 Happ limitli kod",
         "autoann": "🕰 Awto habar: {s}", "aon": "Açyk", "aoff": "Ýapyk", "ipb": "🚨 IP çägi: iň az {n} täze IP", "ping": "⏱ Ping çägi: {n} ms", "rollback": "♻️ Öňki wersiýa gaýt",
         "start": "▶️ Başlat", "stop": "🛑 Sakla", "menu": "◀️ Menýu", "rev": "📥 Bildirişler ({n})",
-        "lastchk": "🔍 Soňky barlag", "lastupd": "🔄 Soňky täzelenme", "tm": "📱 Telefon testi", "stat": "📡 <b>{n}</b> kod  ·  🔗 <b>{s}</b> podpiska  ·  👥 <b>{v}</b> VIP  ·  🙋 <b>{u}</b> ulanyjy",
+        "lastchk": "🔍 Soňky barlag", "lastupd": "🔄 Soňky täzelenme", "tm": "📱 Telefon testi", "stat": "📡 <b>{n}</b> kod  ·  🔗 <b>{s}</b> podpiska\n👥 <b>{v}</b> VIP  ·  🙋 <b>{u}</b> ulanyjy",
         "rev_t": "📥 <b>Barlag garaşýan bildirişler</b>  <code>{n}</code>\n<blockquote>Bildirişe basyň: surat, hakyky ping we tassyklama düwmeleri geler.</blockquote>",
         "rev_none": "📥 <b>Garaşýan bildiriş ýok</b> ✅",
         "rv_cap": "📥 <b>{title}</b>\n<blockquote>👤 {who}\n💲 {m} TMT/aý · 📡 {n} serwer\n🧪 TM testi {w}/{t} · 🌍 {c} ýurt\n⏳ {wait} garaşýar{ph}</blockquote>",
@@ -1257,7 +1273,7 @@ AT = {
         "chans": "📢 Каналы", "mk": "🏪 Биржа", "bcast": "📣 Рассылка всем", "ad": "📢 Рекламный пост", "sa": "👮 Помощники", "ref": "🧪 Тест приглашения", "hp": "🔒 Happ код с лимитом",
         "autoann": "🕰 Автообъявл.: {s}", "aon": "Вкл", "aoff": "Выкл", "ipb": "🚨 Порог IP: от {n} новых", "ping": "⏱ Лимит пинга: {n} мс", "rollback": "♻️ Откатить версию",
         "start": "▶️ Запустить", "stop": "🛑 Остановить", "menu": "◀️ Меню", "rev": "📥 Объявления ({n})",
-        "lastchk": "🔍 Последняя проверка", "lastupd": "🔄 Последнее обновление", "tm": "📱 Тест телефона", "stat": "📡 <b>{n}</b> кодов  ·  🔗 <b>{s}</b> подписок  ·  👥 <b>{v}</b> VIP  ·  🙋 <b>{u}</b> польз.",
+        "lastchk": "🔍 Последняя проверка", "lastupd": "🔄 Последнее обновление", "tm": "📱 Тест телефона", "stat": "📡 <b>{n}</b> кодов  ·  🔗 <b>{s}</b> подписок\n👥 <b>{v}</b> VIP  ·  🙋 <b>{u}</b> польз.",
         "rev_t": "📥 <b>Объявления на проверке</b>  <code>{n}</code>\n<blockquote>Нажмите на объявление: фото, реальный пинг и кнопки решения.</blockquote>",
         "rev_none": "📥 <b>Нет объявлений на проверке</b> ✅",
         "rv_cap": "📥 <b>{title}</b>\n<blockquote>👤 {who}\n💲 {m} TMT/мес · 📡 {n} серверов\n🧪 Тест ТМ {w}/{t} · 🌍 {c} стран\n⏳ ждёт {wait}{ph}</blockquote>",
@@ -3217,9 +3233,9 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
                total=len(e.get("refs", [])), avail=max(0, avail_refs(e)), need=REF_NEED, free=e.get("free_n", 0),
                active=len(user_codes(db, uid)), buys=e.get("buys", 0), inviter=esc(inv.get("name") or tr(lang, "nobody")),
                link=esc(ref_link(uid)))
-        t += tr(lang, "bal_line", bal=f"{e.get('bal', 0) / UM:.2f}", tmt=f"{e.get('bal', 0) * USDT_RATE / UM:.2f}") + (tr(lang, "earn_line", earn=fmt_u(e["earn"])) if e.get("earn") else "")
+        t += tr(lang, "bal_line", bal=f"{e.get('bal', 0) / UM:.2f}", tmt=f"{e.get('bal', 0) * USDT_RATE / UM:.2f}") + (tr(lang, "earn_line", earn=(f"{e['earn'] / UM:.2f}" if e["earn"] >= UM // 100 else f"{e['earn'] / UM:.4f}")) if e.get("earn") else "")
         await bsend("prof", t, KB([[B(tr(lang, "b_share"), url=share_url(lang, uid), style="success")],
-                          [B(tr(lang, "b_top"), "u_top", "primary")], [B(tr(lang, "b_myad"), "u_myad", "success")]] + ([[B(tr(lang, "b_wd"), "u_wd")]] if e.get("earn") else []) + [
+                          [B(tr(lang, "b_myad"), "u_myad", "success")], [B(tr(lang, "b_top"), "u_top", "primary")]] + ([[B(tr(lang, "b_wd"), "u_wd", "primary")]] if e.get("earn") else []) + [
                           [B(tr(lang, "b_menu"), "u_menu")]]))
 
     elif a == "u_myad":   # kullanıcının kendi davet linkiyle reklam postu (30 dakikada bir yenisi)
@@ -3553,7 +3569,7 @@ ERR_SEEN = {}                    # uid -> son hata mesajı zamanı (aynı kişiy
 from telegram.ext import ApplicationHandlerStop
 
 T["tr"].update({
-  "b_sup": "🆘 Support", "b_bug": "🐞 Hata Bildir", "b_tclose": "🔒 Talebi Kapat", "b_report": "📨 Admine Bildir",
+  "b_sup": "🆘 Support", "b_bug": "🐞 Bug Bildir", "b_tclose": "🔒 Talebi Kapat", "b_report": "📨 Admine Bildir",
   "bug_new": "🐞 <b>Hata Bildir · #{tid}</b>\n<blockquote>Bulduğun hatayı anlat. Ekran görüntüsü ya da video ekleyebilirsin.\n📷 Fotoğraf en fazla 5 MB · 🎬 Video/dosya en fazla 10 MB</blockquote>\n<i>Admin cevap verince burada görürsün; sen de cevap yazabilirsin.</i>",
   "sup_new": "🆘 <b>Destek · #{tid}</b>\n<blockquote>Sorununu yaz. Fotoğraf, video ya da dosya da gönderebilirsin.\n📷 Fotoğraf en fazla 5 MB · 🎬 Video/dosya en fazla 10 MB</blockquote>\n<i>Admin cevap verince burada görürsün; sen de cevap yazabilirsin. Talep kapanana kadar konuşma devam eder.</i>",
   "sup_open": "🆘 <b>Destek · #{tid}</b>\n<blockquote>Talebin açık. Mesaj yazabilirsin; admin cevap verince burada görürsün.</blockquote>",
@@ -4412,7 +4428,7 @@ T["tk"] = {
  "expired": "⏳ Kodyňyň möhleti gutardy, ol pozuldy: {name}",
  "nobody": "—",
  "b_sup": "🆘 Support",
- "b_bug": "🐞 Ýalňyşlyk",
+ "b_bug": "🐞 Bug bildir",
  "b_tclose": "🔒 Soragy ýap",
  "b_report": "📨 Admine ýaz",
  "bug_new": "🐞 <b>Ýalňyşlyk ýaz · #{tid}</b>\n<blockquote>Tapan ýalňyşlygyňy düşündirip ýaz. Skrinşot ýa-da wideo goşup bilersiň.\n📷 Surat iň köp 5 MB · 🎬 Wideo/faýl iň köp 10 MB</blockquote>\n<i>Admin jogap berse, şu ýerde görersiň; sen hem jogap ýazyp bilersiň.</i>",
@@ -4598,6 +4614,11 @@ T["ru"].update({"fake_rej": "🤥 <b>Объявление отклонено: ф
     "fake_warn": "⚠️ <i>Если это повторится, за следующее объявление будет взята двойная плата.</i>",
     "fake_x2": "⚠️ <b>Это уже второй раз: следующее объявление будет стоить {fee}$ (в 2 раза больше).</b> После оплаты цена снова обычная.",
     "fee_x2_note": "\n⚠️ <b>Штраф за фальшивый пинг:</b> это объявление в 2 раза дороже."})
+
+# Sınırlı abonelik uyarısı (satış)
+T["tr"]["sell_limited"] = "⚠️ <b>Bu abonelik sınırlı</b>\n<blockquote>{lim}\nPazara sadece <b>GB ve süre sınırı olmayan</b> abonelik konabilir.</blockquote>"
+T["tk"]["sell_limited"] = "⚠️ <b>Bu podpiskanyň çägi bar</b>\n<blockquote>{lim}\nBazara diňe <b>GB we möhlet çägi bolmadyk</b> podpiska goýup bolýar.</blockquote>"
+T["ru"]["sell_limited"] = "⚠️ <b>У подписки есть ограничения</b>\n<blockquote>{lim}\nНа биржу можно выставить только подписку <b>без лимита ГБ и срока</b>.</blockquote>"
 
 # Happ şifreli link uyarısı (satış)
 T["tr"]["sell_happ"] = "⚠️ <b>Happ şifreli linkleri kabul edilmiyor</b>\n<blockquote>happ://crypt… gibi şifreli ya da kapalı linklerin içindeki kodlar okunamaz.\nAçık abonelik linkini gönder (<code>https://</code> ile başlayan).</blockquote>"
@@ -5330,6 +5351,30 @@ def topup_order(uid, user, lang, usdt):
     rows = ([[B(tr(lang, "b_usdt", usdt=usdt_of(o["price"])), f"u_usdt:{oid}", "success")]] if crypto_token() else []) + [[B(tr(lang, "b_cancel"), f"u_cancel:{oid}", "danger")]]
     return tr(lang, "top_order", oid=oid, usdt=usdt_of(o["price"])) + ("" if crypto_token() else "\n" + tr(lang, "pay_off")), KB(rows)
 
+PAD_MAX_RATIO = 1.25   # yükseklik / genişlik bundan fazlaysa yanlara boşluk eklenir (Telegram uzun fotoğrafı kırpar)
+
+def pad_photo(data):
+    """Uzun (dikey) ekran görüntüsünü bulanık arka planlı geniş bir tuvale ortalar → sohbette hep tam görünür. Gerek yoksa None."""
+    from PIL import Image, ImageFilter
+    im = Image.open(io.BytesIO(data)).convert("RGB")
+    w, h = im.size
+    if h / w <= PAD_MAX_RATIO: return None
+    W = int(h / PAD_MAX_RATIO)
+    bg = im.resize((W, h)).filter(ImageFilter.GaussianBlur(40)).point(lambda v: int(v * 0.45))
+    bg.paste(im, ((W - w) // 2, 0))
+    out = io.BytesIO(); bg.save(out, "JPEG", quality=88); return out.getvalue()
+
+async def full_view_photo(c, uid, fid):
+    """Fotoğraf kırpılacak kadar uzunsa düzeltilmiş halini yükler; yeni file_id döner (gerekmezse None)."""
+    f = await c.bot.get_file(fid)
+    data = bytes(await f.download_as_bytearray())
+    new = await asyncio.to_thread(pad_photo, data)
+    if not new: return None
+    m_ = await c.bot.send_photo(uid, new, disable_notification=True)
+    try: await m_.delete()
+    except Exception: pass
+    return m_.photo[-1].file_id
+
 async def market_input(c, u, st):
     """Satıcı ilan adımları ve özel yükleme tutarı (yazı ya da fotoğraf)."""
     m, user = u.message, u.effective_user
@@ -5351,6 +5396,11 @@ async def market_input(c, u, st):
         try: codes = await asyncio.to_thread(fetch_codes, link)
         except Exception: codes = []
         if not codes: await say(tr(lang, "sell_badlink")); return
+        lim = await asyncio.to_thread(sub_limits, link)   # GB ya da süre sınırı varsa kabul edilmez
+        gb = lim.get("total", 0); exp = lim.get("expire", 0)
+        if gb > 0 or exp > time.time():
+            parts = ([f"📦 {gb / 1024 ** 3:.0f} GB"] if gb > 0 else []) + ([f"⏳ {datetime.datetime.fromtimestamp(exp, TM_TZ).strftime('%d.%m.%Y')}"] if exp > time.time() else [])
+            await say(tr(lang, "sell_limited", lim=" · ".join(parts))); return
         if uid not in ADMINS and any(L.get("link") == link and L.get("status") in ("pending", "live") for L in load_db().get("market", {}).values()):
             STATE.pop(uid, None); await say(tr(lang, "sell_dup"), KB([[B(tr(lang, "b_back_mkt"), "u_mkt")]])); return
         protos = {}
@@ -5363,7 +5413,10 @@ async def market_input(c, u, st):
         await say(tr(lang, "sell_3"))
     elif step == "photo":
         if not m.photo: await say(tr(lang, "sell_need_photo")); return
-        st.update({"step": "desc", "photo": m.photo[-1].file_id})
+        fid_ = m.photo[-1].file_id
+        try: fid_ = await full_view_photo(c, uid, fid_) or fid_
+        except Exception as ex_: log.info("photo pad: %s", ex_)
+        st.update({"step": "desc", "photo": fid_})
         await say(tr(lang, "sell_4"))
     elif step == "desc":
         st.update({"step": "price", "desc": "" if txt == "-" else txt[:300]})
