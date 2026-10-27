@@ -2958,6 +2958,7 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
     elif a.startswith("u_ms:"):   # önce sor: emin misin?
         lid = a.split(":", 1)[1]; L_ = db.get("market", {}).get(lid)
         if not L_ or L_.get("status") != "live": await send(tr(lang, "m_gone"), KB([[B(tr(lang, "b_back_mkt"), "u_mkt")]])); return
+        if L_.get("owner") == uid and uid not in ADMINS: await send(tr(lang, "m_own"), KB([[B(tr(lang, "b_back_mkt"), "u_mkt")]])); return
         t_ = tr(lang, "ms_q", title=esc(short(L_["title"], 40)), fee=fmt_u(MKT_FEE), pm=money_tmt(float(L_["price"]), 4), ph=money_tmt(float(L_["price"]) * PREPAY_MIN), bal=fmt_u(e.get("bal", 0)))
         kb_ = KB([[B(tr(lang, "b_msy"), f"u_msy:{lid}", "success")], [B(tr(lang, "b_msn"), f"u_ml:{lid}")]])
         msg = getattr(q, "message", None)
@@ -2973,6 +2974,7 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
             elif err == "already": await send(tr(lang, "m_already"), KB([[B(tr(lang, "b_mine"), "u_mine")], [B(tr(lang, "b_back_mkt"), "u_mkt")]]))
             elif err == "limit": await send(tr(lang, "m_limit", n=MAX_STARTS_DAY), KB([[B(tr(lang, "b_back_mkt"), "u_mkt")]]))
             elif err == "gone": await send(tr(lang, "m_gone"), KB([[B(tr(lang, "b_back_mkt"), "u_mkt")]]))
+            elif err == "own": await send(tr(lang, "m_own"), KB([[B(tr(lang, "b_back_mkt"), "u_mkt")]]))
             else:
                 await send(tr(lang, "no_slot"), menu_btn)
                 await notify_founders(c.application, f"⚠️ <b>Pazar kodu başlatılamadı</b>\n<blockquote>{esc(who(user))}\n{esc(err)}</blockquote>")
@@ -3116,17 +3118,25 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         await send(tr(lang, "top_ask"), KB([[B(tr(lang, "b_cancel"), "u_top")]]))
 
     elif a == "u_wd":
-        amt = e.get("earn", 0)
+        adm_ = uid in ADMINS   # kurucu: bakiyedeki para da kazanç sayılır
+        amt = e.get("earn", 0) + (e.get("bal", 0) if adm_ else 0)
         if amt < wd_min(uid): await send(tr(lang, "wd_min", earn=fmt_u(amt), min=fmt_u(wd_min(uid))), menu_btn); return
         def take(d):
             x = d["users"][str(uid)]
-            if x.get("earn", 0) < amt: return False
-            x["earn"] -= amt; return True
-        if not mutate(take): return
+            ea, ba = x.get("earn", 0), (x.get("bal", 0) if adm_ else 0)
+            if ea + ba < amt: return False
+            from_e = min(ea, amt); x["earn"] = ea - from_e
+            if amt > from_e: x["bal"] = ba - (amt - from_e)
+            return (from_e, amt - from_e)
+        took = mutate(take)
+        if not took: return
         try:
             await asyncio.to_thread(crypto_call, "transfer", user_id=uid, asset="USDT", amount=fmt_u(amt), spend_id=f"wd-{uid}-{int(time.time())}", comment="VPN pazarı kazancı")
         except Exception as ex:
-            mutate(lambda d: d["users"][str(uid)].__setitem__("earn", d["users"][str(uid)].get("earn", 0) + amt))
+            def back(d):
+                x = d["users"][str(uid)]; x["earn"] = x.get("earn", 0) + took[0]
+                if took[1]: x["bal"] = x.get("bal", 0) + took[1]
+            mutate(back)
             await send(tr(lang, "wd_err", err=esc(str(ex)[:100])), menu_btn); return
         ulog("m_wd", f"💸 Kazanç çekti: {who(user)} · {fmt_u(amt)} USDT")
         await send(tr(lang, "wd_ok", usdt=fmt_u(amt)), menu_btn)
@@ -3245,7 +3255,7 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
                link=esc(ref_link(uid)))
         t += tr(lang, "bal_line", bal=f"{e.get('bal', 0) / UM:.2f}", tmt=f"{e.get('bal', 0) * USDT_RATE / UM:.2f}") + (tr(lang, "earn_line", earn=(f"{e['earn'] / UM:.2f}" if e["earn"] >= UM // 100 else f"{e['earn'] / UM:.4f}")) if e.get("earn") else "")
         await bsend("prof", t, KB([[B(tr(lang, "b_share"), url=share_url(lang, uid), style="success")],
-                          [B(tr(lang, "b_myad"), "u_myad", "success")], [B(tr(lang, "b_top"), "u_top", "primary")]] + ([[B(tr(lang, "b_wd"), "u_wd", "primary")]] if e.get("earn") else []) + [
+                          [B(tr(lang, "b_myad"), "u_myad", "success")], [B(tr(lang, "b_top"), "u_top", "primary")]] + ([[B(tr(lang, "b_wd"), "u_wd", "primary")]] if e.get("earn") or (uid in ADMINS and e.get("bal")) else []) + [
                           [B(tr(lang, "b_menu"), "u_menu")]]))
 
     elif a == "u_myad":   # kullanıcının kendi davet linkiyle reklam postu (30 dakikada bir yenisi)
@@ -4020,6 +4030,7 @@ def mkt_start(uid, lid):
         db = load_db(); ensure_own(db)
         L = db["market"].get(lid); e = db["users"].setdefault(str(uid), {})
         if not L or L.get("status") != "live": return None, "gone"
+        if L.get("owner") == uid and uid not in ADMINS: return None, "own"   # kendi ilanını alıp bakiyeyi kazanca çeviremesin
         if any(s["buyer"] == uid and s["lid"] == lid and s["status"] == "on" for s in db.get("msess", {}).values()): return None, "already"
         if sum(1 for s in db.get("msess", {}).values() if s["buyer"] == uid and s["lid"] == lid and s["start"] > time.time() - 86400) >= MAX_STARTS_DAY:
             return None, "limit"   # aynı ilanı sık başlat-durdur (IP toplama) engeli
@@ -4624,6 +4635,9 @@ T["ru"].update({"b_myad": "🎨 Создать свою рекламу",
     "myad_done": "✅ <b>Ваша реклама готова!</b>\n<blockquote>Реклама выше создана <b>с вашей реферальной ссылкой</b> — используйте смело. Перешлите в любой канал или группу.\n\n💡 Или там, где даёте рекламу, напишите в поле ввода <code>@{un}</code> — ваша реклама появится сама.\n\n🔗 Ваша ссылка: {link}</blockquote>"})
 
 # günlük başlatma sınırı (aynı ilan)
+T["tr"]["m_own"] = "⚠️ <b>Kendi ilanını satın alamazsın.</b>"
+T["tk"]["m_own"] = "⚠️ <b>Öz bildirişiňizi satyn alyp bilmeýärsiňiz.</b>"
+T["ru"]["m_own"] = "⚠️ <b>Нельзя купить своё собственное объявление.</b>"
 T["tr"]["m_limit"] = "⚠️ <b>Bu ilanı bugün {n} kez başlattın.</b>\n<blockquote>Aynı ilan 24 saatte en fazla {n} kez başlatılabilir. Diğer ilanları kullanabilirsin.</blockquote>"
 T["tk"]["m_limit"] = "⚠️ <b>Bu bildirişi şu gün {n} gezek başlatdyňyz.</b>\n<blockquote>Bir bildiriş 24 sagatda iň köp {n} gezek başladylyp bilner. Beýleki bildirişleri ulanyp bilersiňiz.</blockquote>"
 T["ru"]["m_limit"] = "⚠️ <b>Вы уже запускали это объявление {n} раза за сутки.</b>\n<blockquote>Одно объявление можно запускать не больше {n} раз за 24 часа. Другие объявления доступны.</blockquote>"
