@@ -3335,27 +3335,29 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
                    KB([[B(tr(lang, "b_pay"), url=o["inv_url"], style="success")], [B(tr(lang, "b_chk"), f"u_chk:{oid}", "primary")]]
                       + ([[B("🟡 🧪 Ödendi say (test)", f"u_tpaid:{oid}", "primary")]] if uid in ADMINS else []) + [[B(tr(lang, "b_menu"), "u_menu")]]))
 
-    elif a.startswith("u_pbal:"):   # 💰 profil bakiyesiyle öde
-        oid = a.split(":", 1)[1]
+    elif a.startswith("u_pbal:") or a.startswith("u_pbon:"):   # 💰 bakiyeyle / 🎁 bonusla öde
+        oid = a.split(":", 1)[1]; wal = "bonus" if a.startswith("u_pbon:") else "bal"
         def f(d):
             o_ = d.get("orders", {}).get(oid); x = d["users"].setdefault(str(uid), {})
             if not o_ or o_["uid"] != uid or o_["status"] != "new" or o_["item"] == "topup": return "old"
+            if wal == "bonus" and o_["item"] not in PRICES: return "old"   # bonus sadece kod (7/30 gün) alımında
             cost = tmt_to_um(o_["price"])
-            bon = x.get("bonus", 0) if o_["item"] in PRICES else 0   # bonus sadece kod (7/30 gün) alımında
-            if x.get("bal", 0) + bon < cost: return ("nobal", cost)
-            fb = min(bon, cost); x["bonus"] = x.get("bonus", 0) - fb; x["bal"] = x.get("bal", 0) - (cost - fb)
-            o_["status"] = "paid"; o_["via"] = "bal"; o_["bal_cost"] = cost; o_["bonus_used"] = fb
-            return ("ok", cost, fb)
+            if x.get(wal, 0) < cost: return ("nobal", cost, x.get(wal, 0))
+            x[wal] = x.get(wal, 0) - cost
+            o_["status"] = "paid"; o_["via"] = wal; o_["bal_cost"] = cost
+            return ("ok", cost)
         r_ = mutate(f)
         if r_ == "old": await send(tr(lang, "order_old"), menu_btn); return
         if r_[0] == "nobal":
-            await send(tr(lang, "pbal_need", need=fmt_u(r_[1]), bal=fmt_u(e.get("bal", 0) + (e.get("bonus", 0) if load_db()["orders"][oid]["item"] in PRICES else 0))),
+            if wal == "bonus":
+                await send(tr(lang, "pbon_need", need=f"{r_[1] * USDT_RATE / UM:.2f}", b=f"{r_[2] * USDT_RATE / UM:.2f}"), KB([[B(tr(lang, "b_menu"), "u_menu")]])); return
+            await send(tr(lang, "pbal_need", need=fmt_u(r_[1]), bal=fmt_u(r_[2])),
                        KB([[B(tr(lang, "b_top"), "u_top", "success")], [B(tr(lang, "b_menu"), "u_menu")]])); return
-        ulog("paid", f"💰 Bakiyeyle ödedi: {who(user)} · #{oid} · {fmt_u(r_[1])} USDT")
+        ulog("paid", f"{'🎁 Bonusla' if wal == 'bonus' else '💰 Bakiyeyle'} ödedi: {who(user)} · #{oid} · {fmt_u(r_[1])} USDT")
         msg = await fulfill_order(c.application, oid, True, uid)
         if load_db().get("orders", {}).get(oid, {}).get("status") != "done":   # teslim olmadı → para geri
             def back(d):
-                x = d["users"][str(uid)]; x["bonus"] = x.get("bonus", 0) + r_[2]; x["bal"] = x.get("bal", 0) + r_[1] - r_[2]; d["orders"][oid]["status"] = "cancel"
+                x = d["users"][str(uid)]; x[wal] = x.get(wal, 0) + r_[1]; d["orders"][oid]["status"] = "cancel"
             mutate(back)
             await send(tr(lang, "pbal_fail"), menu_btn)
             await notify_founders(c.application, f"⚠️ <b>Bakiyeyle alım teslim edilemedi</b> (para iade edildi)\n<blockquote>{esc(who(user))} · #{oid}\n{msg}</blockquote>")
@@ -3408,6 +3410,7 @@ def new_order(uid, user, lang, item, n=0, ext=None):
     ulog("order", f"🧾 Sipariş açtı: {who(user)} · #{oid} · {item_tr(o)} · {price} TMT")
     us = usdt_of(price); has = bool(crypto_token())
     rows = [[B(tr(lang, "b_pbal", usdt=fmt_u(tmt_to_um(price))), f"u_pbal:{oid}", "success")]] + \
+           ([[B(tr(lang, "b_pbon", tmt=price), f"u_pbon:{oid}", "success")]] if item in PRICES else []) + \
            ([[B(tr(lang, "b_usdt", usdt=us), f"u_usdt:{oid}", "success")]] if has else []) + [[B(tr(lang, "b_cancel"), f"u_cancel:{oid}", "danger")]]
     # TMT ile ödeme henüz açık değil ("yakında"); açılınca eski TMT akışı (u_paid -> admin onayı) kullanılabilir
     t = (f"🧾 <b>{'Заказ' if lang == 'ru' else 'Sipariş'} #{oid}</b>\n<blockquote>{esc(it)}\n💰 {'Сумма' if lang == 'ru' else 'Tutar'}  <b>{price} TMT</b>  ·  <b>{us} USDT</b></blockquote>\n"
@@ -4685,6 +4688,12 @@ T["ru"].update({"b_myad": "🎨 Создать свою рекламу",
 T["tr"]["wd_nofund"] = "⏳ <b>Çekim şu an yapılamadı.</b>\n<blockquote>Ödeme hesabında geçici olarak yeterli para yok. <b>{usdt} USDT</b> kazancın yerinde duruyor, kaybolmadı.\nAdmine bildirildi — biraz sonra tekrar dene.</blockquote>"
 T["tk"]["wd_nofund"] = "⏳ <b>Häzir çekip bolmady.</b>\n<blockquote>Töleg hasabynda wagtlaýyn ýeterlik pul ýok. <b>{usdt} USDT</b> gazanjyňyz ýerinde dur, ýitmedi.\nAdmine habar berildi — birazdan gaýtadan synanyşyň.</blockquote>"
 T["ru"]["wd_nofund"] = "⏳ <b>Вывод сейчас невозможен.</b>\n<blockquote>На платёжном счёте временно недостаточно средств. Ваши <b>{usdt} USDT</b> на месте.\nАдмин уведомлён — попробуйте чуть позже.</blockquote>"
+T["tr"].update({"b_pbon": "🎁 Bonustan öde ({tmt} TMT)",
+  "pbon_need": "⚠️ <b>Bonus yetersiz</b>\n<blockquote>Gerekli  <b>{need} TMT</b>\n🎁 Bonusun  <b>{b} TMT</b></blockquote>\n<i>👥 Çağırdığın her dost için 0.25 TMT bonus alırsın.</i>"})
+T["tk"].update({"b_pbon": "🎁 Bonusdan töle ({tmt} TMT)",
+  "pbon_need": "⚠️ <b>Bonus ýeterlik däl</b>\n<blockquote>Gerek  <b>{need} TMT</b>\n🎁 Bonusyňyz  <b>{b} TMT</b></blockquote>\n<i>👥 Çagyran her dostuňyz üçin 0.25 TMT bonus alýarsyňyz.</i>"})
+T["ru"].update({"b_pbon": "🎁 Оплатить бонусом ({tmt} TMT)",
+  "pbon_need": "⚠️ <b>Недостаточно бонусов</b>\n<blockquote>Нужно  <b>{need} TMT</b>\n🎁 Бонус  <b>{b} TMT</b></blockquote>\n<i>👥 За каждого приглашённого друга — 0.25 TMT бонуса.</i>"})
 T["tr"].update({"b_pbal": "💰 Bakiyeden öde ({usdt} USDT)",
   "pbal_need": "⚠️ <b>Bakiye yetersiz</b>\n<blockquote>Gerekli  <b>{need} USDT</b>\n💰 Bakiyen  <b>{bal} USDT</b></blockquote>",
   "pbal_fail": "⚠️ Şu an teslim edilemedi. Paran bakiyene geri yüklendi, admine bildirildi."})
