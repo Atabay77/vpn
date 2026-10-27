@@ -2549,6 +2549,13 @@ def crypto_call(method, token=None, **params):
     if not j.get("ok"): raise RuntimeError(str(j.get("error"))[:200])
     return j["result"]
 
+def crypto_transfer(**kw):
+    """CryptoBot transferi; yorum kabul edilmezse (CANNOT_ATTACH_COMMENT) yorumsuz tekrar dener."""
+    try: return crypto_call("transfer", **kw)
+    except RuntimeError as e:
+        if "CANNOT_ATTACH_COMMENT" not in str(e) or not kw.get("comment"): raise
+        kw.pop("comment"); return crypto_call("transfer", **kw)
+
 # ── Happ limitli link (happ-proxy.com): kod en fazla N cihaza kurulabilir ──
 HAPP_API = "https://api.happ-proxy.com/api/"
 HAPP_CRYPT = "https://crypto.happ.su/api-v2.php"
@@ -3132,7 +3139,7 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         took = mutate(take)
         if not took: return
         try:
-            await asyncio.to_thread(crypto_call, "transfer", user_id=uid, asset="USDT", amount=fmt_u(amt), spend_id=f"wd-{uid}-{int(time.time())}", comment="VPN pazarı kazancı")
+            await asyncio.to_thread(crypto_transfer, user_id=uid, asset="USDT", amount=fmt_u(amt), spend_id=f"wd-{uid}-{int(time.time())}", comment="VPN pazarı kazancı")
         except Exception as ex:
             def back(d):
                 x = d["users"][str(uid)]; x["earn"] = x.get("earn", 0) + took[0]
@@ -4146,7 +4153,7 @@ def pay_seller(seller, amount, spend_id, comment):
     if amount <= 0: return "none"
     if crypto_token() and amount >= TRANSFER_MIN:   # CryptoBot 1$'ın altını göndermiyor (AMOUNT_TOO_SMALL)
         try:
-            crypto_call("transfer", user_id=seller, asset="USDT", amount=fmt_u(amount), spend_id=spend_id[:64], comment=comment[:500])
+            crypto_transfer(user_id=seller, asset="USDT", amount=fmt_u(amount), spend_id=spend_id[:64], comment=comment[:500])
             return "sent"
         except Exception as e:
             RUN["transfer_err"] = str(e)[:150]
