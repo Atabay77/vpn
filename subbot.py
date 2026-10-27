@@ -2087,7 +2087,8 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         await safe_edit(q, *ask_num(uid, "ping_max", f"Şu an: <b>{ping_max()} ms</b>\n"))
 
     elif a == "ad_post":
-        await send_ad(c, uid)
+        v_ = mutate(lambda d: d.__setitem__("ad_admin_v", (d.get("ad_admin_v", -1) + 1) % 3) or d["ad_admin_v"])
+        await send_ad(c, uid, "tk", None, v_)
         await safe_edit(q, "📢 <b>Reklam postu</b>\n<blockquote>Post aşağıda. İstediğin kanala ilet (forward) ya da kanal sahibine gönder.\n\nKanalda dil butonu çalışsın istersen: kanala yazı yazarken <code>@" + esc(BOT.get("un") or "bot") + "</code> yaz, çıkan reklamı seç (BotFather'da /setinline açık olmalı).</blockquote>", back("admin"))
 
     elif a == "auto_ann":
@@ -2734,6 +2735,9 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         if not await pub_gate(c, uid, lang, send): return
         await show_home(c, uid, getattr(q, "message", None), send=send); return
 
+    if a == "u_myad":   # yeni reklam: 30 dakika dolmadıysa sadece uyarı
+        left_ = int(load_db()["users"].get(str(uid), {}).get("ad_ts", 0) + AD_EVERY - time.time())
+        if left_ > 0: await q.answer(tr(lang, "myad_wait2", m=(left_ + 59) // 60), show_alert=True); return
     await q.answer()
     if not await pub_gate(c, uid, lang, send): return
     db = load_db(); e = db["users"].get(str(uid), {})
@@ -3104,18 +3108,21 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
                           [B(tr(lang, "b_top"), "u_top", "primary")], [B(tr(lang, "b_myad"), "u_myad", "success")]] + ([[B(tr(lang, "b_wd"), "u_wd")]] if e.get("earn") else []) + [
                           [B(tr(lang, "b_menu"), "u_menu")]]))
 
-    elif a == "u_myad":   # kullanıcının kendi davet linkiyle reklam postu
+    elif a == "u_myad":   # kullanıcının kendi davet linkiyle reklam postu (30 dakikada bir yenisi)
+        v_ = mutate(lambda d: d["users"][str(uid)].__setitem__("ad_v", (d["users"][str(uid)].get("ad_v", -1) + 1) % 3) or d["users"][str(uid)].__setitem__("ad_ts", time.time()) or d["users"][str(uid)]["ad_v"])
         steps = tr(lang, "myad_wait").split("|")
-        for i_, st_ in enumerate(steps):
-            await send(st_)
-            await asyncio.sleep(0.9 if i_ < len(steps) - 1 else 0.3)
-        msg_ = getattr(q, "message", None)
-        try: await msg_.delete()
+        pm_ = await c.bot.send_message(uid, steps[0], parse_mode="HTML")
+        for st_ in steps[1:]:
+            await asyncio.sleep(0.9)
+            try: await pm_.edit_text(st_, parse_mode="HTML")
+            except Exception: pass
+        await asyncio.sleep(0.3)
+        try: await pm_.delete()
         except Exception: pass
-        try: await send_ad(c, uid, "tk" if lang != "ru" else "ru", uid)
+        try: await send_ad(c, uid, "ru" if lang == "ru" else "tk", uid, v_)
         except Exception as ex_: log.warning("myad: %s", ex_)
         await c.bot.send_message(uid, tr(lang, "myad_done", un=esc(BOT.get("un") or "SuBDrive_bot"), link=esc(ref_link(uid))), parse_mode="HTML",
-                                 disable_web_page_preview=True, reply_markup=KB([[B(tr(lang, "b_prof"), "u_prof"), B(tr(lang, "b_menu"), "u_menu")]]))
+                                 disable_web_page_preview=True, reply_markup=KB([[B(tr(lang, "b_myad2"), "u_myad", "success")], [B(tr(lang, "b_prof"), "u_prof"), B(tr(lang, "b_menu"), "u_menu")]]))
 
     elif a == "u_market":
         STATE.pop(uid, None)
@@ -3738,7 +3745,7 @@ def user_view(tid):
 
 # ───────── PAZAR: VPN satıcıları, dakika başı ödeme (bakiye + CryptoBot) ─────────
 UM = 1_000_000                   # 1 USDT = 1.000.000 mikro (kuruş hatası olmasın diye tam sayı)
-PREPAY_MIN = 60                  # başlatınca ilk 60 dakika peşin alınır (hemen iade edip IP toplamaya karşı)
+PREPAY_MIN = 300                 # başlatınca ilk 5 saat peşin alınır (hemen iade edip IP toplamaya karşı)
 MAX_STARTS_DAY = 3               # bir alıcı AYNI ilanı (başka ilanlar serbest) 24 saatte en fazla bu kadar başlatabilir
 MKT_FEE = 50_000                 # 0.05 USDT: satıcı ilan ücreti ve alıcı başlatma ücreti (bota kalır)
 TOPUP_MIN = 1                    # en az bakiye yükleme (USDT)
@@ -3859,7 +3866,7 @@ def mkt_start(uid, lid):
         if any(s["buyer"] == uid and s["lid"] == lid and s["status"] == "on" for s in db.get("msess", {}).values()): return None, "already"
         if sum(1 for s in db.get("msess", {}).values() if s["buyer"] == uid and s["lid"] == lid and s["start"] > time.time() - 86400) >= MAX_STARTS_DAY:
             return None, "limit"   # aynı ilanı sık başlat-durdur (IP toplama) engeli
-        need = MKT_FEE + int(round(L["price"] * START_MINUTES))
+        need = MKT_FEE + int(round(L["price"] * max(START_MINUTES, PREPAY_MIN)))
         if e.get("bal", 0) < need: return None, f"nobal:{need}"
         codes = listing_codes(db, L)
         if not codes: return None, "nocodes"
@@ -3947,7 +3954,7 @@ T["tr"].update({
   "mkt_empty": "<i>Şu an başka ilan yok.</i>",
   "ml": "🏪 <b>{title}</b>\n<blockquote>{own}👤 Satıcı  {seller}\n📡 Sunucu  <b>{total}</b>  ·  {protos}\n🇹🇲 TM testi  <b>{work}/{tested}</b> çalışıyor  ·  ❌ {dead}\n🌍 Gerçek ülke  <b>{ncc}</b>  {flags}\n🔌 Açık port (VPS)  {tcp}\n🕒 Son kontrol  {chk}\n✅ Son sağlam  {good}</blockquote>\n💲 <b>Fiyat</b>\n<blockquote>{calc}</blockquote>{desc}\n<i>Başlatınca 0.05$ başlatma ücreti alınır, sonra her dakika bakiyenden düşer.</i>",
   "ml_own": "⭐ Resmi ilan\n",
-  "m_need": "⚠️ <b>Bakiye yetersiz</b>\n<blockquote>Başlatmak için en az <b>{need} USDT</b> gerekli (0.05$ + 60 dakika).\n💰 Bakiyen  <b>{bal} USDT</b></blockquote>",
+  "m_need": "⚠️ <b>Bakiye yetersiz</b>\n<blockquote>Başlatmak için en az <b>{need} USDT</b> gerekli (0.05$ + 5 saat).\n💰 Bakiyen  <b>{bal} USDT</b></blockquote>",
   "m_started": "✅ <b>Kod başladı!</b>\n<blockquote>🏪 {title}\n💲 {p}  ·  💰 Bakiye {bal} USDT</blockquote>\n🔗 <b>Abonelik linki</b> <i>(dokun → kopyala)</i>\n<code>{link}</code>\n<i>Durdurmak için: 🎟 Kodlarım → ⏹ Durdur</i>",
   "m_already": "ℹ️ Bu ilan sende zaten açık. 🎟 Kodlarım'dan bakabilirsin.",
   "m_gone": "⚠️ Bu ilan artık yayında değil.",
@@ -3980,7 +3987,7 @@ T["tr"].update({
   "myl": "📦 <b>İlanlarım</b>", "myl_none": "📦 <b>İlanlarım</b>\n<blockquote>İlanın yok.</blockquote>",
   "myl_item": "<blockquote>{st} <b>{title}</b>\n💲 {p} USDT/dk · 👥 {n} alıcı · 💰 {earned} USDT kazanç</blockquote>",
   "st_pending": "⏳", "st_live": "🟢", "st_removed": "⛔", "st_rejected": "❌",
-  "rules": "📜 <b>Pazar kuralları</b>\n\n🏪 <b><u>SATICI</u></b>\n<blockquote>• Her ilan 0.05$ (iade edilmez).\n• Abonelik limitsiz olmalı; ekran görüntüsü zorunlu.\n• Başvuruda en az 4 farklı gerçek ülke (bot ölçer, bayraklara bakılmaz).\n• 💎 VIP: 0.2$ ile 36 saat en üstte.\n• Kazanç: alıcı durdurunca, uzun kullanımda her 24 saatte bir gönderilir.\n• 🔒 Kodların sadece satın alan kişinin dosyasına yazılır, durdurunca silinir. Her kullanım İlanlarım → 📜 Kullanım geçmişi'nde görünür.</blockquote>\n\n🛒 <b><u>ALICI</u></b>\n<blockquote>• Her başlatma 0.05$ + ilk 1 saat peşin (iade edilmez).\n• Aynı ilan 24 saatte en fazla 3 kez başlatılır.\n• Dakika başı ücret bakiyenden düşer (kullansan da kullanmasan da).\n• İstediğin an durdurursun; bakiye bitince kod durur.\n• Bakiye en az 1$ yüklenir; yüklenen bakiye geri çekilmez.</blockquote>",
+  "rules": "📜 <b>Pazar kuralları</b>\n\n🏪 <b><u>SATICI</u></b>\n<blockquote>• Her ilan 0.05$ (iade edilmez).\n• Abonelik limitsiz olmalı; ekran görüntüsü zorunlu.\n• Başvuruda en az 4 farklı gerçek ülke (bot ölçer, bayraklara bakılmaz).\n• 💎 VIP: 0.2$ ile 36 saat en üstte.\n• Kazanç: alıcı durdurunca, uzun kullanımda her 24 saatte bir gönderilir.\n• 🔒 Kodların sadece satın alan kişinin dosyasına yazılır, durdurunca silinir. Her kullanım İlanlarım → 📜 Kullanım geçmişi'nde görünür.</blockquote>\n\n🛒 <b><u>ALICI</u></b>\n<blockquote>• Her başlatma 0.05$ + ilk 5 saat peşin (iade edilmez).\n• Aynı ilan 24 saatte en fazla 3 kez başlatılır.\n• Dakika başı ücret bakiyenden düşer (kullansan da kullanmasan da).\n• İstediğin an durdurursun; bakiye bitince kod durur.\n• Bakiye en az 1$ yüklenir; yüklenen bakiye geri çekilmez.</blockquote>",
   "bal_line": "\n\n💰 <b>Bakiye</b> {bal} USDT ≈ {tmt} TMT" , "earn_line": "\n💼 <b>Çekilebilir kazanç</b>  {earn} USDT",
   "top": "➕ <b>Bakiye Yükle</b>\n<blockquote>CryptoBot ile USDT. En az 1 USDT.\n💰 Bakiyen  <b>{bal} USDT</b></blockquote>",
   "top_ask": "✏️ Kaç USDT yüklemek istiyorsun? (en az 1)", "top_bad": "⚠️ En az 1 USDT, sayı yaz (ör. 2.5).",
@@ -3999,7 +4006,7 @@ T["ru"].update({
   "mkt_empty": "<i>Других объявлений пока нет.</i>",
   "ml": "🏪 <b>{title}</b>\n<blockquote>{own}👤 Продавец  {seller}\n📡 Серверов  <b>{total}</b>  ·  {protos}\n🇹🇲 Тест в ТМ  <b>{work}/{tested}</b> работают  ·  ❌ {dead}\n🌍 Реальных стран  <b>{ncc}</b>  {flags}\n🔌 Открытые порты (VPS)  {tcp}\n🕒 Проверка  {chk}\n✅ Последний раз исправен  {good}</blockquote>\n💲 <b>Цена</b>\n<blockquote>{calc}</blockquote>{desc}\n<i>При запуске списывается 0.05$, затем оплата каждую минуту с баланса.</i>",
   "ml_own": "⭐ Официальное объявление\n",
-  "m_need": "⚠️ <b>Недостаточно средств</b>\n<blockquote>Для запуска нужно минимум <b>{need} USDT</b> (0.05$ + 60 минут).\n💰 Баланс  <b>{bal} USDT</b></blockquote>",
+  "m_need": "⚠️ <b>Недостаточно средств</b>\n<blockquote>Для запуска нужно минимум <b>{need} USDT</b> (0.05$ + 5 часов).\n💰 Баланс  <b>{bal} USDT</b></blockquote>",
   "m_started": "✅ <b>Код запущен!</b>\n<blockquote>🏪 {title}\n💲 {p}  ·  💰 Баланс {bal} USDT</blockquote>\n🔗 <b>Ссылка подписки</b> <i>(нажмите → скопировать)</i>\n<code>{link}</code>\n<i>Остановить: 🎟 Мои коды → ⏹ Стоп</i>",
   "m_already": "ℹ️ Это объявление у вас уже запущено. Смотрите в 🎟 Мои коды.",
   "m_gone": "⚠️ Это объявление больше не активно.",
@@ -4031,7 +4038,7 @@ T["ru"].update({
   "m_paid_bal": "🎉 <b>Поздравляем!</b>\n<blockquote>🏪 {title}\n⏱ Покупатель использовал ваш код {dur}\n💰 Выплата  <b>{usdt} USDT</b> (≈{tmt} TMT)</blockquote>\n💼 Зачислено на ваш баланс в боте. Профиль → 💸 Вывести доход.",
   "myl": "📦 <b>Мои объявления</b>", "myl_none": "📦 <b>Мои объявления</b>\n<blockquote>Объявлений нет.</blockquote>",
   "myl_item": "<blockquote>{st} <b>{title}</b>\n💲 {p} USDT/мин · 👥 {n} покуп. · 💰 {earned} USDT доход</blockquote>",
-  "rules": "📜 <b>Правила биржи</b>\n\n🏪 <b><u>ПРОДАВЕЦ</u></b>\n<blockquote>• Каждое объявление 0.05$ (не возвращается).\n• Подписка должна быть безлимитной; скриншот обязателен.\n• При подаче минимум 4 разные реальные страны (бот измеряет сам, флаги не учитываются).\n• 💎 VIP: 0.2$ — 36 часов на самом верху.\n• Выплата: после остановки покупателем, при долгом использовании — каждые 24 ч.\n• 🔒 Ваши коды записываются только в файл купившего и удаляются после остановки. Каждое использование видно в Мои объявления → 📜 История.</blockquote>\n\n🛒 <b><u>ПОКУПАТЕЛЬ</u></b>\n<blockquote>• Каждый запуск 0.05$ + первый час сразу (не возвращается).\n• Одно объявление — не больше 3 запусков за 24 ч.\n• Поминутная оплата списывается с баланса (пользуетесь или нет).\n• Остановить можно в любой момент; при нулевом балансе код останавливается.\n• Пополнение от 1$; пополненный баланс не выводится.</blockquote>",
+  "rules": "📜 <b>Правила биржи</b>\n\n🏪 <b><u>ПРОДАВЕЦ</u></b>\n<blockquote>• Каждое объявление 0.05$ (не возвращается).\n• Подписка должна быть безлимитной; скриншот обязателен.\n• При подаче минимум 4 разные реальные страны (бот измеряет сам, флаги не учитываются).\n• 💎 VIP: 0.2$ — 36 часов на самом верху.\n• Выплата: после остановки покупателем, при долгом использовании — каждые 24 ч.\n• 🔒 Ваши коды записываются только в файл купившего и удаляются после остановки. Каждое использование видно в Мои объявления → 📜 История.</blockquote>\n\n🛒 <b><u>ПОКУПАТЕЛЬ</u></b>\n<blockquote>• Каждый запуск 0.05$ + первые 5 часов сразу (не возвращается).\n• Одно объявление — не больше 3 запусков за 24 ч.\n• Поминутная оплата списывается с баланса (пользуетесь или нет).\n• Остановить можно в любой момент; при нулевом балансе код останавливается.\n• Пополнение от 1$; пополненный баланс не выводится.</blockquote>",
   "bal_line": "\n\n💰 <b>Баланс</b> {bal} USDT ≈ {tmt} TMT", "earn_line": "\n💼 <b>Доход к выводу</b>  {earn} USDT",
   "top": "➕ <b>Пополнение</b>\n<blockquote>USDT через CryptoBot. Минимум 1 USDT.\n💰 Баланс  <b>{bal} USDT</b></blockquote>",
   "top_ask": "✏️ Сколько USDT пополнить? (минимум 1)", "top_bad": "⚠️ Минимум 1 USDT, напишите число (напр. 2.5).",
@@ -4063,7 +4070,7 @@ T["tr"].update({
   "m_removed": "⛔ <b>İlanın {h} saat yasaklandı</b>\n<blockquote>🏪 {title}\n{why}</blockquote>\n<i>Yasak süresince kodların verilmez, iade yapılmaz. Yasak bitince ilan kendiliğinden yeniden incelenir.</i>",
   "myl_item": "<blockquote>{st} <b>{title}</b>{vip}\n💲 {m} TMT/30 gün · 👥 {n} alıcı · 💰 {earned} USDT{extra}</blockquote>",
   "myl_pend": "\n⏳ Teste gönderildi {ago} · test {a}/{b}", "myl_susp": "\n⛔ Yasak bitişi: {left} sonra", "st_suspended": "⛔",
-  "rules": "📜 <b>Pazar kuralları</b>\n\n🏪 <b><u>SATICI</u></b>\n<blockquote>• Her ilan 0.05$ (iade edilmez).\n• Abonelik limitsiz olmalı; ekran görüntüsü zorunlu.\n• Başvuruda en az 4 farklı gerçek ülke (bot ölçer, bayraklara bakılmaz).\n• 💎 VIP: 0.2$ ile 36 saat en üstte.\n• Kazanç: alıcı durdurunca, uzun kullanımda her 24 saatte bir gönderilir.\n• 🔒 Kodların sadece satın alan kişinin dosyasına yazılır, durdurunca silinir. Her kullanım İlanlarım → 📜 Kullanım geçmişi'nde görünür.</blockquote>\n\n🛒 <b><u>ALICI</u></b>\n<blockquote>• Her başlatma 0.05$ + ilk 1 saat peşin (iade edilmez).\n• Aynı ilan 24 saatte en fazla 3 kez başlatılır.\n• Dakika başı ücret bakiyenden düşer (kullansan da kullanmasan da).\n• İstediğin an durdurursun; bakiye bitince kod durur.\n• Bakiye en az 1$ yüklenir; yüklenen bakiye geri çekilmez.</blockquote>",
+  "rules": "📜 <b>Pazar kuralları</b>\n\n🏪 <b><u>SATICI</u></b>\n<blockquote>• Her ilan 0.05$ (iade edilmez).\n• Abonelik limitsiz olmalı; ekran görüntüsü zorunlu.\n• Başvuruda en az 4 farklı gerçek ülke (bot ölçer, bayraklara bakılmaz).\n• 💎 VIP: 0.2$ ile 36 saat en üstte.\n• Kazanç: alıcı durdurunca, uzun kullanımda her 24 saatte bir gönderilir.\n• 🔒 Kodların sadece satın alan kişinin dosyasına yazılır, durdurunca silinir. Her kullanım İlanlarım → 📜 Kullanım geçmişi'nde görünür.</blockquote>\n\n🛒 <b><u>ALICI</u></b>\n<blockquote>• Her başlatma 0.05$ + ilk 5 saat peşin (iade edilmez).\n• Aynı ilan 24 saatte en fazla 3 kez başlatılır.\n• Dakika başı ücret bakiyenden düşer (kullansan da kullanmasan da).\n• İstediğin an durdurursun; bakiye bitince kod durur.\n• Bakiye en az 1$ yüklenir; yüklenen bakiye geri çekilmez.</blockquote>",
 })
 T["ru"].update({
   "b_pazar": "🏪 Биржа", "b_start": "▶️ Запустить", "b_live": "📊 Онлайн", "b_vip": "💎 VIP · 36 ч · 0.2$", "b_yes_stop": "✅ Да, остановить", "b_no": "✖️ Отмена",
@@ -4084,7 +4091,7 @@ T["ru"].update({
   "m_removed": "⛔ <b>Объявление заблокировано на {h} ч</b>\n<blockquote>🏪 {title}\n{why}</blockquote>\n<i>Во время бана коды не выдаются, возврата нет. После бана объявление автоматически проверяется снова.</i>",
   "myl_item": "<blockquote>{st} <b>{title}</b>{vip}\n💲 {m} TMT/30 дн · 👥 {n} покуп. · 💰 {earned} USDT{extra}</blockquote>",
   "myl_pend": "\n⏳ Отправлено на тест {ago} · проверено {a}/{b}", "myl_susp": "\n⛔ Бан закончится через {left}", "st_suspended": "⛔",
-  "rules": "📜 <b>Правила биржи</b>\n\n🏪 <b><u>ПРОДАВЕЦ</u></b>\n<blockquote>• Каждое объявление 0.05$ (не возвращается).\n• Подписка должна быть безлимитной; скриншот обязателен.\n• При подаче минимум 4 разные реальные страны (бот измеряет сам, флаги не учитываются).\n• 💎 VIP: 0.2$ — 36 часов на самом верху.\n• Выплата: после остановки покупателем, при долгом использовании — каждые 24 ч.\n• 🔒 Ваши коды записываются только в файл купившего и удаляются после остановки. Каждое использование видно в Мои объявления → 📜 История.</blockquote>\n\n🛒 <b><u>ПОКУПАТЕЛЬ</u></b>\n<blockquote>• Каждый запуск 0.05$ + первый час сразу (не возвращается).\n• Одно объявление — не больше 3 запусков за 24 ч.\n• Поминутная оплата списывается с баланса (пользуетесь или нет).\n• Остановить можно в любой момент; при нулевом балансе код останавливается.\n• Пополнение от 1$; пополненный баланс не выводится.</blockquote>",
+  "rules": "📜 <b>Правила биржи</b>\n\n🏪 <b><u>ПРОДАВЕЦ</u></b>\n<blockquote>• Каждое объявление 0.05$ (не возвращается).\n• Подписка должна быть безлимитной; скриншот обязателен.\n• При подаче минимум 4 разные реальные страны (бот измеряет сам, флаги не учитываются).\n• 💎 VIP: 0.2$ — 36 часов на самом верху.\n• Выплата: после остановки покупателем, при долгом использовании — каждые 24 ч.\n• 🔒 Ваши коды записываются только в файл купившего и удаляются после остановки. Каждое использование видно в Мои объявления → 📜 История.</blockquote>\n\n🛒 <b><u>ПОКУПАТЕЛЬ</u></b>\n<blockquote>• Каждый запуск 0.05$ + первые 5 часов сразу (не возвращается).\n• Одно объявление — не больше 3 запусков за 24 ч.\n• Поминутная оплата списывается с баланса (пользуетесь или нет).\n• Остановить можно в любой момент; при нулевом балансе код останавливается.\n• Пополнение от 1$; пополненный баланс не выводится.</blockquote>",
 })
 
 T["tr"].update({
@@ -4334,7 +4341,7 @@ T["tk"] = {
  "mkt_empty": "<i>Häzir başga bildiriş ýok.</i>",
  "ml": "🏪 <b>{title}</b>\n<blockquote>{own}👤 Satyjy  {seller}\n📡 Serwer  <b>{total}</b>  ·  {protos}\n🇹🇲 TM barlagy  <b>{work}/{tested}</b> işleýär  ·  ❌ {dead}\n🌍 Hakyky ýurt  <b>{ncc}</b>  {flags}\n🔌 Açyk port (VPS)  {tcp}\n🕒 Soňky barlag  {chk}\n✅ Soňky işlän wagty  {good}</blockquote>\n💲 <b>Baha</b>\n<blockquote>{calc}</blockquote>{desc}\n<i>Başlanyňda 0.05$ başlangyç töleg alynýar, soň her minut balansyňdan tutulýar.</i>",
  "ml_own": "⭐ Resmi bildiriş\n",
- "m_need": "⚠️ <b>Balans ýetenok</b>\n<blockquote>Başlamak üçin iň az <b>{need} USDT</b> gerek (0.05$ + 60 minut).\n💰 Balansyň  <b>{bal} USDT</b></blockquote>",
+ "m_need": "⚠️ <b>Balans ýetenok</b>\n<blockquote>Başlamak üçin iň az <b>{need} USDT</b> gerek (0.05$ + 5 sagat).\n💰 Balansyň  <b>{bal} USDT</b></blockquote>",
  "m_started": "✅ <b>Kod başlady!</b>\n<blockquote>🏪 {title}\n💲 {p}  ·  💰 Balans {bal} USDT</blockquote>\n🔗 <b>Podpiska linki</b> <i>(bas → göçür)</i>\n<code>{link}</code>\n<i>Yzyna gowşurmak üçin: 🎟 Kodlarym → ⏹ Yzyna gowşur</i>",
  "m_already": "ℹ️ Bu bildiriş sende eýýäm açyk. 🎟 Kodlarym bölüminden görüp bilersiň.",
  "m_gone": "⚠️ Bu bildiriş indi ýok.",
@@ -4375,7 +4382,7 @@ T["tk"] = {
  "st_live": "🟢",
  "st_removed": "⛔",
  "st_rejected": "❌",
- "rules": "📜 <b>Bazaryň düzgünleri</b>\n\n🏪 <b><u>SATYJY</u></b>\n<blockquote>• Her bildiriş 0.05$ (yzyna gaýtarylmaýar).\n• Podpiska limitsiz bolmaly; skrinşot hökman.\n• Bildiriş berlende azyndan 4 dürli hakyky ýurt bolmaly (bot özi ölçeýär, baýdaklara seredilmeýär).\n• 💎 VIP: 0.2$ töläp, 36 sagat iň ýokarda durýar.\n• Gazanç: alyjy kody yzyna gowşuranda, uzak ulanylsa her 24 sagatda bir gezek iberilýär.\n• 🔒 Kodlaryňyz diňe satyn alan adamyň faýlyna ýazylýar, yzyna gowşurylanda pozulýar. Her ulanylyşy Bildirişlerim → 📜 Ulanyş taryhy bölüminde görünýär.</blockquote>\n\n🛒 <b><u>ALYJY</u></b>\n<blockquote>• Her gezek başlamak 0.05$ + ilkinji 1 sagat öňünden (yzyna gaýtarylmaýar).\n• Bir bildiriş 24 sagatda iň köp 3 gezek başladylýar.\n• Minutlyk töleg balansyňdan aýrylýar (ulansaň-da, ulanmasaň-da).\n• Islän wagtyň yzyna gowşurup bilersiň; balans gutarsa, kod özi yzyna gowşurylýar.\n• Balans azyndan 1$ doldurylýar; doldurylan balansy yzyna çekip bolmaýar.</blockquote>",
+ "rules": "📜 <b>Bazaryň düzgünleri</b>\n\n🏪 <b><u>SATYJY</u></b>\n<blockquote>• Her bildiriş 0.05$ (yzyna gaýtarylmaýar).\n• Podpiska limitsiz bolmaly; skrinşot hökman.\n• Bildiriş berlende azyndan 4 dürli hakyky ýurt bolmaly (bot özi ölçeýär, baýdaklara seredilmeýär).\n• 💎 VIP: 0.2$ töläp, 36 sagat iň ýokarda durýar.\n• Gazanç: alyjy kody yzyna gowşuranda, uzak ulanylsa her 24 sagatda bir gezek iberilýär.\n• 🔒 Kodlaryňyz diňe satyn alan adamyň faýlyna ýazylýar, yzyna gowşurylanda pozulýar. Her ulanylyşy Bildirişlerim → 📜 Ulanyş taryhy bölüminde görünýär.</blockquote>\n\n🛒 <b><u>ALYJY</u></b>\n<blockquote>• Her gezek başlamak 0.05$ + ilkinji 5 sagat öňünden (yzyna gaýtarylmaýar).\n• Bir bildiriş 24 sagatda iň köp 3 gezek başladylýar.\n• Minutlyk töleg balansyňdan aýrylýar (ulansaň-da, ulanmasaň-da).\n• Islän wagtyň yzyna gowşurup bilersiň; balans gutarsa, kod özi yzyna gowşurylýar.\n• Balans azyndan 1$ doldurylýar; doldurylan balansy yzyna çekip bolmaýar.</blockquote>",
  "bal_line": "\n\n💰 <b>Balans</b> {bal} USDT ≈ {tmt} TMT",
  "earn_line": "\n💼 <b>Çekip boljak gazanç</b>  {earn} USDT",
  "top": "➕ <b>Balansy doldur</b>\n<blockquote>CryptoBot arkaly USDT. Azyndan 1 USDT.\n💰 Balansyň  <b>{bal} USDT</b></blockquote>",
@@ -4449,13 +4456,13 @@ T["ru"].update({"b_mlh": "📜 История · {t}", "mlh_none": "Пока н�
     "mlh": "📜 <b>История использования</b> · {title}\n<blockquote>{lines}</blockquote>\n<i>🔒 Ваши коды записывались только в эти часы и только в файл купившего; после остановки файл очищается. В собственные коды бота и другие файлы они не попадают.\n🔎 Сравните со временем подключений/трафика в панели вашего провайдера; если видите использование вне этого списка — напишите в поддержку.\nПримечание: бот примерно раз в 10 минут на несколько секунд проверяет коды из Туркменистана (очень мало трафика).</i>"})
 
 # 🎨 Kendi reklamım (profil)
-T["tr"].update({"b_myad": "🎨 Kendi reklamımı hazırla",
+T["tr"].update({"b_myad": "🎨 Kendi reklamımı hazırla", "b_myad2": "🔄 Yeni reklam oluştur (30 dk'da bir)", "myad_wait2": "⏳ Yeni reklamı {m} dakika sonra oluşturabilirsin.",
     "myad_wait": "🎨 <b>Reklamın hazırlanıyor...</b>\n▱▱▱▱▱ 0%|🎨 <b>Reklamın hazırlanıyor...</b>\n▰▰▱▱▱ 40%\n<i>Davet linkin ekleniyor</i>|🎨 <b>Reklamın hazırlanıyor...</b>\n▰▰▰▰▱ 80%\n<i>Banner ve yazı birleştiriliyor</i>|✅ <b>Hazır!</b>\n▰▰▰▰▰ 100%",
     "myad_done": "✅ <b>Reklamın hazır!</b>\n<blockquote>Yukarıdaki reklam <b>senin davet linkinle</b> oluşturuldu — rahatça kullan. İstediğin kanala ya da gruba ilet.\n\n💡 Ya da reklam yapacağın yerde yazı kutusuna <code>@{un}</code> yaz — reklamın kendiliğinden çıkar.\n\n🔗 Davet linkin: {link}</blockquote>"})
-T["tk"].update({"b_myad": "🎨 Öz reklamamy taýýarla",
+T["tk"].update({"b_myad": "🎨 Öz reklamamy taýýarla", "b_myad2": "🔄 Täze reklama döret (30 minutda bir)", "myad_wait2": "⏳ Täze reklamany {m} minutdan soň döredip bilersiňiz.",
     "myad_wait": "🎨 <b>Reklamaňyz taýýarlanýar...</b>\n▱▱▱▱▱ 0%|🎨 <b>Reklamaňyz taýýarlanýar...</b>\n▰▰▱▱▱ 40%\n<i>Çagyryş linkiňiz goşulýar</i>|🎨 <b>Reklamaňyz taýýarlanýar...</b>\n▰▰▰▰▱ 80%\n<i>Banner we tekst birleşdirilýär</i>|✅ <b>Taýýar!</b>\n▰▰▰▰▰ 100%",
     "myad_done": "✅ <b>Reklamaňyz taýýar!</b>\n<blockquote>Ýokardaky reklama <b>siziň çagyryş linkiňiz bilen</b> döredildi — rahat ulanyň. Islän kanalyňyza ýa-da toparyňyza iberiň.\n\n💡 Ýa-da reklama berjek ýeriňizde ýazuw meýdançasyna <code>@{un}</code> ýazyň — reklamaňyz özi çykar.\n\n🔗 Çagyryş linkiňiz: {link}</blockquote>"})
-T["ru"].update({"b_myad": "🎨 Создать свою рекламу",
+T["ru"].update({"b_myad": "🎨 Создать свою рекламу", "b_myad2": "🔄 Новая реклама (раз в 30 мин)", "myad_wait2": "⏳ Новую рекламу можно создать через {m} мин.",
     "myad_wait": "🎨 <b>Ваша реклама создаётся...</b>\n▱▱▱▱▱ 0%|🎨 <b>Ваша реклама создаётся...</b>\n▰▰▱▱▱ 40%\n<i>Добавляем вашу реферальную ссылку</i>|🎨 <b>Ваша реклама создаётся...</b>\n▰▰▰▰▱ 80%\n<i>Собираем баннер и текст</i>|✅ <b>Готово!</b>\n▰▰▰▰▰ 100%",
     "myad_done": "✅ <b>Ваша реклама готова!</b>\n<blockquote>Реклама выше создана <b>с вашей реферальной ссылкой</b> — используйте смело. Перешлите в любой канал или группу.\n\n💡 Или там, где даёте рекламу, напишите в поле ввода <code>@{un}</code> — ваша реклама появится сама.\n\n🔗 Ваша ссылка: {link}</blockquote>"})
 
@@ -4466,11 +4473,11 @@ T["ru"]["m_limit"] = "⚠️ <b>Вы уже запускали это объяв
 
 # 🛒 Satın Al onayı
 T["tr"].update({"b_msy": "✅ Evet, satın al", "b_msn": "✖️ Vazgeç",
-    "ms_q": "🛒 <b>Satın almak istediğine emin misin?</b>\n<blockquote>🏪 {title}\n💵 Başlatma ücreti  <b>{fee}$</b> (iade edilmez)\n⏳ İlk 1 saat peşin  <b>{ph} TMT</b> (iade edilmez)\n⏱ Sonra her dakika  <b>{pm} TMT</b> bakiyenden düşer\n💰 Bakiyen  <b>{bal} USDT</b></blockquote>\n<i>İstediğin an durdurabilirsin.</i>"})
+    "ms_q": "🛒 <b>Satın almak istediğine emin misin?</b>\n<blockquote>🏪 {title}\n💵 Başlatma ücreti  <b>{fee}$</b> (iade edilmez)\n⏳ İlk 5 saat peşin  <b>{ph} TMT</b> (iade edilmez)\n⏱ Sonra her dakika  <b>{pm} TMT</b> bakiyenden düşer\n💰 Bakiyen  <b>{bal} USDT</b></blockquote>\n<i>İstediğin an durdurabilirsin.</i>"})
 T["tk"].update({"b_msy": "✅ Hawa, satyn al", "b_msn": "✖️ Ýatyr",
-    "ms_q": "🛒 <b>Hakykatdan hem satyn almak isleýärsiňizmi?</b>\n<blockquote>🏪 {title}\n💵 Başlamak tölegi  <b>{fee}$</b> (yzyna gaýtarylmaýar)\n⏳ Ilkinji 1 sagat öňünden  <b>{ph} TMT</b> (yzyna gaýtarylmaýar)\n⏱ Soňra her minutda  <b>{pm} TMT</b> balansyňyzdan aýrylýar\n💰 Balansyňyz  <b>{bal} USDT</b></blockquote>\n<i>Islän wagtyňyz kody yzyna gowşuryp bilersiňiz.</i>"})
+    "ms_q": "🛒 <b>Hakykatdan hem satyn almak isleýärsiňizmi?</b>\n<blockquote>🏪 {title}\n💵 Başlamak tölegi  <b>{fee}$</b> (yzyna gaýtarylmaýar)\n⏳ Ilkinji 5 sagat öňünden  <b>{ph} TMT</b> (yzyna gaýtarylmaýar)\n⏱ Soňra her minutda  <b>{pm} TMT</b> balansyňyzdan aýrylýar\n💰 Balansyňyz  <b>{bal} USDT</b></blockquote>\n<i>Islän wagtyňyz kody yzyna gowşuryp bilersiňiz.</i>"})
 T["ru"].update({"b_msy": "✅ Да, купить", "b_msn": "✖️ Отмена",
-    "ms_q": "🛒 <b>Вы уверены, что хотите купить?</b>\n<blockquote>🏪 {title}\n💵 Плата за запуск  <b>{fee}$</b> (не возвращается)\n⏳ Первый час сразу  <b>{ph} TMT</b> (не возвращается)\n⏱ Затем каждую минуту  <b>{pm} TMT</b> списывается с баланса\n💰 Баланс  <b>{bal} USDT</b></blockquote>\n<i>Остановить можно в любой момент.</i>"})
+    "ms_q": "🛒 <b>Вы уверены, что хотите купить?</b>\n<blockquote>🏪 {title}\n💵 Плата за запуск  <b>{fee}$</b> (не возвращается)\n⏳ Первые 5 часов сразу  <b>{ph} TMT</b> (не возвращается)\n⏱ Затем каждую минуту  <b>{pm} TMT</b> списывается с баланса\n💰 Баланс  <b>{bal} USDT</b></blockquote>\n<i>Остановить можно в любой момент.</i>"})
 
 # ⚙️ Ayarlar ekranı (dil seçimi burada)
 T["tr"].update({"b_set": "⚙️ Ayarlar", "set_t": "⚙️ <b>Ayarlar</b>\n<blockquote>🌐 Dil  <b>{lname}</b>\n🆔 ID  <code>{id}</code></blockquote>\n<i>Dili değiştirmek için aşağıdan seç.</i>"})
@@ -4667,7 +4674,7 @@ def is_banner(msg):
     ph = getattr(msg, "photo", None)
     return bool(ph) and getattr(ph[-1], "file_unique_id", None) in (load_db().get("banner_u") or [])
 
-BANNER_ACTIONS = {"u_menu", "u_mkt", "u_top", "u_free", "u_prof", "u_mine", "u_sup", "u_bug", "u_market", "u_set"}   # kendi banner'ı olan ekranlar
+BANNER_ACTIONS = {"u_menu", "u_mkt", "u_top", "u_free", "u_prof", "u_mine", "u_sup", "u_bug", "u_market", "u_set", "u_myad"}   # kendi banner'ı olan ekranlar
 
 class QProxy:
     """Banner'lı menüden bir ekrana geçerken foto silinir, yerine yazı mesajı açılır; kodun geri kalanı bu mesajı düzenler."""
@@ -4916,48 +4923,64 @@ def market_bill():
 # ── 📢 Reklam postu: banner + yazı + 🇹🇲/🇷🇺 butonları (basınca yazı o dile döner) ──
 # Satırlar telefonda tek satıra sığacak kadar kısa. uid verilirse son satır + "Bota gir" o kişinin davet linki olur.
 AD_TXT = {
- "tk": ("🛡 — <b>Drive Bot · VPN bazary</b> 🌐\n\n"
-        "Pul töläp kod alyp bilmediňizmi?\n"
-        "Alan kodyňyz işlemedimi?\n"
-        "Drive Bot-da beýle zat ýok ✅\n\n"
-        "<b>🛒 Satyn alýanlar üçin</b>\n"
-        "📡 Serwerler TM-den barlanýar\n"
-        "🔍 Almazdan öň «Barla» bilen görüň\n"
-        "⏱ Diňe ulanan wagtyňyz üçin töleg\n"
-        "↩️ Islän wagtyňyz yzyna gowşuryň\n\n"
-        "<b>🪪 Satýanlar üçin</b>\n"
-        "💰 Bahany özüňiz goýýarsyňyz\n"
-        "💸 Pul CryptoBot-a özi gelýär\n"
-        "🤖 Satyşy bot özi ýöredýär\n"
-        "📢 Reklama — bary-ýogy <b>0.05$</b>\n\n"
-        "Başlamak üçin 👇\n{link}"),
- "ru": ("🛡 — <b>Drive Bot · биржа VPN</b> 🌐\n\n"
-        "Заплатили, а код не получили?\n"
-        "Купленный код не работает?\n"
-        "В Drive Bot такого нет ✅\n\n"
-        "<b>🛒 Покупателям</b>\n"
-        "📡 Серверы проверяются из ТМ\n"
-        "🔍 Проверка перед покупкой\n"
-        "⏱ Оплата только за использование\n"
-        "↩️ Остановить можно в любой момент\n\n"
-        "<b>🪪 Продавцам</b>\n"
-        "💰 Цену ставите сами\n"
-        "💸 Доход сам приходит в CryptoBot\n"
-        "🤖 Продажу ведёт бот\n"
-        "📢 Размещение — всего <b>0.05$</b>\n\n"
-        "Начать 👇\n{link}")}
+ "tk": [
+  ("🛡 <b>DRIVE BOT · VPN BAZARY</b> 🌐\n\n"
+   "<blockquote>❌ Pul töläp kod alyp bilmediňizmi?\n❌ Alan kodyňyz işlemedimi?\n❌ Baýdak bir ýurt, serwer başga ýurtmy?</blockquote>\n"
+   "<b>Drive Bot-da beýle zat ýok ✅</b>\n\n"
+   "🛒 <b><u>SATYN ALÝANLAR ÜÇIN</u></b>\n"
+   "<blockquote>📡 Serwerler TM-den barlanýar\n🎯 Diňe <b>hakyky ýurtlar</b> görkezilýär\n🔍 Almazdan öň «Barla» bilen görüň\n↩️ Islän wagtyňyz yzyna gowşuryň</blockquote>\n\n"
+   "🪪 <b><u>SATÝANLAR ÜÇIN</u></b>\n"
+   "<blockquote>💰 Bahany özüňiz goýýarsyňyz\n💸 Pul CryptoBot-a özi gelýär\n🤖 Satyşy bot özi ýöredýär\n📢 Reklama — bary-ýogy <b>0.05$</b></blockquote>\n\n"
+   "👇 <i>Başlamak üçin</i>\n{link}"),
+  ("🎯 <b>GALP BAÝDAKLARA ÝOL ÝOK!</b>\n\n"
+   "<i>«🇩🇪 Germaniýa» diýip satýarlar — serwer bolsa düýbünden başga ýerde…</i>\n\n"
+   "<blockquote><b>Drive Bot</b> her serweri Türkmenistandan özi barlaýar we <b>diňe hakyky ýurdy</b> görkezýär. Satyjynyň ýalan baýdagy derrew ýüze çykýar 🔎</blockquote>\n\n"
+   "🛒 <b><u>ALÝANLAR</u></b>\n<i>Diňe işleýän kod · diňe ulanan wagtyňyz üçin töleg</i>\n\n"
+   "🪪 <b><u>SATÝANLAR</u></b>\n<i>Bahany özüňiz goýuň · pul CryptoBot-a gelýär</i>\n\n"
+   "<code>📢 Reklama: bary-ýogy 0.05$</code>\n\n"
+   "👉 {link}"),
+  ("⚡️ <b>VPN satyn almak — indi howpsuz</b>\n\n"
+   "<blockquote expandable>✅ Her serwer TM-den her 10 minutda barlanýar\n✅ Diňe hakyky ýurtlar — ýalan baýdak ýok\n✅ Kod işlemese — islän wagtyňyz yzyna gowşuryň\n✅ Diňe ulanan wagtyňyz üçin tölärsiňiz</blockquote>\n\n"
+   "💼 <b><u>VPN satýarsyňyzmy?</u></b>\n"
+   "Kodlaryňyzy bazara goýuň — <b>klienti biz tapýarys</b>. Pul CryptoBot-a özi gelýär 💸\n\n"
+   "🎁 <tg-spoiler>3 dostuňyzy çagyryň — mugt kod!</tg-spoiler>\n\n"
+   "👇 {link}")],
+ "ru": [
+  ("🛡 <b>DRIVE BOT · БИРЖА VPN</b> 🌐\n\n"
+   "<blockquote>❌ Заплатили, а код не получили?\n❌ Купленный код не работает?\n❌ Флаг одной страны, а сервер в другой?</blockquote>\n"
+   "<b>В Drive Bot такого нет ✅</b>\n\n"
+   "🛒 <b><u>ПОКУПАТЕЛЯМ</u></b>\n"
+   "<blockquote>📡 Серверы проверяются из ТМ\n🎯 Показываем <b>только реальные страны</b>\n🔍 Проверка перед покупкой\n↩️ Остановить можно в любой момент</blockquote>\n\n"
+   "🪪 <b><u>ПРОДАВЦАМ</u></b>\n"
+   "<blockquote>💰 Цену ставите сами\n💸 Доход сам приходит в CryptoBot\n🤖 Продажу ведёт бот\n📢 Размещение — всего <b>0.05$</b></blockquote>\n\n"
+   "👇 <i>Начать</i>\n{link}"),
+  ("🎯 <b>ФАЛЬШИВЫМ ФЛАГАМ — НЕТ!</b>\n\n"
+   "<i>Продают «🇩🇪 Германию» — а сервер на самом деле совсем в другом месте…</i>\n\n"
+   "<blockquote><b>Drive Bot</b> сам проверяет каждый сервер из Туркменистана и показывает <b>только реальную страну</b>. Ложь продавца сразу видна 🔎</blockquote>\n\n"
+   "🛒 <b><u>ПОКУПАТЕЛЯМ</u></b>\n<i>Только рабочие коды · оплата только за использование</i>\n\n"
+   "🪪 <b><u>ПРОДАВЦАМ</u></b>\n<i>Цену ставите сами · доход приходит в CryptoBot</i>\n\n"
+   "<code>📢 Размещение: всего 0.05$</code>\n\n"
+   "👉 {link}"),
+  ("⚡️ <b>Покупать VPN — теперь безопасно</b>\n\n"
+   "<blockquote expandable>✅ Каждый сервер проверяется из ТМ каждые 10 минут\n✅ Только реальные страны — без фальшивых флагов\n✅ Код не работает — остановите в любой момент\n✅ Платите только за время использования</blockquote>\n\n"
+   "💼 <b><u>Продаёте VPN?</u></b>\n"
+   "Выставьте коды на биржу — <b>клиентов найдём мы</b>. Деньги сами приходят в CryptoBot 💸\n\n"
+   "🎁 <tg-spoiler>Пригласите 3 друзей — бесплатный код!</tg-spoiler>\n\n"
+   "👇 {link}")]}
+AD_EVERY = 30 * 60   # kullanıcı yeni reklamı en erken 30 dakikada bir oluşturur
 
 def ad_link(uid=None):
     un = BOT.get("un") or "SuBDrive_bot"
     return f"https://t.me/{un}?start=r{uid}" if uid else f"https://t.me/{un}?start=ad"
 
-def ad_text(lang, uid=None):
+def ad_text(lang, uid=None, v=0):
     un = BOT.get("un") or "SuBDrive_bot"
     link = f"🤖 {ad_link(uid)}" if uid else f"🤖 Telegram: @{un}"
-    return AD_TXT.get(lang, AD_TXT["tk"]).replace("{link}", link)
+    vs = AD_TXT.get(lang, AD_TXT["tk"])
+    return vs[v % len(vs)].replace("{link}", link)
 
-def ad_kb(lang, uid=None):
-    sfx = f":{uid}" if uid else ""
+def ad_kb(lang, uid=None, v=0):
+    sfx = f":{uid or 0}:{v}"
     return KB([[B(("✅ " if lang == "tk" else "") + "🇹🇲 Türkmençe", f"ad:tk{sfx}"), B(("✅ " if lang == "ru" else "") + "🇷🇺 Русский", f"ad:ru{sfx}")],
                [B("🤖 Bota gir" if lang == "tk" else "🤖 Перейти в бот", url=ad_link(uid))]])
 
@@ -4975,17 +4998,18 @@ async def ad_photo_id(bot):
         except Exception as e: log.info("ad photo: %s", e)
     return None
 
-async def send_ad(c, chat, lang="tk", uid=None):
+async def send_ad(c, chat, lang="tk", uid=None, v=0):
     media, h = await banner_media("ad", "tr")
-    m = await c.bot.send_photo(chat, media, caption=ad_text(lang, uid), parse_mode="HTML", reply_markup=ad_kb(lang, uid))
+    m = await c.bot.send_photo(chat, media, caption=ad_text(lang, uid, v), parse_mode="HTML", reply_markup=ad_kb(lang, uid, v))
     remember_banner(m, "ad:tr", h)
 
 async def ad_cb(q, data):
-    lang, _, uid = data.partition(":")
+    p_ = data.split(":"); lang = p_[0]
     if lang not in AD_TXT: return
-    uid = int(uid) if uid.isdigit() else None
+    uid = int(p_[1]) if len(p_) > 1 and p_[1].isdigit() and p_[1] != "0" else None
+    v = int(p_[2]) if len(p_) > 2 and p_[2].isdigit() else 0
     try:
-        await q.edit_message_caption(caption=ad_text(lang, uid), parse_mode="HTML", reply_markup=ad_kb(lang, uid))
+        await q.edit_message_caption(caption=ad_text(lang, uid, v), parse_mode="HTML", reply_markup=ad_kb(lang, uid, v))
         await q.answer()
     except BadRequest as e:
         if "not modified" in str(e).lower(): await q.answer(); return
@@ -5006,9 +5030,11 @@ async def inline_ad(u: Update, c: ContextTypes.DEFAULT_TYPE):
 
 async def _inline_ad(u, fid):
     uid = u.inline_query.from_user.id
-    ref = uid if str(uid) in load_db().get("users", {}) else None   # botu kullanan kişi: kendi davet linki
+    e_ = load_db().get("users", {}).get(str(uid))
+    ref = uid if e_ else None   # botu kullanan kişi: kendi davet linki
+    v = (e_ or {}).get("ad_v", 0)   # kişinin son oluşturduğu reklam türü
     # tek sonuç: Türkmençe post; Rusça için posttaki 🇷🇺 butonu
-    res = [InlineQueryResultCachedPhoto(id="ad", photo_file_id=fid, title="📢 Reklama", caption=ad_text("tk", ref), parse_mode="HTML", reply_markup=ad_kb("tk", ref))]
+    res = [InlineQueryResultCachedPhoto(id=f"ad{v}", photo_file_id=fid, title="📢 Reklama", caption=ad_text("tk", ref, v), parse_mode="HTML", reply_markup=ad_kb("tk", ref, v))]
     await u.inline_query.answer(res, cache_time=30, is_personal=True)
 
 def mkt_ann(lang):
