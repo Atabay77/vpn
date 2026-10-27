@@ -2964,7 +2964,7 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         lid = a.split(":", 1)[1]; L_ = db.get("market", {}).get(lid)
         if not L_ or L_.get("status") != "live": await send(tr(lang, "m_gone"), KB([[B(tr(lang, "b_back_mkt"), "u_mkt")]])); return
         if L_.get("owner") == uid and uid not in ADMINS: await send(tr(lang, "m_own"), KB([[B(tr(lang, "b_back_mkt"), "u_mkt")]])); return
-        t_ = tr(lang, "ms_q", title=esc(short(L_["title"], 40)), fee=fmt_u(MKT_FEE), pm=money_tmt(float(L_["price"]), 4), ph=money_tmt(float(L_["price"]) * PREPAY_MIN), bal=fmt_u(spendable(e, L_)))
+        t_ = tr(lang, "ms_q", title=esc(short(L_["title"], 40)), fee=fmt_u(MKT_FEE), pm=money_tmt(float(L_["price"]), 4), ph=money_tmt(float(L_["price"]) * PREPAY_MIN), bal=fmt_u(e.get("bal", 0)))
         kb_ = KB([[B(tr(lang, "b_msy"), f"u_msy:{lid}", "success")], [B(tr(lang, "b_msn"), f"u_ml:{lid}")]])
         msg = getattr(q, "message", None)
         if msg is None or not await edit_box(c.bot, uid, msg.message_id, bool(getattr(msg, "photo", None)), t_, kb_): await c.bot.send_message(uid, t_, parse_mode="HTML", reply_markup=kb_)
@@ -2974,7 +2974,7 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         res, err = await asyncio.to_thread(mkt_start, uid, lid)
         if not res:
             if err.startswith("nobal:"):
-                await send(tr(lang, "m_need", need=fmt_u(int(err.split(":")[1])), bal=fmt_u(spendable(load_db()["users"].get(str(uid), {}), load_db().get("market", {}).get(lid, {})))),
+                await send(tr(lang, "m_need", need=fmt_u(int(err.split(":")[1])), bal=fmt_u(load_db()["users"].get(str(uid), {}).get("bal", 0))),
                            KB([[B(tr(lang, "b_top"), "u_top", "success")], [B(tr(lang, "b_back_mkt"), f"u_ml:{lid}")]]))
             elif err == "already": await send(tr(lang, "m_already"), KB([[B(tr(lang, "b_mine"), "u_mine")], [B(tr(lang, "b_back_mkt"), "u_mkt")]]))
             elif err == "limit": await send(tr(lang, "m_limit", n=MAX_STARTS_DAY), KB([[B(tr(lang, "b_back_mkt"), "u_mkt")]]))
@@ -3341,19 +3341,21 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
             o_ = d.get("orders", {}).get(oid); x = d["users"].setdefault(str(uid), {})
             if not o_ or o_["uid"] != uid or o_["status"] != "new" or o_["item"] == "topup": return "old"
             cost = tmt_to_um(o_["price"])
-            if x.get("bal", 0) < cost: return ("nobal", cost)
-            x["bal"] = x.get("bal", 0) - cost; o_["status"] = "paid"; o_["via"] = "bal"; o_["bal_cost"] = cost
-            return ("ok", cost)
+            bon = x.get("bonus", 0) if o_["item"] in PRICES else 0   # bonus sadece kod (7/30 gün) alımında
+            if x.get("bal", 0) + bon < cost: return ("nobal", cost)
+            fb = min(bon, cost); x["bonus"] = x.get("bonus", 0) - fb; x["bal"] = x.get("bal", 0) - (cost - fb)
+            o_["status"] = "paid"; o_["via"] = "bal"; o_["bal_cost"] = cost; o_["bonus_used"] = fb
+            return ("ok", cost, fb)
         r_ = mutate(f)
         if r_ == "old": await send(tr(lang, "order_old"), menu_btn); return
         if r_[0] == "nobal":
-            await send(tr(lang, "pbal_need", need=fmt_u(r_[1]), bal=fmt_u(e.get("bal", 0))),
+            await send(tr(lang, "pbal_need", need=fmt_u(r_[1]), bal=fmt_u(e.get("bal", 0) + (e.get("bonus", 0) if load_db()["orders"][oid]["item"] in PRICES else 0))),
                        KB([[B(tr(lang, "b_top"), "u_top", "success")], [B(tr(lang, "b_menu"), "u_menu")]])); return
         ulog("paid", f"💰 Bakiyeyle ödedi: {who(user)} · #{oid} · {fmt_u(r_[1])} USDT")
         msg = await fulfill_order(c.application, oid, True, uid)
         if load_db().get("orders", {}).get(oid, {}).get("status") != "done":   # teslim olmadı → para geri
             def back(d):
-                d["users"][str(uid)]["bal"] = d["users"][str(uid)].get("bal", 0) + r_[1]; d["orders"][oid]["status"] = "cancel"
+                x = d["users"][str(uid)]; x["bonus"] = x.get("bonus", 0) + r_[2]; x["bal"] = x.get("bal", 0) + r_[1] - r_[2]; d["orders"][oid]["status"] = "cancel"
             mutate(back)
             await send(tr(lang, "pbal_fail"), menu_btn)
             await notify_founders(c.application, f"⚠️ <b>Bakiyeyle alım teslim edilemedi</b> (para iade edildi)\n<blockquote>{esc(who(user))} · #{oid}\n{msg}</blockquote>")
@@ -3969,17 +3971,7 @@ OWN_DESC = "✅ Botun resmi kodu\n🛡 7/24 kontrol altında: IP değişince oto
 SETTLE_EVERY = 86400             # alıcı durdurmazsa satıcıya günde bir ödeme
 START_MINUTES = 60               # başlatmak için bakiye en az 60 dakikaya yetmeli
 OWN_LID = "own"                  # bizim ilanımız (her zaman en üstte)
-REF_BONUS = UM // 80             # her sayılan davet: 0.25 TMT bonus (= 0.0125 USDT); çekilemez, sadece resmi ilan kiralamada harcanır
-
-def spendable(e, L):
-    """Bu ilanda harcanabilir para: bakiye (+ resmi ilansa bonus)."""
-    return e.get("bal", 0) + (e.get("bonus", 0) if L.get("own") else 0)
-
-def spend(e, L, amt):
-    """Önce bonustan (resmi ilansa), kalanı bakiyeden düşer."""
-    if L.get("own") and e.get("bonus"):
-        b = min(e["bonus"], amt); e["bonus"] -= b; amt -= b
-    e["bal"] = e.get("bal", 0) - amt
+REF_BONUS = UM // 80             # her sayılan davet: 0.25 TMT bonus (= 0.0125 USDT); çekilemez, sadece 🛒 Market'te kod (c7/c30) almakta harcanır
 OWN_PRICE = 100                  # bizim fiyat: 0.0001 USDT/dk (≈ 4.3 USDT / 30 gün)
 TM_FRESH = 40 * 60               # telefon sonucu bundan eskiyse kurallar uygulanmaz
 MKT = {"lock": None}
@@ -4090,18 +4082,18 @@ def mkt_start(uid, lid):
         if sum(1 for s in db.get("msess", {}).values() if s["buyer"] == uid and s["lid"] == lid and s["start"] > time.time() - 86400) >= MAX_STARTS_DAY:
             return None, "limit"   # aynı ilanı sık başlat-durdur (IP toplama) engeli
         need = MKT_FEE + int(round(L["price"] * max(START_MINUTES, PREPAY_MIN)))
-        if spendable(e, L) < need: return None, f"nobal:{need}"
+        if e.get("bal", 0) < need: return None, f"nobal:{need}"
         codes = listing_codes(db, L)
         if not codes: return None, "nocodes"
         fid, from_free = alloc_file(svc, db)
         if not fid or not make_public(svc, fid): return None, "noslot"
         if not sync_file(svc, fid, L["title"], mkt_ann(lang_of(db, uid)), codes, exp=False): return None, "drive"
         if from_free: db["free_files"].remove(fid)
-        spend(e, L, MKT_FEE)
+        e["bal"] = e.get("bal", 0) - MKT_FEE
         db["mkt_fees"] = db.get("mkt_fees", 0) + MKT_FEE
         sid = uuid.uuid4().hex[:8]
         now = time.time()
-        pre = int(round(L["price"] * PREPAY_MIN)); spend(e, L, pre)   # ilk saat peşin (iade edilmez); dakika başı ödeme 1 saat sonra başlar
+        pre = int(round(L["price"] * PREPAY_MIN)); e["bal"] -= pre   # ilk saat peşin (iade edilmez); dakika başı ödeme 1 saat sonra başlar
         db.setdefault("msess", {})[sid] = {"buyer": uid, "lid": lid, "fid": fid, "start": now, "last": now + PREPAY_MIN * 60, "settle_ts": now,
                                           "acc": pre, "total": pre, "status": "on", "hash": hashlib.md5("\n".join(codes).encode()).hexdigest()}
         save_db(db)
@@ -4114,9 +4106,9 @@ def charge(db, sid, now):
     if not L: return False
     price = float(L["price"]); mins = int((now - s["last"]) // 60)
     if mins <= 0: return True
-    can = int(min(mins, spendable(e, L) // price)) if price else mins
+    can = int(min(mins, e.get("bal", 0) // price)) if price else mins
     cost = int(round(can * price))
-    spend(e, L, cost); s["acc"] += cost; s["total"] += cost; s["last"] += can * 60
+    e["bal"] = e.get("bal", 0) - cost; s["acc"] += cost; s["total"] += cost; s["last"] += can * 60
     return can == mins
 
 def bill(db, now):
@@ -4127,7 +4119,7 @@ def bill(db, now):
         L = db.get("market", {}).get(s["lid"])
         if not L or L.get("status") != "live": stop.append((sid, "gone")); continue
         if not charge(db, sid, now): stop.append((sid, "nobal")); continue
-        price = float(L["price"]); bal = spendable(db["users"][str(s["buyer"])], L)
+        price = float(L["price"]); bal = db["users"][str(s["buyer"])].get("bal", 0)
         left_min = int(bal // price) if price else 10**9
         if left_min < 60 and not s.get("warned"): s["warned"] = True; warn.append((sid, s["buyer"], left_min))
         if left_min >= 60: s.pop("warned", None)
