@@ -2811,7 +2811,7 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
             await q.answer(tr(lang, "chk_wait", m=int(left // 60) + 1), show_alert=True); return
         CHK["user"][uid] = now
         mode = "refresh" if force and CHK.get("last_ch") else "run"   # Yenile: eski sonuç hemen görünür, yeni test arkadan
-        kb = chk_kb(lang, lid); t = check_text(load_db(), lid, lang, CHK.get("last_ch"), mode)
+        kb = chk_kb(lang, lid, False); t = check_text(load_db(), lid, lang, CHK.get("last_ch"), mode)
         msg = getattr(q, "message", None)
         if msg is not None:   # aynı kutu hemen "Kontrol ediliyor..." olur
             is_photo = bool(getattr(msg, "photo", None)); mid = msg.message_id
@@ -2833,7 +2833,7 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         if state == "run":
             CHK["wait"].setdefault(lid, {})[uid] = (lang, mid, is_photo, qid, now, mode)
             if not CHK.get("poll") or CHK["poll"].done(): CHK["poll"] = asyncio.create_task(chk_poll(c.application))
-        else: await edit_box(c.bot, uid, mid, is_photo, check_text(load_db(), lid, lang, ch, state), kb)
+        else: await edit_box(c.bot, uid, mid, is_photo, check_text(load_db(), lid, lang, ch, state), chk_kb(lang, lid))
         ulog("m_check", f"🔍 Kontrol etti: {who(user)} · {db.get('market', {}).get(lid, {}).get('title', lid)}")
 
     elif a.startswith("u_mph:"):
@@ -2929,7 +2929,7 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         def f(d):
             x = d["users"].setdefault(str(uid), {})
             if x.get("mban", 0) > time.time(): return "ban"
-            if any(L.get("link") == st_["link"] and L.get("status") in ("pending", "live") for L in d.get("market", {}).values()): return "dup"
+            if uid not in ADMINS and any(L.get("link") == st_["link"] and L.get("status") in ("pending", "live") for L in d.get("market", {}).values()): return "dup"   # kurucu aynı linki tekrar koyabilir
             fee_ = seller_fee(x)
             if x.get("bal", 0) < fee_: return "nobal"
             x["bal"] -= fee_; d["mkt_fees"] = d.get("mkt_fees", 0) + fee_; x.pop("fee_x2", None)   # 2 kat ödendi: sonra yine normal
@@ -3991,7 +3991,7 @@ T["tr"].update({
   "mine_m": "<blockquote>🏪 <b>{title}</b>  ·  ⏱ {dur}  ·  💸 {usdt} USDT\n<code>{link}</code></blockquote>",
   "sell_banned": "⛔ Pazar yasağın var: <b>{left}</b> sonra tekrar ilan verebilirsin.",
   "sell_1": "➕ <b>Kodumu Sat · 1/5</b>\n<blockquote>Abonelik linkini gönder. <b>Limitsiz</b> olmalı (trafik ve cihaz).\nKurallar: en az 4 farklı gerçek ülke (bot ölçer, bayraklara bakılmaz), en fazla 3 çalışmayan sunucu.</blockquote>",
-  "sell_badlink": "⚠️ Bu linkten kod alınamadı. Linki kontrol edip tekrar gönder.",
+  "sell_badlink": "⚠️ Bu linkten kod alınamadı. Linki kontrol edip tekrar gönder.\n<i>Happ şifreli (happ://crypt…) ya da kapalı linkler kabul edilmiyor; açık abonelik linkini gönder.</i>",
   "sell_dup": "⚠️ Bu link zaten pazarda.",
   "sell_2": "➕ <b>Kodumu Sat · 2/5</b>\n<blockquote>✅ Linkte <b>{n}</b> sunucu bulundu ({protos}).\nİlanın adını yaz (ör. <code>Fast VPN 🇩🇪</code>).</blockquote>",
   "sell_3": "➕ <b>Kodumu Sat · 3/5</b>\n<blockquote>Kodunun <b>ekran görüntüsünü</b> gönder (fotoğraf olarak).</blockquote>",
@@ -4043,7 +4043,7 @@ T["ru"].update({
   "mine_m": "<blockquote>🏪 <b>{title}</b>  ·  ⏱ {dur}  ·  💸 {usdt} USDT\n<code>{link}</code></blockquote>",
   "sell_banned": "⛔ У вас бан на бирже: можно снова через <b>{left}</b>.",
   "sell_1": "➕ <b>Продать код · 1/5</b>\n<blockquote>Отправьте ссылку подписки. Она должна быть <b>безлимитной</b> (трафик и устройства).\nПравила: минимум 4 разные реальные страны (бот проверяет сам, флаги не учитываются), не больше 3 неработающих серверов.</blockquote>",
-  "sell_badlink": "⚠️ По этой ссылке коды не получены. Проверьте и отправьте снова.",
+  "sell_badlink": "⚠️ По этой ссылке коды не получены. Проверьте и отправьте снова.\n<i>Зашифрованные (happ://crypt…) и закрытые ссылки не принимаются — нужна открытая ссылка подписки.</i>",
   "sell_dup": "⚠️ Эта ссылка уже на бирже.",
   "sell_2": "➕ <b>Продать код · 2/5</b>\n<blockquote>✅ Найдено серверов: <b>{n}</b> ({protos}).\nНапишите название объявления (напр. <code>Fast VPN 🇩🇪</code>).</blockquote>",
   "sell_3": "➕ <b>Продать код · 3/5</b>\n<blockquote>Отправьте <b>скриншот</b> вашего кода (как фото).</blockquote>",
@@ -4379,7 +4379,7 @@ T["tk"] = {
  "m_low": "⚠️ Balansyň azalýar: bazardan alan kodyň takmynan ýene <b>{m} minut</b> işlär.",
  "mine_m": "<blockquote>🏪 <b>{title}</b>  ·  ⏱ {dur}  ·  💸 {usdt} USDT\n<code>{link}</code></blockquote>",
  "sell_banned": "⛔ Bazarda bloklandyň: <b>{left}</b> soň täzeden bildiriş goýup bilersiň.",
- "sell_badlink": "⚠️ Bu linkden kod alyp bolmady. Linki barla-da, täzeden iber.",
+ "sell_badlink": "⚠️ Bu linkden kod alyp bolmady. Linki barla-da, täzeden iber.\n<i>Happ-yň şifrlenen (happ://crypt…) ýa-da ýapyk linkleri kabul edilmeýär — açyk podpiska linkini iberiň.</i>",
  "sell_dup": "⚠️ Bu link eýýäm bazarda bar.",
  "sell_2": "➕ <b>Kodumy sat · 2/5</b>\n<blockquote>✅ Linkde <b>{n}</b> serwer tapyldy ({protos}).\nBildirişiň adyny ýaz (mysal: <code>Fast VPN 🇩🇪</code>).</blockquote>",
  "sell_3": "➕ <b>Kodumy sat · 3/5</b>\n<blockquote>Kodyňyň <b>skrinşotyny</b> iber (surat görnüşinde).</blockquote>",
@@ -4512,6 +4512,11 @@ T["ru"].update({"fake_rej": "🤥 <b>Объявление отклонено: ф
     "fake_x2": "⚠️ <b>Это уже второй раз: следующее объявление будет стоить {fee}$ (в 2 раза больше).</b> После оплаты цена снова обычная.",
     "fee_x2_note": "\n⚠️ <b>Штраф за фальшивый пинг:</b> это объявление в 2 раза дороже."})
 
+# Happ şifreli link uyarısı (satış)
+T["tr"]["sell_happ"] = "⚠️ <b>Happ şifreli linkleri kabul edilmiyor</b>\n<blockquote>happ://crypt… gibi şifreli ya da kapalı linklerin içindeki kodlar okunamaz.\nAçık abonelik linkini gönder (<code>https://</code> ile başlayan).</blockquote>"
+T["tk"]["sell_happ"] = "⚠️ <b>Happ-yň şifrlenen linkleri kabul edilmeýär</b>\n<blockquote>happ://crypt… ýaly şifrlenen ýa-da ýapyk linklerdäki kodlary okap bolanok.\nAçyk podpiska linkini iberiň (<code>https://</code> bilen başlaýan).</blockquote>"
+T["ru"]["sell_happ"] = "⚠️ <b>Зашифрованные ссылки Happ не принимаются</b>\n<blockquote>Коды внутри зашифрованных или закрытых ссылок (happ://crypt…) прочитать нельзя.\nОтправьте открытую ссылку подписки (начинается с <code>https://</code>).</blockquote>"
+
 # 🛒 Satın Al onayı
 T["tr"].update({"b_msy": "✅ Evet, satın al", "b_msn": "✖️ Vazgeç",
     "ms_q": "🛒 <b>Satın almak istediğine emin misin?</b>\n<blockquote>🏪 {title}\n💵 Başlatma ücreti  <b>{fee}$</b> (iade edilmez)\n⏳ İlk 5 saat peşin  <b>{ph} TMT</b> (iade edilmez)\n⏱ Sonra her dakika  <b>{pm} TMT</b> bakiyenden düşer\n💰 Bakiyen  <b>{bal} USDT</b></blockquote>\n<i>İstediğin an durdurabilirsin.</i>"})
@@ -4607,8 +4612,10 @@ def check_text(db, lid, lang, ch=None, state="done", el=0):
         if len(t) <= 1024: return t
     return t[:1020]
 
-def chk_kb(lang, lid):
-    return KB([[B(tr(lang, "b_buy_m"), f"u_ms:{lid}", "success"), B(tr(lang, "b_recheck"), f"u_mck:{lid}:r", "primary")], [B(tr(lang, "b_back"), f"u_ml:{lid}")]])
+def chk_kb(lang, lid, refresh=True):
+    """Kontrol kutusu butonları. Test sürerken 🔄 Tazele gösterilmez (sonuç gelince çıkar)."""
+    top = [B(tr(lang, "b_buy_m"), f"u_ms:{lid}", "success")] + ([B(tr(lang, "b_recheck"), f"u_mck:{lid}:r", "primary")] if refresh else [])
+    return KB([top, [B(tr(lang, "b_back"), f"u_ml:{lid}")]])
 
 async def edit_box(bot, uid, mid, is_photo, t, kb):
     """Pazar kutusunu yerinde günceller (fotoğraflıysa altındaki yazı)."""
@@ -5146,7 +5153,7 @@ async def check_waiters(app):
                 el = int((now - t0) // 60)
                 if el >= 1 and CHK.setdefault("el", {}).get((uid, mid)) != el:   # dakikada bir "geçen süre"
                     CHK["el"][(uid, mid)] = el
-                    await edit_box(app.bot, uid, mid, is_photo, check_text(db, lid, lang, ch if mode == "refresh" else None, mode, el), chk_kb(lang, lid))
+                    await edit_box(app.bot, uid, mid, is_photo, check_text(db, lid, lang, ch if mode == "refresh" else None, mode, el), chk_kb(lang, lid, False))
         if not CHK["wait"][lid]: CHK["wait"].pop(lid, None)
 
 async def chk_poll(app):
@@ -5250,12 +5257,14 @@ async def market_input(c, u, st):
         await say(*topup_order(uid, user, lang, v)); return
     step = st.get("step")
     if step == "link":
+        if "happ://" in txt.lower() or "crypt" in txt.lower():   # Happ şifreli link: içindeki kodlar okunamaz
+            await say(tr(lang, "sell_happ")); return
         link = next((w for w in txt.split() if w.startswith("http")), None)
         if not link: await say(tr(lang, "sell_badlink")); return
         try: codes = await asyncio.to_thread(fetch_codes, link)
         except Exception: codes = []
         if not codes: await say(tr(lang, "sell_badlink")); return
-        if any(L.get("link") == link and L.get("status") in ("pending", "live") for L in load_db().get("market", {}).values()):
+        if uid not in ADMINS and any(L.get("link") == link and L.get("status") in ("pending", "live") for L in load_db().get("market", {}).values()):
             STATE.pop(uid, None); await say(tr(lang, "sell_dup"), KB([[B(tr(lang, "b_back_mkt"), "u_mkt")]])); return
         protos = {}
         for c_ in codes: protos[proto_of(c_)] = protos.get(proto_of(c_), 0) + 1
