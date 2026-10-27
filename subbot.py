@@ -2533,6 +2533,7 @@ T = {
 
 USDT_RATE = 20          # 1 USDT = 20 TMT
 CRYPTO_API = "https://pay.crypt.bot/api/"
+def tmt_to_um(tmt): return int(round(tmt / USDT_RATE * UM))   # TMT → bakiye birimi
 def usdt_of(tmt): return f"{tmt / USDT_RATE:.2f}".rstrip("0").rstrip(".")
 def crypto_token(): return os.environ.get("CRYPTO_PAY_TOKEN", "")
 
@@ -3330,6 +3331,29 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
                    KB([[B(tr(lang, "b_pay"), url=o["inv_url"], style="success")], [B(tr(lang, "b_chk"), f"u_chk:{oid}", "primary")]]
                       + ([[B("🟡 🧪 Ödendi say (test)", f"u_tpaid:{oid}", "primary")]] if uid in ADMINS else []) + [[B(tr(lang, "b_menu"), "u_menu")]]))
 
+    elif a.startswith("u_pbal:"):   # 💰 profil bakiyesiyle öde
+        oid = a.split(":", 1)[1]
+        def f(d):
+            o_ = d.get("orders", {}).get(oid); x = d["users"].setdefault(str(uid), {})
+            if not o_ or o_["uid"] != uid or o_["status"] != "new" or o_["item"] == "topup": return "old"
+            cost = tmt_to_um(o_["price"])
+            if x.get("bal", 0) < cost: return ("nobal", cost)
+            x["bal"] = x.get("bal", 0) - cost; o_["status"] = "paid"; o_["via"] = "bal"; o_["bal_cost"] = cost
+            return ("ok", cost)
+        r_ = mutate(f)
+        if r_ == "old": await send(tr(lang, "order_old"), menu_btn); return
+        if r_[0] == "nobal":
+            await send(tr(lang, "pbal_need", need=fmt_u(r_[1]), bal=fmt_u(e.get("bal", 0))),
+                       KB([[B(tr(lang, "b_top"), "u_top", "success")], [B(tr(lang, "b_menu"), "u_menu")]])); return
+        ulog("paid", f"💰 Bakiyeyle ödedi: {who(user)} · #{oid} · {fmt_u(r_[1])} USDT")
+        msg = await fulfill_order(c.application, oid, True, uid)
+        if load_db().get("orders", {}).get(oid, {}).get("status") != "done":   # teslim olmadı → para geri
+            def back(d):
+                d["users"][str(uid)]["bal"] = d["users"][str(uid)].get("bal", 0) + r_[1]; d["orders"][oid]["status"] = "cancel"
+            mutate(back)
+            await send(tr(lang, "pbal_fail"), menu_btn)
+            await notify_founders(c.application, f"⚠️ <b>Bakiyeyle alım teslim edilemedi</b> (para iade edildi)\n<blockquote>{esc(who(user))} · #{oid}\n{msg}</blockquote>")
+
     elif a.startswith("u_tpaid:"):   # sadece kurucu: ödeme yapmadan teslimi dener, satışa sayılmaz
         if uid not in ADMINS: return
         oid = a.split(":", 1)[1]
@@ -3377,7 +3401,8 @@ def new_order(uid, user, lang, item, n=0, ext=None):
     mutate(f)
     ulog("order", f"🧾 Sipariş açtı: {who(user)} · #{oid} · {item_tr(o)} · {price} TMT")
     us = usdt_of(price); has = bool(crypto_token())
-    rows = ([[B(tr(lang, "b_usdt", usdt=us), f"u_usdt:{oid}", "success")]] if has else []) + [[B(tr(lang, "b_cancel"), f"u_cancel:{oid}", "danger")]]
+    rows = [[B(tr(lang, "b_pbal", usdt=fmt_u(tmt_to_um(price))), f"u_pbal:{oid}", "success")]] + \
+           ([[B(tr(lang, "b_usdt", usdt=us), f"u_usdt:{oid}", "success")]] if has else []) + [[B(tr(lang, "b_cancel"), f"u_cancel:{oid}", "danger")]]
     # TMT ile ödeme henüz açık değil ("yakında"); açılınca eski TMT akışı (u_paid -> admin onayı) kullanılabilir
     t = (f"🧾 <b>{'Заказ' if lang == 'ru' else 'Sipariş'} #{oid}</b>\n<blockquote>{esc(it)}\n💰 {'Сумма' if lang == 'ru' else 'Tutar'}  <b>{price} TMT</b>  ·  <b>{us} USDT</b></blockquote>\n"
          + (tr(lang, "usdt_line") if has else tr(lang, "pay_off")) + tr(lang, "tmt_soon"))
@@ -4653,6 +4678,15 @@ T["ru"].update({"b_myad": "🎨 Создать свою рекламу",
 T["tr"]["wd_nofund"] = "⏳ <b>Çekim şu an yapılamadı.</b>\n<blockquote>Ödeme hesabında geçici olarak yeterli para yok. <b>{usdt} USDT</b> kazancın yerinde duruyor, kaybolmadı.\nAdmine bildirildi — biraz sonra tekrar dene.</blockquote>"
 T["tk"]["wd_nofund"] = "⏳ <b>Häzir çekip bolmady.</b>\n<blockquote>Töleg hasabynda wagtlaýyn ýeterlik pul ýok. <b>{usdt} USDT</b> gazanjyňyz ýerinde dur, ýitmedi.\nAdmine habar berildi — birazdan gaýtadan synanyşyň.</blockquote>"
 T["ru"]["wd_nofund"] = "⏳ <b>Вывод сейчас невозможен.</b>\n<blockquote>На платёжном счёте временно недостаточно средств. Ваши <b>{usdt} USDT</b> на месте.\nАдмин уведомлён — попробуйте чуть позже.</blockquote>"
+T["tr"].update({"b_pbal": "💰 Bakiyeden öde ({usdt} USDT)",
+  "pbal_need": "⚠️ <b>Bakiye yetersiz</b>\n<blockquote>Gerekli  <b>{need} USDT</b>\n💰 Bakiyen  <b>{bal} USDT</b></blockquote>",
+  "pbal_fail": "⚠️ Şu an teslim edilemedi. Paran bakiyene geri yüklendi, admine bildirildi."})
+T["tk"].update({"b_pbal": "💰 Balansdan töle ({usdt} USDT)",
+  "pbal_need": "⚠️ <b>Balans ýeterlik däl</b>\n<blockquote>Gerek  <b>{need} USDT</b>\n💰 Balansyňyz  <b>{bal} USDT</b></blockquote>",
+  "pbal_fail": "⚠️ Häzir berip bolmady. Puluňyz balansyňyza gaýtaryldy, admine habar berildi."})
+T["ru"].update({"b_pbal": "💰 Оплатить с баланса ({usdt} USDT)",
+  "pbal_need": "⚠️ <b>Недостаточно средств</b>\n<blockquote>Нужно  <b>{need} USDT</b>\n💰 Баланс  <b>{bal} USDT</b></blockquote>",
+  "pbal_fail": "⚠️ Сейчас выдать не удалось. Деньги возвращены на баланс, админ уведомлён."})
 T["tr"]["m_own"] = "⚠️ <b>Kendi ilanını satın alamazsın.</b>"
 T["tk"]["m_own"] = "⚠️ <b>Öz bildirişiňizi satyn alyp bilmeýärsiňiz.</b>"
 T["ru"]["m_own"] = "⚠️ <b>Нельзя купить своё собственное объявление.</b>"
