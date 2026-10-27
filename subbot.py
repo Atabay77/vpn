@@ -3953,9 +3953,9 @@ UM = 1_000_000                   # 1 USDT = 1.000.000 mikro (kuruş hatası olma
 PREPAY_MIN = 300                 # başlatınca ilk 5 saat peşin alınır (hemen iade edip IP toplamaya karşı)
 MAX_STARTS_DAY = 3               # bir alıcı AYNI ilanı (başka ilanlar serbest) 24 saatte en fazla bu kadar başlatabilir
 MKT_FEE = 50_000                 # 0.05 USDT: satıcı ilan ücreti ve alıcı başlatma ücreti (bota kalır)
-TOPUP_MIN = 1                    # en az bakiye yükleme (USDT)
-WITHDRAW_MIN = UM // 4           # en az kazanç çekme (kullanıcı 0.25 USDT)
-WITHDRAW_MIN_ADMIN = UM // 10    # kurucu 0.1 USDT
+TOPUP_MIN = 0.1                  # en az bakiye yükleme (USDT)
+WITHDRAW_MIN = UM                # en az kazanç çekme: 1 USDT (CryptoBot 1$ altını göndermiyor)
+WITHDRAW_MIN_ADMIN = UM          # kurucu da 1 USDT
 def wd_min(uid): return WITHDRAW_MIN_ADMIN if uid in ADMINS else WITHDRAW_MIN
 MIN_COUNTRIES, MAX_DEAD = 4, 4   # başvuruda en az 4 gerçek ülke; 4'ten fazla çalışmayan (N/A) sunucu olmamalı
 BAD_WINDOW = 30 * 60             # kural ihlali bu kadar sürerse ilan kaldırılır
@@ -4198,7 +4198,7 @@ T["tr"].update({
   "rules": "📜 <b>Pazar kuralları</b>\n\n🏪 <b><u>SATICI</u></b>\n<blockquote>• Her ilan 0.05$ (iade edilmez).\n• Abonelik limitsiz olmalı; ekran görüntüsü zorunlu.\n• Başvuruda en az 4 farklı gerçek ülke (bot ölçer, bayraklara bakılmaz).\n• 💎 VIP: 0.2$ ile 36 saat en üstte.\n• Kazanç: alıcı durdurunca, uzun kullanımda her 24 saatte bir gönderilir.\n• 🔒 Kodların sadece satın alan kişinin dosyasına yazılır, durdurunca silinir. Her kullanım İlanlarım → 📜 Kullanım geçmişi'nde görünür.</blockquote>\n\n🛒 <b><u>ALICI</u></b>\n<blockquote>• Her başlatma 0.05$ + ilk 5 saat peşin (iade edilmez).\n• Aynı ilan 24 saatte en fazla 3 kez başlatılır.\n• Dakika başı ücret bakiyenden düşer (kullansan da kullanmasan da).\n• İstediğin an durdurursun; bakiye bitince kod durur.\n• Bakiye en az 1$ yüklenir; yüklenen bakiye geri çekilmez.</blockquote>",
   "bal_line": "\n\n💰 <b>Bakiye</b> {bal} USDT ≈ {tmt} TMT" , "earn_line": "\n💼 <b>Çekilebilir kazanç</b>  {earn} USDT",
   "top": "➕ <b>Bakiye Yükle</b>\n<blockquote>CryptoBot ile USDT. En az 1 USDT.\n💰 Bakiyen  <b>{bal} USDT</b></blockquote>",
-  "top_ask": "✏️ Kaç USDT yüklemek istiyorsun? (en az 1)", "top_bad": "⚠️ En az 1 USDT, sayı yaz (ör. 2.5).",
+  "top_ask": "✏️ Kaç USDT yüklemek istiyorsun? (en az 0.1)", "top_bad": "⚠️ En az 0.1 USDT, sayı yaz (ör. 2.5).",
   "top_order": "🧾 <b>Bakiye yükleme · #{oid}</b>\n<blockquote>💵 <b>{usdt} USDT</b></blockquote>\n«💵 USDT ile öde»ye bas.",
   "it_top": "Bakiye yükleme · {usdt} USDT",
   "top_ok": "✅ <b>Bakiyene {usdt} USDT eklendi.</b>\n<blockquote>💰 Bakiye  <b>{bal} USDT</b></blockquote>",
@@ -4249,7 +4249,7 @@ T["ru"].update({
   "rules": "📜 <b>Правила биржи</b>\n\n🏪 <b><u>ПРОДАВЕЦ</u></b>\n<blockquote>• Каждое объявление 0.05$ (не возвращается).\n• Подписка должна быть безлимитной; скриншот обязателен.\n• При подаче минимум 4 разные реальные страны (бот измеряет сам, флаги не учитываются).\n• 💎 VIP: 0.2$ — 36 часов на самом верху.\n• Выплата: после остановки покупателем, при долгом использовании — каждые 24 ч.\n• 🔒 Ваши коды записываются только в файл купившего и удаляются после остановки. Каждое использование видно в Мои объявления → 📜 История.</blockquote>\n\n🛒 <b><u>ПОКУПАТЕЛЬ</u></b>\n<blockquote>• Каждый запуск 0.05$ + первые 5 часов сразу (не возвращается).\n• Одно объявление — не больше 3 запусков за 24 ч.\n• Поминутная оплата списывается с баланса (пользуетесь или нет).\n• Остановить можно в любой момент; при нулевом балансе код останавливается.\n• Пополнение от 1$; пополненный баланс не выводится.</blockquote>",
   "bal_line": "\n\n💰 <b>Баланс</b> {bal} USDT ≈ {tmt} TMT", "earn_line": "\n💼 <b>Доход к выводу</b>  {earn} USDT",
   "top": "➕ <b>Пополнение</b>\n<blockquote>USDT через CryptoBot. Минимум 1 USDT.\n💰 Баланс  <b>{bal} USDT</b></blockquote>",
-  "top_ask": "✏️ Сколько USDT пополнить? (минимум 1)", "top_bad": "⚠️ Минимум 1 USDT, напишите число (напр. 2.5).",
+  "top_ask": "✏️ Сколько USDT пополнить? (минимум 0.1)", "top_bad": "⚠️ Минимум 0.1 USDT, напишите число (напр. 2.5).",
   "top_order": "🧾 <b>Пополнение · #{oid}</b>\n<blockquote>💵 <b>{usdt} USDT</b></blockquote>\nНажмите «💵 Оплатить USDT».",
   "it_top": "Пополнение · {usdt} USDT",
   "top_ok": "✅ <b>На баланс зачислено {usdt} USDT.</b>\n<blockquote>💰 Баланс  <b>{bal} USDT</b></blockquote>",
@@ -4594,8 +4594,8 @@ T["tk"] = {
  "bal_line": "\n\n💰 <b>Balans</b> {bal} USDT ≈ {tmt} TMT",
  "earn_line": "\n💼 <b>Çekip boljak gazanç</b>  {earn} USDT",
  "top": "➕ <b>Balansy doldur</b>\n<blockquote>CryptoBot arkaly USDT. Azyndan 1 USDT.\n💰 Balansyň  <b>{bal} USDT</b></blockquote>",
- "top_ask": "✏️ Näçe USDT doldurmak isleýärsiň? (azyndan 1)",
- "top_bad": "⚠️ Azyndan 1 USDT, san ýaz (mysal: 2.5).",
+ "top_ask": "✏️ Näçe USDT doldurmak isleýärsiň? (azyndan 0.1)",
+ "top_bad": "⚠️ Azyndan 0.1 USDT, san ýaz (mysal: 2.5).",
  "top_order": "🧾 <b>Balansy doldurmak · #{oid}</b>\n<blockquote>💵 <b>{usdt} USDT</b></blockquote>\n«💵 USDT bilen töle» düwmesine bas.",
  "it_top": "Balansy doldurmak · {usdt} USDT",
  "top_ok": "✅ <b>Balansyňa {usdt} USDT goşuldy.</b>\n<blockquote>💰 Balans  <b>{bal} USDT</b></blockquote>",
