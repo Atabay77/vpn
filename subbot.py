@@ -4964,9 +4964,9 @@ async def inline_ad(u: Update, c: ContextTypes.DEFAULT_TYPE):
         vlog(f"⚠️ Inline reklam hatası: {str(e)[:150]}"); log.exception("inline ad")
 
 async def _inline_ad(u, fid):
-    res = [InlineQueryResultCachedPhoto(id=f"ad_{l}", photo_file_id=fid, title=("📢 Reklama (Türkmençe)" if l == "tk" else "📢 Реклама (Русский)"),
-                                        caption=ad_text(l), parse_mode="HTML", reply_markup=ad_kb(l)) for l in ("tk", "ru")]
-    await u.inline_query.answer(res, cache_time=60, is_personal=False)
+    # tek sonuç: Türkmençe post; Rusça için posttaki 🇷🇺 butonu
+    res = [InlineQueryResultCachedPhoto(id="ad", photo_file_id=fid, title="📢 Reklama", caption=ad_text("tk"), parse_mode="HTML", reply_markup=ad_kb("tk"))]
+    await u.inline_query.answer(res, cache_time=30, is_personal=False)
 
 def mkt_ann(lang):
     """Satın alınan pazar kodunun Happ duyurusu (tek satır)."""
