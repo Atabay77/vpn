@@ -3112,8 +3112,21 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
                link=esc(ref_link(uid)))
         t += tr(lang, "bal_line", bal=f"{e.get('bal', 0) / UM:.2f}", tmt=f"{e.get('bal', 0) * USDT_RATE / UM:.2f}") + (tr(lang, "earn_line", earn=fmt_u(e["earn"])) if e.get("earn") else "")
         await bsend("prof", t, KB([[B(tr(lang, "b_share"), url=share_url(lang, uid), style="success")],
-                          [B(tr(lang, "b_top"), "u_top", "primary")]] + ([[B(tr(lang, "b_wd"), "u_wd")]] if e.get("earn") else []) + [
+                          [B(tr(lang, "b_top"), "u_top", "primary")], [B(tr(lang, "b_myad"), "u_myad", "success")]] + ([[B(tr(lang, "b_wd"), "u_wd")]] if e.get("earn") else []) + [
                           [B(tr(lang, "b_menu"), "u_menu")]]))
+
+    elif a == "u_myad":   # kullanıcının kendi davet linkiyle reklam postu
+        steps = tr(lang, "myad_wait").split("|")
+        for i_, st_ in enumerate(steps):
+            await send(st_)
+            await asyncio.sleep(0.9 if i_ < len(steps) - 1 else 0.3)
+        msg_ = getattr(q, "message", None)
+        try: await msg_.delete()
+        except Exception: pass
+        try: await send_ad(c, uid, "tk" if lang != "ru" else "ru", uid)
+        except Exception as ex_: log.warning("myad: %s", ex_)
+        await c.bot.send_message(uid, tr(lang, "myad_done", un=esc(BOT.get("un") or "SuBDrive_bot"), link=esc(ref_link(uid))), parse_mode="HTML",
+                                 disable_web_page_preview=True, reply_markup=KB([[B(tr(lang, "b_prof"), "u_prof"), B(tr(lang, "b_menu"), "u_menu")]]))
 
     elif a == "u_market":
         STATE.pop(uid, None)
@@ -4441,6 +4454,17 @@ T["tk"].update({"b_mlh": "📜 Ulanyş taryhy · {t}", "mlh_none": "Entek hiç k
 T["ru"].update({"b_mlh": "📜 История · {t}", "mlh_none": "Пока никто не пользовался.", "mlh_now": "сейчас открыт",
     "mlh": "📜 <b>История использования</b> · {title}\n<blockquote>{lines}</blockquote>\n<i>🔒 Ваши коды записывались только в эти часы и только в файл купившего; после остановки файл очищается. В собственные коды бота и другие файлы они не попадают.\n🔎 Сравните со временем подключений/трафика в панели вашего провайдера; если видите использование вне этого списка — напишите в поддержку.\nПримечание: бот примерно раз в 10 минут на несколько секунд проверяет коды из Туркменистана (очень мало трафика).</i>"})
 
+# 🎨 Kendi reklamım (profil)
+T["tr"].update({"b_myad": "🎨 Kendi reklamımı hazırla",
+    "myad_wait": "🎨 <b>Reklamın hazırlanıyor...</b>\n▱▱▱▱▱ 0%|🎨 <b>Reklamın hazırlanıyor...</b>\n▰▰▱▱▱ 40%\n<i>Davet linkin ekleniyor</i>|🎨 <b>Reklamın hazırlanıyor...</b>\n▰▰▰▰▱ 80%\n<i>Banner ve yazı birleştiriliyor</i>|✅ <b>Hazır!</b>\n▰▰▰▰▰ 100%",
+    "myad_done": "✅ <b>Reklamın hazır!</b>\n<blockquote>Yukarıdaki reklam <b>senin davet linkinle</b> oluşturuldu — rahatça kullan. İstediğin kanala ya da gruba ilet.\n\n💡 Ya da reklam yapacağın yerde yazı kutusuna <code>@{un}</code> yaz — reklamın kendiliğinden çıkar.\n\n🔗 Davet linkin: {link}</blockquote>"})
+T["tk"].update({"b_myad": "🎨 Öz reklamamy taýýarla",
+    "myad_wait": "🎨 <b>Reklamaňyz taýýarlanýar...</b>\n▱▱▱▱▱ 0%|🎨 <b>Reklamaňyz taýýarlanýar...</b>\n▰▰▱▱▱ 40%\n<i>Çagyryş linkiňiz goşulýar</i>|🎨 <b>Reklamaňyz taýýarlanýar...</b>\n▰▰▰▰▱ 80%\n<i>Banner we tekst birleşdirilýär</i>|✅ <b>Taýýar!</b>\n▰▰▰▰▰ 100%",
+    "myad_done": "✅ <b>Reklamaňyz taýýar!</b>\n<blockquote>Ýokardaky reklama <b>siziň çagyryş linkiňiz bilen</b> döredildi — rahat ulanyň. Islän kanalyňyza ýa-da toparyňyza iberiň.\n\n💡 Ýa-da reklama berjek ýeriňizde ýazuw meýdançasyna <code>@{un}</code> ýazyň — reklamaňyz özi çykar.\n\n🔗 Çagyryş linkiňiz: {link}</blockquote>"})
+T["ru"].update({"b_myad": "🎨 Создать свою рекламу",
+    "myad_wait": "🎨 <b>Ваша реклама создаётся...</b>\n▱▱▱▱▱ 0%|🎨 <b>Ваша реклама создаётся...</b>\n▰▰▱▱▱ 40%\n<i>Добавляем вашу реферальную ссылку</i>|🎨 <b>Ваша реклама создаётся...</b>\n▰▰▰▰▱ 80%\n<i>Собираем баннер и текст</i>|✅ <b>Готово!</b>\n▰▰▰▰▰ 100%",
+    "myad_done": "✅ <b>Ваша реклама готова!</b>\n<blockquote>Реклама выше создана <b>с вашей реферальной ссылкой</b> — используйте смело. Перешлите в любой канал или группу.\n\n💡 Или там, где даёте рекламу, напишите в поле ввода <code>@{un}</code> — ваша реклама появится сама.\n\n🔗 Ваша ссылка: {link}</blockquote>"})
+
 # 🛒 Satın Al onayı
 T["tr"].update({"b_msy": "✅ Evet, satın al", "b_msn": "✖️ Vazgeç",
     "ms_q": "🛒 <b>Satın almak istediğine emin misin?</b>\n<blockquote>🏪 {title}\n💵 Başlatma ücreti  <b>{fee}$</b> (iade edilmez)\n⏱ Sonra her dakika  <b>{pm} TMT</b> bakiyenden düşer\n💰 Bakiyen  <b>{bal} USDT</b></blockquote>\n<i>İstediğin an durdurabilirsin.</i>"})
@@ -4891,35 +4915,44 @@ def market_bill():
     return stop, warn, info
 
 # ── 📢 Reklam postu: banner + yazı + 🇹🇲/🇷🇺 butonları (basınca yazı o dile döner) ──
+# Satırlar telefonda tek satıra sığacak kadar kısa. uid verilirse son satır + "Bota gir" o kişinin davet linki olur.
 AD_TXT = {
  "tk": ("🪪 — <b>VPN satyjylary üçin</b> 🌐\n\n"
-        "Kodlaryňyza klient tapyp bilmeýärsiňizmi? Drive Bot bazaryna goýuň — klientler özleri gelýär ✅\n\n"
+        "Kodlaryňyza klient tapyp bilmeýärsiňizmi?\n"
+        "Drive Bot bazaryna goýuň — klientler özleri gelýär ✅\n\n"
         "💰 Bahany özüňiz goýýarsyňyz\n"
-        "⏱ Minutlyk · sagatlyk · hepdelik · aýlyk\n"
-        "💸 Gazanç CryptoBot-a awtomatik gelýär\n"
-        "📡 Serwerler Türkmenistandan her 10 minutda barlanýar\n"
-        "💎 VIP — 36 sagat iň ýokarda\n"
-        "🔒 Kod diňe satyn alan klientiňize berilýär\n\n"
+        "⏱ Minutlyk, sagatlyk, aýlyk\n"
+        "💸 Pul CryptoBot-a özi gelýär\n"
+        "📡 Serwerler TM-den barlanýar\n"
+        "🤖 Satyşy bot özi ýöredýär\n"
+        "🔒 Kod diňe satyn alana berilýär\n\n"
         "📢 Reklamaňyz — bary-ýogy <b>0.05$</b>\n\n"
-        "Başlamak üçin 👇\n🤖 Telegram: @{un}"),
+        "Başlamak üçin 👇\n{link}"),
  "ru": ("🪪 — <b>Для продавцов VPN</b> 🌐\n\n"
-        "Не можете найти клиентов для своих кодов? Выставьте их на бирже Drive Bot — клиенты придут сами ✅\n\n"
+        "Не можете найти клиентов для кодов?\n"
+        "Выставьте их на бирже Drive Bot — клиенты придут сами ✅\n\n"
         "💰 Цену ставите сами\n"
-        "⏱ Поминутно · почасово · на неделю · на месяц\n"
-        "💸 Доход автоматически приходит в CryptoBot\n"
-        "📡 Серверы проверяются из Туркменистана каждые 10 минут\n"
-        "💎 VIP — 36 часов на самом верху\n"
-        "🔒 Код получает только купивший клиент\n\n"
+        "⏱ Поминутно, почасово, помесячно\n"
+        "💸 Доход сам приходит в CryptoBot\n"
+        "📡 Серверы проверяются из ТМ\n"
+        "🤖 Продажу ведёт бот\n"
+        "🔒 Код получает только покупатель\n\n"
         "📢 Размещение — всего <b>0.05$</b>\n\n"
-        "Начать 👇\n🤖 Telegram: @{un}")}
+        "Начать 👇\n{link}")}
 
-def ad_text(lang):
-    return AD_TXT.get(lang, AD_TXT["tk"]).replace("{un}", BOT.get("un") or "SuBDrive_bot")
-
-def ad_kb(lang):
+def ad_link(uid=None):
     un = BOT.get("un") or "SuBDrive_bot"
-    return KB([[B(("✅ " if lang == "tk" else "") + "🇹🇲 Türkmençe", "ad:tk"), B(("✅ " if lang == "ru" else "") + "🇷🇺 Русский", "ad:ru")],
-               [B("🤖 Bota gir" if lang == "tk" else "🤖 Перейти в бот", url=f"https://t.me/{un}?start=ad")]])
+    return f"https://t.me/{un}?start=r{uid}" if uid else f"https://t.me/{un}?start=ad"
+
+def ad_text(lang, uid=None):
+    un = BOT.get("un") or "SuBDrive_bot"
+    link = f"🤖 {ad_link(uid)}" if uid else f"🤖 Telegram: @{un}"
+    return AD_TXT.get(lang, AD_TXT["tk"]).replace("{link}", link)
+
+def ad_kb(lang, uid=None):
+    sfx = f":{uid}" if uid else ""
+    return KB([[B(("✅ " if lang == "tk" else "") + "🇹🇲 Türkmençe", f"ad:tk{sfx}"), B(("✅ " if lang == "ru" else "") + "🇷🇺 Русский", f"ad:ru{sfx}")],
+               [B("🤖 Bota gir" if lang == "tk" else "🤖 Перейти в бот", url=ad_link(uid))]])
 
 async def ad_photo_id(bot):
     """Reklam fotoğrafının bu bottaki file_id'si (yoksa bir kurucuya yükleyip alır)."""
@@ -4935,27 +4968,28 @@ async def ad_photo_id(bot):
         except Exception as e: log.info("ad photo: %s", e)
     return None
 
-async def send_ad(c, uid, lang="tk"):
+async def send_ad(c, chat, lang="tk", uid=None):
     media, h = await banner_media("ad", "tr")
-    m = await c.bot.send_photo(uid, media, caption=ad_text(lang), parse_mode="HTML", reply_markup=ad_kb(lang))
+    m = await c.bot.send_photo(chat, media, caption=ad_text(lang, uid), parse_mode="HTML", reply_markup=ad_kb(lang, uid))
     remember_banner(m, "ad:tr", h)
 
-async def ad_cb(q, lang):
+async def ad_cb(q, data):
+    lang, _, uid = data.partition(":")
     if lang not in AD_TXT: return
-    un = BOT.get("un") or "SuBDrive_bot"
+    uid = int(uid) if uid.isdigit() else None
     try:
-        await q.edit_message_caption(caption=ad_text(lang), parse_mode="HTML", reply_markup=ad_kb(lang))
+        await q.edit_message_caption(caption=ad_text(lang, uid), parse_mode="HTML", reply_markup=ad_kb(lang, uid))
         await q.answer()
     except BadRequest as e:
         if "not modified" in str(e).lower(): await q.answer(); return
-        await q.answer(("Начните: @" if lang == "ru" else "Başlamak üçin: @") + un, show_alert=True)   # iletilmiş kopya düzenlenemez
+        await q.answer(("Начните: " if lang == "ru" else "Başlamak üçin: ") + ad_link(uid), show_alert=True)   # iletilmiş kopya düzenlenemez
     except Exception as e:
         log.info("ad cb: %s", e)
         try: await q.answer()
         except Exception: pass
 
 async def inline_ad(u: Update, c: ContextTypes.DEFAULT_TYPE):
-    """@bot yazınca reklam postu (kanalda dil butonları çalışır)."""
+    """@bot yazınca reklam postu; yazan kişinin davet linkiyle (kanalda dil butonları çalışır)."""
     try:
         fid = await ad_photo_id(c.bot)
         if not fid: vlog("⚠️ Inline reklam: fotoğraf yüklenemedi"); await u.inline_query.answer([], cache_time=10); return
@@ -4964,9 +4998,11 @@ async def inline_ad(u: Update, c: ContextTypes.DEFAULT_TYPE):
         vlog(f"⚠️ Inline reklam hatası: {str(e)[:150]}"); log.exception("inline ad")
 
 async def _inline_ad(u, fid):
+    uid = u.inline_query.from_user.id
+    ref = uid if str(uid) in load_db().get("users", {}) else None   # botu kullanan kişi: kendi davet linki
     # tek sonuç: Türkmençe post; Rusça için posttaki 🇷🇺 butonu
-    res = [InlineQueryResultCachedPhoto(id="ad", photo_file_id=fid, title="📢 Reklama", caption=ad_text("tk"), parse_mode="HTML", reply_markup=ad_kb("tk"))]
-    await u.inline_query.answer(res, cache_time=30, is_personal=False)
+    res = [InlineQueryResultCachedPhoto(id="ad", photo_file_id=fid, title="📢 Reklama", caption=ad_text("tk", ref), parse_mode="HTML", reply_markup=ad_kb("tk", ref))]
+    await u.inline_query.answer(res, cache_time=30, is_personal=True)
 
 def mkt_ann(lang):
     """Satın alınan pazar kodunun Happ duyurusu (tek satır)."""
