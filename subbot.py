@@ -2765,9 +2765,6 @@ def home(uid):
     """Kurucu/panel sahibi -> kendi paneli, diğerleri -> kullanıcı menüsü."""
     return (menu_text(uid), main_kb(uid)) if is_admin(uid) else pub_menu(load_db(), uid)
 
-def share_url(lang, uid):
-    return "https://t.me/share/url?" + urllib.parse.urlencode({"url": ref_link(uid), "text": tr(lang, "share_text")})
-
 async def credit_ref(c, uid):
     """Doğrulama + kanal şartı tamamlanınca daveti sayar (bir kez)."""
     def f(d):
@@ -3173,7 +3170,7 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
             await bsend("free", tr(lang, "free_today"), menu_btn); return
         if avail_refs(e) < REF_NEED:
             await bsend("free", tr(lang, "free_need", need=REF_NEED, avail=max(0, avail_refs(e)), link=esc(ref_link(uid))),
-                       KB([[B(tr(lang, "b_share"), url=share_url(lang, uid), style="success")]]
+                       KB([[B(tr(lang, "b_share"), switch_inline_query="", style="success")]]
                           + [[B(tr(lang, "b_menu"), "u_menu")]])); return
         # yer ayır (aynı anda iki kez basılırsa iki kod çıkmasın)
         def take(d):
@@ -3266,7 +3263,7 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
                active=len(user_codes(db, uid)), buys=e.get("buys", 0), inviter=esc(inv.get("name") or tr(lang, "nobody")),
                link=esc(ref_link(uid)))
         t += tr(lang, "bal_line", bal=f"{e.get('bal', 0) / UM:.2f}", tmt=f"{e.get('bal', 0) * USDT_RATE / UM:.2f}") + (tr(lang, "earn_line", earn=(f"{e['earn'] / UM:.2f}" if e["earn"] >= UM // 100 else f"{e['earn'] / UM:.4f}")) if e.get("earn") else "")
-        await bsend("prof", t, KB([[B(tr(lang, "b_share"), url=share_url(lang, uid), style="success")],
+        await bsend("prof", t, KB([[B(tr(lang, "b_share"), switch_inline_query="", style="success")],
                           [B(tr(lang, "b_myad"), "u_myad", "success")], [B(tr(lang, "b_top"), "u_top", "primary")]] + ([[B(tr(lang, "b_wd"), "u_wd", "primary")]] if e.get("earn") or (uid in ADMINS and e.get("bal")) else []) + [
                           [B(tr(lang, "b_menu"), "u_menu")]]))
 
