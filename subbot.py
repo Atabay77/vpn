@@ -1736,7 +1736,7 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         miss = await missing_channels(c.bot, uid)
         if miss:
             await q.answer(); await safe_edit(q, *join_view(lang_of(load_db(), uid), miss)); return
-    if uid not in ADMINS and (a in FOUNDER_ONLY or a.startswith(("sv:", "se:", "sd:", "sa_del:", "sa_ext:", "sa_lim:", "kx:", "kxs:", "ul:", "chd:", "ord_ok:", "ord_no:", "t_rep:", "t_close:", "tv:", "ug:", "ux:", "uxc:", "ub:", "uv:", "ubal:", "mk_l:", "mk_ok:", "mk_rm:", "mk_ph:", "mk_pok:", "mk_pno:", "mk_prj:", "hl:", "hlp:", "ubn:", "bnd:", "bnq:"))):
+    if uid not in ADMINS and (a in FOUNDER_ONLY or a.startswith(("sv:", "se:", "sd:", "sa_del:", "sa_ext:", "sa_lim:", "kx:", "kxs:", "ul:", "chd:", "ord_ok:", "ord_no:", "t_rep:", "t_close:", "tv:", "ug:", "ux:", "uxc:", "ub:", "uv:", "ubal:", "mk_l:", "mk_ok:", "mk_rm:", "mk_ph:", "mk_real:", "mk_fake:", "mk_fakey:",  "mk_pok:", "mk_pno:", "mk_prj:", "hl:", "hlp:", "ubn:", "bnd:", "bnq:"))):
         await q.answer(L(uid, "⛔ Erişim yok", "⛔ Нет доступа"), show_alert=True); return
     if a not in ("toggle_sys", "upd_now"):
         await q.answer()
@@ -1854,6 +1854,36 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
             await q.answer(f"🔞 İlan kaldırıldı, satıcı {PHOTO_BAN_H} saat botu kullanamaz.", show_alert=True)
         try: await q.edit_message_reply_markup(None)
         except Exception: pass
+
+    elif a.startswith("mk_real:"):   # sadece kurucuya: telefonun gerçek ölçümü
+        lid = a.split(":", 1)[1]
+        await c.bot.send_message(uid, "📊 <b>Gerçek ölçüm</b> <i>(sadece sen görürsün)</i>\n\n" + await real_report(lid, "tr"), parse_mode="HTML")
+
+    elif a.startswith("mk_fake:"):   # yalan ping: önce onay
+        lid = a.split(":", 1)[1]; L_ = db.get("market", {}).get(lid, {}); e_ = db["users"].get(str(L_.get("owner")), {})
+        await c.bot.send_message(uid, f"🤥 <b>Yalan ping olarak reddedilsin mi?</b>\n<blockquote>🏷 {esc(L_.get('title', '?'))}\nSatıcının önceki yalan ping sayısı: <b>{e_.get('fake_n', 0)}</b>"
+                                 + (" · bir sonraki ilanı zaten 2 kat" if e_.get("fee_x2") else "") + "</blockquote>\n<i>Satıcıya gerçek ping ve ülkeleriyle ayrıntılı red mesajı gider. 2. kez olursa bir sonraki ilanı 2 kat ücretli olur.</i>",
+                                 parse_mode="HTML", reply_markup=KB([[B("🤥 Evet, yalan ping", f"mk_fakey:{lid}", "danger")], [B("✖️ Vazgeç", "mk_admin")]]))
+
+    elif a.startswith("mk_fakey:"):
+        lid = a.split(":", 1)[1]
+        def f(d):
+            L = d.get("market", {}).get(lid)
+            if not L or L.get("own") or L.get("status") not in ("pending", "live"): return None
+            L["status"] = "rejected"; L["removed_ts"] = time.time(); L["removed_why"] = "fake_ping"; L["photo"], L["photo_ok"] = None, False
+            e = d["users"].setdefault(str(L.get("owner")), {})
+            e["fake_n"] = e.get("fake_n", 0) + 1; x2 = False
+            if e["fake_n"] >= 2: e["fee_x2"] = True; e["fake_n"] = 0; x2 = True   # her 2 yalan pingte bir sonraki ilan 2 kat
+            return L.get("owner"), L.get("title"), x2
+        r = mutate(f)
+        if not r: await safe_edit(q, "⚠️ İlan bulunamadı ya da zaten kapalı.", back("mk_admin")); return
+        ow, title_, x2 = r; lg = lang_of(load_db(), ow)
+        audit(uid, f"fake_ping {lid}"); ulog("m_admin", f"🤥 Yalan ping: ilan reddedildi · {title_} · satıcı {ow}" + (" · sonraki ilan 2 kat" if x2 else ""))
+        rep_ = await real_report(lid, lg)
+        warn = tr(lg, "fake_x2", fee=fmt_u(MKT_FEE * 2)) if x2 else tr(lg, "fake_warn")
+        try: await c.bot.send_message(ow, tr(lg, "fake_rej", title=esc(title_ or "?")) + "\n\n" + rep_ + "\n\n" + warn, parse_mode="HTML", disable_web_page_preview=True)
+        except Exception as ex_: log.info("fake msg: %s", ex_)
+        await safe_edit(q, f"🤥 <b>Yalan ping: ilan reddedildi</b>\n<blockquote>🏷 {esc(title_ or '?')}\nSatıcıya gerçek ping ve ülkeleriyle mesaj gitti." + ("\n⚠️ 2. kez: bir sonraki ilanı 2 kat ücretli." if x2 else "\nTekrar ederse bir sonraki ilanı 2 kat ücretli olacak.") + "</blockquote>", back("mk_admin"))
 
     elif a.startswith("mk_prj:"):   # fotoğraf/ilan reddi: ceza yok, sebep yazılabilir
         lid = a.split(":", 1)[1]
@@ -2900,14 +2930,15 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
             x = d["users"].setdefault(str(uid), {})
             if x.get("mban", 0) > time.time(): return "ban"
             if any(L.get("link") == st_["link"] and L.get("status") in ("pending", "live") for L in d.get("market", {}).values()): return "dup"
-            if x.get("bal", 0) < MKT_FEE: return "nobal"
-            x["bal"] -= MKT_FEE; d["mkt_fees"] = d.get("mkt_fees", 0) + MKT_FEE
+            fee_ = seller_fee(x)
+            if x.get("bal", 0) < fee_: return "nobal"
+            x["bal"] -= fee_; d["mkt_fees"] = d.get("mkt_fees", 0) + fee_; x.pop("fee_x2", None)   # 2 kat ödendi: sonra yine normal
             lid = uuid.uuid4().hex[:6]
             d.setdefault("market", {})[lid] = {"owner": uid, "title": st_["title"], "link": st_["link"], "photo": st_["photo"], "desc": st_.get("desc", ""),
                                                "price": st_["price"], "codes": st_["codes"], "codes_ts": time.time(), "status": "pending", "created": time.time(), "photo_ok": False}
             return lid
         r = mutate(f); new_lid = r if r not in ("nobal", "dup", "ban") else None
-        if r == "nobal": await send(tr(lang, "sell_nobal"), KB([[B(tr(lang, "b_top"), "u_top", "success")], [B(tr(lang, "b_back_mkt"), "u_mkt")]])); return
+        if r == "nobal": await send(tr(lang, "sell_nobal").replace("0.05$", fmt_u(seller_fee(load_db()["users"].get(str(uid), {}))) + "$"), KB([[B(tr(lang, "b_top"), "u_top", "success")], [B(tr(lang, "b_back_mkt"), "u_mkt")]])); return
         STATE.pop(uid, None)
         if r == "dup": await send(tr(lang, "sell_dup"), KB([[B(tr(lang, "b_back_mkt"), "u_mkt")]])); return
         if r == "ban": await send(tr(lang, "sell_banned", left="—"), KB([[B(tr(lang, "b_back_mkt"), "u_mkt")]])); return
@@ -4467,6 +4498,20 @@ T["tr"]["m_limit"] = "⚠️ <b>Bu ilanı bugün {n} kez başlattın.</b>\n<bloc
 T["tk"]["m_limit"] = "⚠️ <b>Bu bildirişi şu gün {n} gezek başlatdyňyz.</b>\n<blockquote>Bir bildiriş 24 sagatda iň köp {n} gezek başladylyp bilner. Beýleki bildirişleri ulanyp bilersiňiz.</blockquote>"
 T["ru"]["m_limit"] = "⚠️ <b>Вы уже запускали это объявление {n} раза за сутки.</b>\n<blockquote>Одно объявление можно запускать не больше {n} раз за 24 часа. Другие объявления доступны.</blockquote>"
 
+# 🤥 Yalan ping reddi
+T["tr"].update({"fake_rej": "🤥 <b>İlanın reddedildi: yalan ping görüntüsü</b>\n<blockquote>🏷 {title}\nGönderdiğin ekran görüntüsündeki ping'ler gerçek değil (TCP ping). Happ'te <b>Proxy GET</b> ile ping ölçüp yeniden gönder.</blockquote>\n📊 <b>İşte kodunun gerçek ping'leri ve gerçek ülkeleri:</b>",
+    "fake_warn": "⚠️ <i>Bu tekrarlanırsa bir sonraki ilanın için 2 kat ücret alınır.</i>",
+    "fake_x2": "⚠️ <b>Bu ikinci kez oldu: bir sonraki ilanın {fee}$ (2 kat) olacak.</b> Ödedikten sonra ücret yine normale döner.",
+    "fee_x2_note": "\n⚠️ <b>Yalan ping cezası:</b> bu ilan 2 kat ücretli."})
+T["tk"].update({"fake_rej": "🤥 <b>Bildirişiňiz ret edildi: ýalan ping suraty</b>\n<blockquote>🏷 {title}\nUgradan suratyňyzdaky pingler hakyky däl (TCP ping). Happ-da <b>Proxy GET</b> bilen ping barlap, täzeden ugradyň.</blockquote>\n📊 <b>Ine siziň çyn pingleriňiz we kodyňyzyň berýän çyn ýurtlary:</b>",
+    "fake_warn": "⚠️ <i>Bu gaýtalansa, indiki bildirişiňiz üçin töleg 2 esse alnar.</i>",
+    "fake_x2": "⚠️ <b>Bu ikinji gezek boldy: indiki bildirişiňiz {fee}$ (2 esse) bolar.</b> Töländen soň töleg ýene adaty bolar.",
+    "fee_x2_note": "\n⚠️ <b>Ýalan ping jerimesi:</b> bu bildiriş 2 esse tölegli."})
+T["ru"].update({"fake_rej": "🤥 <b>Объявление отклонено: фальшивый пинг на скриншоте</b>\n<blockquote>🏷 {title}\nПинги на вашем скриншоте ненастоящие (TCP ping). Проверьте пинг в Happ через <b>Proxy GET</b> и отправьте заново.</blockquote>\n📊 <b>Вот реальные пинги и реальные страны вашего кода:</b>",
+    "fake_warn": "⚠️ <i>Если это повторится, за следующее объявление будет взята двойная плата.</i>",
+    "fake_x2": "⚠️ <b>Это уже второй раз: следующее объявление будет стоить {fee}$ (в 2 раза больше).</b> После оплаты цена снова обычная.",
+    "fee_x2_note": "\n⚠️ <b>Штраф за фальшивый пинг:</b> это объявление в 2 раза дороже."})
+
 # 🛒 Satın Al onayı
 T["tr"].update({"b_msy": "✅ Evet, satın al", "b_msn": "✖️ Vazgeç",
     "ms_q": "🛒 <b>Satın almak istediğine emin misin?</b>\n<blockquote>🏪 {title}\n💵 Başlatma ücreti  <b>{fee}$</b> (iade edilmez)\n⏳ İlk 5 saat peşin  <b>{ph} TMT</b> (iade edilmez)\n⏱ Sonra her dakika  <b>{pm} TMT</b> bakiyenden düşer\n💰 Bakiyen  <b>{bal} USDT</b></blockquote>\n<i>İstediğin an durdurabilirsin.</i>"})
@@ -4509,7 +4554,19 @@ def code_label(c):
 PHOTO_BAN_H = 6   # uygunsuz fotoğraf: bot engeli (saat)
 
 def photo_kb(lid):
-    return KB([[B("✅ Foto uygun", f"mk_pok:{lid}", "success")], [B("❌ Reddet", f"mk_prj:{lid}"), B("🔞 Uygunsuz", f"mk_pno:{lid}", "danger")]])
+    return KB([[B("✅ Foto uygun", f"mk_pok:{lid}", "success")], [B("❌ Reddet", f"mk_prj:{lid}"), B("🔞 Uygunsuz", f"mk_pno:{lid}", "danger")],
+               [B("📊 Gerçek ping", f"mk_real:{lid}", "primary"), B("🤥 Yalan ping", f"mk_fake:{lid}", "danger")]])
+
+def seller_fee(e):
+    """İlan ücreti: yalan ping cezası varsa bir sonraki ilan 2 kat."""
+    return MKT_FEE * (2 if e.get("fee_x2") else 1)
+
+async def real_report(lid, lang="tr"):
+    """Telefonun ölçtüğü gerçek ping / gerçek ülke (Proxy GET ile, satıcının ekran görüntüsünden bağımsız)."""
+    db = load_db()
+    try: ch = await asyncio.to_thread(_read_channel, db)
+    except Exception: ch = CHK.get("last_ch") or {}
+    return check_text(db, lid, lang, ch or {}, "done")
 CHK_FRESH = 300   # son TM testi bundan yeniyse yeniden test istenmez, sonuç hemen gösterilir
 CHK_WAIT = 600    # telefon bu kadar sürede sonuç göndermezse son bilinen durum gösterilir
 PHONE_OFF = 1800  # telefonun son sonucu bundan eskiyse telefon kapalı sayılır (test istenmez)
@@ -5131,6 +5188,9 @@ async def market_tick(app):
             L = db["market"].get(lid, {}); ow = L.get("owner"); lg = lang_of(db, ow) if ow else "tr"; st = L.get("st") or {}
             try:
                 if kind != "slow": vlog(f"🏪 Pazar: «{L.get('title')}» → {kind} {why} · TM {st.get('work', 0)}/{st.get('tested', 0)} · {len(st.get('cc', []))} ülke")
+                if kind in ("approved", "rejected"):   # kurucuya gerçek ping/ülke (satıcı görmez)
+                    try: await notify_founders(app, "📊 <b>Gerçek ölçüm</b> <i>(sadece sen görürsün)</i>\n\n" + await real_report(lid, "tr"))
+                    except Exception: pass
                 if kind == "approved":
                     ulog("m_live", f"🟢 İlan yayında: {L.get('title')} · satıcı {ow}")
                     await notify_founders(app, f"🟢 <b>Pazar ilanı yayında</b>\n<blockquote>{esc(L.get('title'))} · 🌍 {len(st.get('cc', []))} ülke · ✅ {st.get('work', 0)}/{st.get('tested', 0)}</blockquote>")
@@ -5218,9 +5278,11 @@ async def market_input(c, u, st):
         if not (1 <= v <= 10000): await say(tr(lang, "sell_badprice")); return
         p = price_from_month_tmt(v)
         st.update({"step": "confirm", "price": p})
-        await say(tr(lang, "sell_confirm", title=esc(st["title"]), n=len(st["codes"]), protos=protos_txt(st["protos"]), desc=esc(st.get("desc") or "—"), calc=calc_text(p, lang == "ru"))
-                  + tr(lang, "sell_bal", bal=fmt_u(load_db()["users"].get(str(uid), {}).get("bal", 0))),
-                  KB([[B(tr(lang, "b_sellok"), "u_sellok", "success")], [B(tr(lang, "b_sellp"), "u_sellp")], [B(tr(lang, "b_cancel"), "u_mkt", "danger")]]))
+        e_ = load_db()["users"].get(str(uid), {}); fee_s = fmt_u(seller_fee(e_)) + "$"
+        await say((tr(lang, "sell_confirm", title=esc(st["title"]), n=len(st["codes"]), protos=protos_txt(st["protos"]), desc=esc(st.get("desc") or "—"), calc=calc_text(p, lang == "ru"))
+                   + (tr(lang, "fee_x2_note") if e_.get("fee_x2") else "")).replace("0.05$", fee_s)
+                  + tr(lang, "sell_bal", bal=fmt_u(e_.get("bal", 0))),
+                  KB([[B(tr(lang, "b_sellok").replace("0.05$", fee_s), "u_sellok", "success")], [B(tr(lang, "b_sellp"), "u_sellp")], [B(tr(lang, "b_cancel"), "u_mkt", "danger")]]))
 
 # ── kurucu ekranları ──
 def mkt_admin_view():
