@@ -1183,13 +1183,13 @@ def _menu_text(uid):
     src = len(db["sources"]) if db else "?"
     vip = len(db["subs"]) if db else "?"
     on = not os.path.exists(STOP_FLAG)
-    tm = RUN["tm_line"].replace("📱 Telefon testi: ", "")
+    tm = RUN["tm_line"].replace("📱 Telefon testi: ", ""); lg = alang(uid)
     return ("✦ <b>VPN PANEL</b> ✦\n"
-            f"<blockquote>⚙️ Sistem  <b>{'🟢 Çalışıyor' if on else '🔴 Durduruldu'}</b>\n"
-            f"🔍 Son kontrol  <i>{ago(RUN['last_check'])}</i>\n"
-            f"🔄 Son güncelleme  <i>{ago(db.get('last_update') if db else None)}</i>\n"
-            f"📱 Telefon testi  <i>{esc(tm)}</i></blockquote>\n"
-            f"📡 <b>{n}</b> kod  ·  🔗 <b>{src}</b> abonelik  ·  👥 <b>{vip}</b> VIP  ·  🙋 <b>{len(db.get('users', {})) if db else '?'}</b> kullanıcı")
+            f"<blockquote>{at(lg, 'sys')}  <b>{at(lg, 'on') if on else at(lg, 'off')}</b>\n"
+            f"{at(lg, 'lastchk')}  <i>{ago_l(RUN['last_check'], lg)}</i>\n"
+            f"{at(lg, 'lastupd')}  <i>{ago_l(db.get('last_update') if db else None, lg)}</i>\n"
+            f"{at(lg, 'tm')}  <i>{esc(tm)}</i></blockquote>\n"
+            + at(lg, "stat", n=n, s=src, v=vip, u=len(db.get('users', {})) if db else '?'))
 
 def main_kb(uid):
     kb = _main_kb(uid)
@@ -1205,12 +1205,16 @@ def _main_kb(uid):
                    [B(L(uid, "👤 Profil", "👤 Профиль"), "u_prof"), B(L(uid, "🛒 Market", "🛒 Магазин"), "u_market")],
                    [B(L(uid, "🆘 Support", "🆘 Поддержка"), "u_sup"), B(L(uid, "🐞 Hata Bildir", "🐞 Баг-репорт"), "u_bug")],
                    [lang_btn]])
-    # kurucu: kullanıcıların gördüğü butonlar + tek bir Admin butonu (geri kalan her şey Admin'in içinde)
-    return KB([[B(L(uid, "🏪 Pazar", "🏪 Биржа"), "u_mkt", "success")],
-               [B(L(uid, "✨ Kod Oluştur", "✨ Создать код"), "u_free"), B(L(uid, "👥 Kodlarım", "👥 Мои коды"), "my_keys")],
-               [B(L(uid, "👤 Profil", "👤 Профиль"), "u_prof"), B(L(uid, "🛒 Market", "🛒 Магазин"), "u_market")],
-               [B(L(uid, "🆘 Support", "🆘 Поддержка"), "tickets"), B(L(uid, "🐞 Hata Bildir", "🐞 Баг-репорт"), "tickets_bug")],
+    # kurucu: kullanıcıların gördüğü butonlar (seçili dilde) + 📥 İlanlar + tek bir Admin butonu
+    lg = alang(uid)
+    try: n_rev = len(review_list(load_db()))
+    except Exception: n_rev = 0
+    return KB([[B(tr(lg, "b_pazar"), "u_mkt", "success")],
+               [B(tr(lg, "b_free"), "u_free"), B(tr(lg, "b_mine"), "my_keys")],
+               [B(tr(lg, "b_prof"), "u_prof"), B(tr(lg, "b_market"), "u_market")],
+               [B(tr(lg, "b_sup"), "tickets"), B(tr(lg, "b_bug"), "tickets_bug")],
                [lang_btn],
+               [B(at(lg, "rev", n=n_rev), "mk_rev", "primary" if n_rev else None)],
                [B("🟡 Admin", "admin", "danger")]])
 
 def ip_need(db=None):
@@ -1218,42 +1222,104 @@ def ip_need(db=None):
     try: return int((db if db is not None else load_db()).get("ip_need") or NEW_IP_LIMIT + 1)
     except Exception: return NEW_IP_LIMIT + 1
 
-def admin_text():
-    on = not os.path.exists(STOP_FLAG)
-    return ("⚙️ <b>Admin</b>\n"
-            f"<blockquote>⚙️ Sistem  <b>{'🟢 Çalışıyor' if on else '🔴 Durduruldu'}</b>\n"
-            f"🔍 Kontrol her <b>{CHECK_EVERY // 60} dk</b>\n"
-            f"🚨 En az <b>{ip_need()}</b> yeni IP → bütün kodlar yenilenir\n"
-            "📱 TM'de çalışmayan kodlar telefon testine göre çıkarılır\n"
-            "🕰 Otomatik duyuru (Aşkabat saati):\n" + "\n".join(f"   {h:02d}:00  {esc(t)}" for h, t in sorted(AUTO_ANN.items())) + "</blockquote>")
+# ── Kurucu ekranları: seçili dile göre (tr / tk / ru) ──
+AT = {
+ "tr": {"sys": "⚙️ Sistem", "on": "🟢 Çalışıyor", "off": "🔴 Durduruldu", "every": "🔍 Kontrol her <b>{m} dk</b>", "ipline": "🚨 En az <b>{n}</b> yeni IP → bütün kodlar yenilenir",
+        "tmline": "📱 TM'de çalışmayan kodlar telefon testine göre çıkarılır", "annline": "🕰 Otomatik duyuru (Aşkabat saati):",
+        "create_key": "🛠 Admin Kod Oluştur", "sources": "🔗 Abonelikler", "logs": "📜 Loglar", "bulk_title": "🏷 Toplu Başlık", "tickets": "🎫 Destek ({n})",
+        "upd": "⚡ Güncelle", "zip": "📦 Yedek", "ul": "👥 Kullanıcı Logları", "usearch": "🔎 Kullanıcı Ara", "bal": "💰 Bakiye Ekle / Düş", "rep": "📈 Rapor", "stats": "📊 İstatistik",
+        "chans": "📢 Kanallar", "mk": "🏪 Pazar", "bcast": "📣 Herkese Mesaj", "ad": "📢 Reklam Postu", "sa": "👮 Alt Adminler", "ref": "🧪 Davet Testi", "hp": "🔒 Happ Limitli Kod",
+        "autoann": "🕰 Oto. Duyuru: {s}", "aon": "Açık", "aoff": "Kapalı", "ipb": "🚨 IP Eşiği: en az {n} yeni IP", "ping": "⏱ Ping Sınırı: {n} ms", "rollback": "♻️ Önceki Sürüme Dön",
+        "start": "▶️ Başlat", "stop": "🛑 Durdur", "menu": "◀️ Menü", "rev": "📥 İlanlar ({n})",
+        "lastchk": "🔍 Son kontrol", "lastupd": "🔄 Son güncelleme", "tm": "📱 Telefon testi", "stat": "📡 <b>{n}</b> kod  ·  🔗 <b>{s}</b> abonelik  ·  👥 <b>{v}</b> VIP  ·  🙋 <b>{u}</b> kullanıcı",
+        "rev_t": "📥 <b>İnceleme bekleyen ilanlar</b>  <code>{n}</code>\n<blockquote>Bir ilana dokun: fotoğraf, gerçek ping ve onay butonları gelir.</blockquote>",
+        "rev_none": "📥 <b>İnceleme bekleyen ilan yok</b> ✅",
+        "rv_cap": "📥 <b>{title}</b>\n<blockquote>👤 {who}\n💲 {m} TMT/ay · 📡 {n} sunucu\n🧪 TM testi {w}/{t} · 🌍 {c} ülke\n⏳ {wait} bekliyor{ph}</blockquote>",
+        "rv_ph": "\n📷 Fotoğraf onay bekliyor", "back_rev": "◀️ İlanlar", "ok_hand": "✅ Elle onayla",
+        "p_ok": "✅ Foto uygun", "p_rej": "❌ Reddet", "p_no": "🔞 Uygunsuz", "p_real": "📊 Gerçek ping", "p_fake": "🤥 Yalan ping", "mn": "{m} dk", "hr": "{h} sa {m} dk"},
+ "tk": {"sys": "⚙️ Ulgam", "on": "🟢 Işleýär", "off": "🔴 Saklandy", "every": "🔍 Barlag her <b>{m} min</b>", "ipline": "🚨 Iň az <b>{n}</b> täze IP → ähli kodlar täzelenýär",
+        "tmline": "📱 TM-de işlemeýän kodlar telefon testi boýunça aýrylýar", "annline": "🕰 Awtomatik habar (Aşgabat wagty):",
+        "create_key": "🛠 Admin kod döret", "sources": "🔗 Podpiskalar", "logs": "📜 Loglar", "bulk_title": "🏷 Umumy at", "tickets": "🎫 Goldaw ({n})",
+        "upd": "⚡ Täzele", "zip": "📦 Ätiýaçlyk", "ul": "👥 Ulanyjy loglary", "usearch": "🔎 Ulanyjy gözle", "bal": "💰 Balans goş / aýyr", "rep": "📈 Hasabat", "stats": "📊 Statistika",
+        "chans": "📢 Kanallar", "mk": "🏪 Bazar", "bcast": "📣 Hemmelere habar", "ad": "📢 Reklama posty", "sa": "👮 Kömekçi adminler", "ref": "🧪 Çagyryş testi", "hp": "🔒 Happ limitli kod",
+        "autoann": "🕰 Awto habar: {s}", "aon": "Açyk", "aoff": "Ýapyk", "ipb": "🚨 IP çägi: iň az {n} täze IP", "ping": "⏱ Ping çägi: {n} ms", "rollback": "♻️ Öňki wersiýa gaýt",
+        "start": "▶️ Başlat", "stop": "🛑 Sakla", "menu": "◀️ Menýu", "rev": "📥 Bildirişler ({n})",
+        "lastchk": "🔍 Soňky barlag", "lastupd": "🔄 Soňky täzelenme", "tm": "📱 Telefon testi", "stat": "📡 <b>{n}</b> kod  ·  🔗 <b>{s}</b> podpiska  ·  👥 <b>{v}</b> VIP  ·  🙋 <b>{u}</b> ulanyjy",
+        "rev_t": "📥 <b>Barlag garaşýan bildirişler</b>  <code>{n}</code>\n<blockquote>Bildirişe basyň: surat, hakyky ping we tassyklama düwmeleri geler.</blockquote>",
+        "rev_none": "📥 <b>Garaşýan bildiriş ýok</b> ✅",
+        "rv_cap": "📥 <b>{title}</b>\n<blockquote>👤 {who}\n💲 {m} TMT/aý · 📡 {n} serwer\n🧪 TM testi {w}/{t} · 🌍 {c} ýurt\n⏳ {wait} garaşýar{ph}</blockquote>",
+        "rv_ph": "\n📷 Surat tassyklama garaşýar", "back_rev": "◀️ Bildirişler", "ok_hand": "✅ Elde tassykla",
+        "p_ok": "✅ Surat dogry", "p_rej": "❌ Ret et", "p_no": "🔞 Ýaramaz", "p_real": "📊 Hakyky ping", "p_fake": "🤥 Ýalan ping", "mn": "{m} min", "hr": "{h} sag {m} min"},
+ "ru": {"sys": "⚙️ Система", "on": "🟢 Работает", "off": "🔴 Остановлена", "every": "🔍 Проверка каждые <b>{m} мин</b>", "ipline": "🚨 От <b>{n}</b> новых IP → все коды обновляются",
+        "tmline": "📱 Коды, не работающие в ТМ, убираются по тесту телефона", "annline": "🕰 Автообъявление (время Ашхабада):",
+        "create_key": "🛠 Создать код (админ)", "sources": "🔗 Подписки", "logs": "📜 Логи", "bulk_title": "🏷 Заголовок", "tickets": "🎫 Тикеты ({n})",
+        "upd": "⚡ Обновить", "zip": "📦 Бэкап", "ul": "👥 Логи пользователей", "usearch": "🔎 Найти пользователя", "bal": "💰 Баланс + / −", "rep": "📈 Отчёт", "stats": "📊 Статистика",
+        "chans": "📢 Каналы", "mk": "🏪 Биржа", "bcast": "📣 Рассылка всем", "ad": "📢 Рекламный пост", "sa": "👮 Помощники", "ref": "🧪 Тест приглашения", "hp": "🔒 Happ код с лимитом",
+        "autoann": "🕰 Автообъявл.: {s}", "aon": "Вкл", "aoff": "Выкл", "ipb": "🚨 Порог IP: от {n} новых", "ping": "⏱ Лимит пинга: {n} мс", "rollback": "♻️ Откатить версию",
+        "start": "▶️ Запустить", "stop": "🛑 Остановить", "menu": "◀️ Меню", "rev": "📥 Объявления ({n})",
+        "lastchk": "🔍 Последняя проверка", "lastupd": "🔄 Последнее обновление", "tm": "📱 Тест телефона", "stat": "📡 <b>{n}</b> кодов  ·  🔗 <b>{s}</b> подписок  ·  👥 <b>{v}</b> VIP  ·  🙋 <b>{u}</b> польз.",
+        "rev_t": "📥 <b>Объявления на проверке</b>  <code>{n}</code>\n<blockquote>Нажмите на объявление: фото, реальный пинг и кнопки решения.</blockquote>",
+        "rev_none": "📥 <b>Нет объявлений на проверке</b> ✅",
+        "rv_cap": "📥 <b>{title}</b>\n<blockquote>👤 {who}\n💲 {m} TMT/мес · 📡 {n} серверов\n🧪 Тест ТМ {w}/{t} · 🌍 {c} стран\n⏳ ждёт {wait}{ph}</blockquote>",
+        "rv_ph": "\n📷 Фото ждёт проверки", "back_rev": "◀️ Объявления", "ok_hand": "✅ Одобрить вручную",
+        "p_ok": "✅ Фото ок", "p_rej": "❌ Отклонить", "p_no": "🔞 Неприлично", "p_real": "📊 Реальный пинг", "p_fake": "🤥 Фейк пинг", "mn": "{m} мин", "hr": "{h} ч {m} мин"}}
 
-def admin_kb():
+def alang(uid):
+    try: lg = lang_of(load_db(), uid)
+    except Exception: lg = "tr"
+    return lg if lg in AT else "tr"
+
+def at(uid_or_lang, key, **kw):
+    lg = uid_or_lang if isinstance(uid_or_lang, str) else alang(uid_or_lang)
+    s_ = AT.get(lg, AT["tr"]).get(key) or AT["tr"][key]
+    return s_.format(**kw) if kw else s_
+
+def wait_txt(lg, sec):
+    m_ = int(max(0, sec) // 60)
+    return at(lg, "mn", m=m_) if m_ < 60 else at(lg, "hr", h=m_ // 60, m=m_ % 60)
+
+def review_list(db):
+    """İnceleme bekleyenler: test bekleyen ilanlar + fotoğrafı onaylanmamış ilanlar (eskiden yeniye)."""
+    out = [(lid, L) for lid, L in db.get("market", {}).items() if not L.get("own") and
+           (L.get("status") == "pending" or (L.get("status") == "live" and L.get("photo") and not L.get("photo_ok", True)))]
+    return sorted(out, key=lambda x: x[1].get("created", 0))
+
+def admin_text(uid=None):
+    on = not os.path.exists(STOP_FLAG); a_ = lambda k, **kw: at(uid if uid else "tr", k, **kw)
+    return ("⚙️ <b>Admin</b>\n"
+            f"<blockquote>{a_('sys')}  <b>{a_('on') if on else a_('off')}</b>\n"
+            f"{a_('every', m=CHECK_EVERY // 60)}\n"
+            f"{a_('ipline', n=ip_need())}\n"
+            f"{a_('tmline')}\n"
+            f"{a_('annline')}\n" + "\n".join(f"   {h:02d}:00  {esc(t)}" for h, t in sorted(AUTO_ANN.items())) + "</blockquote>")
+
+def admin_kb(uid=None):
     try: on = load_db().get("auto_ann_on", True)
     except Exception: on = True
-    stop = os.path.exists(STOP_FLAG)
+    stop = os.path.exists(STOP_FLAG); a_ = lambda k, **kw: at(uid if uid else "tr", k, **kw)
     return KB([
-        [B("🛠 Admin Kod Oluştur", "create_key", "primary")],
-        [B("🔗 Abonelikler", "sources"), B("📜 Loglar", "logs")],
-        [B("🏷 Toplu Başlık", "bulk_title"), B(f"🎫 Destek ({sum(1 for t in load_db().get('tickets', {}).values() if t.get('status') == 'open')})", "tickets")],
-        [B("⚡ Güncelle", "upd_now"), B("📦 Yedek", "get_zip")],
-        [B("👥 Kullanıcı Logları", "ul_open")],
-        [B("🔎 Kullanıcı Ara", "usearch")],
-        [B("💰 Bakiye Ekle / Düş", "bal_find")],
+        [B(a_("create_key"), "create_key", "primary")],
+        [B(a_("sources"), "sources"), B(a_("logs"), "logs")],
+        [B(a_("bulk_title"), "bulk_title"), B(a_("tickets", n=sum(1 for t in load_db().get('tickets', {}).values() if t.get('status') == 'open')), "tickets")],
+        [B(a_("upd"), "upd_now"), B(a_("zip"), "get_zip")],
+        [B(a_("ul"), "ul_open")],
+        [B(a_("usearch"), "usearch")],
+        [B(a_("bal"), "bal_find")],
         [B("🚫 Ban / Unban", "ban_menu")],
-        [B("📈 Rapor", "rep_today"), B("📊 İstatistik", "stats")],
-        [B("📢 Kanallar", "chans"), B("🪙 CryptoBot", "cp")],
-        [B("🏪 Pazar", "mk_admin"), B("💳 TMT 🔜", "pay_set")],
-        [B("📣 Herkese Mesaj", "bcast")],
-        [B("📢 Reklam Postu", "ad_post")],
-        [B("👮 Alt Adminler", "sa_menu")],
-        [B("🧪 Davet Testi", "ref_test")],
-        [B("🔒 Happ Limitli Kod", "hp")],
-        [B(f"🕰 Oto. Duyuru: {'Açık' if on else 'Kapalı'}", "auto_ann")],
-        [B(f"🚨 IP Eşiği: en az {ip_need()} yeni IP", "ip_need")],
-        [B(f"⏱ Ping Sınırı: {ping_max()} ms", "ping_max")],
-        [B("♻️ Önceki Sürüme Dön", "rollback")],
-        [B("▶️ Başlat", "toggle_sys", "success") if stop else B("🛑 Durdur", "toggle_sys", "danger")],
-        [B("◀️ Menü", "menu")]])
+        [B(a_("rep"), "rep_today"), B(a_("stats"), "stats")],
+        [B(a_("chans"), "chans"), B("🪙 CryptoBot", "cp")],
+        [B(a_("mk"), "mk_admin"), B("💳 TMT 🔜", "pay_set")],
+        [B(a_("bcast"), "bcast")],
+        [B(a_("ad"), "ad_post")],
+        [B(a_("sa"), "sa_menu")],
+        [B(a_("ref"), "ref_test")],
+        [B(a_("hp"), "hp")],
+        [B(a_("autoann", s=a_("aon") if on else a_("aoff")), "auto_ann")],
+        [B(a_("ipb", n=ip_need()), "ip_need")],
+        [B(a_("ping", n=ping_max()), "ping_max")],
+        [B(a_("rollback"), "rollback")],
+        [B(a_("start"), "toggle_sys", "success") if stop else B(a_("stop"), "toggle_sys", "danger")],
+        [B(a_("menu"), "menu")]])
 
 def log_text():
     on = not os.path.exists(STOP_FLAG)
@@ -1397,10 +1463,10 @@ async def on_num(c, uid, st, n, send, who=""):
     elif what == "ping_max":
         mutate(lambda d: d.__setitem__("ping_max", n)); audit(uid, f"ping_max {n}")
         start_refresh(c.application, f"⏱ Ping sınırı {n} ms oldu")
-        await send(f"✅ <b>Ping sınırı kaydedildi</b>\n<blockquote>Telefon testinde <b>{n} ms</b>'den yavaş kodlar listeye girmez (en az {PING_KEEP} kod hep kalır). Kodlar şimdi yeniden yazılıyor.</blockquote>\n\n" + admin_text(), admin_kb())
+        await send(f"✅ <b>Ping sınırı kaydedildi</b>\n<blockquote>Telefon testinde <b>{n} ms</b>'den yavaş kodlar listeye girmez (en az {PING_KEEP} kod hep kalır). Kodlar şimdi yeniden yazılıyor.</blockquote>\n\n" + admin_text(uid), admin_kb(uid))
     elif what == "ip_need":
         mutate(lambda d: d.__setitem__("ip_need", n)); audit(uid, f"ip_need {n}"); vlog(f"🚨 IP eşiği değişti: en az {n} yeni IP")
-        await send("✅ <b>IP eşiği kaydedildi</b>\n<blockquote>En az <b>" + str(n) + "</b> yeni IP görülünce bütün kodlar yenilenir.</blockquote>\n\n" + admin_text(), admin_kb())
+        await send("✅ <b>IP eşiği kaydedildi</b>\n<blockquote>En az <b>" + str(n) + "</b> yeni IP görülünce bütün kodlar yenilenir.</blockquote>\n\n" + admin_text(uid), admin_kb(uid))
     elif what == "hp_limit" and uid in ADMINS:
         kid = st["kid"]
         try: link, enc = await asyncio.to_thread(happ_make, kid, n)
@@ -1722,7 +1788,7 @@ async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
         log.exception("msg_handler")
         await send_error(c, uid, f"mesaj:{act}", e)
 
-FOUNDER_ONLY = {"ban_menu", "ban_find", "hp", "hp_set", "hp_del", "hp_new", "ref_test", "mk_admin", "mk_price", "mk_oph", "mk_ods", "mk_odr", "bal_find", "usearch", "rep_today", "rep_yday", "tickets_bug", "t_cancel", "tickets", "cp_test", "cp", "cp_set", "cp_del", "ul_open", "stats", "chans", "ch_add", "pay_set", "bcast", "bcast_yes", "rollback", "rollback_yes", "auto_ann", "toggle_sys", "ad_post", "ip_need", "ping_max", "admin", "sources", "s_add", "logs", "upd_now", "get_zip", "sa_menu", "sa_add", "bulk_ann", "bulk_title", "bulk_yes"}
+FOUNDER_ONLY = {"ban_menu", "ban_find", "hp", "hp_set", "hp_del", "hp_new", "ref_test", "mk_admin", "mk_price", "mk_oph", "mk_ods", "mk_odr", "bal_find", "usearch", "rep_today", "rep_yday", "tickets_bug", "t_cancel", "tickets", "cp_test", "cp", "cp_set", "cp_del", "ul_open", "stats", "chans", "ch_add", "pay_set", "bcast", "bcast_yes", "rollback", "rollback_yes", "auto_ann", "toggle_sys", "mk_rev", "ad_post", "ip_need", "ping_max", "admin", "sources", "s_add", "logs", "upd_now", "get_zip", "sa_menu", "sa_add", "bulk_ann", "bulk_title", "bulk_yes"}
 OWNED = ("kv", "kt", "kn", "ka", "kd", "kdy")   # alt admin sadece kendi kodunda
 def src_find(db, h): return next((s for s in db["sources"] if hashlib.md5(s.encode()).hexdigest()[:8] == h), None)
 
@@ -1736,7 +1802,7 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         miss = await missing_channels(c.bot, uid)
         if miss:
             await q.answer(); await safe_edit(q, *join_view(lang_of(load_db(), uid), miss)); return
-    if uid not in ADMINS and (a in FOUNDER_ONLY or a.startswith(("sv:", "se:", "sd:", "sa_del:", "sa_ext:", "sa_lim:", "kx:", "kxs:", "ul:", "chd:", "ord_ok:", "ord_no:", "t_rep:", "t_close:", "tv:", "ug:", "ux:", "uxc:", "ub:", "uv:", "ubal:", "mk_l:", "mk_ok:", "mk_rm:", "mk_ph:", "mk_real:", "mk_fake:", "mk_fakey:",  "mk_pok:", "mk_pno:", "mk_prj:", "hl:", "hlp:", "ubn:", "bnd:", "bnq:"))):
+    if uid not in ADMINS and (a in FOUNDER_ONLY or a.startswith(("sv:", "se:", "sd:", "sa_del:", "sa_ext:", "sa_lim:", "kx:", "kxs:", "ul:", "chd:", "ord_ok:", "ord_no:", "t_rep:", "t_close:", "tv:", "ug:", "ux:", "uxc:", "ub:", "uv:", "ubal:", "mk_l:", "mk_ok:", "mk_rm:", "mk_ph:", "mk_real:", "mk_fake:", "mk_fakey:", "mk_rv:",  "mk_pok:", "mk_pno:", "mk_prj:", "hl:", "hlp:", "ubn:", "bnd:", "bnq:"))):
         await q.answer(L(uid, "⛔ Erişim yok", "⛔ Нет доступа"), show_alert=True); return
     if a not in ("toggle_sys", "upd_now"):
         await q.answer()
@@ -1854,6 +1920,27 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
             await q.answer(f"🔞 İlan kaldırıldı, satıcı {PHOTO_BAN_H} saat botu kullanamaz.", show_alert=True)
         try: await q.edit_message_reply_markup(None)
         except Exception: pass
+
+    elif a == "mk_rev":   # 📥 inceleme bekleyen ilanlar
+        lg = alang(uid); now_ = time.time(); lst = review_list(db)
+        rows = [[B(f"⏳ {wait_txt(lg, now_ - L.get('created', now_))} · {short(L.get('title', '?'), 14)} · {money_tmt(float(L.get('price', 0)) * 43200)} TMT"
+                   + (" · 📷" if L.get("photo") and not L.get("photo_ok", True) else ""), f"mk_rv:{lid}")] for lid, L in lst[:20]]
+        await safe_edit(q, at(lg, "rev_t", n=len(lst)) if lst else at(lg, "rev_none"), KB(rows + [[B(at(lg, "menu"), "menu")]]))
+
+    elif a.startswith("mk_rv:"):   # tek ilan: fotoğraf + bilgiler + karar butonları
+        lid = a.split(":", 1)[1]; L_ = db.get("market", {}).get(lid); lg = alang(uid)
+        if not L_: return
+        o_ = db["users"].get(str(L_.get("owner")), {}); st_ = L_.get("st") or {}
+        who_ = esc(o_.get("name") or "?") + (f" (@{esc(o_['un'])})" if o_.get("un") else "") + f" · <code>{L_.get('owner')}</code>"
+        cap_ = at(lg, "rv_cap", title=esc(short(L_.get("title", "?"), 40)), who=who_, m=money_tmt(float(L_.get("price", 0)) * 43200), n=len(L_.get("codes", [])),
+                  w=st_.get("work", 0), t=st_.get("tested", 0), c=len(st_.get("cc", [])), wait=wait_txt(lg, time.time() - L_.get("created", time.time())),
+                  ph=at(lg, "rv_ph") if L_.get("photo") and not L_.get("photo_ok", True) else "")
+        extra = ([[B(at(lg, "ok_hand"), f"mk_ok:{lid}", "success")]] if L_.get("status") == "pending" else []) + [[B(at(lg, "back_rev"), "mk_rev")]]
+        kb_ = photo_kb(lid, lg, extra)
+        try:
+            if L_.get("photo"): await c.bot.send_photo(uid, L_["photo"], caption=cap_, parse_mode="HTML", reply_markup=kb_)
+            else: await c.bot.send_message(uid, cap_, parse_mode="HTML", reply_markup=kb_)
+        except Exception: await c.bot.send_message(uid, cap_, parse_mode="HTML", reply_markup=kb_)
 
     elif a.startswith("mk_real:"):   # sadece kurucuya: telefonun gerçek ölçümü
         lid = a.split(":", 1)[1]
@@ -2087,11 +2174,11 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
             with open(STOP_FLAG, "w") as f: f.write("stop")
             vlog("🛑 Sistem durduruldu.")
             await q.answer("🛑 Durduruldu.", show_alert=True)
-        await safe_edit(q, admin_text(), admin_kb())
+        await safe_edit(q, admin_text(uid), admin_kb(uid))
 
     elif a == "admin":
         STATE.pop(uid, None)
-        await safe_edit(q, admin_text(), admin_kb())
+        await safe_edit(q, admin_text(uid), admin_kb(uid))
 
     elif a == "rollback":
         if not os.path.exists(SELF + ".eski"):
@@ -2123,7 +2210,7 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
     elif a == "auto_ann":
         on = mutate(lambda d: d.__setitem__("auto_ann_on", not d.get("auto_ann_on", True)) or d["auto_ann_on"])
         audit(uid, f"auto_ann {'on' if on else 'off'}")
-        await safe_edit(q, "⚙️ <b>Admin</b>\n<blockquote>🕰 Otomatik duyuru " + ("<b>açık</b>: " + ", ".join(f"{h:02d}:00" for h in sorted(AUTO_ANN)) + "'da genel duyuru değişir." if on else "<b>kapalı</b>.") + "</blockquote>", admin_kb())
+        await safe_edit(q, "⚙️ <b>Admin</b>\n<blockquote>🕰 Otomatik duyuru " + ("<b>açık</b>: " + ", ".join(f"{h:02d}:00" for h in sorted(AUTO_ANN)) + "'da genel duyuru değişir." if on else "<b>kapalı</b>.") + "</blockquote>", admin_kb(uid))
 
     elif a == "upd_now":
         if CHECK_LOCK.locked():
@@ -2946,8 +3033,8 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         await send(tr(lang, "sell_sent"), KB([[B(tr(lang, "b_myl"), "u_myl")], [B(tr(lang, "b_back_mkt"), "u_mkt")]]))
         cap_ = (f"📤 <b>Yeni pazar ilanı</b> (incelemede)\n<blockquote>{esc(who(user))}\n🏷 {esc(st_['title'])} · {money_tmt(float(st_['price']) * 43200)} TMT/ay</blockquote>\n"
                 "<i>⏳ Telefon testi bekleniyor. Fotoğrafı sen onaylayana kadar pazarda fotoğrafsız görünür.</i>")
-        kb_ = photo_kb(new_lid)
         for fid_ in ADMINS:
+            kb_ = photo_kb(new_lid, alang(fid_))
             try: await c.bot.send_photo(fid_, st_["photo"], caption=cap_, parse_mode="HTML", reply_markup=kb_)
             except Exception:
                 try: await c.bot.send_message(fid_, cap_, parse_mode="HTML", reply_markup=kb_)
@@ -4558,9 +4645,9 @@ def code_label(c):
 
 PHOTO_BAN_H = 6   # uygunsuz fotoğraf: bot engeli (saat)
 
-def photo_kb(lid):
-    return KB([[B("✅ Foto uygun", f"mk_pok:{lid}", "success")], [B("❌ Reddet", f"mk_prj:{lid}"), B("🔞 Uygunsuz", f"mk_pno:{lid}", "danger")],
-               [B("📊 Gerçek ping", f"mk_real:{lid}", "primary"), B("🤥 Yalan ping", f"mk_fake:{lid}", "danger")]])
+def photo_kb(lid, lg="tr", extra=()):
+    return KB([[B(at(lg, "p_ok"), f"mk_pok:{lid}", "success")], [B(at(lg, "p_rej"), f"mk_prj:{lid}"), B(at(lg, "p_no"), f"mk_pno:{lid}", "danger")],
+               [B(at(lg, "p_real"), f"mk_real:{lid}", "primary"), B(at(lg, "p_fake"), f"mk_fake:{lid}", "danger")]] + [list(r) for r in extra])
 
 def seller_fee(e):
     """İlan ücreti: yalan ping cezası varsa bir sonraki ilan 2 kat."""
