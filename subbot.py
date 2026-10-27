@@ -1400,6 +1400,22 @@ def html_cut(t, n=4000):
         else: stack.append(m.group(2))
     return t + "…" + "".join(f"</{x}>" for x in reversed(stack))
 
+def _w(t):
+    """Telegram'da yaklaşık görünür genişlik (emoji ~2 harf)."""
+    return sum(0 if ch in "\ufe0f\u200d" else 2 if ord(ch) >= 0x2190 else 1 for ch in t)
+
+def fit_kb(t, kb):
+    """Butonlar mesaj balonundan genişse (taşma) ilk satırın sonuna görünmez boşluk ekler."""
+    try: rows = kb.inline_keyboard if kb else ()
+    except Exception: return t
+    need = max((sum(_w(b.text) + 4 for b in r) for r in rows), default=0)
+    plain = html.unescape(re.sub(r"<[^>]+>", "", t)).split("\n")
+    have = max((_w(x) + (3 if "<blockquote" in t else 0) for x in plain), default=0)
+    if have >= need: return t
+    first, sep, rest = t.partition("\n")
+    add = min(need, 34) - _w(html.unescape(re.sub(r"<[^>]+>", "", first)))
+    return first + "\u2800" * max(0, add) + sep + rest if add > 0 else t
+
 async def safe_edit(q, text, kb=None):
     try:
         await q.edit_message_text(html_cut(text), parse_mode="HTML", reply_markup=kb, disable_web_page_preview=True)
@@ -2831,8 +2847,8 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
             if is_banner(msg_):
                 try: await msg_.delete()
                 except Exception: pass
-            await c.bot.send_message(uid, t, parse_mode="HTML", reply_markup=kb, disable_web_page_preview=True)
-        else: await safe_edit(q, t, kb)
+            await c.bot.send_message(uid, fit_kb(t, kb), parse_mode="HTML", reply_markup=kb, disable_web_page_preview=True)
+        else: await safe_edit(q, fit_kb(t, kb), kb)
     async def bsend(kind, t, kb): await show_banner(c, uid, getattr(q, "message", None), kind, t, kb, send)
     menu_btn = KB([[B(tr(lang, "b_menu"), "u_menu")]])
     if not a.startswith("u_live:") and uid in LIVE: LIVE.pop(uid).cancel()
@@ -3004,7 +3020,13 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         if s_["status"] == "on" and not getattr(getattr(q, "message", None), "photo", None):
             LIVE[uid] = asyncio.create_task(live_loop(q, uid, sid, lang))
 
-    elif a.startswith("u_vip:"):
+    elif a.startswith("u_vip:"):   # önce sor: emin misin?
+        lid = a.split(":", 1)[1]; L_ = db.get("market", {}).get(lid)
+        if not L_ or L_.get("owner") != uid or L_.get("status") != "live": await send(tr(lang, "vip_notlive"), KB([[B(tr(lang, "b_myl"), "u_myl")]])); return
+        await send(tr(lang, "vip_q", title=esc(short(L_["title"], 40)), h=VIP_HOURS, fee=fmt_u(VIP_FEE), bal=fmt_u(e.get("bal", 0))),
+                   KB([[B(tr(lang, "b_yes_vip"), f"u_vipy:{lid}", "success")], [B(tr(lang, "b_no"), "u_myl")]]))
+
+    elif a.startswith("u_vipy:"):
         lid = a.split(":", 1)[1]
         def f(d):
             L = d.get("market", {}).get(lid); x = d["users"].setdefault(str(uid), {})
@@ -3099,7 +3121,14 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
                           f" · {dur_txt((x.get('end') or time.time()) - x['start'], lang == 'ru')} · 💰 {fmt_u(x.get('total', 0))} USDT · 👤 …{str(x['buyer'])[-3:]}" for x in ss) or tr(lang, "mlh_none")
         await send(tr(lang, "mlh", title=esc(short(L["title"], 30)), lines=lines), KB([[B(tr(lang, "b_myl"), "u_myl")], [B(tr(lang, "b_back_mkt"), "u_mkt")]]))
 
-    elif a.startswith("u_mld:"):
+    elif a.startswith("u_mld:"):   # önce sor: emin misin?
+        lid = a.split(":", 1)[1]; L_ = db.get("market", {}).get(lid)
+        if not L_ or L_.get("owner") != uid or L_.get("status") not in ("pending", "live"): await show_market(c, q, uid, lang); return
+        n_ = sum(1 for x in db.get("msess", {}).values() if x["lid"] == lid and x["status"] == "on")
+        await send(tr(lang, "mld_q", title=esc(short(L_["title"], 40)), n=n_),
+                   KB([[B(tr(lang, "b_yes_mld"), f"u_mldy:{lid}", "danger")], [B(tr(lang, "b_no"), "u_myl")]]))
+
+    elif a.startswith("u_mldy:"):
         lid = a.split(":", 1)[1]
         def f(d):
             L = d.get("market", {}).get(lid)
@@ -4709,6 +4738,12 @@ T["tk"].update({"bonus_line": "\n🎁 <b>Bonus</b>  {b} TMT\n<i>👥 Çagyran he
   "ref_bonus": "🎁 +0.25 TMT bonus hasabyňyza goşuldy."})
 T["ru"].update({"bonus_line": "\n🎁 <b>Бонус</b>  {b} TMT\n<i>👥 За каждого приглашённого друга — 0.25 TMT бонуса.</i>",
   "ref_bonus": "🎁 +0.25 TMT зачислено на бонусный счёт."})
+T["tr"].update({"vip_q": "💎 <b>İlan VIP yapılsın mı?</b>\n<blockquote>🏪 {title}\n⏳ {h} saat pazarın en üstünde\n💵 Ücret  <b>{fee} USDT</b> (iade edilmez)\n💰 Bakiyen  <b>{bal} USDT</b></blockquote>",
+  "b_yes_vip": "✅ Evet, VIP yap", "mld_q": "🗑 <b>İlan silinsin mi?</b>\n<blockquote>🏪 {title}\n👥 Şu an kullanan  <b>{n}</b>\nİlan pazardan kalkar, geri alınamaz.</blockquote>", "b_yes_mld": "🗑 Evet, sil"})
+T["tk"].update({"vip_q": "💎 <b>Bildiriş VIP edilsinmi?</b>\n<blockquote>🏪 {title}\n⏳ {h} sagat bazaryň iň ýokarsynda\n💵 Tölegi  <b>{fee} USDT</b> (yzyna gaýtarylmaýar)\n💰 Balansyňyz  <b>{bal} USDT</b></blockquote>",
+  "b_yes_vip": "✅ Hawa, VIP et", "mld_q": "🗑 <b>Bildiriş pozulsynmy?</b>\n<blockquote>🏪 {title}\n👥 Häzir ulanýan  <b>{n}</b>\nBildiriş bazardan aýrylýar, yzyna gaýtaryp bolmaýar.</blockquote>", "b_yes_mld": "🗑 Hawa, poz"})
+T["ru"].update({"vip_q": "💎 <b>Сделать объявление VIP?</b>\n<blockquote>🏪 {title}\n⏳ {h} ч на самом верху биржи\n💵 Стоимость  <b>{fee} USDT</b> (не возвращается)\n💰 Баланс  <b>{bal} USDT</b></blockquote>",
+  "b_yes_vip": "✅ Да, сделать VIP", "mld_q": "🗑 <b>Удалить объявление?</b>\n<blockquote>🏪 {title}\n👥 Сейчас пользуются  <b>{n}</b>\nОбъявление уйдёт с биржи, отменить нельзя.</blockquote>", "b_yes_mld": "🗑 Да, удалить"})
 T["tr"]["m_own"] = "⚠️ <b>Kendi ilanını satın alamazsın.</b>"
 T["tk"]["m_own"] = "⚠️ <b>Öz bildirişiňizi satyn alyp bilmeýärsiňiz.</b>"
 T["ru"]["m_own"] = "⚠️ <b>Нельзя купить своё собственное объявление.</b>"
