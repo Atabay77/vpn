@@ -3137,6 +3137,10 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
                 x = d["users"][str(uid)]; x["earn"] = x.get("earn", 0) + took[0]
                 if took[1]: x["bal"] = x.get("bal", 0) + took[1]
             mutate(back)
+            if "INSUFFICIENT_FUNDS" in str(ex):
+                av = await asyncio.to_thread(app_usdt)
+                await notify_founders(c.application, f"⚠️ <b>Çekim yapılamadı: CryptoBot uygulama bakiyesi yetersiz</b>\n<blockquote>{esc(who(user))} · istenen {fmt_u(amt)} USDT\n💼 Uygulamada {av if av is not None else '?'} USDT</blockquote>\n<i>@CryptoBot → Crypto Pay → My Apps → uygulama → bakiye yükle.</i>")
+                await send(tr(lang, "wd_nofund", usdt=fmt_u(amt)), menu_btn); return
             await send(tr(lang, "wd_err", err=esc(str(ex)[:100])), menu_btn); return
         ulog("m_wd", f"💸 Kazanç çekti: {who(user)} · {fmt_u(amt)} USDT")
         await send(tr(lang, "wd_ok", usdt=fmt_u(amt)), menu_btn)
@@ -3495,11 +3499,22 @@ async def check_invoices(app, only=None):
         n += 1
     return n
 
+def app_usdt():
+    """CryptoBot uygulamasındaki kullanılabilir USDT (yazı). Bilinmiyorsa None."""
+    try:
+        for b in crypto_call("getBalance"):
+            if b.get("currency_code") == "USDT": return b.get("available")
+        return "0"
+    except Exception: return None
+
 def crypto_view():
     tok = crypto_token()
     if tok:
         try: me = crypto_call("getMe"); st = f"🟢 Bağlı: <b>{esc(me.get('name'))}</b>"
         except Exception as e: st = f"🔴 Token çalışmıyor: <code>{esc(str(e)[:100])}</code>"
+        else:
+            av = app_usdt()
+            if av is not None: st += f"\n💼 Uygulama bakiyesi  <b>{av} USDT</b>\n<i>Kullanıcı çekimleri bu bakiyeden ödenir.</i>"
     else: st = "⚪️ Bağlı değil — USDT butonu kullanıcılara görünmüyor."
     t = ("🪙 <b>CryptoBot (USDT)</b>\n<blockquote>" + st + f"\n💱 1 USDT = {USDT_RATE} TMT</blockquote>\n"
          "<i>Token almak: @CryptoBot → Crypto Pay → Create App → API Token.</i>")
@@ -4635,6 +4650,9 @@ T["ru"].update({"b_myad": "🎨 Создать свою рекламу",
     "myad_done": "✅ <b>Ваша реклама готова!</b>\n<blockquote>Реклама выше создана <b>с вашей реферальной ссылкой</b> — используйте смело. Перешлите в любой канал или группу.\n\n💡 Или там, где даёте рекламу, напишите в поле ввода <code>@{un}</code> — ваша реклама появится сама.\n\n🔗 Ваша ссылка: {link}</blockquote>"})
 
 # günlük başlatma sınırı (aynı ilan)
+T["tr"]["wd_nofund"] = "⏳ <b>Çekim şu an yapılamadı.</b>\n<blockquote>Ödeme hesabında geçici olarak yeterli para yok. <b>{usdt} USDT</b> kazancın yerinde duruyor, kaybolmadı.\nAdmine bildirildi — biraz sonra tekrar dene.</blockquote>"
+T["tk"]["wd_nofund"] = "⏳ <b>Häzir çekip bolmady.</b>\n<blockquote>Töleg hasabynda wagtlaýyn ýeterlik pul ýok. <b>{usdt} USDT</b> gazanjyňyz ýerinde dur, ýitmedi.\nAdmine habar berildi — birazdan gaýtadan synanyşyň.</blockquote>"
+T["ru"]["wd_nofund"] = "⏳ <b>Вывод сейчас невозможен.</b>\n<blockquote>На платёжном счёте временно недостаточно средств. Ваши <b>{usdt} USDT</b> на месте.\nАдмин уведомлён — попробуйте чуть позже.</blockquote>"
 T["tr"]["m_own"] = "⚠️ <b>Kendi ilanını satın alamazsın.</b>"
 T["tk"]["m_own"] = "⚠️ <b>Öz bildirişiňizi satyn alyp bilmeýärsiňiz.</b>"
 T["ru"]["m_own"] = "⚠️ <b>Нельзя купить своё собственное объявление.</b>"
