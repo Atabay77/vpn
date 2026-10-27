@@ -3852,7 +3852,7 @@ def mkt_start(uid, lid):
         if not codes: return None, "nocodes"
         fid, from_free = alloc_file(svc, db)
         if not fid or not make_public(svc, fid): return None, "noslot"
-        if not sync_file(svc, fid, L["title"], "🏪 " + ("Пазар" if lang_of(db, uid) == "ru" else "Pazar"), codes, exp=False): return None, "drive"
+        if not sync_file(svc, fid, L["title"], mkt_ann(lang_of(db, uid)), codes, exp=False): return None, "drive"
         if from_free: db["free_files"].remove(fid)
         e["bal"] = e.get("bal", 0) - MKT_FEE
         db["mkt_fees"] = db.get("mkt_fees", 0) + MKT_FEE
@@ -4883,6 +4883,11 @@ def market_bill():
         save_db(db)
     return stop, warn, info
 
+def mkt_ann(lang):
+    """Satın alınan pazar kodunun Happ duyurusu (tek satır)."""
+    un = "@" + (BOT.get("un") or "SuBDrive_bot")
+    return {"ru": f"🤖 Telegram: {un} · поддержка 24/7", "tk": f"🤖 Telegram: {un} · 7/24 goldaw"}.get(lang, f"🤖 Telegram: {un} · 7/24 destek")
+
 def market_refresh_files():
     """İlanın kodları değiştiyse açık oturumların Drive dosyalarını günceller."""
     db = load_db(); jobs = []
@@ -4891,12 +4896,13 @@ def market_refresh_files():
         L = db.get("market", {}).get(s["lid"])
         if not L: continue
         codes = listing_codes(db, L)
-        h = hashlib.md5(("\n".join(codes) + f"#fmt{FILE_FMT}").encode()).hexdigest()
-        if codes and h != s.get("hash"): jobs.append((sid, s["fid"], L["title"], codes, h))
+        ann = mkt_ann(lang_of(db, s["buyer"]))
+        h = hashlib.md5(("\n".join(codes) + f"#fmt{FILE_FMT}#{ann}").encode()).hexdigest()   # duyuru değişince de yeniden yazılır
+        if codes and h != s.get("hash"): jobs.append((sid, s["fid"], L["title"], codes, h, ann))
     if not jobs: return
     svc = new_service()
-    for sid, fid, title, codes, h in jobs:
-        if sync_file(svc, fid, title, "🏪", codes, exp=False):
+    for sid, fid, title, codes, h, ann in jobs:
+        if sync_file(svc, fid, title, ann, codes, exp=False):
             mutate(lambda d: d["msess"][sid].__setitem__("hash", h))
 
 async def notify_payout(app, info):
