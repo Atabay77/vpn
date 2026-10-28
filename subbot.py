@@ -4363,18 +4363,20 @@ async def user_to_ticket(c, u, tid):
 
 AI_SUP_RULES = """Destek talebine BOTUN SAHİBİ olarak, birinci ağızdan cevap veriyorsun. Bot senin ("bot meňki", "bot benim"). Kullanıcıya bir arkadaş gibi rahat ve dobra yaz.
 NASIL YAZACAKSIN:
-- Kitap dili değil, halkın konuştuğu günlük dil. Türkmence için örnekler: "bilmeýärin" değil "bilemok"; "edýärin" değil "edýän"; "aýdyň" yerine "aýdyber arkaýyn"; "Size nähili kömek edip bilerin?" yerine "näme kömek gerek, aýdyber arkaýyn"; "bu bot kimiň?" → "meň bodym". Türkçe ve Rusça da günlük konuşma dili.
+- Kitap dili değil, halkın konuştuğu günlük dil. Türkmence için örnekler: "bilmeýärin" değil "bilemok"; "edýärin" değil "edýän"; "Size nähili kömek edip bilerin?" yerine "näme kömek gerek?"; "bu bot kimiň?" → "meň bodym".
+- Aynı kalıpları tekrar tekrar kullanma; her cevabı farklı ve doğal kur. "aýdyber arkaýyn" samimi bir sözdür: çok nadir kullan (bir yazışmada en fazla bir kez), küfür eden/kaba yazan birine ASLA kullanma. Türkçe ve Rusça da günlük konuşma dili.
 - Dil hataları yapma: Türkçede "sen naber" YANLIŞ, doğrusu "senden naber" (ya da "sende naber"). Türkmençede "sen nähili" değil "sen nähili / özüň nähili" gibi doğal kalıplar.
 - Türkmen argosu: "zaýa" / "zaya" (ör. "naýli zaýa", "zaýa") KÜFÜRDÜR, curse=true say ve küfür gibi karşılık ver.
-- Varsayılan kısa, emojisiz. Gerekirse (adım adım anlatım) uzun yaz.
+- ASLA emoji kullanma (sadece buton adlarındaki emojiler kalabilir). Varsayılan kısa.
+- Mesajın dili belirsizse (Türkçe ve Türkmence birbirine çok benzer: "sen bot mi?", "naber" vb.) yukarıda söylenen varsayılan dili kullan. Gerekirse (adım adım anlatım) uzun yaz.
 - Kullanıcının üslubuna uy: kibar ise kibar, samimi ise samimi; küfürlü/kaba yazıyorsa sen de aynı rahatlıkta argo ve küfürle cevap verebilirsin. Irk, din, milliyet, cinsiyet hakareti ve tehdit asla yok.
-- Yapay zekâ olduğundan hiç bahsetme. Kullanıcı "bot musun / yapay zekâ mısın / gerçek insan mısın / bunları kim yazıyor" gibi SENİN ne olduğunu sorarsa bu soruya ASLA cevap verme: ne evet ne hayır de, insan olduğunu da iddia etme. Sert, dobra, biraz sinirli bir karşı soruyla geçiştir ve konuyu bota çevir. Örnek (tk): "Saňa gyzyklymy şol zatlar? Bot hakda soragyň barmy ýa ýok?" / (tr): "Seni ne ilgilendiriyor? Botla ilgili sorun var mı yok mu?" Bu durumda botq=true, handoff=false.
+- Kendiliğinden bot/yapay zekâ olduğundan bahsetme. Ama kullanıcı bot olup olmadığını sorarsa uzatmadan, ters ve dobra bir şekilde kabul et ve konuyu bota çevir. Örnek (tk): "Hawa hawa, bot men. Soragyň barmy ýa ýok?" / (tr): "Evet evet, botum. Sorun var mı yok mu?" / (ru): "Да-да, бот. Вопрос есть или нет?" Sadece gerçekten bunu sorarsa söyle; küfür, sitem veya başka soruları bu soru sanma.
 - Küfür, hakaret veya argo içeren mesajı "bot musun" sorusu SANMA; mesajda "ai", "bot" gibi kelimeler küfürle birlikte geçse bile önce küfür olarak değerlendir. curse=true SADECE sana yönelik hakaret/düşmanca küfür varsa (ör. "sikdir", "anaňy…"); "naber lan yarram" gibi samimi argo selamlaşma curse DEĞİLDİR. Üslubuna göre karşılık verebilirsin.
 - Her soruyu cevapla. BİLGİLER'e, YENİLİKLER'e, SAHİBİNİN EKLEDİĞİ BİLGİLER'e ve SAHİBİNİN ÖNCEKİ CEVAPLARI'na dayan; bilmediğin şeyi uydurma. Asla söz verme (iade, telafi, süre uzatma vb.).
 - Kullanıcının ÖNCEKİ TALEPLERİ'ni hatırla ve gerekiyorsa ona göre konuş.
 - Ödeme kontrolü, iade, bozuk kodun düzeltilmesi gibi elle bakılması gereken durumlarda gerekli bilgiyi iste ve "istersen özüm seredeýin" gibi kendin bakacağını teklif et.
 - Kullanıcı açıkça admine / insana / sahibine bağlanmak isterse ya da bakmanı kabul ederse handoff=true yap ve tek cümleyle birazdan kendin bakacağını söyle.
-SADECE şu JSON'u döndür: {"handoff": true/false, "botq": true/false, "curse": true/false, "answer": "kullanıcıya gidecek mesaj"}"""
+SADECE şu JSON'u döndür: {"handoff": true/false, "curse": true/false, "answer": "kullanıcıya gidecek mesaj"}"""
 SUP_CURSE_MAX = 3   # üst üste bu kadar küfür → cevap verilmez, talep sahibine gider
 AI_LEARN_MAX = 40
 SUP_MODEL = "anthropic/claude-fable-5"   # destek: en doğal yazan model (meşgulse varsayılan modele düşer)
@@ -4434,11 +4436,6 @@ async def ai_support(c, uid, tid, lang, m, user):
             t["curse_n"] = (t.get("curse_n", 0) + 1) if curse else 0
             return t["curse_n"]
         cn = mutate(cf)
-        bq = 0
-        if j.get("botq") and not hand:   # "bot musun?": ilk seferde sert karşı soru (cevap yok); tekrar sorarsa sahibine
-            bq = mutate(lambda d: d.get("tickets", {}).get(tid, {}).__setitem__("botq_n", d["tickets"][tid].get("botq_n", 0) + 1) or d["tickets"][tid]["botq_n"])
-            ans = tr(lang, "sup_botq") if bq < 2 else ""
-            if bq >= 2: hand = True
         if cn >= SUP_CURSE_MAX: ans, hand = "", True   # üst üste küfür: cevap yok, sahibine
         if not ans and not hand: raise RuntimeError("boş cevap")
         def f(d):
@@ -4450,7 +4447,7 @@ async def ai_support(c, uid, tid, lang, m, user):
         mutate(f)
         if ans:
             await c.bot.send_message(uid, esc(ans)[:4000], parse_mode="HTML", reply_markup=KB([[B(tr(lang, "b_tclose"), "u_tclose")]]))
-        if hand: await send_handoff(c, tid, user, curse=cn >= SUP_CURSE_MAX, botq=bq >= 2)
+        if hand: await send_handoff(c, tid, user, curse=cn >= SUP_CURSE_MAX)
     except Exception as e:
         log.warning("ai support: %s", e); RUN["ai_err"] = f"support: {str(e)[:120]}"
         # AI cevap veremedi: talep admine geçer (kullanıcı cevapsız kalmasın)
@@ -4459,7 +4456,7 @@ async def ai_support(c, uid, tid, lang, m, user):
         except Exception: pass
         await send_handoff(c, tid, user, err=True)
 
-async def send_handoff(c, tid, user, err=False, curse=False, botq=False):
+async def send_handoff(c, tid, user, err=False, curse=False):
     """Kurucuya: admine bağlanmak isteyen kullanıcının bütün yazışması."""
     t = load_db().get("tickets", {}).get(tid) or {}
     lines = [("👤 " if x["r"] == "u" else "🛠 " if x["r"] == "adm" else "🤖 ") + esc(x["c"]) for x in t.get("log", [])]
@@ -4468,7 +4465,7 @@ async def send_handoff(c, tid, user, err=False, curse=False, botq=False):
         n += len(ln)
         if n > 3300: break
         body.append(ln)
-    head = f"🙋 <b>{'AI cevap veremedi' if err else f'Üst üste {SUP_CURSE_MAX} kez küfür etti — AI cevap vermiyor' if curse else 'Israrla bot mu insan mı diye soruyor — AI cevap vermedi, sen yaz' if botq else 'Admine bağlanmak istiyor'}</b> · #{tid}\n<i>{esc(who(user))}</i>\n"
+    head = f"🙋 <b>{'AI cevap veremedi' if err else f'Üst üste {SUP_CURSE_MAX} kez küfür etti — AI cevap vermiyor' if curse else 'Admine bağlanmak istiyor'}</b> · #{tid}\n<i>{esc(who(user))}</i>\n"
     kb = KB([[B("✍️ Yanıtla", f"t_rep:{tid}", "primary"), B("🔒 Kapat", f"t_close:{tid}", "danger")]])
     for fid in ADMINS:
         try:
@@ -5630,11 +5627,11 @@ T["ru"].update({"fake_rej": "🤥 <b>Объявление отклонено: ф
     "fee_x2_note": "\n⚠️ <b>Штраф за фальшивый пинг:</b> это объявление в 2 раза дороже."})
 
 # Destek / Bug: ✍️ Yaz butonu + 60 sn sınırı
-T["tr"].update({"sup_botq": 'Seni ne ilgilendiriyor? Botla ilgili sorun var mı yok mu?', "sup_press": '✍️ Talebine (#{tid}) yazmak için önce <b>✍️ Yaz</b> butonuna bas. Bir kez basman yeterli, sonra talep kapanana kadar yazabilirsin.', "sup_cmd_q": '📩 <b>Açık destek talebin var (#{tid}).</b>\nKapatılsın mı?', "b_tclose_yes": '🔒 Evet, kapat', "b_tkeep": '✍️ Hayır, yazmaya devam', "b_twrite": "✍️ Yaz", "sup_ask": "✍️ <b>Mesajını gönder</b>\n<blockquote>Yazı, fotoğraf ya da video — fark etmez.</blockquote>",
+T["tr"].update({"sup_press": '✍️ Talebine (#{tid}) yazmak için önce <b>✍️ Yaz</b> butonuna bas. Bir kez basman yeterli, sonra talep kapanana kadar yazabilirsin.', "sup_cmd_q": '📩 <b>Açık destek talebin var (#{tid}).</b>\nKapatılsın mı?', "b_tclose_yes": '🔒 Evet, kapat', "b_tkeep": '✍️ Hayır, yazmaya devam', "b_twrite": "✍️ Yaz", "sup_ask": "✍️ <b>Mesajını gönder</b>\n<blockquote>Yazı, fotoğraf ya da video — fark etmez.</blockquote>",
   "sup_slow": "⏳ Biraz bekle, {s} sn sonra tekrar yaz."})
-T["tk"].update({"sup_botq": 'Saňa gyzyklymy şol zatlar? Bot hakda soragyň barmy ýa ýok?', "sup_press": '✍️ Soragyňa (#{tid}) ýazmak üçin ilki <b>✍️ Ýaz</b> düwmesine bas. Bir gezek basmak ýeterlik, soňra sorag ýapylýança ýazyp bilersiň.', "sup_cmd_q": '📩 <b>Açyk goldaw soragyň bar (#{tid}).</b>\nÝapylsynmy?', "b_tclose_yes": '🔒 Hawa, ýap', "b_tkeep": '✍️ Ýok, ýazmagy dowam et', "b_twrite": "✍️ Ýaz", "sup_ask": "✍️ <b>Habaryňy iber</b>\n<blockquote>Tekst, surat ýa-da wideo — tapawudy ýok.</blockquote>",
+T["tk"].update({"sup_press": '✍️ Soragyňa (#{tid}) ýazmak üçin ilki <b>✍️ Ýaz</b> düwmesine bas. Bir gezek basmak ýeterlik, soňra sorag ýapylýança ýazyp bilersiň.', "sup_cmd_q": '📩 <b>Açyk goldaw soragyň bar (#{tid}).</b>\nÝapylsynmy?', "b_tclose_yes": '🔒 Hawa, ýap', "b_tkeep": '✍️ Ýok, ýazmagy dowam et', "b_twrite": "✍️ Ýaz", "sup_ask": "✍️ <b>Habaryňy iber</b>\n<blockquote>Tekst, surat ýa-da wideo — tapawudy ýok.</blockquote>",
   "sup_slow": "⏳ Azajyk garaş, {s} sek soň gaýtadan ýaz."})
-T["ru"].update({"sup_botq": 'Тебе это зачем? По боту вопрос есть или нет?', "sup_press": '✍️ Чтобы написать в обращение (#{tid}), сначала нажмите <b>✍️ Написать</b>. Достаточно один раз — потом можно писать, пока обращение открыто.', "sup_cmd_q": '📩 <b>У вас открыто обращение (#{tid}).</b>\nЗакрыть его?', "b_tclose_yes": '🔒 Да, закрыть', "b_tkeep": '✍️ Нет, продолжить', "b_twrite": "✍️ Написать", "sup_ask": "✍️ <b>Отправьте сообщение</b>\n<blockquote>Текст, фото или видео — неважно.</blockquote>",
+T["ru"].update({"sup_press": '✍️ Чтобы написать в обращение (#{tid}), сначала нажмите <b>✍️ Написать</b>. Достаточно один раз — потом можно писать, пока обращение открыто.', "sup_cmd_q": '📩 <b>У вас открыто обращение (#{tid}).</b>\nЗакрыть его?', "b_tclose_yes": '🔒 Да, закрыть', "b_tkeep": '✍️ Нет, продолжить', "b_twrite": "✍️ Написать", "sup_ask": "✍️ <b>Отправьте сообщение</b>\n<blockquote>Текст, фото или видео — неважно.</blockquote>",
   "sup_slow": "⏳ Подождите {s} сек и напишите снова."})
 
 # Sınırlı abonelik uyarısı (satış)
