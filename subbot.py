@@ -684,6 +684,7 @@ def rename_all(codes, geo, ms=None, fresh=False, exits=None, cap=None, listed=()
 TM_NAME = "tmtest.txt"
 TM_MAX_AGE = 6 * 3600     # bundan eski telefon sonucu yok sayılır
 TM_ALERT = 30 * 60        # bu kadar süre sonuç gelmezse kurucuya bir kez hatırlatma
+TM_HINT_AGE = 48 * 3600   # test eskiyse bile bu kadar yeni sonuç, kod sıralamasında (çalışanlar önce) kullanılır
 
 def source_fids(db):
     out = set()
@@ -790,7 +791,10 @@ def _tm_sync(db, sources, codes=None):
     if ts and time.time() - ts > TM_ALERT and RUN.get("tm_alerted") != ts:
         RUN["tm_alerted"] = ts
         RUN["tm_alert"] = f"📱 Telefon testinden sonuç gelmiyor (son sonuç: {ago(ts)}). Termux'u aç, test kendiliğinden başlar."
-    if not ts or stale: return set(), {}, False, load_exits()
+    if not ts: return set(), {}, False, load_exits()
+    if stale:   # test eski: kurallar uygulanmaz ama son bilinen çalışan kodlar öne alınır (ülke başına ilk seçilen o olsun)
+        hint = {k: v for k, v in res.items() if isinstance(v, (int, float)) and v > 0} if time.time() - ts < TM_HINT_AGE else {}
+        return set(), hint, False, load_exits()
     return ({k for k, v in res.items() if isinstance(v, (int, float)) and v < 0},
             {k: v for k, v in res.items() if isinstance(v, (int, float)) and v > 0}, True, load_exits())
 
