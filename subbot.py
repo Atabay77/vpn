@@ -4373,6 +4373,7 @@ NASIL YAZACAKSIN:
 - Kullanıcı açıkça admine / insana / sahibine bağlanmak isterse ya da bakmanı kabul ederse handoff=true yap ve tek cümleyle birazdan kendin bakacağını söyle.
 SADECE şu JSON'u döndür: {"handoff": true/false, "botq": true/false, "answer": "kullanıcıya gidecek mesaj"}"""
 AI_LEARN_MAX = 40
+SUP_MODEL = "anthropic/claude-fable-5"   # destek: en doğal yazan model (meşgulse varsayılan modele düşer)
 
 def sup_memory(db, uid, tid):
     """Kullanıcının önceki talepleri + sahibinin örnek cevapları (destek AI'sına bağlam)."""
@@ -4390,13 +4391,8 @@ def sup_memory(db, uid, tid):
     return out
 
 async def ai_support(c, uid, tid, lang, m, user):
-    """Destek mesajına AI cevap verir (insan gibi). Kullanıcı admin isterse talep admine geçer ve bütün yazışma kurucuya gider."""
-    async def typing():
-        while True:
-            try: await c.bot.send_chat_action(uid, "typing")
-            except Exception: pass
-            await asyncio.sleep(4)
-    tt = asyncio.ensure_future(typing())
+    """Destek mesajına AI cevap verir (insan gibi). Kullanıcı admin isterse talep admine geçer ve bütün yazışma kurucuya gider.
+    "yazıyor…" gösterilmez (bot olduğu belli olmasın)."""
     try:
         t0 = load_db().get("tickets", {}).get(tid) or {}
         kind = t0.get("kind")
@@ -4418,7 +4414,11 @@ async def ai_support(c, uid, tid, lang, m, user):
             msgs[-1] = {"role": "user", "content": ([{"type": "text", "text": msgs[-1]["content"]}] + cur) if isinstance(cur, list) else msgs[-1]["content"] + "\n" + cur}
         else: msgs.append({"role": "user", "content": cur})
         mem = sup_memory(load_db(), uid, tid)
-        raw_ = await asyncio.to_thread(ai_call, ai_system(lang) + "\n\n" + AI_SUP_RULES + (("\n\n" + mem) if mem else ""), msgs)
+        sys_ = ai_system(lang) + "\n\n" + AI_SUP_RULES + (("\n\n" + mem) if mem else "")
+        try: raw_ = await asyncio.to_thread(ai_call, sys_, msgs, None, 4000, 120, SUP_MODEL)
+        except Exception as e1:
+            log.info("sup model %s: %s → varsayılan model", SUP_MODEL, e1)
+            raw_ = await asyncio.to_thread(ai_call, sys_, msgs)
         mj = re.search(r"\{.*\}", raw_, re.S)
         try: j = json.loads(mj.group(0)) if mj else {"handoff": False, "answer": raw_}
         except Exception: j = {"handoff": False, "answer": raw_}
@@ -4432,12 +4432,11 @@ async def ai_support(c, uid, tid, lang, m, user):
             t["pending"] = 0
             if hand: t["human"] = True; t["pending"] = 1
         mutate(f)
-        tt.cancel()
         if ans:
             await c.bot.send_message(uid, esc(ans)[:4000], parse_mode="HTML", reply_markup=KB([[B(tr(lang, "b_tclose"), "u_tclose")]]))
         if hand: await send_handoff(c, tid, user, botq=bool(j.get("botq")))
     except Exception as e:
-        tt.cancel(); log.warning("ai support: %s", e); RUN["ai_err"] = f"support: {str(e)[:120]}"
+        log.warning("ai support: %s", e); RUN["ai_err"] = f"support: {str(e)[:120]}"
         # AI cevap veremedi: talep admine geçer (kullanıcı cevapsız kalmasın)
         mutate(lambda d: d.get("tickets", {}).get(tid, {}).__setitem__("human", True))
         try: await c.bot.send_message(uid, tr(lang, "sup_sent"))
