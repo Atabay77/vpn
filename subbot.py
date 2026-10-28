@@ -1790,12 +1790,13 @@ async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
             audit(uid, "ai key set")
             t_, kb_ = ai_view(); await u.message.reply_text("✅ AI bağlandı.\n\n" + t_, parse_mode="HTML", reply_markup=kb_)
 
-        elif act == "ai_lim":
+        elif act in ("ai_lim", "ai_plim"):
             try: n_ = int(txt.strip())
             except Exception: n_ = -1
             if not 1 <= n_ <= 1000:
                 STATE[uid] = st; await u.message.reply_text("⚠️ 1-1000 arası bir sayı yaz.", reply_markup=back("ai_adm")); return
-            mutate(lambda d: d.__setitem__("ai_limit", n_)); audit(uid, f"ai limit {n_}")
+            fld_ = "ai_limit" if act == "ai_lim" else "ai_pro_limit"
+            mutate(lambda d: d.__setitem__(fld_, n_)); audit(uid, f"{fld_} {n_}")
             t_, kb_ = ai_view(); await u.message.reply_text("✅ Kaydedildi.\n\n" + t_, parse_mode="HTML", reply_markup=kb_)
 
         elif act == "cp_set":
@@ -1846,7 +1847,7 @@ async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
         log.exception("msg_handler")
         await send_error(c, uid, f"mesaj:{act}", e)
 
-FOUNDER_ONLY = {"ban_menu", "ban_find", "hp", "hp_set", "hp_del", "hp_new", "ref_test", "mk_admin", "mk_price", "mk_oph", "mk_ods", "mk_odr", "bal_find", "usearch", "rep_today", "rep_yday", "tickets_bug", "t_cancel", "tickets", "cp_test", "cp", "cp_set", "cp_del", "ai_adm", "ai_set", "ai_lim", "ai_del", "ul_open", "stats", "chans", "ch_add", "pay_set", "bcast", "bcast_yes", "rollback", "rollback_yes", "auto_ann", "toggle_sys", "mk_rev", "ad_post", "ip_need", "ping_max", "admin", "sources", "s_add", "logs", "upd_now", "get_zip", "sa_menu", "sa_add", "bulk_ann", "bulk_title", "bulk_yes"}
+FOUNDER_ONLY = {"ban_menu", "ban_find", "hp", "hp_set", "hp_del", "hp_new", "ref_test", "mk_admin", "mk_price", "mk_oph", "mk_ods", "mk_odr", "bal_find", "usearch", "rep_today", "rep_yday", "tickets_bug", "t_cancel", "tickets", "cp_test", "cp", "cp_set", "cp_del", "ai_adm", "ai_set", "ai_lim", "ai_plim", "ai_del", "ul_open", "stats", "chans", "ch_add", "pay_set", "bcast", "bcast_yes", "rollback", "rollback_yes", "auto_ann", "toggle_sys", "mk_rev", "ad_post", "ip_need", "ping_max", "admin", "sources", "s_add", "logs", "upd_now", "get_zip", "sa_menu", "sa_add", "bulk_ann", "bulk_title", "bulk_yes"}
 OWNED = ("kv", "kt", "kn", "ka", "kd", "kdy")   # alt admin sadece kendi kodunda
 def src_find(db, h): return next((s for s in db["sources"] if hashlib.md5(s.encode()).hexdigest()[:8] == h), None)
 
@@ -2185,6 +2186,10 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
     elif a == "ai_lim":
         STATE[uid] = {"action": "ai_lim"}
         await safe_edit(q, *prompt("🔢 <b>Günlük soru sınırı</b>", f"Kullanıcı başı günde kaç soru? (şu an {ai_limit()})", "ai_adm"))
+
+    elif a == "ai_plim":
+        STATE[uid] = {"action": "ai_plim"}
+        await safe_edit(q, *prompt("💎 <b>Premium günlük sınır</b>", f"Abone başı günde kaç soru? (şu an {ai_pro_limit()})", "ai_adm"))
 
     elif a == "ai_del":
         await asyncio.to_thread(set_env, "AI_API_KEY", ""); audit(uid, "ai key del")
@@ -2717,9 +2722,57 @@ def ai_limit(db=None):
     try: return int((db if db is not None else load_db()).get("ai_limit") or AI_LIMIT)
     except Exception: return AI_LIMIT
 
-def ai_call(system, msgs, key=None, max_tokens=4000, timeout=120):
+# Seçilebilir modeller (her sağlayıcının en iyisi). Açıklamalar model ailelerinin genel bilinen güçlü yanları.
+AI_MODELS = {
+ "opus":     ("Claude Opus 5.5", "anthropic/claude-opus-5.5", {"tr": "kod yazma, uzun ve dikkatli düşünme", "tk": "kod ýazmak, uzyn we içgin pikirlenmek", "ru": "код, сложные и длинные задачи"}),
+ "gpt":      ("GPT-6.1 Sol", "openai/gpt-6.1-sol", {"tr": "genel sohbet, yazı, matematik", "tk": "umumy söhbet, tekst, matematika", "ru": "общение, тексты, математика"}),
+ "gemini":   ("Gemini 3.8 Flash", "google/gemini-3.8-flash", {"tr": "çok hızlı, uzun metin okuma ve özetleme", "tk": "örän çalt, uzyn tekst okamak we gysgaltmak", "ru": "очень быстрый, длинные тексты и пересказ"}),
+ "grok":     ("Grok 4.7", "x-ai/grok-4.7", {"tr": "rahat, esprili sohbet, kısa net cevap", "tk": "erkin, degişmeli söhbet, gysga jogap", "ru": "свободный остроумный стиль, кратко"}),
+ "kimi":     ("Kimi K3 Agent", "moonshotai/kimi-k3-agent", {"tr": "çok adımlı işler, plan, kod", "tk": "köp ädimli işler, meýilnama, kod", "ru": "многошаговые задачи, планы, код"}),
+ "mistral":  ("Mistral Large 4", "mistralai/mistral-large-4-0", {"tr": "hızlı, çeviri ve yazı", "tk": "çalt, terjime we tekst", "ru": "быстрый, перевод и тексты"}),
+ "mimo":     ("MiMo v2.6 Pro", "xiaomi/mimo-v2.6-pro", {"tr": "matematik ve mantık, hızlı", "tk": "matematika we logika, çalt", "ru": "математика и логика, быстрый"}),
+ "nemotron": ("Nemotron 3 Ultra", "nvidia/nemotron-3-ultra", {"tr": "teknik sorular, akıl yürütme", "tk": "tehniki soraglar, pikir ýöretmek", "ru": "технические вопросы, рассуждения"}),
+}
+AIPRO_USDT, AIPRO_DAYS = 10, 30          # 💎 AI Premium: aylık 10$ (CryptoBot / bakiye)
+AI_FREE_N, AI_FREE_WIN = 3, 2 * 86400    # abone olmayana: 2 günde 3 soru (bütün modeller toplam)
+AI_PRO_LIMIT = 100                       # aboneye günde en fazla (Admin'den değişir)
+def ai_pro_limit(db=None):
+    try: return int((db if db is not None else load_db()).get("ai_pro_limit") or AI_PRO_LIMIT)
+    except Exception: return AI_PRO_LIMIT
+def ai_free_left(x):
+    fr = [t for t in x.get("ai_free", []) if t > time.time() - AI_FREE_WIN]
+    return max(0, AI_FREE_N - len(fr)), (min(fr) + AI_FREE_WIN if len(fr) >= AI_FREE_N else None)
+def ai_is_pro(x): return x.get("ai_pro_until", 0) > time.time()
+
+def ai_take(d, uid):
+    """Modelli soru hakkı düşer. Dönüş: 'admin' | 'pro' | 'free' | 'lock' | 'plim'."""
+    x = d["users"].setdefault(str(uid), {})
+    if uid in ADMINS: return "admin"
+    if ai_is_pro(x):
+        if x.get("ai_pday") != tm_day(): x["ai_pday"], x["ai_pn"] = tm_day(), 0
+        if x["ai_pn"] >= ai_pro_limit(d): return "plim"
+        x["ai_pn"] += 1; return "pro"
+    if ai_free_left(x)[0] <= 0: return "lock"
+    x["ai_free"] = [t for t in x.get("ai_free", []) if t > time.time() - AI_FREE_WIN] + [time.time()]; return "free"
+
+def ai_give_back(d, uid, kind):
+    x = d["users"].setdefault(str(uid), {})
+    if kind == "pro": x["ai_pn"] = max(0, x.get("ai_pn", 1) - 1)
+    elif kind == "free" and x.get("ai_free"): x["ai_free"].pop()
+
+def ai_system_model(lang, name, mid):
+    lname = {"tk": "Türkmen dili", "ru": "русский"}.get(lang, "Türkçe")
+    return f"""Sen {name} modelisin (kimlik: {mid}). Hangi model olduğun sorulursa bunu söyle.
+Her konuda yardım edersin: genel sorular, kod yazma, hata ayıklama, ödev/ders, metin yazma, çeviri, fikir.
+- Kullanıcının yazdığı dilde cevap ver (varsayılan: {lname}).
+- Doğru ol; emin olmadığın bilgiyi uydurma, emin değilsen söyle.
+- Fotoğraf, video veya ses oluşturamazsın; istenirse bu sohbette sadece yazıyla yardım edebildiğini söyle.
+- Kod istenirse çalışır ve eksiksiz kod ver, ``` kod bloklarını kullan. Gereksiz uzatma.
+- Biçim Telegram içindir: sadece ``` kod blokları, `satır içi kod` ve **kalın** kullan; başlık (#) veya tablo kullanma."""
+
+def ai_call(system, msgs, key=None, max_tokens=4000, timeout=120, model=None):
     """Tek istek. Dönüş: cevap yazısı. Hata: RuntimeError."""
-    body = {"model": ai_model(), "max_tokens": max_tokens, "system": system, "messages": msgs}
+    body = {"model": model or ai_model(), "max_tokens": max_tokens, "system": system, "messages": msgs}
     req = urllib.request.Request(ai_base() + "/v1/messages", data=json.dumps(body).encode("utf-8"),
                                  headers={"x-api-key": key or ai_key(), "anthropic-version": "2023-06-01", "content-type": "application/json", "User-Agent": "subbot/1.0"})   # varsayılan Python UA'sını Cloudflare engelliyor (1010)
     try:
@@ -2779,18 +2832,6 @@ KURALLAR:
 
 BİLGİLER:
 {facts}"""
-
-def ai_system_owner(lang):
-    """Kurucu için: her konuda yardım eden genel asistan (bot bilgileri ek bağlam)."""
-    lname = {"tk": "Türkmen dili", "ru": "русский"}.get(lang, "Türkçe")
-    return f"""Sen bot sahibinin kişisel asistanısın. Her konuda yardım edersin: genel sorular, kod yazma (Python ve diğer diller), hata ayıklama, metin yazma, çeviri, fikir.
-- Kullanıcının yazdığı dilde cevap ver (varsayılan: {lname}).
-- Doğru ol; emin olmadığın bilgiyi uydurma, emin değilsen söyle.
-- Kod yazarken çalışır, eksiksiz kod ver ve ``` kod bloklarını kullan. Gereksiz uzatma.
-- Biçim: Telegram'da gösterilecek. Sadece ``` kod blokları, `satır içi kod` ve **kalın** kullan; başlık (#) veya tablo kullanma.
-
-Ek bağlam (bot hakkında soru gelirse kullan):
-{ai_system(lang).split("BİLGİLER:", 1)[-1].strip()}"""
 
 def md_tg(t):
     """Model cevabı (```kod```, `kod`, **kalın**) → Telegram HTML parçaları (her biri ≤ ~3800 karakter)."""
@@ -3073,11 +3114,39 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         STATE.pop(uid, None)
         await show_home(c, uid, getattr(q, "message", None), send=send)
 
-    elif a == "u_ai":   # 🤖 Yardımcı: sonraki yazılar AI'ya gider
+    elif a == "u_ai":   # 🤖 ekranı: ❓ bot yardımcısı (ücretsiz) + modeller (💎 abonelik / 2 günde 3 ücretsiz soru)
+        if not ai_key(): await send(tr(lang, "ai_off"), menu_btn); return
+        STATE.pop(uid, None); AI_HIST.pop(uid, None)
+        own_, pro_ = uid in ADMINS, ai_is_pro(e); left_, when_ = ai_free_left(e)
+        if own_: st_l = tr(lang, "ai_st_own")
+        elif pro_: st_l = tr(lang, "ai_st_pro", until=tm_fmt(e["ai_pro_until"]), n=ai_pro_limit(db))
+        else: st_l = tr(lang, "ai_st_free", n=left_, w=(tm_fmt(when_) if when_ else "—"))
+        lock = not (own_ or pro_) and left_ <= 0
+        body = "\n".join(f"🧠 <b>{n_}</b> — {d_.get(lang, d_['tr'])}" for n_, _, d_ in AI_MODELS.values())
+        mb = [B(("🔒 " if lock else "") + n_, f"u_aim:{k_}") for k_, (n_, _, _) in AI_MODELS.items()]
+        rows = [[B(tr(lang, "b_ai_bot"), "u_aib", "success")]] + [mb[i:i + 2] for i in range(0, len(mb), 2)]
+        if not (own_ or pro_): rows.append([B(tr(lang, "b_aipro", usdt=AIPRO_USDT), "u_aipro", "primary")])
+        await send(tr(lang, "ai_menu", st=st_l, body=body), KB(rows + [[B(tr(lang, "b_menu"), "u_menu")]]))
+
+    elif a == "u_aib":   # ❓ bot hakkında (ücretsiz, günlük sınırlı)
         if not ai_key(): await send(tr(lang, "ai_off"), menu_btn); return
         STATE[uid] = {"action": "ai"}; AI_HIST.pop(uid, None)
         left = "∞" if uid in ADMINS else max(0, ai_limit(db) - (e.get("ai_n", 0) if e.get("ai_day") == tm_day() else 0))
-        await send(tr(lang, "ai_hi_own") if uid in ADMINS else tr(lang, "ai_hi", n=left), KB([[B(tr(lang, "b_ai_end"), "u_aix")]]))
+        await send(tr(lang, "ai_hi", n=left), KB([[B(tr(lang, "b_ai_models"), "u_ai")], [B(tr(lang, "b_ai_end"), "u_aix")]]))
+
+    elif a.startswith("u_aim:"):   # model seç
+        k_ = a.split(":", 1)[1]; M_ = AI_MODELS.get(k_)
+        if not M_ or not ai_key(): await send(tr(lang, "ai_off"), menu_btn); return
+        if not (uid in ADMINS or ai_is_pro(e)) and ai_free_left(e)[0] <= 0:
+            await send(tr(lang, "aipro_info", usdt=AIPRO_USDT, days=AIPRO_DAYS, n=ai_pro_limit(db), f=AI_FREE_N),
+                       KB([[B(tr(lang, "b_aipro_buy", usdt=AIPRO_USDT), "u_buy:aipro", "success")], [B(tr(lang, "b_ai_models"), "u_ai")]])); return
+        STATE[uid] = {"action": "ai", "model": k_}; AI_HIST.pop(uid, None)
+        left_ = "∞" if uid in ADMINS else (f"{max(0, ai_pro_limit(db) - (e.get('ai_pn', 0) if e.get('ai_pday') == tm_day() else 0))}" if ai_is_pro(e) else f"{ai_free_left(e)[0]}/{AI_FREE_N}")
+        await send(tr(lang, "ai_pick", name=M_[0], d=M_[2].get(lang, M_[2]["tr"]), n=left_), KB([[B(tr(lang, "b_ai_models"), "u_ai")], [B(tr(lang, "b_ai_end"), "u_aix")]]))
+
+    elif a == "u_aipro":
+        await send(tr(lang, "aipro_info", usdt=AIPRO_USDT, days=AIPRO_DAYS, n=ai_pro_limit(db), f=AI_FREE_N),
+                   KB([[B(tr(lang, "b_aipro_buy", usdt=AIPRO_USDT), "u_buy:aipro", "success")], [B(tr(lang, "b_ai_models"), "u_ai")]]))
 
     elif a == "u_aix":
         STATE.pop(uid, None); AI_HIST.pop(uid, None)
@@ -3581,6 +3650,7 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
 def item_tr(o):
     if o["item"] == "topup": return f"Bakiye yükleme · {usdt_of(o['price'])} USDT"
     if o["item"] == "panel": return f"Panel · {o['n']} kullanıcı · {PANEL_DAYS} gün"
+    if o["item"] == "aipro": return f"AI Premium · {AIPRO_DAYS} gün"
     if o.get("ext"): return f"Uzatma · {PRICES[o['item']][0]} gün"
     return f"Kod · {PRICES[o['item']][0]} gün"
 
@@ -3592,6 +3662,7 @@ def new_order(uid, user, lang, item, n=0, ext=None):
         price = PRICES[item][1]
         it = tr(lang, "it_ext", days=PRICES[item][0], name=name_of(load_db()["subs"].get(ext, {}), ext))
     elif item in PRICES: price, it = PRICES[item][1], tr(lang, "it_" + item)
+    elif item == "aipro": price, it = AIPRO_USDT * USDT_RATE, tr(lang, "it_aipro")
     else: return pub_menu(load_db(), uid)
     oid = uuid.uuid4().hex[:6].upper()
     o = {"uid": uid, "item": item, "n": n, "price": price, "ts": time.time(), "status": "new", "who": who(user)}
@@ -3662,6 +3733,13 @@ async def fulfill_order(c, oid, approve, admin_uid):
             return e
         e = mutate(p)
         msg = tr(lang, "order_ok_panel", oid=oid, n=e["limit"], days=PANEL_DAYS)
+    elif o["item"] == "aipro":   # 💎 AI Premium: süre eklenir
+        def p(d):
+            x = d.setdefault("users", {}).setdefault(str(uid), {})
+            x["ai_pro_until"] = max(time.time(), x.get("ai_pro_until", 0)) + AIPRO_DAYS * 86400
+            d["orders"][oid]["status"] = "done"; d["orders"][oid]["done_ts"] = time.time()
+            return x["ai_pro_until"]
+        msg = tr(lang, "aipro_ok", until=tm_fmt(mutate(p)), n=ai_pro_limit())
     elif o.get("ext") and db["subs"].get(o["ext"], {}).get("owner_id") == uid:   # aynı kodu uzat (link değişmez)
         s_ = await asyncio.to_thread(extend_code, o["ext"], PRICES[o["item"]][0])
         def p(d):
@@ -3736,9 +3814,9 @@ def ai_view():
     on = bool(ai_key())
     db = load_db(); today = sum(x.get("ai_n", 0) for x in db.get("users", {}).values() if x.get("ai_day") == tm_day())
     t = ("🤖 <b>AI Yardımcı</b>\n<blockquote>" + ("🟢 Bağlı" if on else "⚪️ Bağlı değil — kullanıcılar butonu görür ama kapalı der") +
-         f"\n🌐 <code>{esc(ai_base())}</code>\n🧠 <code>{esc(ai_model())}</code>\n🔢 Günlük sınır  <b>{ai_limit(db)}</b> soru/kişi\n📊 Bugün  <b>{today}</b> soru</blockquote>"
+         f"\n🌐 <code>{esc(ai_base())}</code>\n🧠 Bot yardımcısı: <code>{esc(ai_model())}</code> · {len(AI_MODELS)} model seçilebilir\n🔢 Bot yardımcısı  <b>{ai_limit(db)}</b> soru/gün\n💎 Premium  <b>{AIPRO_USDT}$</b>/{AIPRO_DAYS} gün · <b>{ai_pro_limit(db)}</b> soru/gün · abone <b>{sum(1 for x in db.get('users', {}).values() if ai_is_pro(x))}</b>\n🎁 Ücretsiz: 2 günde {AI_FREE_N} soru\n📊 Bugün bot yardımcısı  <b>{today}</b> soru</blockquote>"
          + (f"\n⚠️ Son hata: <code>{esc(RUN.get('ai_err', ''))}</code>" if RUN.get("ai_err") else ""))
-    return t, KB([[B("🔑 Anahtar Gir", "ai_set", "primary")], [B("🔢 Günlük Sınır", "ai_lim")]] + ([[B("🗑 Anahtarı Kaldır", "ai_del", "danger")]] if on else []) + [[B("◀️ Admin", "admin")]])
+    return t, KB([[B("🔑 Anahtar Gir", "ai_set", "primary")], [B("🔢 Bot Yardımcısı Sınırı", "ai_lim")], [B("💎 Premium Günlük Sınır", "ai_plim")]] + ([[B("🗑 Anahtarı Kaldır", "ai_del", "danger")]] if on else []) + [[B("◀️ Admin", "admin")]])
 
 def crypto_view():
     tok = crypto_token()
@@ -3963,22 +4041,31 @@ async def close_ticket(c, tid, by_admin):
     return True
 
 async def ai_answer(c, u):
-    m = u.message; uid = u.effective_user.id; lang = lang_of(load_db(), uid)
-    own = uid in ADMINS
-    kb = KB([[B("🧹 " + tr(lang, "b_ai_new"), "u_ai"), B(tr(lang, "b_ai_end"), "u_aix")]]) if own else KB([[B(tr(lang, "b_ai_end"), "u_aix")], [B(tr(lang, "b_sup"), "u_sup")]])
+    m = u.message; uid = u.effective_user.id; db0 = load_db(); lang = lang_of(db0, uid)
+    own = uid in ADMINS; mk = (STATE.get(uid) or {}).get("model"); M = AI_MODELS.get(mk) if mk else None
+    if M: kb = KB([[B("🧹 " + tr(lang, "b_ai_new"), f"u_aim:{mk}"), B(tr(lang, "b_ai_models"), "u_ai")], [B(tr(lang, "b_ai_end"), "u_aix")]])
+    else: kb = KB([[B(tr(lang, "b_ai_models"), "u_ai")], [B(tr(lang, "b_ai_end"), "u_aix"), B(tr(lang, "b_sup"), "u_sup")]])
     q = (m.text or m.caption or "").strip()
     if not q: await m.reply_text(tr(lang, "ai_text"), reply_markup=kb); return
     if time.time() - AI_HIST.get(("t", uid), 0) < 3: return   # art arda spam
     AI_HIST[("t", uid)] = time.time()
-    lim = ai_limit()
-    def f(d):
-        x = d["users"].setdefault(str(uid), {})
-        if x.get("ai_day") != tm_day(): x["ai_day"], x["ai_n"] = tm_day(), 0
-        if uid not in ADMINS and x["ai_n"] >= lim: return False
-        x["ai_n"] += 1; return True
-    if not mutate(f): await m.reply_text(tr(lang, "ai_lim", n=lim), reply_markup=kb); return
+    if M:
+        kind = mutate(lambda d: ai_take(d, uid))
+        if kind == "lock":
+            await m.reply_text(tr(lang, "aipro_info", usdt=AIPRO_USDT, days=AIPRO_DAYS, n=ai_pro_limit(), f=AI_FREE_N), parse_mode="HTML",
+                               reply_markup=KB([[B(tr(lang, "b_aipro_buy", usdt=AIPRO_USDT), "u_buy:aipro", "success")], [B(tr(lang, "b_ai_models"), "u_ai")]])); return
+        if kind == "plim": await m.reply_text(tr(lang, "ai_plim", n=ai_pro_limit()), reply_markup=kb); return
+    else:
+        lim = ai_limit()
+        def f(d):
+            x = d["users"].setdefault(str(uid), {})
+            if x.get("ai_day") != tm_day(): x["ai_day"], x["ai_n"] = tm_day(), 0
+            if not own and x["ai_n"] >= lim: return False
+            x["ai_n"] += 1; return True
+        if not mutate(f): await m.reply_text(tr(lang, "ai_lim", n=lim), reply_markup=kb); return
+        kind = "bot"
     hist = AI_HIST.setdefault(uid, [])
-    keep, qmax = (20, 20000) if own else (8, 2000)
+    keep, qmax = (20, 20000) if (own or M) else (8, 2000)
     msgs = hist[-keep:] + [{"role": "user", "content": q[:qmax]}]
     async def typing():
         while True:
@@ -3987,22 +4074,24 @@ async def ai_answer(c, u):
             await asyncio.sleep(4)
     tt = asyncio.ensure_future(typing())
     try:
-        if own: ans = await asyncio.to_thread(ai_call, ai_system_owner(lang), msgs, None, 16000, 300)
+        if M: ans = await asyncio.to_thread(ai_call, ai_system_model(lang, M[0], M[1]), msgs, None, 16000 if own else 8000, 300, M[1])
         else: ans = await asyncio.to_thread(ai_call, ai_system(lang), msgs)
     except Exception as ex:
         tt.cancel()
-        mutate(lambda d: d["users"][str(uid)].__setitem__("ai_n", max(0, d["users"][str(uid)].get("ai_n", 1) - 1)))   # hata sayılmaz
-        log.warning("ai: %s", ex); RUN["ai_err"] = str(ex)[:150]
-        await m.reply_text(tr(lang, "ai_err"), reply_markup=kb); return
+        if kind == "bot": mutate(lambda d: d["users"][str(uid)].__setitem__("ai_n", max(0, d["users"][str(uid)].get("ai_n", 1) - 1)))   # hata sayılmaz
+        else: mutate(lambda d: ai_give_back(d, uid, kind))
+        log.warning("ai %s: %s", M[1] if M else "bot", ex); RUN["ai_err"] = f"{M[0] if M else 'bot'}: {str(ex)[:130]}"
+        busy = M and any(x in str(ex) for x in ("503", "429", "capacity", "overloaded"))
+        await m.reply_text(tr(lang, "ai_busy", name=M[0]) if busy else tr(lang, "ai_err"), reply_markup=kb); return
     tt.cancel()
-    hist += [{"role": "user", "content": q[:qmax]}, {"role": "assistant", "content": ans[:20000 if own else 3000]}]
+    hist += [{"role": "user", "content": q[:qmax]}, {"role": "assistant", "content": ans[:20000 if (own or M) else 3000]}]
     AI_HIST[uid] = hist[-keep:]
-    if not own:
+    if not M:
         await m.reply_text("🤖 " + esc(ans)[:3900], parse_mode="HTML", reply_markup=kb, disable_web_page_preview=True); return
     chunks = md_tg(ans)
-    for i, ch_ in enumerate(chunks):
-        last = i == len(chunks) - 1
-        try: await m.reply_text(("🤖 " if i == 0 else "") + ch_, parse_mode="HTML", reply_markup=kb if last else None, disable_web_page_preview=True)
+    for i_, ch_ in enumerate(chunks):
+        last = i_ == len(chunks) - 1
+        try: await m.reply_text((f"🧠 <i>{esc(M[0])}</i>\n" if i_ == 0 else "") + ch_, parse_mode="HTML", reply_markup=kb if last else None, disable_web_page_preview=True)
         except BadRequest: await m.reply_text(_plain(ch_)[:4000], reply_markup=kb if last else None)   # biçim bozuksa düz yazı
 
 async def support_router(u: Update, c: ContextTypes.DEFAULT_TYPE):
@@ -4960,9 +5049,30 @@ T["tk"].update({"vip_q": "💎 <b>Bildiriş VIP edilsinmi?</b>\n<blockquote>🏪
   "b_yes_vip": "✅ Hawa, VIP et", "mld_q": "🗑 <b>Bildiriş pozulsynmy?</b>\n<blockquote>🏪 {title}\n👥 Häzir ulanýan  <b>{n}</b>\nBildiriş bazardan aýrylýar, yzyna gaýtaryp bolmaýar.</blockquote>", "b_yes_mld": "🗑 Hawa, poz"})
 T["ru"].update({"vip_q": "💎 <b>Сделать объявление VIP?</b>\n<blockquote>🏪 {title}\n⏳ {h} ч на самом верху биржи\n💵 Стоимость  <b>{fee} USDT</b> (не возвращается)\n💰 Баланс  <b>{bal} USDT</b></blockquote>",
   "b_yes_vip": "✅ Да, сделать VIP", "mld_q": "🗑 <b>Удалить объявление?</b>\n<blockquote>🏪 {title}\n👥 Сейчас пользуются  <b>{n}</b>\nОбъявление уйдёт с биржи, отменить нельзя.</blockquote>", "b_yes_mld": "🗑 Да, удалить"})
-T["tr"].update({"b_ai_new": "Yeni sohbet", "ai_hi_own": "🤖 <b>Asistan</b>\n<blockquote>Her konuda sorabilirsin: genel sorular, kod yazma, hata ayıklama, çeviri…\nSınır yok · son 20 mesajı hatırlar.</blockquote>\n<i>Mesajını yaz</i> 👇"})
-T["tk"].update({"b_ai_new": "Täze söhbet", "ai_hi_own": "🤖 <b>Kömekçi</b>\n<blockquote>Islendik zat barada sorap bilersiň: umumy soraglar, kod ýazmak, ýalňyşlyk tapmak, terjime…\nÇäk ýok · soňky 20 habary ýatda saklaýar.</blockquote>\n<i>Habaryňy ýaz</i> 👇"})
-T["ru"].update({"b_ai_new": "Новый чат", "ai_hi_own": "🤖 <b>Ассистент</b>\n<blockquote>Спрашивайте о чём угодно: общие вопросы, код, отладка, перевод…\nБез лимита · помнит последние 20 сообщений.</blockquote>\n<i>Напишите сообщение</i> 👇"})
+T["tr"].update({"b_ai_bot": "❓ Bot hakkında soru (ücretsiz)", "b_ai_models": "🧠 Modeller", "b_aipro": "💎 Premium · {usdt}$/ay", "b_aipro_buy": "💎 Satın al · {usdt}$", "it_aipro": "💎 AI Premium · 30 gün",
+  "ai_menu": "🤖 <b>Yapay Zekâ</b>\n<blockquote>{st}</blockquote>\n<blockquote expandable>{body}</blockquote>\n<i>❓ Bot hakkındaki sorular ücretsiz. Modellerle her konuda sorabilirsin (kod, ders, çeviri…). Fotoğraf/video oluşturulmaz.</i>",
+  "ai_st_own": "👑 Kurucu · sınırsız", "ai_st_pro": "💎 Premium · {until}'e kadar · günde {n} soru", "ai_st_free": "🎁 Ücretsiz: 2 günde 3 soru · kalan <b>{n}</b> · yenilenme {w}",
+  "ai_pick": "🧠 <b>{name}</b>\n<blockquote>{d}\nKalan soru  <b>{n}</b></blockquote>\n<i>Sorunu yaz</i> 👇",
+  "aipro_info": "💎 <b>AI Premium</b>\n<blockquote>Bütün modeller: Claude Opus, GPT, Gemini, Grok, Kimi…\nGünde <b>{n}</b> soru · {days} gün\nÜcret  <b>{usdt}$</b> / ay (CryptoBot ya da bakiye)</blockquote>\n<i>Abone olmadan 2 günde {f} soru ücretsiz.</i>",
+  "aipro_ok": "✅ <b>💎 AI Premium aktif!</b>\n<blockquote>{until}'e kadar · günde {n} soru</blockquote>\n🤖 butonundan modeli seç.",
+  "ai_plim": "⏳ Bugünkü {n} soru hakkın bitti. Yarın devam edebilirsin.", "ai_busy": "⚠️ {name} şu an meşgul. Başka model seç ya da biraz sonra dene. (Hakkın düşülmedi.)"})
+T["tk"].update({"b_ai_bot": "❓ Bot barada sorag (mugt)", "b_ai_models": "🧠 Modeller", "b_aipro": "💎 Premium · {usdt}$/aý", "b_aipro_buy": "💎 Satyn al · {usdt}$", "it_aipro": "💎 AI Premium · 30 gün",
+  "ai_menu": "🤖 <b>Emeli aň</b>\n<blockquote>{st}</blockquote>\n<blockquote expandable>{body}</blockquote>\n<i>❓ Bot barada soraglar mugt. Modellerden islendik zat barada sorap bilersiň (kod, sapak, terjime…). Surat/wideo döredilmeýär.</i>",
+  "ai_st_own": "👑 Esasy admin · çäksiz", "ai_st_pro": "💎 Premium · {until} çenli · günde {n} sorag", "ai_st_free": "🎁 Mugt: 2 günde 3 sorag · galan <b>{n}</b> · täzelenýär {w}",
+  "ai_pick": "🧠 <b>{name}</b>\n<blockquote>{d}\nGalan sorag  <b>{n}</b></blockquote>\n<i>Soragyňy ýaz</i> 👇",
+  "aipro_info": "💎 <b>AI Premium</b>\n<blockquote>Ähli modeller: Claude Opus, GPT, Gemini, Grok, Kimi…\nGünde <b>{n}</b> sorag · {days} gün\nBahasy  <b>{usdt}$</b> / aý (CryptoBot ýa-da balans)</blockquote>\n<i>Abuna bolmazdan 2 günde {f} sorag mugt.</i>",
+  "aipro_ok": "✅ <b>💎 AI Premium işjeň!</b>\n<blockquote>{until} çenli · günde {n} sorag</blockquote>\n🤖 düwmesinden model saýla.",
+  "ai_plim": "⏳ Şu günki {n} sorag hakyň gutardy. Ertir dowam edip bilersiň.", "ai_busy": "⚠️ {name} häzir meşgul. Başga model saýla ýa-da birazdan synan. (Hakyň aýrylmady.)"})
+T["ru"].update({"b_ai_bot": "❓ Вопрос о боте (бесплатно)", "b_ai_models": "🧠 Модели", "b_aipro": "💎 Premium · {usdt}$/мес", "b_aipro_buy": "💎 Купить · {usdt}$", "it_aipro": "💎 AI Premium · 30 дней",
+  "ai_menu": "🤖 <b>Искусственный интеллект</b>\n<blockquote>{st}</blockquote>\n<blockquote expandable>{body}</blockquote>\n<i>❓ Вопросы о боте бесплатны. Моделям можно задавать любые вопросы (код, учёба, перевод…). Фото/видео не создаются.</i>",
+  "ai_st_own": "👑 Основатель · без лимита", "ai_st_pro": "💎 Premium · до {until} · {n} вопросов в день", "ai_st_free": "🎁 Бесплатно: 3 вопроса за 2 дня · осталось <b>{n}</b> · обновление {w}",
+  "ai_pick": "🧠 <b>{name}</b>\n<blockquote>{d}\nОсталось вопросов  <b>{n}</b></blockquote>\n<i>Напишите вопрос</i> 👇",
+  "aipro_info": "💎 <b>AI Premium</b>\n<blockquote>Все модели: Claude Opus, GPT, Gemini, Grok, Kimi…\n<b>{n}</b> вопросов в день · {days} дней\nЦена  <b>{usdt}$</b> / мес (CryptoBot или баланс)</blockquote>\n<i>Без подписки — {f} вопроса за 2 дня бесплатно.</i>",
+  "aipro_ok": "✅ <b>💎 AI Premium активен!</b>\n<blockquote>до {until} · {n} вопросов в день</blockquote>\nВыберите модель через 🤖.",
+  "ai_plim": "⏳ Лимит {n} вопросов на сегодня исчерпан. Продолжите завтра.", "ai_busy": "⚠️ {name} сейчас занят. Выберите другую модель или попробуйте позже. (Вопрос не засчитан.)"})
+T["tr"].update({"b_ai_new": "Yeni sohbet"})
+T["tk"].update({"b_ai_new": "Täze söhbet"})
+T["ru"].update({"b_ai_new": "Новый чат"})
 T["tr"].update({"b_ai": "🤖 Yardımcı", "b_ai_end": "◀️ Menü",
   "ai_hi": "🤖 <b>Yardımcı</b>\n<blockquote>Bot hakkında sorunu yaz: fiyatlar, Pazar, kod alma, Happ'e ekleme, bakiye, kazanç çekme…\n🔢 Bugün kalan soru  <b>{n}</b></blockquote>\n<i>Sorunu mesaj olarak gönder</i> 👇",
   "ai_off": "🤖 Yardımcı şu an kapalı. 🆘 Support'a yazabilirsin.", "ai_text": "✍️ Sorunu yazı olarak gönder.",
