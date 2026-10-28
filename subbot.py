@@ -1234,6 +1234,7 @@ def _main_kb(uid):
                [B(tr(lg, "b_free"), "u_free"), B(tr(lg, "b_mine"), "my_keys")],
                [B(tr(lg, "b_prof"), "u_prof"), B(tr(lg, "b_market"), "u_market")],
                [B(tr(lg, "b_sup"), "tickets"), B(tr(lg, "b_bug"), "tickets_bug")],
+               [B(tr(lg, "b_ai"), "u_ai", "primary")],
                [lang_btn],
                [B(at(lg, "rev", n=n_rev), "mk_rev", "primary" if n_rev else None)],
                [B("🟡 Admin", "admin", "danger")]])
@@ -1329,6 +1330,7 @@ def admin_kb(uid=None):
         [B("🚫 Ban / Unban", "ban_menu")],
         [B(a_("rep"), "rep_today"), B(a_("stats"), "stats")],
         [B(a_("chans"), "chans"), B("🪙 CryptoBot", "cp")],
+        [B("🤖 AI Yardımcı", "ai_adm")],
         [B(a_("mk"), "mk_admin"), B("💳 TMT 🔜", "pay_set")],
         [B(a_("bcast"), "bcast")],
         [B(a_("ad"), "ad_post")],
@@ -1777,6 +1779,25 @@ async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
             audit(uid, "happ set")
             t, kb = happ_view(); await u.message.reply_text("✅ Happ hesabı bağlandı." + note + "\n\n" + t, parse_mode="HTML", reply_markup=kb)
 
+        elif act == "ai_set":
+            try: await u.message.delete()   # anahtar sohbette kalmasın
+            except Exception: pass
+            key_ = txt.strip()
+            try: await asyncio.to_thread(ai_call, "Kısa cevap ver.", [{"role": "user", "content": "ping"}], key_)
+            except Exception as e:
+                await u.message.reply_text(f"⚠️ Anahtar çalışmadı: <code>{esc(str(e)[:150])}</code>", parse_mode="HTML", reply_markup=back("ai_adm")); return
+            await asyncio.to_thread(set_env, "AI_API_KEY", key_); RUN.pop("ai_err", None)
+            audit(uid, "ai key set")
+            t_, kb_ = ai_view(); await u.message.reply_text("✅ AI bağlandı.\n\n" + t_, parse_mode="HTML", reply_markup=kb_)
+
+        elif act == "ai_lim":
+            try: n_ = int(txt.strip())
+            except Exception: n_ = -1
+            if not 1 <= n_ <= 1000:
+                STATE[uid] = st; await u.message.reply_text("⚠️ 1-1000 arası bir sayı yaz.", reply_markup=back("ai_adm")); return
+            mutate(lambda d: d.__setitem__("ai_limit", n_)); audit(uid, f"ai limit {n_}")
+            t_, kb_ = ai_view(); await u.message.reply_text("✅ Kaydedildi.\n\n" + t_, parse_mode="HTML", reply_markup=kb_)
+
         elif act == "cp_set":
             try: await u.message.delete()   # token sohbette kalmasın
             except Exception: pass
@@ -1825,7 +1846,7 @@ async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
         log.exception("msg_handler")
         await send_error(c, uid, f"mesaj:{act}", e)
 
-FOUNDER_ONLY = {"ban_menu", "ban_find", "hp", "hp_set", "hp_del", "hp_new", "ref_test", "mk_admin", "mk_price", "mk_oph", "mk_ods", "mk_odr", "bal_find", "usearch", "rep_today", "rep_yday", "tickets_bug", "t_cancel", "tickets", "cp_test", "cp", "cp_set", "cp_del", "ul_open", "stats", "chans", "ch_add", "pay_set", "bcast", "bcast_yes", "rollback", "rollback_yes", "auto_ann", "toggle_sys", "mk_rev", "ad_post", "ip_need", "ping_max", "admin", "sources", "s_add", "logs", "upd_now", "get_zip", "sa_menu", "sa_add", "bulk_ann", "bulk_title", "bulk_yes"}
+FOUNDER_ONLY = {"ban_menu", "ban_find", "hp", "hp_set", "hp_del", "hp_new", "ref_test", "mk_admin", "mk_price", "mk_oph", "mk_ods", "mk_odr", "bal_find", "usearch", "rep_today", "rep_yday", "tickets_bug", "t_cancel", "tickets", "cp_test", "cp", "cp_set", "cp_del", "ai_adm", "ai_set", "ai_lim", "ai_del", "ul_open", "stats", "chans", "ch_add", "pay_set", "bcast", "bcast_yes", "rollback", "rollback_yes", "auto_ann", "toggle_sys", "mk_rev", "ad_post", "ip_need", "ping_max", "admin", "sources", "s_add", "logs", "upd_now", "get_zip", "sa_menu", "sa_add", "bulk_ann", "bulk_title", "bulk_yes"}
 OWNED = ("kv", "kt", "kn", "ka", "kd", "kdy")   # alt admin sadece kendi kodunda
 def src_find(db, h): return next((s for s in db["sources"] if hashlib.md5(s.encode()).hexdigest()[:8] == h), None)
 
@@ -2153,6 +2174,21 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
 
     elif a == "cp":
         await safe_edit(q, *(await asyncio.to_thread(crypto_view)))
+
+    elif a == "ai_adm":
+        await safe_edit(q, *ai_view())
+
+    elif a == "ai_set":
+        STATE[uid] = {"action": "ai_set"}
+        await safe_edit(q, *prompt("🔑 <b>AI API anahtarı</b>", f"xKiro anahtarını gönder (sk-xt-…).\nAdres: <code>{esc(ai_base())}</code> · Model: <code>{esc(ai_model())}</code>\n<i>Mesajın güvenlik için hemen silinir.</i>", "ai_adm"))
+
+    elif a == "ai_lim":
+        STATE[uid] = {"action": "ai_lim"}
+        await safe_edit(q, *prompt("🔢 <b>Günlük soru sınırı</b>", f"Kullanıcı başı günde kaç soru? (şu an {ai_limit()})", "ai_adm"))
+
+    elif a == "ai_del":
+        await asyncio.to_thread(set_env, "AI_API_KEY", ""); audit(uid, "ai key del")
+        await safe_edit(q, *ai_view())
 
     elif a == "cp_test":
         try:
@@ -2671,6 +2707,79 @@ def set_env(key, val):
     if val: os.environ[key] = val
     else: os.environ.pop(key, None)
 
+# ── 🤖 Yardımcı (AI): xKiro üzerinden Anthropic biçimi (/v1/messages) ──
+AI_LIMIT = 20                    # kullanıcı başı günlük soru (kurucuya sınır yok); Admin → 🤖 AI'dan değişir
+AI_HIST = {}                     # uid -> son mesajlar (bellekte, kısa konuşma geçmişi)
+def ai_key(): return os.environ.get("AI_API_KEY", "")
+def ai_base(): return (os.environ.get("AI_BASE_URL") or "https://api.xkiro.com").rstrip("/")
+def ai_model(): return os.environ.get("AI_MODEL") or "anthropic/claude-opus-5.5"
+def ai_limit(db=None):
+    try: return int((db if db is not None else load_db()).get("ai_limit") or AI_LIMIT)
+    except Exception: return AI_LIMIT
+
+def ai_call(system, msgs, key=None):
+    """Tek istek. Dönüş: cevap yazısı. Hata: RuntimeError."""
+    body = {"model": ai_model(), "max_tokens": 4000, "system": system, "messages": msgs}
+    req = urllib.request.Request(ai_base() + "/v1/messages", data=json.dumps(body).encode("utf-8"),
+                                 headers={"x-api-key": key or ai_key(), "anthropic-version": "2023-06-01", "content-type": "application/json", "User-Agent": "subbot/1.0"})   # varsayılan Python UA'sını Cloudflare engelliyor (1010)
+    try:
+        with urllib.request.urlopen(req, timeout=120) as r: j = json.loads(r.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        try: msg = json.loads(e.read().decode("utf-8")).get("error", {}).get("message", "")
+        except Exception: msg = ""
+        raise RuntimeError(f"HTTP {e.code} {msg}"[:200])
+    txt = "".join(b.get("text", "") for b in j.get("content", []) if b.get("type") == "text").strip()
+    if not txt: raise RuntimeError("boş cevap")
+    return txt
+
+def _plain(t):
+    return html.unescape(re.sub(r"<[^>]+>", "", t))
+
+def ai_system(lang):
+    """Botun GERÇEK bilgileri (koddaki değerlerden) + kurallar. Model sadece bunlara dayanır."""
+    b = lambda k: re.sub(r"\s*\([^()]*\{\w+\}[^()]*\)|\{\w+\}", "", T[lang].get(k) or T["tr"].get(k, k)).strip()
+    lname = {"tk": "Türkmen dili (Turkmen)", "ru": "русский (Russian)"}.get(lang, "Türkçe (Turkish)")
+    tmt = lambda um: f"{um * USDT_RATE / UM:.2f}".rstrip("0").rstrip(".")
+    facts = f"""BOT: @{BOT.get('un') or 'SuBDrive_bot'} — Türkmenistan için VPN kodları (Happ uygulamasında abonelik linki olarak çalışır).
+KUR: 1 USDT = {USDT_RATE} TMT. Ödemeler CryptoBot (USDT) ile, otomatik onaylanır. TMT ile ödeme henüz yok (yakında).
+USDT almak için (TMT karşılığı) satıcılar: {', '.join(USDT_SELLERS)}.
+
+ANA MENÜ BUTONLARI: {b('b_pazar')} · {b('b_free')} · {b('b_mine')} · {b('b_prof')} · {b('b_market')} · {b('b_sup')} · {b('b_bug')} · {b('b_ai')} · {b('b_set')}
+
+ÜCRETSİZ KOD ({b('b_free')}): {REF_NEED} yeni arkadaş davet edince {FREE_DAYS} günlük ücretsiz kod. Günde en fazla 1 ücretsiz kod. Davet linki Profil'de; "{b('b_share')}" butonu bannerli reklamı seçilen sohbete gönderir (kendi davet linkiyle). Davet edilen kişi doğrulamayı geçince sayılır.
+DAVET BONUSU: her sayılan davet için {tmt(REF_BONUS)} TMT bonus. Bonus Market'te 7/30 günlük kod alırken "{b('b_pbon')}" butonuyla kullanılır.
+
+MARKET ({b('b_market')}) — botun kendi kodları:
+{_plain(b('market'))}
+PANEL: kendi kullanıcıların için kod oluşturup yönetebileceğin panel. Kullanıcı başı {PANEL_PRICE} TMT, en az {PANEL_MIN} kullanıcı, {PANEL_DAYS} gün geçerli. Süre bitmeden tekrar alınırsa kullanıcı sayısı eklenir ve süre {PANEL_DAYS} gün uzar. Onaydan sonra /start yazınca panel açılır. Bonus panelde kullanılmaz.
+Kodların protokolleri sunuculara göre değişir (VLESS, Hysteria, Shadowsocks vb.); hepsi Happ'te abonelik linkiyle çalışır.
+Sipariş ekranında: "{b('b_pbal')}" (profil bakiyesiyle, hemen teslim), "{b('b_usdt')}" (CryptoBot faturası), kod siparişlerinde "{b('b_pbon')}".
+
+BAKİYE: Profil → "{b('b_top')}". Hazır tutarlar 1/3/5/10 USDT ya da başka tutar (en az {TOPUP_MIN} USDT). Ödeme CryptoBot'ta yapılır, bot ödemeyi kendisi görür.
+
+PAZAR ({b('b_pazar')}) — satıcıların kodları, dakika başı ödeme:
+{_plain(b('rules'))}
+Alıcı: ilanı seç → "Satın Al" → onay. Başlatma {fmt_u(MKT_FEE)}$ + ilk {PREPAY_MIN // 60} saat peşin (iade edilmez), sonra her dakika bakiyeden düşer. Durdurmak: {b('b_mine')} → ⏹. Aynı ilan 24 saatte en fazla {MAX_STARTS_DAY} kez başlatılır. Bakiye bitince kod durur.
+Satıcı: Pazar → "{b('b_sell')}" (5 adım: abonelik linki, başlık, ekran görüntüsü, açıklama, fiyat). İlan ücreti {fmt_u(MKT_FEE)}$. Abonelik GB ve süre sınırsız olmalı. Kendi ilanını satın alamazsın. İlanlar telefonla Türkmenistan'dan test edilir ve admin onaylar. 💎 VIP: {fmt_u(VIP_FEE)}$ ile {VIP_HOURS} saat en üstte. İlanlarım → kullanım geçmişi, VIP, sil (sorulur).
+KAZANÇ ÇEKME: Profil → "{b('b_wd')}", en az {fmt_u(WITHDRAW_MIN)} USDT, CryptoBot hesabına gider (@CryptoBot'u en az bir kez açmış olmak gerekir). Kazanç alıcı durdurunca ya da her 24 saatte satıcıya geçer. Yüklenen bakiye çekilemez, sadece satış kazancı çekilir.
+
+KODLARIM ({b('b_mine')}): aktif kodlar ve abonelik linkleri. Kullanım: linki kopyala → Happ uygulaması → sağ üstteki + → panodan ekle (ya da linke dokun). Kodlar düzenli kontrol edilir; Happ'te aboneliği yenile (↻) ile güncel sunucular gelir.
+DESTEK: {b('b_sup')} ya da {b('b_bug')} → "✍️" butonu → yazı/fotoğraf/video gönder. 60 saniyede tek mesaj, hepsini tek mesajda yaz. Admin cevabı aynı sohbete gelir.
+DİL: {b('b_set')} → Türkçe / Türkmençe / Rusça."""
+    return f"""Sen @{BOT.get('un') or 'SuBDrive_bot'} Telegram botunun yardımcısısın. Kullanıcıların bot hakkındaki sorularını cevaplarsın.
+
+KURALLAR:
+- Cevabı HER ZAMAN şu dilde yaz: {lname}. Kullanıcı başka dilde yazarsa onun dilinde cevap ver.
+- SADECE aşağıdaki BİLGİLER'e dayan. Orada olmayan bir şeyi (fiyat, süre, özellik, tarih, kişi) asla uydurma veya tahmin etme. Emin değilsen bunu açıkça söyle ve kullanıcıyı "{b('b_sup')}" butonuna yönlendir.
+- Butonları tam adlarıyla, adım adım anlat.
+- Kısa ve net yaz (en fazla ~10 satır). Düz metin ve emoji kullan; HTML, Markdown, ** veya # kullanma.
+- Admin paneli, sunucu altyapısı, kodların kaynağı, test sistemi, diğer kullanıcılar veya gizli bilgiler hakkında bilgi verme.
+- Bot dışı konularda (genel sohbet, ödev vb.) kibarca sadece bot konusunda yardım ettiğini söyle.
+- Hesap/ödeme sorunu, para kaybı, bozuk kod gibi kişisel durumlarda çözümü tahmin etme; {b('b_sup')}'a yazmasını söyle.
+
+BİLGİLER:
+{facts}"""
+
 def lang_of(db, uid):   # tek kaynak: LANGC (menüler arasında tutarsızlık olmasın)
     is_ru(uid)   # LANGC'yi doldurur
     return LANGC.get(uid) if LANGC.get(uid) in ("tr", "tk", "ru") else "tr"
@@ -2779,6 +2888,7 @@ def pub_menu(db, uid):
              [B(tr(lang, "b_free"), "u_free"), B(tr(lang, "b_mine"), "u_mine", "primary")],
              [B(tr(lang, "b_prof"), "u_prof"), B(tr(lang, "b_market"), "u_market")],
              [B(tr(lang, "b_sup"), "u_sup"), B(tr(lang, "b_bug"), "u_bug")],
+             [B(tr(lang, "b_ai"), "u_ai", "primary")],
              [B(tr(lang, "b_set"), "u_set")]])
     return t, kb
 
@@ -2924,6 +3034,16 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
 
     elif a == "u_twx":
         STATE.pop(uid, None)
+        await show_home(c, uid, getattr(q, "message", None), send=send)
+
+    elif a == "u_ai":   # 🤖 Yardımcı: sonraki yazılar AI'ya gider
+        if not ai_key(): await send(tr(lang, "ai_off"), menu_btn); return
+        STATE[uid] = {"action": "ai"}; AI_HIST.pop(uid, None)
+        left = "∞" if uid in ADMINS else max(0, ai_limit(db) - (e.get("ai_n", 0) if e.get("ai_day") == tm_day() else 0))
+        await send(tr(lang, "ai_hi", n=left), KB([[B(tr(lang, "b_ai_end"), "u_aix")]]))
+
+    elif a == "u_aix":
+        STATE.pop(uid, None); AI_HIST.pop(uid, None)
         await show_home(c, uid, getattr(q, "message", None), send=send)
 
     elif a == "u_tclose":
@@ -3575,6 +3695,14 @@ def app_usdt():
         return "0"
     except Exception: return None
 
+def ai_view():
+    on = bool(ai_key())
+    db = load_db(); today = sum(x.get("ai_n", 0) for x in db.get("users", {}).values() if x.get("ai_day") == tm_day())
+    t = ("🤖 <b>AI Yardımcı</b>\n<blockquote>" + ("🟢 Bağlı" if on else "⚪️ Bağlı değil — kullanıcılar butonu görür ama kapalı der") +
+         f"\n🌐 <code>{esc(ai_base())}</code>\n🧠 <code>{esc(ai_model())}</code>\n🔢 Günlük sınır  <b>{ai_limit(db)}</b> soru/kişi\n📊 Bugün  <b>{today}</b> soru</blockquote>"
+         + (f"\n⚠️ Son hata: <code>{esc(RUN.get('ai_err', ''))}</code>" if RUN.get("ai_err") else ""))
+    return t, KB([[B("🔑 Anahtar Gir", "ai_set", "primary")], [B("🔢 Günlük Sınır", "ai_lim")]] + ([[B("🗑 Anahtarı Kaldır", "ai_del", "danger")]] if on else []) + [[B("◀️ Admin", "admin")]])
+
 def crypto_view():
     tok = crypto_token()
     if tok:
@@ -3797,12 +3925,43 @@ async def close_ticket(c, tid, by_admin):
         await notify_founders(c.application if hasattr(c, "application") else c, f"🔒 Kullanıcı destek talebini kapattı · #{tid}\n<blockquote>{esc(t.get('who'))}</blockquote>")
     return True
 
+async def ai_answer(c, u):
+    m = u.message; uid = u.effective_user.id; lang = lang_of(load_db(), uid)
+    kb = KB([[B(tr(lang, "b_ai_end"), "u_aix")], [B(tr(lang, "b_sup"), "u_sup")]])
+    q = (m.text or m.caption or "").strip()
+    if not q: await m.reply_text(tr(lang, "ai_text"), reply_markup=kb); return
+    if time.time() - AI_HIST.get(("t", uid), 0) < 3: return   # art arda spam
+    AI_HIST[("t", uid)] = time.time()
+    lim = ai_limit()
+    def f(d):
+        x = d["users"].setdefault(str(uid), {})
+        if x.get("ai_day") != tm_day(): x["ai_day"], x["ai_n"] = tm_day(), 0
+        if uid not in ADMINS and x["ai_n"] >= lim: return False
+        x["ai_n"] += 1; return True
+    if not mutate(f): await m.reply_text(tr(lang, "ai_lim", n=lim), reply_markup=kb); return
+    hist = AI_HIST.setdefault(uid, [])
+    msgs = hist[-8:] + [{"role": "user", "content": q[:2000]}]
+    try: await c.bot.send_chat_action(uid, "typing")
+    except Exception: pass
+    try:
+        ans = await asyncio.to_thread(ai_call, ai_system(lang), msgs)
+    except Exception as ex:
+        mutate(lambda d: d["users"][str(uid)].__setitem__("ai_n", max(0, d["users"][str(uid)].get("ai_n", 1) - 1)))   # hata sayılmaz
+        log.warning("ai: %s", ex); RUN["ai_err"] = str(ex)[:150]
+        await m.reply_text(tr(lang, "ai_err"), reply_markup=kb); return
+    hist += [{"role": "user", "content": q[:2000]}, {"role": "assistant", "content": ans[:3000]}]
+    AI_HIST[uid] = hist[-8:]
+    await m.reply_text("🤖 " + esc(ans)[:3900], parse_mode="HTML", reply_markup=kb, disable_web_page_preview=True)
+
 async def support_router(u: Update, c: ContextTypes.DEFAULT_TYPE):
     """Her mesajdan ÖNCE çalışır: açık destek talebi ya da kurucu cevabı varsa mesajı oraya yönlendirir."""
     m = u.message
     if not m or not u.effective_user or m.chat.type != "private": return
     uid = u.effective_user.id
     st0 = STATE.get(uid) or {}
+    if st0.get("action") == "ai":   # 🤖 Yardımcı
+        if not is_banned(uid): await ai_answer(c, u)
+        raise ApplicationHandlerStop
     if st0.get("action") in ("u_sell", "u_topamt"):   # pazar: ilan adımları / yükleme tutarı (yazı ya da fotoğraf)
         if not is_banned(uid): await market_input(c, u, st0)
         raise ApplicationHandlerStop
@@ -4239,9 +4398,9 @@ T["tr"].update({
   "myl": "📦 <b>İlanlarım</b>", "myl_none": "📦 <b>İlanlarım</b>\n<blockquote>İlanın yok.</blockquote>",
   "myl_item": "<blockquote>{st} <b>{title}</b>\n💲 {p} USDT/dk · 👥 {n} alıcı · 💰 {earned} USDT kazanç</blockquote>",
   "st_pending": "⏳", "st_live": "🟢", "st_removed": "⛔", "st_rejected": "❌",
-  "rules": "📜 <b>Pazar kuralları</b>\n\n🏪 <b><u>SATICI</u></b>\n<blockquote>• Her ilan 0.05$ (iade edilmez).\n• Abonelik limitsiz olmalı; ekran görüntüsü zorunlu.\n• Başvuruda en az 4 farklı gerçek ülke (bot ölçer, bayraklara bakılmaz).\n• 💎 VIP: 0.2$ ile 36 saat en üstte.\n• Kazanç: alıcı durdurunca, uzun kullanımda her 24 saatte bir gönderilir.\n• 🔒 Kodların sadece satın alan kişinin dosyasına yazılır, durdurunca silinir. Her kullanım İlanlarım → 📜 Kullanım geçmişi'nde görünür.</blockquote>\n\n🛒 <b><u>ALICI</u></b>\n<blockquote>• Her başlatma 0.05$ + ilk 5 saat peşin (iade edilmez).\n• Aynı ilan 24 saatte en fazla 3 kez başlatılır.\n• Dakika başı ücret bakiyenden düşer (kullansan da kullanmasan da).\n• İstediğin an durdurursun; bakiye bitince kod durur.\n• Bakiye en az 1$ yüklenir; yüklenen bakiye geri çekilmez.</blockquote>",
+  "rules": "📜 <b>Pazar kuralları</b>\n\n🏪 <b><u>SATICI</u></b>\n<blockquote>• Her ilan 0.05$ (iade edilmez).\n• Abonelik limitsiz olmalı; ekran görüntüsü zorunlu.\n• Başvuruda en az 4 farklı gerçek ülke (bot ölçer, bayraklara bakılmaz).\n• 💎 VIP: 0.2$ ile 36 saat en üstte.\n• Kazanç: alıcı durdurunca, uzun kullanımda her 24 saatte bir gönderilir.\n• 🔒 Kodların sadece satın alan kişinin dosyasına yazılır, durdurunca silinir. Her kullanım İlanlarım → 📜 Kullanım geçmişi'nde görünür.</blockquote>\n\n🛒 <b><u>ALICI</u></b>\n<blockquote>• Her başlatma 0.05$ + ilk 5 saat peşin (iade edilmez).\n• Aynı ilan 24 saatte en fazla 3 kez başlatılır.\n• Dakika başı ücret bakiyenden düşer (kullansan da kullanmasan da).\n• İstediğin an durdurursun; bakiye bitince kod durur.\n• Bakiye en az 0.1$ yüklenir; yüklenen bakiye geri çekilmez.</blockquote>",
   "bal_line": "\n\n💰 <b>Bakiye</b> {bal} USDT ≈ {tmt} TMT" , "earn_line": "\n💼 <b>Çekilebilir kazanç</b>  {earn} USDT",
-  "top": "➕ <b>Bakiye Yükle</b>\n<blockquote>CryptoBot ile USDT. En az 1 USDT.\n💰 Bakiyen  <b>{bal} USDT</b></blockquote>",
+  "top": "➕ <b>Bakiye Yükle</b>\n<blockquote>CryptoBot ile USDT. En az 0.1 USDT.\n💰 Bakiyen  <b>{bal} USDT</b></blockquote>",
   "top_ask": "✏️ Kaç USDT yüklemek istiyorsun? (en az 0.1)", "top_bad": "⚠️ En az 0.1 USDT, sayı yaz (ör. 2.5).",
   "top_order": "🧾 <b>Bakiye yükleme · #{oid}</b>\n<blockquote>💵 <b>{usdt} USDT</b></blockquote>\n«💵 USDT ile öde»ye bas.",
   "it_top": "Bakiye yükleme · {usdt} USDT",
@@ -4290,9 +4449,9 @@ T["ru"].update({
   "m_paid_bal": "🎉 <b>Поздравляем!</b>\n<blockquote>🏪 {title}\n⏱ Покупатель использовал ваш код {dur}\n💰 Выплата  <b>{usdt} USDT</b> (≈{tmt} TMT)</blockquote>\n💼 Зачислено на ваш баланс в боте. Профиль → 💸 Вывести доход.",
   "myl": "📦 <b>Мои объявления</b>", "myl_none": "📦 <b>Мои объявления</b>\n<blockquote>Объявлений нет.</blockquote>",
   "myl_item": "<blockquote>{st} <b>{title}</b>\n💲 {p} USDT/мин · 👥 {n} покуп. · 💰 {earned} USDT доход</blockquote>",
-  "rules": "📜 <b>Правила биржи</b>\n\n🏪 <b><u>ПРОДАВЕЦ</u></b>\n<blockquote>• Каждое объявление 0.05$ (не возвращается).\n• Подписка должна быть безлимитной; скриншот обязателен.\n• При подаче минимум 4 разные реальные страны (бот измеряет сам, флаги не учитываются).\n• 💎 VIP: 0.2$ — 36 часов на самом верху.\n• Выплата: после остановки покупателем, при долгом использовании — каждые 24 ч.\n• 🔒 Ваши коды записываются только в файл купившего и удаляются после остановки. Каждое использование видно в Мои объявления → 📜 История.</blockquote>\n\n🛒 <b><u>ПОКУПАТЕЛЬ</u></b>\n<blockquote>• Каждый запуск 0.05$ + первые 5 часов сразу (не возвращается).\n• Одно объявление — не больше 3 запусков за 24 ч.\n• Поминутная оплата списывается с баланса (пользуетесь или нет).\n• Остановить можно в любой момент; при нулевом балансе код останавливается.\n• Пополнение от 1$; пополненный баланс не выводится.</blockquote>",
+  "rules": "📜 <b>Правила биржи</b>\n\n🏪 <b><u>ПРОДАВЕЦ</u></b>\n<blockquote>• Каждое объявление 0.05$ (не возвращается).\n• Подписка должна быть безлимитной; скриншот обязателен.\n• При подаче минимум 4 разные реальные страны (бот измеряет сам, флаги не учитываются).\n• 💎 VIP: 0.2$ — 36 часов на самом верху.\n• Выплата: после остановки покупателем, при долгом использовании — каждые 24 ч.\n• 🔒 Ваши коды записываются только в файл купившего и удаляются после остановки. Каждое использование видно в Мои объявления → 📜 История.</blockquote>\n\n🛒 <b><u>ПОКУПАТЕЛЬ</u></b>\n<blockquote>• Каждый запуск 0.05$ + первые 5 часов сразу (не возвращается).\n• Одно объявление — не больше 3 запусков за 24 ч.\n• Поминутная оплата списывается с баланса (пользуетесь или нет).\n• Остановить можно в любой момент; при нулевом балансе код останавливается.\n• Пополнение от 0.1$; пополненный баланс не выводится.</blockquote>",
   "bal_line": "\n\n💰 <b>Баланс</b> {bal} USDT ≈ {tmt} TMT", "earn_line": "\n💼 <b>Доход к выводу</b>  {earn} USDT",
-  "top": "➕ <b>Пополнение</b>\n<blockquote>USDT через CryptoBot. Минимум 1 USDT.\n💰 Баланс  <b>{bal} USDT</b></blockquote>",
+  "top": "➕ <b>Пополнение</b>\n<blockquote>USDT через CryptoBot. Минимум 0.1 USDT.\n💰 Баланс  <b>{bal} USDT</b></blockquote>",
   "top_ask": "✏️ Сколько USDT пополнить? (минимум 0.1)", "top_bad": "⚠️ Минимум 0.1 USDT, напишите число (напр. 2.5).",
   "top_order": "🧾 <b>Пополнение · #{oid}</b>\n<blockquote>💵 <b>{usdt} USDT</b></blockquote>\nНажмите «💵 Оплатить USDT».",
   "it_top": "Пополнение · {usdt} USDT",
@@ -4322,7 +4481,7 @@ T["tr"].update({
   "m_removed": "⛔ <b>İlanın {h} saat yasaklandı</b>\n<blockquote>🏪 {title}\n{why}</blockquote>\n<i>Yasak süresince kodların verilmez, iade yapılmaz. Yasak bitince ilan kendiliğinden yeniden incelenir.</i>",
   "myl_item": "<blockquote>{st} <b>{title}</b>{vip}\n💲 {m} TMT/30 gün · 👥 {n} alıcı · 💰 {earned} USDT{extra}</blockquote>",
   "myl_pend": "\n⏳ Teste gönderildi {ago} · test {a}/{b}", "myl_susp": "\n⛔ Yasak bitişi: {left} sonra", "st_suspended": "⛔",
-  "rules": "📜 <b>Pazar kuralları</b>\n\n🏪 <b><u>SATICI</u></b>\n<blockquote>• Her ilan 0.05$ (iade edilmez).\n• Abonelik limitsiz olmalı; ekran görüntüsü zorunlu.\n• Başvuruda en az 4 farklı gerçek ülke (bot ölçer, bayraklara bakılmaz).\n• 💎 VIP: 0.2$ ile 36 saat en üstte.\n• Kazanç: alıcı durdurunca, uzun kullanımda her 24 saatte bir gönderilir.\n• 🔒 Kodların sadece satın alan kişinin dosyasına yazılır, durdurunca silinir. Her kullanım İlanlarım → 📜 Kullanım geçmişi'nde görünür.</blockquote>\n\n🛒 <b><u>ALICI</u></b>\n<blockquote>• Her başlatma 0.05$ + ilk 5 saat peşin (iade edilmez).\n• Aynı ilan 24 saatte en fazla 3 kez başlatılır.\n• Dakika başı ücret bakiyenden düşer (kullansan da kullanmasan da).\n• İstediğin an durdurursun; bakiye bitince kod durur.\n• Bakiye en az 1$ yüklenir; yüklenen bakiye geri çekilmez.</blockquote>",
+  "rules": "📜 <b>Pazar kuralları</b>\n\n🏪 <b><u>SATICI</u></b>\n<blockquote>• Her ilan 0.05$ (iade edilmez).\n• Abonelik limitsiz olmalı; ekran görüntüsü zorunlu.\n• Başvuruda en az 4 farklı gerçek ülke (bot ölçer, bayraklara bakılmaz).\n• 💎 VIP: 0.2$ ile 36 saat en üstte.\n• Kazanç: alıcı durdurunca, uzun kullanımda her 24 saatte bir gönderilir.\n• 🔒 Kodların sadece satın alan kişinin dosyasına yazılır, durdurunca silinir. Her kullanım İlanlarım → 📜 Kullanım geçmişi'nde görünür.</blockquote>\n\n🛒 <b><u>ALICI</u></b>\n<blockquote>• Her başlatma 0.05$ + ilk 5 saat peşin (iade edilmez).\n• Aynı ilan 24 saatte en fazla 3 kez başlatılır.\n• Dakika başı ücret bakiyenden düşer (kullansan da kullanmasan da).\n• İstediğin an durdurursun; bakiye bitince kod durur.\n• Bakiye en az 0.1$ yüklenir; yüklenen bakiye geri çekilmez.</blockquote>",
 })
 T["ru"].update({
   "b_pazar": "🏪 Биржа", "b_start": "▶️ Запустить", "b_live": "📊 Онлайн", "b_vip": "💎 VIP · 36 ч · 0.2$", "b_yes_stop": "✅ Да, остановить", "b_no": "✖️ Отмена",
@@ -4343,7 +4502,7 @@ T["ru"].update({
   "m_removed": "⛔ <b>Объявление заблокировано на {h} ч</b>\n<blockquote>🏪 {title}\n{why}</blockquote>\n<i>Во время бана коды не выдаются, возврата нет. После бана объявление автоматически проверяется снова.</i>",
   "myl_item": "<blockquote>{st} <b>{title}</b>{vip}\n💲 {m} TMT/30 дн · 👥 {n} покуп. · 💰 {earned} USDT{extra}</blockquote>",
   "myl_pend": "\n⏳ Отправлено на тест {ago} · проверено {a}/{b}", "myl_susp": "\n⛔ Бан закончится через {left}", "st_suspended": "⛔",
-  "rules": "📜 <b>Правила биржи</b>\n\n🏪 <b><u>ПРОДАВЕЦ</u></b>\n<blockquote>• Каждое объявление 0.05$ (не возвращается).\n• Подписка должна быть безлимитной; скриншот обязателен.\n• При подаче минимум 4 разные реальные страны (бот измеряет сам, флаги не учитываются).\n• 💎 VIP: 0.2$ — 36 часов на самом верху.\n• Выплата: после остановки покупателем, при долгом использовании — каждые 24 ч.\n• 🔒 Ваши коды записываются только в файл купившего и удаляются после остановки. Каждое использование видно в Мои объявления → 📜 История.</blockquote>\n\n🛒 <b><u>ПОКУПАТЕЛЬ</u></b>\n<blockquote>• Каждый запуск 0.05$ + первые 5 часов сразу (не возвращается).\n• Одно объявление — не больше 3 запусков за 24 ч.\n• Поминутная оплата списывается с баланса (пользуетесь или нет).\n• Остановить можно в любой момент; при нулевом балансе код останавливается.\n• Пополнение от 1$; пополненный баланс не выводится.</blockquote>",
+  "rules": "📜 <b>Правила биржи</b>\n\n🏪 <b><u>ПРОДАВЕЦ</u></b>\n<blockquote>• Каждое объявление 0.05$ (не возвращается).\n• Подписка должна быть безлимитной; скриншот обязателен.\n• При подаче минимум 4 разные реальные страны (бот измеряет сам, флаги не учитываются).\n• 💎 VIP: 0.2$ — 36 часов на самом верху.\n• Выплата: после остановки покупателем, при долгом использовании — каждые 24 ч.\n• 🔒 Ваши коды записываются только в файл купившего и удаляются после остановки. Каждое использование видно в Мои объявления → 📜 История.</blockquote>\n\n🛒 <b><u>ПОКУПАТЕЛЬ</u></b>\n<blockquote>• Каждый запуск 0.05$ + первые 5 часов сразу (не возвращается).\n• Одно объявление — не больше 3 запусков за 24 ч.\n• Поминутная оплата списывается с баланса (пользуетесь или нет).\n• Остановить можно в любой момент; при нулевом балансе код останавливается.\n• Пополнение от 0.1$; пополненный баланс не выводится.</blockquote>",
 })
 
 T["tr"].update({
@@ -4634,10 +4793,10 @@ T["tk"] = {
  "st_live": "🟢",
  "st_removed": "⛔",
  "st_rejected": "❌",
- "rules": "📜 <b>Bazaryň düzgünleri</b>\n\n🏪 <b><u>SATYJY</u></b>\n<blockquote>• Her bildiriş 0.05$ (yzyna gaýtarylmaýar).\n• Podpiska limitsiz bolmaly; skrinşot hökman.\n• Bildiriş berlende azyndan 4 dürli hakyky ýurt bolmaly (bot özi ölçeýär, baýdaklara seredilmeýär).\n• 💎 VIP: 0.2$ töläp, 36 sagat iň ýokarda durýar.\n• Gazanç: alyjy kody yzyna gowşuranda, uzak ulanylsa her 24 sagatda bir gezek iberilýär.\n• 🔒 Kodlaryňyz diňe satyn alan adamyň faýlyna ýazylýar, yzyna gowşurylanda pozulýar. Her ulanylyşy Bildirişlerim → 📜 Ulanyş taryhy bölüminde görünýär.</blockquote>\n\n🛒 <b><u>ALYJY</u></b>\n<blockquote>• Her gezek başlamak 0.05$ + ilkinji 5 sagat öňünden (yzyna gaýtarylmaýar).\n• Bir bildiriş 24 sagatda iň köp 3 gezek başladylýar.\n• Minutlyk töleg balansyňdan aýrylýar (ulansaň-da, ulanmasaň-da).\n• Islän wagtyň yzyna gowşurup bilersiň; balans gutarsa, kod özi yzyna gowşurylýar.\n• Balans azyndan 1$ doldurylýar; doldurylan balansy yzyna çekip bolmaýar.</blockquote>",
+ "rules": "📜 <b>Bazaryň düzgünleri</b>\n\n🏪 <b><u>SATYJY</u></b>\n<blockquote>• Her bildiriş 0.05$ (yzyna gaýtarylmaýar).\n• Podpiska limitsiz bolmaly; skrinşot hökman.\n• Bildiriş berlende azyndan 4 dürli hakyky ýurt bolmaly (bot özi ölçeýär, baýdaklara seredilmeýär).\n• 💎 VIP: 0.2$ töläp, 36 sagat iň ýokarda durýar.\n• Gazanç: alyjy kody yzyna gowşuranda, uzak ulanylsa her 24 sagatda bir gezek iberilýär.\n• 🔒 Kodlaryňyz diňe satyn alan adamyň faýlyna ýazylýar, yzyna gowşurylanda pozulýar. Her ulanylyşy Bildirişlerim → 📜 Ulanyş taryhy bölüminde görünýär.</blockquote>\n\n🛒 <b><u>ALYJY</u></b>\n<blockquote>• Her gezek başlamak 0.05$ + ilkinji 5 sagat öňünden (yzyna gaýtarylmaýar).\n• Bir bildiriş 24 sagatda iň köp 3 gezek başladylýar.\n• Minutlyk töleg balansyňdan aýrylýar (ulansaň-da, ulanmasaň-da).\n• Islän wagtyň yzyna gowşurup bilersiň; balans gutarsa, kod özi yzyna gowşurylýar.\n• Balans azyndan 0.1$ doldurylýar; doldurylan balansy yzyna çekip bolmaýar.</blockquote>",
  "bal_line": "\n\n💰 <b>Balans</b> {bal} USDT ≈ {tmt} TMT",
  "earn_line": "\n💼 <b>Çekip boljak gazanç</b>  {earn} USDT",
- "top": "➕ <b>Balansy doldur</b>\n<blockquote>CryptoBot arkaly USDT. Azyndan 1 USDT.\n💰 Balansyň  <b>{bal} USDT</b></blockquote>",
+ "top": "➕ <b>Balansy doldur</b>\n<blockquote>CryptoBot arkaly USDT. Azyndan 0.1 USDT.\n💰 Balansyň  <b>{bal} USDT</b></blockquote>",
  "top_ask": "✏️ Näçe USDT doldurmak isleýärsiň? (azyndan 0.1)",
  "top_bad": "⚠️ Azyndan 0.1 USDT, san ýaz (mysal: 2.5).",
  "top_order": "🧾 <b>Balansy doldurmak · #{oid}</b>\n<blockquote>💵 <b>{usdt} USDT</b></blockquote>\n«💵 USDT bilen töle» düwmesine bas.",
@@ -4749,6 +4908,21 @@ T["tk"].update({"vip_q": "💎 <b>Bildiriş VIP edilsinmi?</b>\n<blockquote>🏪
   "b_yes_vip": "✅ Hawa, VIP et", "mld_q": "🗑 <b>Bildiriş pozulsynmy?</b>\n<blockquote>🏪 {title}\n👥 Häzir ulanýan  <b>{n}</b>\nBildiriş bazardan aýrylýar, yzyna gaýtaryp bolmaýar.</blockquote>", "b_yes_mld": "🗑 Hawa, poz"})
 T["ru"].update({"vip_q": "💎 <b>Сделать объявление VIP?</b>\n<blockquote>🏪 {title}\n⏳ {h} ч на самом верху биржи\n💵 Стоимость  <b>{fee} USDT</b> (не возвращается)\n💰 Баланс  <b>{bal} USDT</b></blockquote>",
   "b_yes_vip": "✅ Да, сделать VIP", "mld_q": "🗑 <b>Удалить объявление?</b>\n<blockquote>🏪 {title}\n👥 Сейчас пользуются  <b>{n}</b>\nОбъявление уйдёт с биржи, отменить нельзя.</blockquote>", "b_yes_mld": "🗑 Да, удалить"})
+T["tr"].update({"b_ai": "🤖 Yardımcı", "b_ai_end": "◀️ Menü",
+  "ai_hi": "🤖 <b>Yardımcı</b>\n<blockquote>Bot hakkında sorunu yaz: fiyatlar, Pazar, kod alma, Happ'e ekleme, bakiye, kazanç çekme…\n🔢 Bugün kalan soru  <b>{n}</b></blockquote>\n<i>Sorunu mesaj olarak gönder</i> 👇",
+  "ai_off": "🤖 Yardımcı şu an kapalı. 🆘 Support'a yazabilirsin.", "ai_text": "✍️ Sorunu yazı olarak gönder.",
+  "ai_lim": "⏳ Bugünkü {n} soru hakkın bitti. Yarın tekrar sorabilir ya da 🆘 Support'a yazabilirsin.",
+  "ai_err": "⚠️ Yardımcı şu an cevap veremedi, biraz sonra tekrar dene ya da 🆘 Support'a yaz. (Hakkın düşülmedi.)"})
+T["tk"].update({"b_ai": "🤖 Kömekçi", "b_ai_end": "◀️ Menýu",
+  "ai_hi": "🤖 <b>Kömekçi</b>\n<blockquote>Bot barada soragyňy ýaz: bahalar, Bazar, kod almak, Happ-a goşmak, balans, gazanç çekmek…\n🔢 Şu gün galan sorag  <b>{n}</b></blockquote>\n<i>Soragyňy habar edip iber</i> 👇",
+  "ai_off": "🤖 Kömekçi häzir ýapyk. 🆘 Goldaw-a ýazyp bilersiň.", "ai_text": "✍️ Soragyňy tekst görnüşinde iber.",
+  "ai_lim": "⏳ Şu günki {n} sorag hakyň gutardy. Ertir gaýtadan sorap ýa-da 🆘 Goldaw-a ýazyp bilersiň.",
+  "ai_err": "⚠️ Kömekçi häzir jogap berip bilmedi, birazdan gaýtadan synan ýa-da 🆘 Goldaw-a ýaz. (Hakyň aýrylmady.)"})
+T["ru"].update({"b_ai": "🤖 Помощник", "b_ai_end": "◀️ Меню",
+  "ai_hi": "🤖 <b>Помощник</b>\n<blockquote>Задайте вопрос о боте: цены, Биржа, покупка кода, добавление в Happ, баланс, вывод…\n🔢 Осталось вопросов сегодня  <b>{n}</b></blockquote>\n<i>Отправьте вопрос сообщением</i> 👇",
+  "ai_off": "🤖 Помощник сейчас выключен. Напишите в 🆘 Поддержку.", "ai_text": "✍️ Отправьте вопрос текстом.",
+  "ai_lim": "⏳ Лимит {n} вопросов на сегодня исчерпан. Спросите завтра или напишите в 🆘 Поддержку.",
+  "ai_err": "⚠️ Помощник сейчас не ответил, попробуйте позже или напишите в 🆘 Поддержку. (Вопрос не засчитан.)"})
 T["tr"]["m_own"] = "⚠️ <b>Kendi ilanını satın alamazsın.</b>"
 T["tk"]["m_own"] = "⚠️ <b>Öz bildirişiňizi satyn alyp bilmeýärsiňiz.</b>"
 T["ru"]["m_own"] = "⚠️ <b>Нельзя купить своё собственное объявление.</b>"
