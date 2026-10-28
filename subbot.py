@@ -1590,6 +1590,7 @@ def bulk_apply(field, val):
 # ───────── HANDLERS ─────────
 async def start(u: Update, c: ContextTypes.DEFAULT_TYPE):
     uid = u.effective_user.id
+    if u.message and await ticket_cmd_ask(u): return   # açık talep: önce sor
     if not is_admin(uid) or is_banned(uid): return await pub_start(u, c)
     STATE.pop(uid, None)
     if uid not in ADMINS:
@@ -2928,7 +2929,7 @@ Satıcı: Pazar → "{b('b_sell')}" (5 adım: abonelik linki, başlık, ekran g�
 KAZANÇ ÇEKME: Profil → "{b('b_wd')}", en az {fmt_u(WITHDRAW_MIN)} USDT, CryptoBot hesabına gider (@CryptoBot'u en az bir kez açmış olmak gerekir). Kazanç alıcı durdurunca ya da her 24 saatte satıcıya geçer. Yüklenen bakiye çekilemez, sadece satış kazancı çekilir.
 
 KODLARIM ({b('b_mine')}): aktif kodlar ve abonelik linkleri. Kullanım: linki kopyala → Happ uygulaması → sağ üstteki + → panodan ekle (ya da linke dokun). Kodlar düzenli kontrol edilir; Happ'te aboneliği yenile (↻) ile güncel sunucular gelir.
-DESTEK: {b('b_sup')} ya da {b('b_bug')} → "✍️" butonu → yazı/fotoğraf/video gönder. 60 saniyede tek mesaj, hepsini tek mesajda yaz. Admin cevabı aynı sohbete gelir.
+DESTEK: {b('b_sup')} ya da {b('b_bug')} → "✍️" butonu (bir kez) → yazı/fotoğraf/video gönder, talep kapanana kadar yazılabilir. 5 saniyede tek mesaj, hepsini tek mesajda yaz. Admin cevabı aynı sohbete gelir.
 DİL: {b('b_set')} → Türkçe / Türkmençe / Rusça."""
     return f"""Sen @{BOT.get('un') or 'SuBDrive_bot'} Telegram botunun yardımcısısın. Kullanıcıların bot hakkındaki sorularını cevaplarsın.
 
@@ -3115,6 +3116,20 @@ async def pub_gate(c, uid, lang, send):
     if not e.get("ok"): await credit_ref(c, uid)
     return True
 
+async def ticket_cmd_ask(u):
+    """Açık talep varken komut yazıldı: önce talebi kapatmak isteyip istemediği sorulur. Soruldu ise True."""
+    uid = u.effective_user.id
+    if uid in ADMINS or is_banned(uid): return False
+    db_ = load_db(); tid = open_ticket(db_, uid)
+    if not tid: return False
+    lang_ = lang_of(db_, uid)
+    await u.message.reply_text(tr(lang_, "sup_cmd_q", tid=tid), parse_mode="HTML",
+                               reply_markup=KB([[B(tr(lang_, "b_tclose_yes"), "u_tclose", "danger")], [B(tr(lang_, "b_tkeep"), "u_tw", "primary")]]))
+    return True
+
+async def other_cmd(u: Update, c: ContextTypes.DEFAULT_TYPE):
+    if u.message and u.effective_user and u.message.chat.type == "private": await ticket_cmd_ask(u)
+
 async def pub_start(u: Update, c: ContextTypes.DEFAULT_TYPE):
     user = u.effective_user
     if is_banned(user.id):
@@ -3214,13 +3229,15 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         key = ("bug_new" if kind == "bug" else "sup_new") if new else "sup_open"
         await bsend(kind, tr(lang, key, tid=tid) + "\n" + tr(lang, "sup_rate"), KB([[B(tr(lang, "b_twrite"), "u_tw", "primary")], [B(tr(lang, "b_tclose"), "u_tclose", "danger")], [B(tr(lang, "b_menu"), "u_menu")]]))
 
-    elif a == "u_tw":   # ✍️ Yaz: sıradaki tek mesaj (yazı / foto / video) talebe gider
+    elif a == "u_tw":   # ✍️ Yaz: bir kez basınca talep kapanana kadar yazılanlar talebe gider
         tid = open_ticket(load_db(), uid)
         if not tid: await send(tr(lang, "sup_closed", tid="—"), KB([[B(tr(lang, "b_menu"), "u_menu")]])); return
-        STATE[uid] = {"action": "t_write", "tid": tid}
+        STATE.pop(uid, None); mutate(lambda d: d["tickets"][tid].__setitem__("armed", True))
         await send(tr(lang, "sup_ask") + "\n" + tr(lang, "sup_rate"), KB([[B(tr(lang, "b_cancel"), "u_twx")]]))
 
-    elif a == "u_twx":
+    elif a == "u_twx":   # ✍️ iptal: yazma kapanır (talep açık kalır)
+        tid_ = open_ticket(load_db(), uid)
+        if tid_: mutate(lambda d: d["tickets"][tid_].pop("armed", None))
         STATE.pop(uid, None)
         await show_home(c, uid, getattr(q, "message", None), send=send)
 
@@ -4165,7 +4182,7 @@ async def broadcast(app, text, admin_uid):
 
 # ───────── DESTEK (talep) + HATA BİLDİRİMİ ─────────
 SUP_MAX = 3                      # admin cevap vermeden kullanıcının gönderebileceği mesaj sayısı
-SUP_EVERY = 60                   # destek / bug: kullanıcı 60 saniyede tek mesaj gönderebilir
+SUP_EVERY = 5                    # destek / bug: kullanıcı 5 saniyede tek mesaj gönderebilir
 SUP_LIMIT_MB = {"photo": 5, "other": 10}
 ERRS = {}                        # hata no -> bilgi (Admine Bildir butonu için)
 ERR_SEEN = {}                    # uid -> son hata mesajı zamanı (aynı kişiye arka arkaya hata yağmasın)
@@ -4459,15 +4476,13 @@ async def support_router(u: Update, c: ContextTypes.DEFAULT_TYPE):
         if st.get("action") == "t_reply": STATE.pop(uid, None)
         await admin_reply(c, uid, tid, m)
         raise ApplicationHandlerStop
-    if st0.get("action") == "t_write":   # ✍️ Yaz'a bastı: bu mesaj talebe gider
-        STATE.pop(uid, None)
-        if is_banned(uid): raise ApplicationHandlerStop
-        tid = open_ticket(load_db(), uid) or st0.get("tid")
-        if open_ticket(load_db(), uid): await user_to_ticket(c, u, tid)
-        raise ApplicationHandlerStop
     if uid in STATE or is_banned(uid): return    # başka bir işlem bekleniyor (ör. panel kullanıcı sayısı) / engelli
-    tid = open_ticket(load_db(), uid)
+    db_ = load_db(); tid = open_ticket(db_, uid)
     if not tid: return
+    if not db_["tickets"][tid].get("armed"):   # ✍️ Yaz'a henüz basılmadı: talebe gitmez, hatırlatılır
+        lang_ = lang_of(db_, uid)
+        await m.reply_text(tr(lang_, "sup_press", tid=tid), parse_mode="HTML", reply_markup=KB([[B(tr(lang_, "b_twrite"), "u_tw", "primary")], [B(tr(lang_, "b_tclose"), "u_tclose", "danger")]]))
+        raise ApplicationHandlerStop
     await user_to_ticket(c, u, tid)
     raise ApplicationHandlerStop
 
@@ -5459,15 +5474,15 @@ T["ru"].update({"fake_rej": "🤥 <b>Объявление отклонено: ф
     "fee_x2_note": "\n⚠️ <b>Штраф за фальшивый пинг:</b> это объявление в 2 раза дороже."})
 
 # Destek / Bug: ✍️ Yaz butonu + 60 sn sınırı
-T["tr"].update({"b_twrite": "✍️ Yaz", "sup_ask": "✍️ <b>Mesajını gönder</b>\n<blockquote>Yazı, fotoğraf ya da video — fark etmez.</blockquote>",
-  "sup_rate": "<i>⏱ 60 saniyede tek mesaj gönderebilirsin — hepsini tek mesajda yaz.</i>",
-  "sup_slow": "⏳ 60 saniyede tek mesaj gönderebilirsin. {s} sn sonra tekrar dene — hepsini tek mesajda yaz."})
-T["tk"].update({"b_twrite": "✍️ Ýaz", "sup_ask": "✍️ <b>Habaryňy iber</b>\n<blockquote>Tekst, surat ýa-da wideo — tapawudy ýok.</blockquote>",
-  "sup_rate": "<i>⏱ 60 sekuntda diňe 1 habar iberip bilersiňiz — hemmesini bir habarda ýazyň.</i>",
-  "sup_slow": "⏳ 60 sekuntda diňe 1 habar iberip bilersiňiz. {s} sek soň gaýtadan synanyşyň — hemmesini bir habarda ýazyň."})
-T["ru"].update({"b_twrite": "✍️ Написать", "sup_ask": "✍️ <b>Отправьте сообщение</b>\n<blockquote>Текст, фото или видео — неважно.</blockquote>",
-  "sup_rate": "<i>⏱ Можно отправить 1 сообщение в 60 секунд — пишите всё одним сообщением.</i>",
-  "sup_slow": "⏳ Можно отправить 1 сообщение в 60 секунд. Попробуйте через {s} сек — пишите всё одним сообщением."})
+T["tr"].update({"sup_press": '✍️ Talebine (#{tid}) yazmak için önce <b>✍️ Yaz</b> butonuna bas. Bir kez basman yeterli, sonra talep kapanana kadar yazabilirsin.', "sup_cmd_q": '📩 <b>Açık destek talebin var (#{tid}).</b>\nKapatılsın mı?', "b_tclose_yes": '🔒 Evet, kapat', "b_tkeep": '✍️ Hayır, yazmaya devam', "b_twrite": "✍️ Yaz", "sup_ask": "✍️ <b>Mesajını gönder</b>\n<blockquote>Yazı, fotoğraf ya da video — fark etmez.</blockquote>",
+  "sup_rate": "<i>⏱ 5 saniyede tek mesaj gönderebilirsin — hepsini tek mesajda yaz.</i>",
+  "sup_slow": "⏳ 5 saniyede tek mesaj gönderebilirsin. {s} sn sonra tekrar dene — hepsini tek mesajda yaz."})
+T["tk"].update({"sup_press": '✍️ Soragyňa (#{tid}) ýazmak üçin ilki <b>✍️ Ýaz</b> düwmesine bas. Bir gezek basmak ýeterlik, soňra sorag ýapylýança ýazyp bilersiň.', "sup_cmd_q": '📩 <b>Açyk goldaw soragyň bar (#{tid}).</b>\nÝapylsynmy?', "b_tclose_yes": '🔒 Hawa, ýap', "b_tkeep": '✍️ Ýok, ýazmagy dowam et', "b_twrite": "✍️ Ýaz", "sup_ask": "✍️ <b>Habaryňy iber</b>\n<blockquote>Tekst, surat ýa-da wideo — tapawudy ýok.</blockquote>",
+  "sup_rate": "<i>⏱ 5 sekuntda diňe 1 habar iberip bilersiňiz — hemmesini bir habarda ýazyň.</i>",
+  "sup_slow": "⏳ 5 sekuntda diňe 1 habar iberip bilersiňiz. {s} sek soň gaýtadan synanyşyň — hemmesini bir habarda ýazyň."})
+T["ru"].update({"sup_press": '✍️ Чтобы написать в обращение (#{tid}), сначала нажмите <b>✍️ Написать</b>. Достаточно один раз — потом можно писать, пока обращение открыто.', "sup_cmd_q": '📩 <b>У вас открыто обращение (#{tid}).</b>\nЗакрыть его?', "b_tclose_yes": '🔒 Да, закрыть', "b_tkeep": '✍️ Нет, продолжить', "b_twrite": "✍️ Написать", "sup_ask": "✍️ <b>Отправьте сообщение</b>\n<blockquote>Текст, фото или видео — неважно.</blockquote>",
+  "sup_rate": "<i>⏱ Можно отправить 1 сообщение в 5 секунд — пишите всё одним сообщением.</i>",
+  "sup_slow": "⏳ Можно отправить 1 сообщение в 5 секунд. Попробуйте через {s} сек — пишите всё одним сообщением."})
 
 # Sınırlı abonelik uyarısı (satış)
 T["tr"]["sell_limited"] = "⚠️ <b>Bu abonelik sınırlı</b>\n<blockquote>{lim}\nPazara sadece <b>GB ve süre sınırı olmayan</b> abonelik konabilir.</blockquote>"
@@ -6444,6 +6459,7 @@ def main():
     app.add_handler(MessageHandler(filters.UpdateType.MESSAGE & ~filters.COMMAND, support_router), group=-1)
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("id", cmd_id))
+    app.add_handler(MessageHandler(filters.COMMAND, other_cmd))
     app.add_handler(CallbackQueryHandler(cb))
     app.add_handler(InlineQueryHandler(inline_ad))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, msg_handler))
