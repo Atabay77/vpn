@@ -1152,6 +1152,7 @@ async def post_init(app):
     app.bot_data["mkt"] = asyncio.create_task(market_loop(app))
     app.bot_data["aiw"] = asyncio.create_task(ai_usage_watch(app))
     app.bot_data["aim"] = asyncio.create_task(ai_log_watch(app))
+    if ADMINS: asyncio.create_task(pad_old_photos(app))
     if load_db().get("off_msg") != CODE_OFF_MSG: asyncio.create_task(asyncio.to_thread(rewrite_off_files))
     if load_db().get("file_fmt") != FILE_FMT:   # dosya biçimi değişti: bütün abonelik dosyaları bir kez yeniden yazılsın
         mutate(lambda d: d.__setitem__("file_fmt", FILE_FMT)); start_refresh(app, "Abonelik dosyası biçimi güncellendi")
@@ -2933,6 +2934,7 @@ def _plain(t):
 
 # Botun yenilikleri: her güncellemede en üste eklenir; AI (yardımcı + destek) bunları bilir.
 CHANGELOG = [
+ ("29.10", "İlan fotoğrafları (uzun ekran görüntüleri) kırpılmadan tam görünür."),
  ("29.10", "Bazar/Pazar ilan kartı yeni sade tasarım: hizalı fiyat tablosu, ayraçlar."),
  ("28.10", "Destekte cevapları bot sahibi adına veren asistan; kullanıcının eski talepleri hatırlanır."),
  ("28.10", "Destek: ✍️ Ýaz'a bir kez basılır, talep kapanana kadar yazılabilir; mesajlar arası 5 sn."),
@@ -3545,7 +3547,7 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
             x["bal"] -= fee_; d["mkt_fees"] = d.get("mkt_fees", 0) + fee_; x.pop("fee_x2", None)   # 2 kat ödendi: sonra yine normal
             lid = uuid.uuid4().hex[:6]
             d.setdefault("market", {})[lid] = {"owner": uid, "title": st_["title"], "link": st_["link"], "photo": st_["photo"], "desc": st_.get("desc", ""),
-                                               "price": st_["price"], "codes": st_["codes"], "codes_ts": time.time(), "status": "pending", "created": time.time(), "photo_ok": False}
+                                               "price": st_["price"], "codes": st_["codes"], "codes_ts": time.time(), "status": "pending", "created": time.time(), "photo_ok": False, "pad_ok": True}
             return lid
         r = mutate(f); new_lid = r if r not in ("nobal", "dup", "ban") else None
         if r == "nobal": await send(tr(lang, "sell_nobal").replace("0.05$", fmt_u(seller_fee(load_db()["users"].get(str(uid), {}))) + "$"), KB([[B(tr(lang, "b_top"), "u_top", "success")], [B(tr(lang, "b_back_mkt"), "u_mkt")]])); return
@@ -4621,7 +4623,9 @@ async def support_router(u: Update, c: ContextTypes.DEFAULT_TYPE):
         if st.get("action") == "own_photo":
             if not m.photo: await m.reply_text("⚠️ Fotoğraf gönder."); raise ApplicationHandlerStop
             STATE.pop(uid, None); fid_ = m.photo[-1].file_id
-            mutate(lambda d: ensure_own(d)[OWN_LID].__setitem__("photo", fid_))
+            try: fid_ = await full_view_photo(c, uid, fid_) or fid_   # uzun ekran görüntüsü kırpılmasın
+            except Exception as ex_: log.info("own photo pad: %s", ex_)
+            mutate(lambda d: ensure_own(d)[OWN_LID].update(photo=fid_, pad_ok=True))
             audit(uid, "own_photo")
             t, kb = mkt_admin_view(); await m.reply_text("✅ Fotoğraf kaydedildi.\n\n" + t, parse_mode="HTML", reply_markup=kb)
             raise ApplicationHandlerStop
@@ -6399,6 +6403,27 @@ def pad_photo(data):
     bg = im.resize((W, h)).filter(ImageFilter.GaussianBlur(40)).point(lambda v: int(v * 0.45))
     bg.paste(im, ((W - w) // 2, 0))
     out = io.BytesIO(); bg.save(out, "JPEG", quality=88); return out.getvalue()
+
+async def pad_old_photos(app):
+    """Bir kez: eski ilan fotoğrafları (resmi ilan dahil) kırpılmadan tam görünecek şekilde yeniden yüklenir."""
+    await asyncio.sleep(20)
+    try: import PIL   # noqa
+    except ImportError:
+        vlog("⚠️ İlan fotoğrafları tam görünsün diye VPS'te Pillow gerekli: pip install pillow"); return
+    todo = [(lid, L["photo"]) for lid, L in load_db().get("market", {}).items() if L.get("photo") and not L.get("pad_ok")]
+    n = 0
+    for lid, fid in todo:
+        new = None
+        try: new = await full_view_photo(app, next(iter(ADMINS)), fid)
+        except Exception as e: log.info("pad old %s: %s", lid, e)
+        def f(d):
+            L = d.get("market", {}).get(lid)
+            if L and L.get("photo") == fid:
+                if new: L["photo"] = new
+                L["pad_ok"] = True
+        mutate(f); n += bool(new)
+        await asyncio.sleep(1)
+    if n: vlog(f"🖼 {n} ilan fotoğrafı tam görünecek şekilde düzeltildi")
 
 async def full_view_photo(c, uid, fid):
     """Fotoğraf kırpılacak kadar uzunsa düzeltilmiş halini yükler; yeni file_id döner (gerekmezse None)."""
