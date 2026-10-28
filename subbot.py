@@ -1231,10 +1231,10 @@ def _main_kb(uid):
     try: n_rev = len(review_list(load_db()))
     except Exception: n_rev = 0
     return KB([[B(tr(lg, "b_pazar"), "u_mkt", "success")],
+               [B(tr(lg, "b_ai"), "u_ai", "primary")],
                [B(tr(lg, "b_free"), "u_free"), B(tr(lg, "b_mine"), "my_keys")],
                [B(tr(lg, "b_prof"), "u_prof"), B(tr(lg, "b_market"), "u_market")],
                [B(tr(lg, "b_sup"), "tickets"), B(tr(lg, "b_bug"), "tickets_bug")],
-               [B(tr(lg, "b_ai"), "u_ai", "primary")],
                [lang_btn],
                [B(at(lg, "rev", n=n_rev), "mk_rev", "primary" if n_rev else None)],
                [B("🟡 Admin", "admin", "danger")]])
@@ -1788,7 +1788,7 @@ async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
                 await u.message.reply_text(f"⚠️ Anahtar çalışmadı: <code>{esc(str(e)[:150])}</code>", parse_mode="HTML", reply_markup=back("ai_adm")); return
             await asyncio.to_thread(set_env, "AI_API_KEY", key_); RUN.pop("ai_err", None)
             audit(uid, "ai key set")
-            t_, kb_ = ai_view(); await u.message.reply_text("✅ AI bağlandı.\n\n" + t_, parse_mode="HTML", reply_markup=kb_)
+            t_, kb_ = await asyncio.to_thread(ai_view); await u.message.reply_text("✅ AI bağlandı.\n\n" + t_, parse_mode="HTML", reply_markup=kb_)
 
         elif act in ("ai_lim", "ai_plim"):
             try: n_ = int(txt.strip())
@@ -1797,7 +1797,7 @@ async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
                 STATE[uid] = st; await u.message.reply_text("⚠️ 1-1000 arası bir sayı yaz.", reply_markup=back("ai_adm")); return
             fld_ = "ai_limit" if act == "ai_lim" else "ai_pro_limit"
             mutate(lambda d: d.__setitem__(fld_, n_)); audit(uid, f"{fld_} {n_}")
-            t_, kb_ = ai_view(); await u.message.reply_text("✅ Kaydedildi.\n\n" + t_, parse_mode="HTML", reply_markup=kb_)
+            t_, kb_ = await asyncio.to_thread(ai_view); await u.message.reply_text("✅ Kaydedildi.\n\n" + t_, parse_mode="HTML", reply_markup=kb_)
 
         elif act == "cp_set":
             try: await u.message.delete()   # token sohbette kalmasın
@@ -2177,7 +2177,7 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         await safe_edit(q, *(await asyncio.to_thread(crypto_view)))
 
     elif a == "ai_adm":
-        await safe_edit(q, *ai_view())
+        await safe_edit(q, *(await asyncio.to_thread(ai_view)))
 
     elif a == "ai_set":
         STATE[uid] = {"action": "ai_set"}
@@ -2189,11 +2189,11 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
 
     elif a == "ai_plim":
         STATE[uid] = {"action": "ai_plim"}
-        await safe_edit(q, *prompt("💎 <b>Premium günlük sınır</b>", f"Abone başı günde kaç soru? (şu an {ai_pro_limit()})", "ai_adm"))
+        await safe_edit(q, *prompt("💎 <b>Premium günlük sınır</b>", f"Abone başı sitenin her 5 saatlik penceresinde kaç soru? (şu an {ai_pro_limit()})", "ai_adm"))
 
     elif a == "ai_del":
         await asyncio.to_thread(set_env, "AI_API_KEY", ""); audit(uid, "ai key del")
-        await safe_edit(q, *ai_view())
+        await safe_edit(q, *(await asyncio.to_thread(ai_view)))
 
     elif a == "cp_test":
         try:
@@ -2733,9 +2733,26 @@ AI_MODELS = {
  "mimo":     ("MiMo v2.6 Pro", "xiaomi/mimo-v2.6-pro", {"tr": "matematik ve mantık, hızlı", "tk": "matematika we logika, çalt", "ru": "математика и логика, быстрый"}),
  "nemotron": ("Nemotron 3 Ultra", "nvidia/nemotron-3-ultra", {"tr": "teknik sorular, akıl yürütme", "tk": "tehniki soraglar, pikir ýöretmek", "ru": "технические вопросы, рассуждения"}),
 }
-AIPRO_USDT, AIPRO_DAYS = 10, 30          # 💎 AI Premium: aylık 10$ (CryptoBot / bakiye)
+AIPRO_USDT, AIPRO_DAYS = 5, 30           # 💎 AI Premium: aylık 5$ (CryptoBot / bakiye)
 AI_FREE_N, AI_FREE_WIN = 3, 2 * 86400    # abone olmayana: 2 günde 3 soru (bütün modeller toplam)
-AI_PRO_LIMIT = 100                       # aboneye günde en fazla (Admin'den değişir)
+AI_PRO_LIMIT = 50                        # aboneye sitenin 5 saatlik limit penceresi başına (Admin'den değişir)
+AI_VISION = {"opus", "gpt", "gemini", "grok", "kimi", "mimo"}   # fotoğraf görebilen modeller (Mistral, Nemotron göremiyor)
+AI_WIN = {"end": 0, "ts": 0, "usage": None}
+def ai_window():
+    """Sitenin (xKiro) 5 saatlik harcama penceresinin bitişi; abone hakları bununla birlikte sıfırlanır."""
+    now = time.time()
+    if now - AI_WIN["ts"] > 300 or now >= AI_WIN["end"]:
+        AI_WIN["ts"] = now
+        try:
+            u = _xk("/v1/usage", timeout=10); AI_WIN["usage"] = u
+            w = next((x for x in u.get("windows", []) if x.get("kind") == "short"), None)
+            if w:
+                end = now + int(w.get("resets_in_sec") or w.get("window_sec") or 18000)
+                idle = float(w.get("spent_usd") or 0) == 0
+                if now >= AI_WIN["end"] or (not idle and abs(end - AI_WIN["end"]) > 600): AI_WIN["end"] = end
+        except Exception as e: log.info("usage: %s", e)
+    if now >= AI_WIN["end"]: AI_WIN["end"] = (int(now // 18000) + 1) * 18000   # bilgi yoksa sabit 5 saatlik dilimler
+    return int(AI_WIN["end"])
 def ai_pro_limit(db=None):
     try: return int((db if db is not None else load_db()).get("ai_pro_limit") or AI_PRO_LIMIT)
     except Exception: return AI_PRO_LIMIT
@@ -2744,12 +2761,14 @@ def ai_free_left(x):
     return max(0, AI_FREE_N - len(fr)), (min(fr) + AI_FREE_WIN if len(fr) >= AI_FREE_N else None)
 def ai_is_pro(x): return x.get("ai_pro_until", 0) > time.time()
 
-def ai_take(d, uid):
+def ai_pro_used(x, win): return x.get("ai_pn", 0) if x.get("ai_pwin") == win else 0
+
+def ai_take(d, uid, win=0):
     """Modelli soru hakkı düşer. Dönüş: 'admin' | 'pro' | 'free' | 'lock' | 'plim'."""
     x = d["users"].setdefault(str(uid), {})
     if uid in ADMINS: return "admin"
     if ai_is_pro(x):
-        if x.get("ai_pday") != tm_day(): x["ai_pday"], x["ai_pn"] = tm_day(), 0
+        if x.get("ai_pwin") != win: x["ai_pwin"], x["ai_pn"] = win, 0
         if x["ai_pn"] >= ai_pro_limit(d): return "plim"
         x["ai_pn"] += 1; return "pro"
     if ai_free_left(x)[0] <= 0: return "lock"
@@ -2760,13 +2779,17 @@ def ai_give_back(d, uid, kind):
     if kind == "pro": x["ai_pn"] = max(0, x.get("ai_pn", 1) - 1)
     elif kind == "free" and x.get("ai_free"): x["ai_free"].pop()
 
-def ai_system_model(lang, name, mid):
+IMG_TOOL = {"name": "generate_image", "description": "Create an image. Call ONLY when the user explicitly asks you to create/draw/generate a picture or photo. Write a detailed English prompt.",
+            "input_schema": {"type": "object", "properties": {"prompt": {"type": "string", "description": "Detailed English description of the image"}}, "required": ["prompt"]}}
+
+def ai_system_model(lang, name, mid, can_img=False, vision=False):
     lname = {"tk": "Türkmen dili", "ru": "русский"}.get(lang, "Türkçe")
     return f"""Sen {name} modelisin (kimlik: {mid}). Hangi model olduğun sorulursa bunu söyle.
 Her konuda yardım edersin: genel sorular, kod yazma, hata ayıklama, ödev/ders, metin yazma, çeviri, fikir.
 - Kullanıcının yazdığı dilde cevap ver (varsayılan: {lname}).
 - Doğru ol; emin olmadığın bilgiyi uydurma, emin değilsen söyle.
-- Fotoğraf, video veya ses oluşturamazsın; istenirse bu sohbette sadece yazıyla yardım edebildiğini söyle.
+{"- Kullanıcı açıkça resim/fotoğraf oluşturmanı isterse generate_image aracını ayrıntılı İngilizce prompt ile çağır; başka hiçbir durumda çağırma. Video ve ses oluşturamazsın." if can_img else "- Fotoğraf, video veya ses oluşturamazsın; istenirse bu sohbette sadece yazıyla yardım edebildiğini söyle."}
+{"- Kullanıcının gönderdiği fotoğrafları görebilir ve ayrıntılı analiz edebilirsin." if vision else "- Fotoğraf göremezsin; fotoğraf gönderilirse fotoğraf görebilen bir model seçmesini söyle."}
 - Kod istenirse çalışır ve eksiksiz kod ver, ``` kod bloklarını kullan. Gereksiz uzatma.
 - Biçim Telegram içindir: sadece ``` kod blokları, `satır içi kod` ve **kalın** kullan; başlık (#) veya tablo kullanma."""
 
@@ -2828,7 +2851,15 @@ def img_fetch(url):
 
 def ai_call(system, msgs, key=None, max_tokens=4000, timeout=120, model=None):
     """Tek istek. Dönüş: cevap yazısı. Hata: RuntimeError."""
+    j = ai_req(system, msgs, key, max_tokens, timeout, model)
+    txt = "".join(b.get("text", "") for b in j.get("content", []) if b.get("type") == "text").strip()
+    if not txt: raise RuntimeError("boş cevap")
+    return txt
+
+def ai_req(system, msgs, key=None, max_tokens=4000, timeout=120, model=None, tools=None):
+    """Ham /v1/messages cevabı (içerik blokları: text / tool_use)."""
     body = {"model": model or ai_model(), "max_tokens": max_tokens, "system": system, "messages": msgs}
+    if tools: body["tools"] = tools
     req = urllib.request.Request(ai_base() + "/v1/messages", data=json.dumps(body).encode("utf-8"),
                                  headers={"x-api-key": key or ai_key(), "anthropic-version": "2023-06-01", "content-type": "application/json", "User-Agent": "subbot/1.0"})   # varsayılan Python UA'sını Cloudflare engelliyor (1010)
     try:
@@ -2837,9 +2868,22 @@ def ai_call(system, msgs, key=None, max_tokens=4000, timeout=120, model=None):
         try: msg = json.loads(e.read().decode("utf-8")).get("error", {}).get("message", "")
         except Exception: msg = ""
         raise RuntimeError(f"HTTP {e.code} {msg}"[:200])
-    txt = "".join(b.get("text", "") for b in j.get("content", []) if b.get("type") == "text").strip()
-    if not txt: raise RuntimeError("boş cevap")
-    return txt
+    return j
+
+async def gen_image(prompt_):
+    """Fotoğraf oluşturur (geçici hata olursa bir kez daha dener). Dönüş: (png bayt, iş no). Hata: RuntimeError('blocked' / sebep)."""
+    last = "?"
+    for _ in range(2):
+        job = await asyncio.to_thread(_xk, "/v1/images/generations", {"model": IMG_MODEL, "prompt": prompt_[:3000], "n": 1, "size": "1024x1024"})
+        jid, t0, w, res = job.get("id"), time.time(), 2, job
+        while res.get("status") == "processing" and time.time() - t0 < 300:
+            await asyncio.sleep(w); w = min(10, w * 1.5)
+            res = await asyncio.to_thread(_xk, f"/v1/images/generations/{jid}")
+        if res.get("status") == "succeeded" and res.get("data"):
+            return await asyncio.to_thread(img_fetch, res["data"][0]["url"]), jid
+        if res.get("status") == "blocked": raise RuntimeError("blocked")
+        err = res.get("error"); last = (err.get("message") if isinstance(err, dict) else err) or res.get("status") or "?"
+    raise RuntimeError(str(last))
 
 def _plain(t):
     return html.unescape(re.sub(r"<[^>]+>", "", t))
@@ -3018,11 +3062,10 @@ def pub_menu(db, uid):
     lang = lang_of(db, uid)
     e = db.get("users", {}).get(str(uid), {})
     t = with_bal(tr(lang, "menu", avail=max(0, avail_refs(e)), need=REF_NEED, codes=len(user_codes(db, uid))), e, lang) + open_mkt_text(db, uid, lang)
-    kb = KB([[B(tr(lang, "b_pazar"), "u_mkt", "success")]] + open_mkt_row(db, uid, lang) + [
-             [B(tr(lang, "b_free"), "u_free"), B(tr(lang, "b_mine"), "u_mine", "primary")],
+    kb = KB([[B(tr(lang, "b_pazar"), "u_mkt", "success")], [B(tr(lang, "b_ai"), "u_ai", "primary")]] + open_mkt_row(db, uid, lang) + [
+             [B(tr(lang, "b_free"), "u_free"), B(tr(lang, "b_mine"), "u_mine")],
              [B(tr(lang, "b_prof"), "u_prof"), B(tr(lang, "b_market"), "u_market")],
              [B(tr(lang, "b_sup"), "u_sup"), B(tr(lang, "b_bug"), "u_bug")],
-             [B(tr(lang, "b_ai"), "u_ai", "primary")],
              [B(tr(lang, "b_set"), "u_set")]])
     return t, kb
 
@@ -3175,13 +3218,15 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         STATE.pop(uid, None)
         own_, pro_ = uid in ADMINS, ai_is_pro(e); left_, when_ = ai_free_left(e)
         if own_: st_l = tr(lang, "ai_st_own")
-        elif pro_: st_l = tr(lang, "ai_st_pro", until=tm_fmt(e["ai_pro_until"]), n=ai_pro_limit(db))
+        elif pro_:
+            win_ = await asyncio.to_thread(ai_window)
+            st_l = tr(lang, "ai_st_pro", until=tm_fmt(e["ai_pro_until"]), n=max(0, ai_pro_limit(db) - ai_pro_used(e, win_)), lim=ai_pro_limit(db), r=tm_fmt(win_)[-5:])
         else: st_l = tr(lang, "ai_st_free", n=left_, w=(tm_fmt(when_) if when_ else "—"))
         lock = not (own_ or pro_) and left_ <= 0
-        body = "\n".join(f"🧠 <b>{n_}</b> — {d_.get(lang, d_['tr'])}" for n_, _, d_ in AI_MODELS.values())
+        body = "\n".join(f"🧠 <b>{n_}</b> — {d_.get(lang, d_['tr'])}" + (" · 📷" if k_ in AI_VISION else "") for k_, (n_, _, d_) in AI_MODELS.items())
         mb = [B(("🔒 " if lock else "") + n_, f"u_aim:{k_}") for k_, (n_, _, _) in AI_MODELS.items()]
         rows = [[B(tr(lang, "b_ai_bot"), "u_aib", "success")]] + [mb[i:i + 2] for i in range(0, len(mb), 2)]
-        rows.append([B(tr(lang, "b_ai_hist"), "u_aih")] + ([B(tr(lang, "b_img"), "u_aimg", "primary")] if own_ else []))
+        rows.append([B(tr(lang, "b_ai_hist"), "u_aih")])
         if not (own_ or pro_): rows.append([B(tr(lang, "b_aipro", usdt=AIPRO_USDT), "u_aipro", "primary")])
         await send(tr(lang, "ai_menu", st=st_l, body=body), KB(rows + [[B(tr(lang, "b_menu"), "u_menu")]]))
 
@@ -3199,9 +3244,9 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
                        KB([[B(tr(lang, "b_aipro_buy", usdt=AIPRO_USDT), "u_buy:aipro", "success")], [B(tr(lang, "b_ai_models"), "u_ai")]])); return
         cid_ = ai_cur(uid, k_)
         STATE[uid] = {"action": "ai", "model": k_, "cid": cid_}
-        left_ = "∞" if uid in ADMINS else (f"{max(0, ai_pro_limit(db) - (e.get('ai_pn', 0) if e.get('ai_pday') == tm_day() else 0))}" if ai_is_pro(e) else f"{ai_free_left(e)[0]}/{AI_FREE_N}")
+        left_ = "∞" if uid in ADMINS else (f"{max(0, ai_pro_limit(db) - ai_pro_used(e, await asyncio.to_thread(ai_window)))}/{ai_pro_limit(db)}" if ai_is_pro(e) else f"{ai_free_left(e)[0]}/{AI_FREE_N}")
         ttl_ = (ai_load(uid)["chats"][cid_]["t"] if cid_ else "")
-        await send(tr(lang, "ai_pick", name=M_[0], d=M_[2].get(lang, M_[2]["tr"]), n=left_) + (("\n" + tr(lang, "ai_cont", t=esc(ttl_))) if cid_ else ""),
+        await send(tr(lang, "ai_pick", name=M_[0], d=M_[2].get(lang, M_[2]["tr"]) + (" · 📷" if k_ in AI_VISION else ""), n=left_) + (("\n" + tr(lang, "ai_cont", t=esc(ttl_))) if cid_ else ""),
                    KB([[B("🧹 " + tr(lang, "b_ai_new"), f"u_ain:{k_}"), B(tr(lang, "b_ai_hist"), "u_aih")], [B(tr(lang, "b_ai_models"), "u_ai"), B(tr(lang, "b_ai_end"), "u_aix")]]))
 
     elif a.startswith("u_ain:"):   # 🧹 yeni sohbet (eskisi Geçmiş'te kalır)
@@ -3253,11 +3298,6 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
                 d_["cur"] = {k: v for k, v in d_.get("cur", {}).items() if v != cid_}; ai_save(uid, d_)
         await asyncio.to_thread(rm_)
         await send(tr(lang, "ai_deleted"), KB([[B(tr(lang, "b_ai_hist"), "u_aih"), B(tr(lang, "b_ai_models"), "u_ai")]]))
-
-    elif a == "u_aimg":   # 🎨 fotoğraf oluştur (sadece kurucu)
-        if uid not in ADMINS or not ai_key(): return
-        STATE[uid] = {"action": "ai_img"}
-        await send(tr(lang, "img_ask"), KB([[B(tr(lang, "b_ai_models"), "u_ai")]]))
 
     elif a == "u_aipro":
         await send(tr(lang, "aipro_info", usdt=AIPRO_USDT, days=AIPRO_DAYS, n=ai_pro_limit(db), f=AI_FREE_N),
@@ -3928,10 +3968,15 @@ def app_usdt():
 def ai_view():
     on = bool(ai_key())
     db = load_db(); today = sum(x.get("ai_n", 0) for x in db.get("users", {}).values() if x.get("ai_day") == tm_day())
+    if on:
+        try: ai_window()
+        except Exception: pass
+    us = AI_WIN.get("usage") or {}
+    site = "\n".join(f"🌐 Site {'5 saat' if w.get('kind') == 'short' else '7 gün'}  <b>${float(w.get('spent_usd', 0)):.2f} / ${float(w.get('cap_usd', 0)):.0f}</b> · yenilenme {datetime.datetime.fromtimestamp(time.time() + int(w.get('resets_in_sec', 0)), TM_TZ):%d.%m %H:%M}" for w in us.get("windows", []))
     t = ("🤖 <b>AI Yardımcı</b>\n<blockquote>" + ("🟢 Bağlı" if on else "⚪️ Bağlı değil — kullanıcılar butonu görür ama kapalı der") +
-         f"\n🌐 <code>{esc(ai_base())}</code>\n🧠 Bot yardımcısı: <code>{esc(ai_model())}</code> · {len(AI_MODELS)} model seçilebilir\n🔢 Bot yardımcısı  <b>{ai_limit(db)}</b> soru/gün\n💎 Premium  <b>{AIPRO_USDT}$</b>/{AIPRO_DAYS} gün · <b>{ai_pro_limit(db)}</b> soru/gün · abone <b>{sum(1 for x in db.get('users', {}).values() if ai_is_pro(x))}</b>\n🎁 Ücretsiz: 2 günde {AI_FREE_N} soru\n📊 Bugün bot yardımcısı  <b>{today}</b> soru</blockquote>"
+         f"\n🌐 <code>{esc(ai_base())}</code>\n🧠 Bot yardımcısı: <code>{esc(ai_model())}</code> · {len(AI_MODELS)} model seçilebilir\n🔢 Bot yardımcısı  <b>{ai_limit(db)}</b> soru/gün\n💎 Premium  <b>{AIPRO_USDT}$</b>/{AIPRO_DAYS} gün · <b>{ai_pro_limit(db)}</b> soru / site 5 saati · abone <b>{sum(1 for x in db.get('users', {}).values() if ai_is_pro(x))}</b>\n🎁 Ücretsiz: 2 günde {AI_FREE_N} soru\n📊 Bugün bot yardımcısı  <b>{today}</b> soru" + (("\n" + site) if site else "") + "</blockquote>"
          + (f"\n⚠️ Son hata: <code>{esc(RUN.get('ai_err', ''))}</code>" if RUN.get("ai_err") else ""))
-    return t, KB([[B("🔑 Anahtar Gir", "ai_set", "primary")], [B("🔢 Bot Yardımcısı Sınırı", "ai_lim")], [B("💎 Premium Günlük Sınır", "ai_plim")]] + ([[B("🗑 Anahtarı Kaldır", "ai_del", "danger")]] if on else []) + [[B("◀️ Admin", "admin")]])
+    return t, KB([[B("🔑 Anahtar Gir", "ai_set", "primary")], [B("🔢 Bot Yardımcısı Sınırı", "ai_lim")], [B("💎 Premium Sınır (5 saat)", "ai_plim")]] + ([[B("🗑 Anahtarı Kaldır", "ai_del", "danger")]] if on else []) + [[B("◀️ Admin", "admin")]])
 
 def crypto_view():
     tok = crypto_token()
@@ -4160,16 +4205,20 @@ async def ai_answer(c, u):
     own = uid in ADMINS; st_ = STATE.get(uid) or {}; mk = st_.get("model"); M = AI_MODELS.get(mk) if mk else None
     if M: kb = KB([[B("🧹 " + tr(lang, "b_ai_new"), f"u_ain:{mk}"), B(tr(lang, "b_ai_hist"), "u_aih")], [B(tr(lang, "b_ai_models"), "u_ai"), B(tr(lang, "b_ai_end"), "u_aix")]])
     else: kb = KB([[B(tr(lang, "b_ai_models"), "u_ai")], [B(tr(lang, "b_ai_end"), "u_aix"), B(tr(lang, "b_sup"), "u_sup")]])
-    q = (m.text or m.caption or "").strip()
-    if not q: await m.reply_text(tr(lang, "ai_text"), reply_markup=kb); return
+    q = (m.text or m.caption or "").strip(); photo = bool(m.photo)
+    if photo and not M: await m.reply_text(tr(lang, "ai_text"), reply_markup=kb); return
+    if photo and mk not in AI_VISION:
+        await m.reply_text(tr(lang, "ai_novision", name=M[0], v=", ".join(AI_MODELS[k][0] for k in AI_MODELS if k in AI_VISION)), reply_markup=kb); return
+    if not q and not photo: await m.reply_text(tr(lang, "ai_text"), reply_markup=kb); return
     if time.time() - AI_HIST.get(("t", uid), 0) < 3: return   # art arda spam
     AI_HIST[("t", uid)] = time.time()
     if M:
-        kind = mutate(lambda d: ai_take(d, uid))
+        win = await asyncio.to_thread(ai_window) if not own else 0
+        kind = mutate(lambda d: ai_take(d, uid, win))
         if kind == "lock":
             await m.reply_text(tr(lang, "aipro_info", usdt=AIPRO_USDT, days=AIPRO_DAYS, n=ai_pro_limit(), f=AI_FREE_N), parse_mode="HTML",
                                reply_markup=KB([[B(tr(lang, "b_aipro_buy", usdt=AIPRO_USDT), "u_buy:aipro", "success")], [B(tr(lang, "b_ai_models"), "u_ai")]])); return
-        if kind == "plim": await m.reply_text(tr(lang, "ai_plim", n=ai_pro_limit()), reply_markup=kb); return
+        if kind == "plim": await m.reply_text(tr(lang, "ai_plim", n=ai_pro_limit(), r=tm_fmt(win)[-5:]), reply_markup=kb); return
     else:
         lim = ai_limit()
         def f(d):
@@ -4182,7 +4231,18 @@ async def ai_answer(c, u):
     qmax = 20000 if (own or M) else 2000
     cid = st_.get("cid") if "cid" in st_ else ai_cur(uid, mk or "bot")
     hist = ai_context(uid, cid, AI_CTX_CHARS if (own or M) else 8000) if cid else []
-    msgs = hist + [{"role": "user", "content": q[:qmax]}]
+    if photo:
+        try:
+            f_ = await c.bot.get_file(m.photo[-1].file_id); raw = bytes(await f_.download_as_bytearray())
+        except Exception as ex:
+            if M: mutate(lambda d: ai_give_back(d, uid, kind))
+            await m.reply_text(tr(lang, "ai_err"), reply_markup=kb); return
+        q = q or tr(lang, "ai_img_q")
+        cur = [{"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": base64.b64encode(raw).decode()}}, {"type": "text", "text": q[:qmax]}]
+        q_save = "[📷] " + q[:qmax]
+    else: cur, q_save = q[:qmax], q[:qmax]
+    msgs = hist + [{"role": "user", "content": cur}]
+    can_img = own and bool(M) and mk != "mistral"   # sohbetten fotoğraf oluşturma: sadece kurucu
     async def typing():
         while True:
             try: await c.bot.send_chat_action(uid, "typing")
@@ -4190,7 +4250,12 @@ async def ai_answer(c, u):
             await asyncio.sleep(4)
     tt = asyncio.ensure_future(typing())
     try:
-        if M: ans = await asyncio.to_thread(ai_call, ai_system_model(lang, M[0], M[1]), msgs, None, 16000 if own else 8000, 300, M[1])
+        img_p = None
+        if M:
+            j_ = await asyncio.to_thread(ai_req, ai_system_model(lang, M[0], M[1], can_img, mk in AI_VISION), msgs, None, 16000 if own else 8000, 300, M[1], [IMG_TOOL] if can_img else None)
+            ans = "".join(b.get("text", "") for b in j_.get("content", []) if b.get("type") == "text").strip()
+            img_p = next((b.get("input", {}).get("prompt") for b in j_.get("content", []) if b.get("type") == "tool_use" and b.get("name") == "generate_image"), None)
+            if not ans and not img_p: raise RuntimeError("boş cevap")
         else: ans = await asyncio.to_thread(ai_call, ai_system(lang), msgs)
     except Exception as ex:
         tt.cancel()
@@ -4200,7 +4265,25 @@ async def ai_answer(c, u):
         busy = M and any(x in str(ex) for x in ("503", "429", "capacity", "overloaded"))
         await m.reply_text(tr(lang, "ai_busy", name=M[0]) if busy else tr(lang, "ai_err"), reply_markup=kb); return
     tt.cancel()
-    cid = await asyncio.to_thread(ai_append, uid, mk or "bot", cid, q[:qmax], ans)
+    if img_p:   # model fotoğraf oluşturmaya karar verdi (kurucu)
+        if ans:
+            for ch_ in md_tg(ans): await m.reply_text(ch_, parse_mode="HTML", disable_web_page_preview=True)
+        wait = await m.reply_text(tr(lang, "img_wait"))
+        try:
+            data, jid = await gen_image(img_p)
+            await c.bot.send_photo(uid, data, caption="🎨 " + esc(short(img_p, 900)), parse_mode="HTML")
+            await c.bot.send_document(uid, data, filename=f"{jid}.png", reply_markup=kb)   # sıkıştırılmamış asıl dosya
+            note = f"[🎨 Fotoğraf oluşturuldu: {img_p}]"
+        except Exception as ex:
+            log.warning("img: %s", ex); RUN["ai_err"] = f"img: {str(ex)[:130]}"
+            await m.reply_text(tr(lang, "img_blocked") if str(ex) == "blocked" else tr(lang, "img_err", e=esc(str(ex)[:150])), parse_mode="HTML", reply_markup=kb)
+            note = f"[🎨 Fotoğraf oluşturulamadı: {img_p}]"
+        try: await wait.delete()
+        except Exception: pass
+        cid = await asyncio.to_thread(ai_append, uid, mk, cid, q_save, (ans + "\n" + note).strip())
+        if (STATE.get(uid) or {}).get("action") == "ai": STATE[uid]["cid"] = cid
+        return
+    cid = await asyncio.to_thread(ai_append, uid, mk or "bot", cid, q_save, ans)
     if (STATE.get(uid) or {}).get("action") == "ai": STATE[uid]["cid"] = cid
     if not M:
         await m.reply_text("🤖 " + esc(ans)[:3900], parse_mode="HTML", reply_markup=kb, disable_web_page_preview=True); return
@@ -4210,45 +4293,12 @@ async def ai_answer(c, u):
         try: await m.reply_text((f"🧠 <i>{esc(M[0])}</i>\n" if i_ == 0 else "") + ch_, parse_mode="HTML", reply_markup=kb if last else None, disable_web_page_preview=True)
         except BadRequest: await m.reply_text(_plain(ch_)[:4000], reply_markup=kb if last else None)   # biçim bozuksa düz yazı
 
-async def ai_image(c, u):
-    m = u.message; uid = u.effective_user.id; lang = lang_of(load_db(), uid)
-    kb = KB([[B(tr(lang, "b_img"), "u_aimg"), B(tr(lang, "b_ai_models"), "u_ai")]])
-    prompt_ = (m.text or m.caption or "").strip()
-    if not prompt_: await m.reply_text(tr(lang, "img_ask"), parse_mode="HTML", reply_markup=kb); return
-    wait = await m.reply_text(tr(lang, "img_wait"))
-    async def upload():
-        while True:
-            try: await c.bot.send_chat_action(uid, "upload_photo")
-            except Exception: pass
-            await asyncio.sleep(4)
-    tt = asyncio.ensure_future(upload())
-    try:
-        job = await asyncio.to_thread(_xk, "/v1/images/generations", {"model": IMG_MODEL, "prompt": prompt_[:3000], "n": 1, "size": "1024x1024"})
-        jid, t0, w, res = job.get("id"), time.time(), 2, job
-        while res.get("status") == "processing" and time.time() - t0 < 300:
-            await asyncio.sleep(w); w = min(10, w * 1.5)
-            res = await asyncio.to_thread(_xk, f"/v1/images/generations/{jid}")
-        if res.get("status") != "succeeded" or not res.get("data"):
-            raise RuntimeError(res.get("error") or res.get("status") or "?")
-        data = await asyncio.to_thread(img_fetch, res["data"][0]["url"])
-        tt.cancel()
-        await c.bot.send_photo(uid, data, caption="🎨 " + esc(short(prompt_, 900)), parse_mode="HTML", reply_markup=kb)
-        await c.bot.send_document(uid, data, filename=f"{jid}.png")   # sıkıştırılmamış asıl dosya
-    except Exception as ex:
-        tt.cancel(); log.warning("img: %s", ex); RUN["ai_err"] = f"img: {str(ex)[:130]}"
-        await m.reply_text(tr(lang, "img_err", e=esc(str(ex)[:150])), parse_mode="HTML", reply_markup=kb)
-    try: await wait.delete()
-    except Exception: pass
-
 async def support_router(u: Update, c: ContextTypes.DEFAULT_TYPE):
     """Her mesajdan ÖNCE çalışır: açık destek talebi ya da kurucu cevabı varsa mesajı oraya yönlendirir."""
     m = u.message
     if not m or not u.effective_user or m.chat.type != "private": return
     uid = u.effective_user.id
     st0 = STATE.get(uid) or {}
-    if st0.get("action") == "ai_img" and uid in ADMINS:   # 🎨 kurucu: fotoğraf oluştur
-        await ai_image(c, u)
-        raise ApplicationHandlerStop
     if st0.get("action") == "ai":   # 🤖 Yardımcı
         if not is_banned(uid): await ai_answer(c, u)
         raise ApplicationHandlerStop
@@ -5200,43 +5250,40 @@ T["ru"].update({"vip_q": "💎 <b>Сделать объявление VIP?</b>\n
   "b_yes_vip": "✅ Да, сделать VIP", "mld_q": "🗑 <b>Удалить объявление?</b>\n<blockquote>🏪 {title}\n👥 Сейчас пользуются  <b>{n}</b>\nОбъявление уйдёт с биржи, отменить нельзя.</blockquote>", "b_yes_mld": "🗑 Да, удалить"})
 T["tr"].update({"b_ai_bot": "❓ Bot hakkında soru (ücretsiz)", "b_ai_models": "🧠 Modeller", "b_aipro": "💎 Premium · {usdt}$/ay", "b_aipro_buy": "💎 Satın al · {usdt}$", "it_aipro": "💎 AI Premium · 30 gün",
   "ai_menu": "🤖 <b>Yapay Zekâ</b>\n<blockquote>{st}</blockquote>\n<blockquote expandable>{body}</blockquote>\n<i>❓ Bot hakkındaki sorular ücretsiz. Modellerle her konuda sorabilirsin (kod, ders, çeviri…). Fotoğraf/video oluşturulmaz.</i>",
-  "ai_st_own": "👑 Kurucu · sınırsız", "ai_st_pro": "💎 Premium · {until}'e kadar · günde {n} soru", "ai_st_free": "🎁 Ücretsiz: 2 günde 3 soru · kalan <b>{n}</b> · yenilenme {w}",
+  "ai_st_own": "👑 Kurucu · sınırsız", "ai_st_pro": "💎 Premium · {until}'e kadar\nKalan soru <b>{n}/{lim}</b> · yenilenme {r}", "ai_st_free": "🎁 Ücretsiz: 2 günde 3 soru · kalan <b>{n}</b> · yenilenme {w}",
   "ai_pick": "🧠 <b>{name}</b>\n<blockquote>{d}\nKalan soru  <b>{n}</b></blockquote>\n<i>Sorunu yaz</i> 👇",
-  "aipro_info": "💎 <b>AI Premium</b>\n<blockquote>Bütün modeller: Claude Opus, GPT, Gemini, Grok, Kimi…\nGünde <b>{n}</b> soru · {days} gün\nÜcret  <b>{usdt}$</b> / ay (CryptoBot ya da bakiye)</blockquote>\n<i>Abone olmadan 2 günde {f} soru ücretsiz.</i>",
-  "aipro_ok": "✅ <b>💎 AI Premium aktif!</b>\n<blockquote>{until}'e kadar · günde {n} soru</blockquote>\n🤖 butonundan modeli seç.",
-  "ai_plim": "⏳ Bugünkü {n} soru hakkın bitti. Yarın devam edebilirsin.", "ai_busy": "⚠️ {name} şu an meşgul. Başka model seç ya da biraz sonra dene. (Hakkın düşülmedi.)"})
+  "aipro_info": "💎 <b>AI Premium</b>\n<blockquote>Bütün modeller: Claude Opus, GPT, Gemini, Grok, Kimi…\nHer 5 saatte <b>{n}</b> soru · {days} gün\nÜcret  <b>{usdt}$</b> / ay (CryptoBot ya da bakiye)</blockquote>\n<i>Abone olmadan 2 günde {f} soru ücretsiz.</i>",
+  "aipro_ok": "✅ <b>💎 AI Premium aktif!</b>\n<blockquote>{until}'e kadar · her 5 saatte {n} soru</blockquote>\n🤖 butonundan modeli seç.",
+  "ai_busy": "⚠️ {name} şu an meşgul. Başka model seç ya da biraz sonra dene. (Hakkın düşülmedi.)"})
 T["tk"].update({"b_ai_bot": "❓ Bot barada sorag (mugt)", "b_ai_models": "🧠 Modeller", "b_aipro": "💎 Premium · {usdt}$/aý", "b_aipro_buy": "💎 Satyn al · {usdt}$", "it_aipro": "💎 AI Premium · 30 gün",
   "ai_menu": "🤖 <b>Emeli aň</b>\n<blockquote>{st}</blockquote>\n<blockquote expandable>{body}</blockquote>\n<i>❓ Bot barada soraglar mugt. Modellerden islendik zat barada sorap bilersiň (kod, sapak, terjime…). Surat/wideo döredilmeýär.</i>",
-  "ai_st_own": "👑 Esasy admin · çäksiz", "ai_st_pro": "💎 Premium · {until} çenli · günde {n} sorag", "ai_st_free": "🎁 Mugt: 2 günde 3 sorag · galan <b>{n}</b> · täzelenýär {w}",
+  "ai_st_own": "👑 Esasy admin · çäksiz", "ai_st_pro": "💎 Premium · {until} çenli\nGalan sorag <b>{n}/{lim}</b> · täzelenýär {r}", "ai_st_free": "🎁 Mugt: 2 günde 3 sorag · galan <b>{n}</b> · täzelenýär {w}",
   "ai_pick": "🧠 <b>{name}</b>\n<blockquote>{d}\nGalan sorag  <b>{n}</b></blockquote>\n<i>Soragyňy ýaz</i> 👇",
-  "aipro_info": "💎 <b>AI Premium</b>\n<blockquote>Ähli modeller: Claude Opus, GPT, Gemini, Grok, Kimi…\nGünde <b>{n}</b> sorag · {days} gün\nBahasy  <b>{usdt}$</b> / aý (CryptoBot ýa-da balans)</blockquote>\n<i>Abuna bolmazdan 2 günde {f} sorag mugt.</i>",
-  "aipro_ok": "✅ <b>💎 AI Premium işjeň!</b>\n<blockquote>{until} çenli · günde {n} sorag</blockquote>\n🤖 düwmesinden model saýla.",
-  "ai_plim": "⏳ Şu günki {n} sorag hakyň gutardy. Ertir dowam edip bilersiň.", "ai_busy": "⚠️ {name} häzir meşgul. Başga model saýla ýa-da birazdan synan. (Hakyň aýrylmady.)"})
+  "aipro_info": "💎 <b>AI Premium</b>\n<blockquote>Ähli modeller: Claude Opus, GPT, Gemini, Grok, Kimi…\nHer 5 sagatda <b>{n}</b> sorag · {days} gün\nBahasy  <b>{usdt}$</b> / aý (CryptoBot ýa-da balans)</blockquote>\n<i>Abuna bolmazdan 2 günde {f} sorag mugt.</i>",
+  "aipro_ok": "✅ <b>💎 AI Premium işjeň!</b>\n<blockquote>{until} çenli · her 5 sagatda {n} sorag</blockquote>\n🤖 düwmesinden model saýla.",
+  "ai_busy": "⚠️ {name} häzir meşgul. Başga model saýla ýa-da birazdan synan. (Hakyň aýrylmady.)"})
 T["ru"].update({"b_ai_bot": "❓ Вопрос о боте (бесплатно)", "b_ai_models": "🧠 Модели", "b_aipro": "💎 Premium · {usdt}$/мес", "b_aipro_buy": "💎 Купить · {usdt}$", "it_aipro": "💎 AI Premium · 30 дней",
   "ai_menu": "🤖 <b>Искусственный интеллект</b>\n<blockquote>{st}</blockquote>\n<blockquote expandable>{body}</blockquote>\n<i>❓ Вопросы о боте бесплатны. Моделям можно задавать любые вопросы (код, учёба, перевод…). Фото/видео не создаются.</i>",
-  "ai_st_own": "👑 Основатель · без лимита", "ai_st_pro": "💎 Premium · до {until} · {n} вопросов в день", "ai_st_free": "🎁 Бесплатно: 3 вопроса за 2 дня · осталось <b>{n}</b> · обновление {w}",
+  "ai_st_own": "👑 Основатель · без лимита", "ai_st_pro": "💎 Premium · до {until}\nОсталось <b>{n}/{lim}</b> · обновление в {r}", "ai_st_free": "🎁 Бесплатно: 3 вопроса за 2 дня · осталось <b>{n}</b> · обновление {w}",
   "ai_pick": "🧠 <b>{name}</b>\n<blockquote>{d}\nОсталось вопросов  <b>{n}</b></blockquote>\n<i>Напишите вопрос</i> 👇",
-  "aipro_info": "💎 <b>AI Premium</b>\n<blockquote>Все модели: Claude Opus, GPT, Gemini, Grok, Kimi…\n<b>{n}</b> вопросов в день · {days} дней\nЦена  <b>{usdt}$</b> / мес (CryptoBot или баланс)</blockquote>\n<i>Без подписки — {f} вопроса за 2 дня бесплатно.</i>",
-  "aipro_ok": "✅ <b>💎 AI Premium активен!</b>\n<blockquote>до {until} · {n} вопросов в день</blockquote>\nВыберите модель через 🤖.",
-  "ai_plim": "⏳ Лимит {n} вопросов на сегодня исчерпан. Продолжите завтра.", "ai_busy": "⚠️ {name} сейчас занят. Выберите другую модель или попробуйте позже. (Вопрос не засчитан.)"})
-T["tr"].update({"b_ai_new": "Yeni sohbet", "b_ai_hist": "📜 Geçmiş", "b_ai_go": "▶️ Sohbete devam et", "b_ai_del": "🗑 Sil", "b_img": "🎨 Fotoğraf oluştur", "ai_q": "soru",
+  "aipro_info": "💎 <b>AI Premium</b>\n<blockquote>Все модели: Claude Opus, GPT, Gemini, Grok, Kimi…\n<b>{n}</b> вопросов каждые 5 часов · {days} дней\nЦена  <b>{usdt}$</b> / мес (CryptoBot или баланс)</blockquote>\n<i>Без подписки — {f} вопроса за 2 дня бесплатно.</i>",
+  "aipro_ok": "✅ <b>💎 AI Premium активен!</b>\n<blockquote>до {until} · {n} вопросов каждые 5 часов</blockquote>\nВыберите модель через 🤖.",
+  "ai_busy": "⚠️ {name} сейчас занят. Выберите другую модель или попробуйте позже. (Вопрос не засчитан.)"})
+T["tr"].update({"ai_img_q": 'Bu fotoğrafı ayrıntılı analiz et.', "img_blocked": '⚠️ Bu istek uygunsuz bulunduğu için fotoğraf oluşturulmadı. Farklı yazıp tekrar dene.', "ai_plim": "⏳ Bu dönemdeki {n} soru hakkın bitti. {r}'de yenilenir.", "ai_novision": '📷 {name} fotoğraf göremez. Fotoğraf için şunlardan birini seç: {v}', "b_ai_new": "Yeni sohbet", "b_ai_hist": "📜 Geçmiş", "b_ai_go": "▶️ Sohbete devam et", "b_ai_del": "🗑 Sil", "ai_q": "soru",
   "ai_cont": "📜 Sohbete devam: <b>{t}</b> (önceki yazışmalar hatırlanıyor)", "ai_new_ok": "🧹 <b>Yeni sohbet</b> · {name}\n<i>Eski sohbet 📜 Geçmiş'te duruyor. Sorunu yaz</i> 👇",
   "ai_hist_t": "📜 <b>Geçmiş sohbetler</b>  <code>{n}</code>\n<i>Birini seç: yazışmaları gör, devam et ya da sil.</i>", "ai_hist_none": "📜 Henüz kayıtlı sohbet yok.",
   "ai_del_q": "🗑 <b>Bu sohbet silinsin mi?</b>\n<i>Yazışmalar geri gelmez.</i>", "ai_deleted": "🗑 Sohbet silindi.",
-  "img_ask": "🎨 <b>Fotoğraf oluştur</b>\n<blockquote>Ne çizilsin? Konu, ortam, ışık ve stili yaz (İngilizce daha iyi sonuç verir).\nÖrn: <i>a cozy cafe in Ashgabat at sunset, photorealistic</i></blockquote>",
-  "img_wait": "⏳ Fotoğraf oluşturuluyor (yaklaşık 1 dakika)…", "img_err": "⚠️ Fotoğraf oluşturulamadı: <code>{e}</code>\n<i>Uygunsuz bulunan istekler reddedilir; farklı yazıp tekrar dene.</i>"})
-T["tk"].update({"b_ai_new": "Täze söhbet", "b_ai_hist": "📜 Taryh", "b_ai_go": "▶️ Söhbeti dowam et", "b_ai_del": "🗑 Poz", "b_img": "🎨 Surat döret", "ai_q": "sorag",
+  "img_wait": "⏳ Fotoğraf oluşturuluyor (yaklaşık 1 dakika)…", "img_err": "⚠️ Fotoğraf oluşturulamadı: <code>{e}</code>\n<i>Sitede geçici bir hata olabilir; biraz sonra tekrar dene.</i>"})
+T["tk"].update({"ai_img_q": 'Bu suraty jikme-jik seljer.', "img_blocked": '⚠️ Bu haýyş laýyk däl diýlip tapyldy, surat döredilmedi. Başgaça ýazyp gaýtadan synan.', "ai_plim": '⏳ Bu döwürdäki {n} sorag hakyň gutardy. {r}-da täzelenýär.', "ai_novision": '📷 {name} surat görüp bilmeýär. Surat üçin şulardan birini saýla: {v}', "b_ai_new": "Täze söhbet", "b_ai_hist": "📜 Taryh", "b_ai_go": "▶️ Söhbeti dowam et", "b_ai_del": "🗑 Poz", "ai_q": "sorag",
   "ai_cont": "📜 Söhbet dowam edýär: <b>{t}</b> (öňki ýazyşmalar ýatda)", "ai_new_ok": "🧹 <b>Täze söhbet</b> · {name}\n<i>Köne söhbet 📜 Taryh-da dur. Soragyňy ýaz</i> 👇",
   "ai_hist_t": "📜 <b>Öňki söhbetler</b>  <code>{n}</code>\n<i>Birini saýla: ýazyşmalary gör, dowam et ýa-da poz.</i>", "ai_hist_none": "📜 Entek ýazylan söhbet ýok.",
   "ai_del_q": "🗑 <b>Bu söhbet pozulsynmy?</b>\n<i>Ýazyşmalar yzyna gelmez.</i>", "ai_deleted": "🗑 Söhbet pozuldy.",
-  "img_ask": "🎨 <b>Surat döret</b>\n<blockquote>Näme çekilsin? Temany, ýeri, ýagtylygy we stili ýaz (iňlisçe has gowy netije berýär).\nMysal: <i>a cozy cafe in Ashgabat at sunset, photorealistic</i></blockquote>",
-  "img_wait": "⏳ Surat döredilýär (takmynan 1 minut)…", "img_err": "⚠️ Surat döredip bolmady: <code>{e}</code>\n<i>Laýyk däl haýyşlar ret edilýär; başgaça ýazyp gaýtadan synan.</i>"})
-T["ru"].update({"b_ai_new": "Новый чат", "b_ai_hist": "📜 История", "b_ai_go": "▶️ Продолжить чат", "b_ai_del": "🗑 Удалить", "b_img": "🎨 Создать фото", "ai_q": "вопр.",
+  "img_wait": "⏳ Surat döredilýär (takmynan 1 minut)…", "img_err": "⚠️ Surat döredip bolmady: <code>{e}</code>\n<i>Saýtda wagtlaýyn ýalňyşlyk bolup biler; birazdan gaýtadan synan.</i>"})
+T["ru"].update({"ai_img_q": 'Подробно проанализируй это фото.', "img_blocked": '⚠️ Запрос признан неприемлемым, фото не создано. Переформулируйте.', "ai_plim": '⏳ Лимит {n} вопросов на этот период исчерпан. Обновится в {r}.', "ai_novision": '📷 {name} не видит фото. Для фото выберите: {v}', "b_ai_new": "Новый чат", "b_ai_hist": "📜 История", "b_ai_go": "▶️ Продолжить чат", "b_ai_del": "🗑 Удалить", "ai_q": "вопр.",
   "ai_cont": "📜 Продолжаем чат: <b>{t}</b> (прошлая переписка учитывается)", "ai_new_ok": "🧹 <b>Новый чат</b> · {name}\n<i>Старый чат остался в 📜 Истории. Напишите вопрос</i> 👇",
   "ai_hist_t": "📜 <b>Прошлые чаты</b>  <code>{n}</code>\n<i>Выберите: посмотреть, продолжить или удалить.</i>", "ai_hist_none": "📜 Сохранённых чатов пока нет.",
   "ai_del_q": "🗑 <b>Удалить этот чат?</b>\n<i>Переписку не вернуть.</i>", "ai_deleted": "🗑 Чат удалён.",
-  "img_ask": "🎨 <b>Создать фото</b>\n<blockquote>Что нарисовать? Опишите объект, место, свет и стиль (на английском результат лучше).\nНапр.: <i>a cozy cafe in Ashgabat at sunset, photorealistic</i></blockquote>",
-  "img_wait": "⏳ Фото создаётся (около минуты)…", "img_err": "⚠️ Не удалось создать фото: <code>{e}</code>\n<i>Неприемлемые запросы отклоняются; переформулируйте.</i>"})
+  "img_wait": "⏳ Фото создаётся (около минуты)…", "img_err": "⚠️ Не удалось создать фото: <code>{e}</code>\n<i>Возможен временный сбой на сайте; попробуйте чуть позже.</i>"})
 T["tr"].update({"b_ai": "🤖 Yardımcı", "b_ai_end": "◀️ Menü",
   "ai_hi": "🤖 <b>Yardımcı</b>\n<blockquote>Bot hakkında sorunu yaz: fiyatlar, Pazar, kod alma, Happ'e ekleme, bakiye, kazanç çekme…\n🔢 Bugün kalan soru  <b>{n}</b></blockquote>\n<i>Sorunu mesaj olarak gönder</i> 👇",
   "ai_off": "🤖 Yardımcı şu an kapalı. 🆘 Support'a yazabilirsin.", "ai_text": "✍️ Sorunu yazı olarak gönder.",
