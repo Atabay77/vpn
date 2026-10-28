@@ -2717,13 +2717,13 @@ def ai_limit(db=None):
     try: return int((db if db is not None else load_db()).get("ai_limit") or AI_LIMIT)
     except Exception: return AI_LIMIT
 
-def ai_call(system, msgs, key=None):
+def ai_call(system, msgs, key=None, max_tokens=4000, timeout=120):
     """Tek istek. Dönüş: cevap yazısı. Hata: RuntimeError."""
-    body = {"model": ai_model(), "max_tokens": 4000, "system": system, "messages": msgs}
+    body = {"model": ai_model(), "max_tokens": max_tokens, "system": system, "messages": msgs}
     req = urllib.request.Request(ai_base() + "/v1/messages", data=json.dumps(body).encode("utf-8"),
                                  headers={"x-api-key": key or ai_key(), "anthropic-version": "2023-06-01", "content-type": "application/json", "User-Agent": "subbot/1.0"})   # varsayılan Python UA'sını Cloudflare engelliyor (1010)
     try:
-        with urllib.request.urlopen(req, timeout=120) as r: j = json.loads(r.read().decode("utf-8"))
+        with urllib.request.urlopen(req, timeout=timeout) as r: j = json.loads(r.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         try: msg = json.loads(e.read().decode("utf-8")).get("error", {}).get("message", "")
         except Exception: msg = ""
@@ -2779,6 +2779,43 @@ KURALLAR:
 
 BİLGİLER:
 {facts}"""
+
+def ai_system_owner(lang):
+    """Kurucu için: her konuda yardım eden genel asistan (bot bilgileri ek bağlam)."""
+    lname = {"tk": "Türkmen dili", "ru": "русский"}.get(lang, "Türkçe")
+    return f"""Sen bot sahibinin kişisel asistanısın. Her konuda yardım edersin: genel sorular, kod yazma (Python ve diğer diller), hata ayıklama, metin yazma, çeviri, fikir.
+- Kullanıcının yazdığı dilde cevap ver (varsayılan: {lname}).
+- Doğru ol; emin olmadığın bilgiyi uydurma, emin değilsen söyle.
+- Kod yazarken çalışır, eksiksiz kod ver ve ``` kod bloklarını kullan. Gereksiz uzatma.
+- Biçim: Telegram'da gösterilecek. Sadece ``` kod blokları, `satır içi kod` ve **kalın** kullan; başlık (#) veya tablo kullanma.
+
+Ek bağlam (bot hakkında soru gelirse kullan):
+{ai_system(lang).split("BİLGİLER:", 1)[-1].strip()}"""
+
+def md_tg(t):
+    """Model cevabı (```kod```, `kod`, **kalın**) → Telegram HTML parçaları (her biri ≤ ~3800 karakter)."""
+    parts, out, cur = re.split(r"```[\w+#.-]*\n?(.*?)```", t, flags=re.S), [], ""
+    def text_html(x):
+        x = esc(x)
+        x = re.sub(r"`([^`\n]+)`", r"<code>\1</code>", x)
+        return re.sub(r"\*\*([^*\n]+)\*\*", r"<b>\1</b>", x)
+    def push(piece):
+        nonlocal cur
+        if len(cur) + len(piece) > 3800 and cur: out.append(cur); cur = ""
+        cur += piece
+    for i, x in enumerate(parts):
+        if i % 2:   # kod bloğu
+            lines, buf = x.rstrip("\n").split("\n"), ""
+            for ln in lines:
+                if buf and len(esc(buf)) + len(esc(ln)) > 3600: push("<pre>" + esc(buf.rstrip("\n")) + "</pre>"); buf = ""
+                buf += ln + "\n"
+            if buf: push("<pre>" + esc(buf.rstrip("\n")) + "</pre>")
+        else:
+            for para in re.split(r"(\n)", x):
+                while len(para) > 2500: push(text_html(para[:2500])); para = para[2500:]
+                push(text_html(para))
+    if cur.strip(): out.append(cur)
+    return out or ["…"]
 
 def lang_of(db, uid):   # tek kaynak: LANGC (menüler arasında tutarsızlık olmasın)
     is_ru(uid)   # LANGC'yi doldurur
@@ -3040,7 +3077,7 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         if not ai_key(): await send(tr(lang, "ai_off"), menu_btn); return
         STATE[uid] = {"action": "ai"}; AI_HIST.pop(uid, None)
         left = "∞" if uid in ADMINS else max(0, ai_limit(db) - (e.get("ai_n", 0) if e.get("ai_day") == tm_day() else 0))
-        await send(tr(lang, "ai_hi", n=left), KB([[B(tr(lang, "b_ai_end"), "u_aix")]]))
+        await send(tr(lang, "ai_hi_own") if uid in ADMINS else tr(lang, "ai_hi", n=left), KB([[B(tr(lang, "b_ai_end"), "u_aix")]]))
 
     elif a == "u_aix":
         STATE.pop(uid, None); AI_HIST.pop(uid, None)
@@ -3927,7 +3964,8 @@ async def close_ticket(c, tid, by_admin):
 
 async def ai_answer(c, u):
     m = u.message; uid = u.effective_user.id; lang = lang_of(load_db(), uid)
-    kb = KB([[B(tr(lang, "b_ai_end"), "u_aix")], [B(tr(lang, "b_sup"), "u_sup")]])
+    own = uid in ADMINS
+    kb = KB([[B("🧹 " + tr(lang, "b_ai_new"), "u_ai"), B(tr(lang, "b_ai_end"), "u_aix")]]) if own else KB([[B(tr(lang, "b_ai_end"), "u_aix")], [B(tr(lang, "b_sup"), "u_sup")]])
     q = (m.text or m.caption or "").strip()
     if not q: await m.reply_text(tr(lang, "ai_text"), reply_markup=kb); return
     if time.time() - AI_HIST.get(("t", uid), 0) < 3: return   # art arda spam
@@ -3940,18 +3978,32 @@ async def ai_answer(c, u):
         x["ai_n"] += 1; return True
     if not mutate(f): await m.reply_text(tr(lang, "ai_lim", n=lim), reply_markup=kb); return
     hist = AI_HIST.setdefault(uid, [])
-    msgs = hist[-8:] + [{"role": "user", "content": q[:2000]}]
-    try: await c.bot.send_chat_action(uid, "typing")
-    except Exception: pass
+    keep, qmax = (20, 20000) if own else (8, 2000)
+    msgs = hist[-keep:] + [{"role": "user", "content": q[:qmax]}]
+    async def typing():
+        while True:
+            try: await c.bot.send_chat_action(uid, "typing")
+            except Exception: pass
+            await asyncio.sleep(4)
+    tt = asyncio.ensure_future(typing())
     try:
-        ans = await asyncio.to_thread(ai_call, ai_system(lang), msgs)
+        if own: ans = await asyncio.to_thread(ai_call, ai_system_owner(lang), msgs, None, 16000, 300)
+        else: ans = await asyncio.to_thread(ai_call, ai_system(lang), msgs)
     except Exception as ex:
+        tt.cancel()
         mutate(lambda d: d["users"][str(uid)].__setitem__("ai_n", max(0, d["users"][str(uid)].get("ai_n", 1) - 1)))   # hata sayılmaz
         log.warning("ai: %s", ex); RUN["ai_err"] = str(ex)[:150]
         await m.reply_text(tr(lang, "ai_err"), reply_markup=kb); return
-    hist += [{"role": "user", "content": q[:2000]}, {"role": "assistant", "content": ans[:3000]}]
-    AI_HIST[uid] = hist[-8:]
-    await m.reply_text("🤖 " + esc(ans)[:3900], parse_mode="HTML", reply_markup=kb, disable_web_page_preview=True)
+    tt.cancel()
+    hist += [{"role": "user", "content": q[:qmax]}, {"role": "assistant", "content": ans[:20000 if own else 3000]}]
+    AI_HIST[uid] = hist[-keep:]
+    if not own:
+        await m.reply_text("🤖 " + esc(ans)[:3900], parse_mode="HTML", reply_markup=kb, disable_web_page_preview=True); return
+    chunks = md_tg(ans)
+    for i, ch_ in enumerate(chunks):
+        last = i == len(chunks) - 1
+        try: await m.reply_text(("🤖 " if i == 0 else "") + ch_, parse_mode="HTML", reply_markup=kb if last else None, disable_web_page_preview=True)
+        except BadRequest: await m.reply_text(_plain(ch_)[:4000], reply_markup=kb if last else None)   # biçim bozuksa düz yazı
 
 async def support_router(u: Update, c: ContextTypes.DEFAULT_TYPE):
     """Her mesajdan ÖNCE çalışır: açık destek talebi ya da kurucu cevabı varsa mesajı oraya yönlendirir."""
@@ -4908,6 +4960,9 @@ T["tk"].update({"vip_q": "💎 <b>Bildiriş VIP edilsinmi?</b>\n<blockquote>🏪
   "b_yes_vip": "✅ Hawa, VIP et", "mld_q": "🗑 <b>Bildiriş pozulsynmy?</b>\n<blockquote>🏪 {title}\n👥 Häzir ulanýan  <b>{n}</b>\nBildiriş bazardan aýrylýar, yzyna gaýtaryp bolmaýar.</blockquote>", "b_yes_mld": "🗑 Hawa, poz"})
 T["ru"].update({"vip_q": "💎 <b>Сделать объявление VIP?</b>\n<blockquote>🏪 {title}\n⏳ {h} ч на самом верху биржи\n💵 Стоимость  <b>{fee} USDT</b> (не возвращается)\n💰 Баланс  <b>{bal} USDT</b></blockquote>",
   "b_yes_vip": "✅ Да, сделать VIP", "mld_q": "🗑 <b>Удалить объявление?</b>\n<blockquote>🏪 {title}\n👥 Сейчас пользуются  <b>{n}</b>\nОбъявление уйдёт с биржи, отменить нельзя.</blockquote>", "b_yes_mld": "🗑 Да, удалить"})
+T["tr"].update({"b_ai_new": "Yeni sohbet", "ai_hi_own": "🤖 <b>Asistan</b>\n<blockquote>Her konuda sorabilirsin: genel sorular, kod yazma, hata ayıklama, çeviri…\nSınır yok · son 20 mesajı hatırlar.</blockquote>\n<i>Mesajını yaz</i> 👇"})
+T["tk"].update({"b_ai_new": "Täze söhbet", "ai_hi_own": "🤖 <b>Kömekçi</b>\n<blockquote>Islendik zat barada sorap bilersiň: umumy soraglar, kod ýazmak, ýalňyşlyk tapmak, terjime…\nÇäk ýok · soňky 20 habary ýatda saklaýar.</blockquote>\n<i>Habaryňy ýaz</i> 👇"})
+T["ru"].update({"b_ai_new": "Новый чат", "ai_hi_own": "🤖 <b>Ассистент</b>\n<blockquote>Спрашивайте о чём угодно: общие вопросы, код, отладка, перевод…\nБез лимита · помнит последние 20 сообщений.</blockquote>\n<i>Напишите сообщение</i> 👇"})
 T["tr"].update({"b_ai": "🤖 Yardımcı", "b_ai_end": "◀️ Menü",
   "ai_hi": "🤖 <b>Yardımcı</b>\n<blockquote>Bot hakkında sorunu yaz: fiyatlar, Pazar, kod alma, Happ'e ekleme, bakiye, kazanç çekme…\n🔢 Bugün kalan soru  <b>{n}</b></blockquote>\n<i>Sorunu mesaj olarak gönder</i> 👇",
   "ai_off": "🤖 Yardımcı şu an kapalı. 🆘 Support'a yazabilirsin.", "ai_text": "✍️ Sorunu yazı olarak gönder.",
