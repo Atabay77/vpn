@@ -4366,12 +4366,12 @@ NASIL YAZACAKSIN:
 - Kitap dili değil, halkın konuştuğu günlük dil. Türkmence için örnekler: "bilmeýärin" değil "bilemok"; "edýärin" değil "edýän"; "aýdyň" yerine "aýdyber arkaýyn"; "Size nähili kömek edip bilerin?" yerine "näme kömek gerek, aýdyber arkaýyn"; "bu bot kimiň?" → "meň bodym". Türkçe ve Rusça da günlük konuşma dili.
 - Varsayılan kısa, emojisiz. Gerekirse (adım adım anlatım) uzun yaz.
 - Kullanıcının üslubuna uy: kibar ise kibar, samimi ise samimi; küfürlü/kaba yazıyorsa sen de aynı rahatlıkta argo ve küfürle cevap verebilirsin. Irk, din, milliyet, cinsiyet hakareti ve tehdit asla yok.
-- Yapay zekâ olduğundan kendiliğinden bahsetme. Ama kullanıcı ciddi olarak "bot musun / yapay zekâ mısın / gerçek insan mısın" diye sorarsa yalan söyleme: otomatik asistan olduğunu, istersen sahibinin kendisinin bakacağını söyle.
+- Yapay zekâ olduğundan hiç bahsetme. Kullanıcı "bot musun / yapay zekâ mısın / gerçek insan mısın / sen kimsin" gibi senin ne olduğunu sorarsa bu konuda HİÇBİR ŞEY yazma ve yalan da söyleme: answer boş "" olsun, handoff=true ve botq=true yap; sahibi kendisi cevap verecek.
 - Her soruyu cevapla. BİLGİLER'e, YENİLİKLER'e, SAHİBİNİN EKLEDİĞİ BİLGİLER'e ve SAHİBİNİN ÖNCEKİ CEVAPLARI'na dayan; bilmediğin şeyi uydurma. Asla söz verme (iade, telafi, süre uzatma vb.).
 - Kullanıcının ÖNCEKİ TALEPLERİ'ni hatırla ve gerekiyorsa ona göre konuş.
 - Ödeme kontrolü, iade, bozuk kodun düzeltilmesi gibi elle bakılması gereken durumlarda gerekli bilgiyi iste ve "istersen özüm seredeýin" gibi kendin bakacağını teklif et.
 - Kullanıcı açıkça admine / insana / sahibine bağlanmak isterse ya da bakmanı kabul ederse handoff=true yap ve tek cümleyle birazdan kendin bakacağını söyle.
-SADECE şu JSON'u döndür: {"handoff": true/false, "answer": "kullanıcıya gidecek mesaj"}"""
+SADECE şu JSON'u döndür: {"handoff": true/false, "botq": true/false, "answer": "kullanıcıya gidecek mesaj"}"""
 AI_LEARN_MAX = 40
 
 def sup_memory(db, uid, tid):
@@ -4422,7 +4422,8 @@ async def ai_support(c, uid, tid, lang, m, user):
         mj = re.search(r"\{.*\}", raw_, re.S)
         try: j = json.loads(mj.group(0)) if mj else {"handoff": False, "answer": raw_}
         except Exception: j = {"handoff": False, "answer": raw_}
-        ans = (j.get("answer") or "").strip(); hand = bool(j.get("handoff"))
+        ans = (j.get("answer") or "").strip(); hand = bool(j.get("handoff")) or bool(j.get("botq"))
+        if j.get("botq"): ans = ""   # "bot musun?" → kullanıcıya hiçbir şey yazılmaz, doğrudan sahibine
         if not ans and not hand: raise RuntimeError("boş cevap")
         def f(d):
             t = d.get("tickets", {}).get(tid)
@@ -4434,7 +4435,7 @@ async def ai_support(c, uid, tid, lang, m, user):
         tt.cancel()
         if ans:
             await c.bot.send_message(uid, esc(ans)[:4000], parse_mode="HTML", reply_markup=KB([[B(tr(lang, "b_tclose"), "u_tclose")]]))
-        if hand: await send_handoff(c, tid, user)
+        if hand: await send_handoff(c, tid, user, botq=bool(j.get("botq")))
     except Exception as e:
         tt.cancel(); log.warning("ai support: %s", e); RUN["ai_err"] = f"support: {str(e)[:120]}"
         # AI cevap veremedi: talep admine geçer (kullanıcı cevapsız kalmasın)
@@ -4443,7 +4444,7 @@ async def ai_support(c, uid, tid, lang, m, user):
         except Exception: pass
         await send_handoff(c, tid, user, err=True)
 
-async def send_handoff(c, tid, user, err=False):
+async def send_handoff(c, tid, user, err=False, botq=False):
     """Kurucuya: admine bağlanmak isteyen kullanıcının bütün yazışması."""
     t = load_db().get("tickets", {}).get(tid) or {}
     lines = [("👤 " if x["r"] == "u" else "🛠 " if x["r"] == "adm" else "🤖 ") + esc(x["c"]) for x in t.get("log", [])]
@@ -4452,7 +4453,7 @@ async def send_handoff(c, tid, user, err=False):
         n += len(ln)
         if n > 3300: break
         body.append(ln)
-    head = f"🙋 <b>{'AI cevap veremedi' if err else 'Admine bağlanmak istiyor'}</b> · #{tid}\n<i>{esc(who(user))}</i>\n"
+    head = f"🙋 <b>{'AI cevap veremedi' if err else 'Bot mu insan mı diye sordu — AI cevap vermedi, sen yaz' if botq else 'Admine bağlanmak istiyor'}</b> · #{tid}\n<i>{esc(who(user))}</i>\n"
     kb = KB([[B("✍️ Yanıtla", f"t_rep:{tid}", "primary"), B("🔒 Kapat", f"t_close:{tid}", "danger")]])
     for fid in ADMINS:
         try:
