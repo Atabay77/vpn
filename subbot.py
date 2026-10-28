@@ -1793,6 +1793,12 @@ async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
             audit(uid, "ai key set")
             t_, kb_ = await asyncio.to_thread(ai_view); await u.message.reply_text("✅ AI bağlandı.\n\n" + t_, parse_mode="HTML", reply_markup=kb_)
 
+        elif act == "ai_nadd":
+            if not txt: STATE[uid] = st; return
+            mutate(lambda d: d.__setitem__("ai_notes", (d.get("ai_notes", []) + [{"t": txt[:800], "ts": time.time()}])[-AI_NOTES_MAX:]))
+            audit(uid, "ai note add")
+            await u.message.reply_text("✅ AI bu bilgiyi artık biliyor.", reply_markup=KB([[B("📝 AI Bilgileri", "ai_notes")]]))
+
         elif act in ("ai_lim", "ai_plim"):
             try: n_ = int(txt.strip())
             except Exception: n_ = -1
@@ -1850,7 +1856,7 @@ async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
         log.exception("msg_handler")
         await send_error(c, uid, f"mesaj:{act}", e)
 
-FOUNDER_ONLY = {"ban_menu", "ban_find", "hp", "hp_set", "hp_del", "hp_new", "ref_test", "mk_admin", "mk_price", "mk_oph", "mk_ods", "mk_odr", "bal_find", "usearch", "rep_today", "rep_yday", "tickets_bug", "t_cancel", "tickets", "cp_test", "cp", "cp_set", "cp_del", "ai_adm", "ai_set", "ai_lim", "ai_plim", "ai_del", "ai_use", "ai_tsup", "ai_tmon", "ul_open", "stats", "chans", "ch_add", "pay_set", "bcast", "bcast_yes", "rollback", "rollback_yes", "auto_ann", "toggle_sys", "mk_rev", "ad_post", "ip_need", "ping_max", "admin", "sources", "s_add", "logs", "upd_now", "get_zip", "sa_menu", "sa_add", "bulk_ann", "bulk_title", "bulk_yes"}
+FOUNDER_ONLY = {"ban_menu", "ban_find", "hp", "hp_set", "hp_del", "hp_new", "ref_test", "mk_admin", "mk_price", "mk_oph", "mk_ods", "mk_odr", "bal_find", "usearch", "rep_today", "rep_yday", "tickets_bug", "t_cancel", "tickets", "cp_test", "cp", "cp_set", "cp_del", "ai_adm", "ai_set", "ai_lim", "ai_plim", "ai_del", "ai_use", "ai_tsup", "ai_tmon", "ai_notes", "ai_nadd", "ai_learnv", "ai_lclr", "ul_open", "stats", "chans", "ch_add", "pay_set", "bcast", "bcast_yes", "rollback", "rollback_yes", "auto_ann", "toggle_sys", "mk_rev", "ad_post", "ip_need", "ping_max", "admin", "sources", "s_add", "logs", "upd_now", "get_zip", "sa_menu", "sa_add", "bulk_ann", "bulk_title", "bulk_yes"}
 OWNED = ("kv", "kt", "kn", "ka", "kd", "kdy")   # alt admin sadece kendi kodunda
 def src_find(db, h): return next((s for s in db["sources"] if hashlib.md5(s.encode()).hexdigest()[:8] == h), None)
 
@@ -1864,7 +1870,7 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         miss = await missing_channels(c.bot, uid)
         if miss:
             await q.answer(); await safe_edit(q, *join_view(lang_of(load_db(), uid), miss)); return
-    if uid not in ADMINS and (a in FOUNDER_ONLY or a.startswith(("sv:", "se:", "sd:", "sa_del:", "sa_ext:", "sa_lim:", "kx:", "kxs:", "ul:", "chd:", "ord_ok:", "ord_no:", "t_rep:", "t_close:", "tv:", "ug:", "ux:", "uxc:", "ub:", "uv:", "ubal:", "mk_l:", "mk_ok:", "mk_rm:", "mk_ph:", "mk_real:", "mk_fake:", "mk_fakey:", "mk_rv:",  "mk_pok:", "mk_pno:", "mk_prj:", "hl:", "hlp:", "ubn:", "bnd:", "bnq:"))):
+    if uid not in ADMINS and (a in FOUNDER_ONLY or a.startswith(("sv:", "se:", "sd:", "sa_del:", "sa_ext:", "sa_lim:", "kx:", "kxs:", "ul:", "chd:", "ord_ok:", "ord_no:", "t_rep:", "t_close:", "tv:", "ug:", "ux:", "uxc:", "ub:", "uv:", "ubal:", "mk_l:", "mk_ok:", "mk_rm:", "mk_ph:", "mk_real:", "mk_fake:", "mk_fakey:", "mk_rv:",  "mk_pok:", "mk_pno:", "mk_prj:", "hl:", "hlp:", "ubn:", "bnd:", "bnq:", "ai_ndel:"))):
         await q.answer(L(uid, "⛔ Erişim yok", "⛔ Нет доступа"), show_alert=True); return
     if a not in ("toggle_sys", "upd_now"):
         await q.answer()
@@ -2200,6 +2206,25 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         fld_ = "ai_sup" if a == "ai_tsup" else "ai_mon"
         mutate(lambda d: d.__setitem__(fld_, not d.get(fld_, True))); audit(uid, f"{fld_} toggle")
         await safe_edit(q, *(await asyncio.to_thread(ai_view)))
+
+    elif a == "ai_notes" or a.startswith("ai_ndel:"):
+        if a.startswith("ai_ndel:"):
+            k_ = int(a.split(":")[1]); mutate(lambda d: d.get("ai_notes", []).pop(k_) if k_ < len(d.get("ai_notes", [])) else None)
+        notes = load_db().get("ai_notes", [])
+        body = "\n".join(f"{i + 1}. {esc(short(n_['t'], 150))}" for i, n_ in enumerate(notes)) or "Henüz bilgi yok."
+        await safe_edit(q, f"📝 <b>AI Bilgileri</b>  <code>{len(notes)}</code>\n<blockquote expandable>{body}</blockquote>\n<i>Buraya yazdığın her bilgiyi AI (destek + yardımcı) kesin doğru kabul eder. Ör: \"Kodlar her gün 03:00'te yenilenir.\"</i>",
+                        KB([[B("➕ Bilgi Ekle", "ai_nadd", "primary")]] + [[B(f"🗑 {i + 1}", f"ai_ndel:{i}") for i in range(k, min(k + 5, len(notes)))] for k in range(0, len(notes), 5)] + [[B("◀️ AI", "ai_adm")]]))
+
+    elif a == "ai_nadd":
+        STATE[uid] = {"action": "ai_nadd"}
+        await safe_edit(q, *prompt("📝 <b>AI'ya bilgi ekle</b>", "AI'nın bilmesini istediğin bilgiyi yaz (bir mesaj = bir bilgi).", "ai_notes"))
+
+    elif a == "ai_learnv" or a == "ai_lclr":
+        if a == "ai_lclr": mutate(lambda d: d.__setitem__("ai_learn", []))
+        ls = load_db().get("ai_learn", [])
+        body = "\n\n".join(f"👤 {esc(short(x['q'], 120))}\n🛠 {esc(short(x['a'], 160))}" for x in ls[-15:]) or "Henüz yok. Destek taleplerine verdiğin cevaplardan öğrenir."
+        await safe_edit(q, f"🎓 <b>AI'nın senden öğrendikleri</b>  <code>{len(ls)}</code>\n<blockquote expandable>{body}</blockquote>\n<i>Taleplere verdiğin her yazılı cevap buraya eklenir (son {AI_LEARN_MAX}).</i>",
+                        KB([[B("🗑 Temizle", "ai_lclr", "danger")], [B("◀️ AI", "ai_adm")]]))
 
     elif a == "ai_use":
         await safe_edit(q, *(await asyncio.to_thread(ai_usage_view)))
@@ -2906,6 +2931,25 @@ async def gen_image(prompt_):
 def _plain(t):
     return html.unescape(re.sub(r"<[^>]+>", "", t))
 
+# Botun yenilikleri: her güncellemede en üste eklenir; AI (yardımcı + destek) bunları bilir.
+CHANGELOG = [
+ ("28.10", "Destekte cevapları bot sahibi adına veren asistan; kullanıcının eski talepleri hatırlanır."),
+ ("28.10", "Destek: ✍️ Ýaz'a bir kez basılır, talep kapanana kadar yazılabilir; mesajlar arası 5 sn."),
+ ("28.10", "🤖 Kömekçi: 8 yapay zekâ modeli (Claude Opus, GPT, Gemini, Grok, Kimi, Mistral, MiMo, Nemotron); 2 günde 3 ücretsiz soru, 💎 Premium 5$/ay (her 5 saatte 50 soru); fotoğraf analizi; 📜 sohbet geçmişi."),
+ ("28.10", "Market'te 💰 Bakiyeden öde ve 🎁 Bonusdan töle (7/30 günlük kod); davet başına 0.25 TMT bonus."),
+ ("28.10", "Bakiye yükleme en az 0.1 USDT; kazanç çekme en az 1 USDT."),
+ ("27.10", "Pazar: Satın Al / VIP / ilan silme önce onay sorar; kendi ilanını satın alamazsın; ilan fotoğrafları tam görünür."),
+]
+AI_NOTES_MAX = 40
+
+def ai_extra(db=None):
+    """Yenilikler + sahibinin elle eklediği bilgiler (AI bunları kesin bilgi sayar)."""
+    db = db if db is not None else load_db()
+    out = "YENİLİKLER (en yeni üstte):\n" + "\n".join(f"- {d}: {t}" for d, t in CHANGELOG[:12])
+    notes = db.get("ai_notes", [])
+    if notes: out += "\n\nSAHİBİNİN EKLEDİĞİ BİLGİLER (kesin doğru kabul et):\n" + "\n".join(f"- {n_['t']}" for n_ in notes[-AI_NOTES_MAX:])
+    return out
+
 def ai_system(lang):
     """Botun GERÇEK bilgileri (koddaki değerlerden) + kurallar. Model sadece bunlara dayanır."""
     b = lambda k: re.sub(r"\s*\([^()]*\{\w+\}[^()]*\)|\{\w+\}", "", T[lang].get(k) or T["tr"].get(k, k)).strip()
@@ -2949,7 +2993,9 @@ KURALLAR:
 - Hesap/ödeme sorunu, para kaybı, bozuk kod gibi kişisel durumlarda çözümü tahmin etme; {b('b_sup')}'a yazmasını söyle.
 
 BİLGİLER:
-{facts}"""
+{facts}
+
+{ai_extra()}"""
 
 def md_tg(t):
     """Model cevabı (```kod```, `kod`, **kalın**) → Telegram HTML parçaları (her biri ≤ ~3800 karakter)."""
@@ -4015,6 +4061,7 @@ def ai_view():
     t += f"\n🎫 Support'a AI ilk cevap: <b>{'açık' if sup_on else 'kapalı'}</b>\n🛡 Log izleme (Haiku, 5 dk): <b>{'açık' if mon_on else 'kapalı'}</b>" + (f" · son: {esc(RUN['ai_mon_last'])}" if RUN.get("ai_mon_last") else "")
     return t, KB([[B("📊 Site Kullanımı", "ai_use", "success")],
                   [B(f"🎫 Support AI: {'🟢' if sup_on else '🔴'}", "ai_tsup"), B(f"🛡 Log izleme: {'🟢' if mon_on else '🔴'}", "ai_tmon")],
+                  [B(f"📝 AI Bilgileri ({len(db.get('ai_notes', []))})", "ai_notes"), B(f"🎓 Öğrendikleri ({len(db.get('ai_learn', []))})", "ai_learnv")],
                   [B("🔑 Anahtar Gir", "ai_set", "primary")], [B("🔢 Bot Yardımcısı Sınırı", "ai_lim")], [B("💎 Premium Sınır (5 saat)", "ai_plim")]] + ([[B("🗑 Anahtarı Kaldır", "ai_del", "danger")]] if on else []) + [[B("◀️ Admin", "admin")]])
 
 def _bar(p): n = max(0, min(10, round(p * 10))); return "▰" * n + "▱" * (10 - n)
@@ -4314,15 +4361,33 @@ async def user_to_ticket(c, u, tid):
     if r_ == "album": return
     await m.reply_text(tr(lang, "sup_sent"), parse_mode="HTML", reply_markup=KB([[B(tr(lang, "b_twrite"), "u_tw", "primary")], [B(tr(lang, "b_tclose"), "u_tclose", "danger")]]))
 
-AI_SUP_RULES = """Sen bu botun destek ekibindensin ve kullanıcının destek talebine cevap veriyorsun.
+AI_SUP_RULES = """Destek talebine BOTUN SAHİBİ olarak, birinci ağızdan cevap veriyorsun. Bot senin ("bot meňki", "bot benim"). Kullanıcıya bir arkadaş gibi rahat ve dobra yaz.
 NASIL YAZACAKSIN:
-- Gerçek bir destek çalışanı gibi doğal yaz. Yapay zekâ, bot, otomatik cevap olduğundan kendiliğinden bahsetme. Ama kullanıcı ciddi olarak "bot musun / yapay zekâ mısın" diye sorarsa yalan söyleme: otomatik destek asistanı olduğunu ve isterse admine bağlayabileceğini söyle.
-- Kullanıcının dilinde yaz. Varsayılan kısa ve net cevap; emoji kullanma. Gerekirse (adım adım anlatım vb.) uzun yazabilirsin.
-- Kullanıcının üslubuna uy: kibar ise kibar, samimi ise samimi; küfürlü/kaba yazıyorsa sen de aynı rahatlıkta argo ve küfürle cevap verebilirsin. Ama ırk, din, milliyet, cinsiyet hakareti ve tehdit asla yok.
-- Her soruyu cevapla. BİLGİLER'deki gerçek bilgilere dayan; bilmediğin şeyi uydurma. Asla söz verme (iade, telafi, süre uzatma, para iadesi vb.).
-- Ödeme kontrolü, iade, bozuk kodun düzeltilmesi gibi admin işlemi gereken durumlarda açıkla, gerekli bilgiyi iste ve "istersen seni admine bağlayabilirim" de.
-- Kullanıcı açıkça admine / insana / yetkiliye bağlanmak isterse handoff=true yap ve tek cümleyle admine aktardığını söyle.
+- Kitap dili değil, halkın konuştuğu günlük dil. Türkmence için örnekler: "bilmeýärin" değil "bilemok"; "edýärin" değil "edýän"; "aýdyň" yerine "aýdyber arkaýyn"; "Size nähili kömek edip bilerin?" yerine "näme kömek gerek, aýdyber arkaýyn"; "bu bot kimiň?" → "meň bodym". Türkçe ve Rusça da günlük konuşma dili.
+- Varsayılan kısa, emojisiz. Gerekirse (adım adım anlatım) uzun yaz.
+- Kullanıcının üslubuna uy: kibar ise kibar, samimi ise samimi; küfürlü/kaba yazıyorsa sen de aynı rahatlıkta argo ve küfürle cevap verebilirsin. Irk, din, milliyet, cinsiyet hakareti ve tehdit asla yok.
+- Yapay zekâ olduğundan kendiliğinden bahsetme. Ama kullanıcı ciddi olarak "bot musun / yapay zekâ mısın / gerçek insan mısın" diye sorarsa yalan söyleme: otomatik asistan olduğunu, istersen sahibinin kendisinin bakacağını söyle.
+- Her soruyu cevapla. BİLGİLER'e, YENİLİKLER'e, SAHİBİNİN EKLEDİĞİ BİLGİLER'e ve SAHİBİNİN ÖNCEKİ CEVAPLARI'na dayan; bilmediğin şeyi uydurma. Asla söz verme (iade, telafi, süre uzatma vb.).
+- Kullanıcının ÖNCEKİ TALEPLERİ'ni hatırla ve gerekiyorsa ona göre konuş.
+- Ödeme kontrolü, iade, bozuk kodun düzeltilmesi gibi elle bakılması gereken durumlarda gerekli bilgiyi iste ve "istersen özüm seredeýin" gibi kendin bakacağını teklif et.
+- Kullanıcı açıkça admine / insana / sahibine bağlanmak isterse ya da bakmanı kabul ederse handoff=true yap ve tek cümleyle birazdan kendin bakacağını söyle.
 SADECE şu JSON'u döndür: {"handoff": true/false, "answer": "kullanıcıya gidecek mesaj"}"""
+AI_LEARN_MAX = 40
+
+def sup_memory(db, uid, tid):
+    """Kullanıcının önceki talepleri + sahibinin örnek cevapları (destek AI'sına bağlam)."""
+    prev = [t for k, t in db.get("tickets", {}).items() if t.get("uid") == uid and k != tid and t.get("log")]
+    prev.sort(key=lambda t: t.get("ts", 0))
+    lines, n = [], 0
+    for t in reversed(prev[-5:]):
+        blk = [f"[{datetime.datetime.fromtimestamp(t.get('ts', 0), TM_TZ):%d.%m}] " + " | ".join(("K: " if x["r"] == "u" else "S: ") + " ".join(x["c"].split())[:200] for x in t["log"][-8:])]
+        n += len(blk[0])
+        if n > 3000: break
+        lines += blk
+    out = ("KULLANICININ ÖNCEKİ TALEPLERİ (K=kullanıcı, S=sen):\n" + "\n".join(reversed(lines))) if lines else ""
+    learn = db.get("ai_learn", [])[-AI_LEARN_MAX:]
+    if learn: out += "\n\nSAHİBİNİN ÖNCEKİ CEVAPLARI (aynı bilgi ve üslupla cevap ver):\n" + "\n".join(f"S: {x['q'][:200]}\nC: {x['a'][:300]}" for x in learn)
+    return out
 
 async def ai_support(c, uid, tid, lang, m, user):
     """Destek mesajına AI cevap verir (insan gibi). Kullanıcı admin isterse talep admine geçer ve bütün yazışma kurucuya gider."""
@@ -4352,7 +4417,8 @@ async def ai_support(c, uid, tid, lang, m, user):
         if msgs and msgs[-1]["role"] == "user":
             msgs[-1] = {"role": "user", "content": ([{"type": "text", "text": msgs[-1]["content"]}] + cur) if isinstance(cur, list) else msgs[-1]["content"] + "\n" + cur}
         else: msgs.append({"role": "user", "content": cur})
-        raw_ = await asyncio.to_thread(ai_call, ai_system(lang) + "\n\n" + AI_SUP_RULES, msgs)
+        mem = sup_memory(load_db(), uid, tid)
+        raw_ = await asyncio.to_thread(ai_call, ai_system(lang) + "\n\n" + AI_SUP_RULES + (("\n\n" + mem) if mem else ""), msgs)
         mj = re.search(r"\{.*\}", raw_, re.S)
         try: j = json.loads(mj.group(0)) if mj else {"handoff": False, "answer": raw_}
         except Exception: j = {"handoff": False, "answer": raw_}
@@ -4405,7 +4471,10 @@ async def admin_reply(c, admin_uid, tid, m):
         await m.reply_text(f"⚠️ Gönderilemedi: {esc(str(e)[:150])}", parse_mode="HTML"); return
     def f(d):
         x = d["tickets"][tid]; x["pending"] = 0; x["last"] = time.time(); x["n"] = x.get("n", 0) + 1
+        last_q = next((y["c"] for y in reversed(x.get("log", [])) if y["r"] == "u"), "")
         tlog(d, tid, "adm", media_tag(m) + (m.text or m.caption or ""))
+        if (m.text or m.caption) and last_q:   # AI sahibinin cevaplarından öğrenir
+            d["ai_learn"] = (d.get("ai_learn", []) + [{"q": last_q[:400], "a": (m.text or m.caption)[:600], "ts": time.time()}])[-AI_LEARN_MAX:]
     mutate(f)
     await m.reply_text(f"✅ Cevap gönderildi · #{tid}", reply_markup=KB([[B("🔒 Talebi Kapat", f"t_close:{tid}", "danger")]]))
 
