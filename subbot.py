@@ -2155,8 +2155,14 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
     elif a.startswith("tv:"):
         tid = a.split(":", 1)[1]; t = db.get("tickets", {}).get(tid)
         if not t: await safe_edit(q, "⚠️ Talep bulunamadı.", back("tickets")); return
-        await safe_edit(q, f"🎫 <b>Destek #{tid}</b>\n<blockquote>👤 {esc(t.get('who'))}\n📅 Açıldı  {ago(t.get('ts'))}\n💬 Mesaj  <b>{t.get('n', 0)}</b>\n"
-                           + ("🔴 Cevap bekliyor" if t.get("pending") else "🟢 Cevaplandı") + "</blockquote>\n<i>Kullanıcının mesajları sana ayrı ayrı geldi; birine Telegram'da yanıt vererek de cevaplayabilirsin.</i>",
+        lines_, n_ = [], 0
+        for x in reversed(t.get("log", [])):
+            ln = ("👤 " if x["r"] == "u" else "🛠 " if x["r"] == "adm" else "🤖 ") + esc(short(" ".join(x["c"].split()), 400))
+            n_ += len(ln)
+            if n_ > 2800: break
+            lines_.append(ln)
+        await safe_edit(q, f"{'🐞' if t.get('kind') == 'bug' else '🎫'} <b>#{tid}</b> · {esc(t.get('who'))}\n<i>{ago(t.get('ts'))} · {t.get('n', 0)} mesaj · " + ("🙋 admin istedi" if t.get("human") else "🤖 AI cevaplıyor") + "</i>"
+                           + (("\n<blockquote expandable>" + "\n\n".join(reversed(lines_)) + "</blockquote>") if lines_ else ""),
                         KB([[B("✍️ Yanıtla", f"t_rep:{tid}", "primary"), B("🔒 Kapat", f"t_close:{tid}", "danger")], [B("◀️ Talepler", "tickets")]]))
 
     elif a.startswith("t_rep:"):   # mesaj medya olabilir: üzerine yazma, yeni mesaj gönder
@@ -3227,13 +3233,13 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         tid, new = mutate(f)
         if new: ulog("t_open", f"{'🐞 Hata raporu' if kind == 'bug' else '🆘 Destek talebi'} açtı: {who(user)} · #{tid}")
         key = ("bug_new" if kind == "bug" else "sup_new") if new else "sup_open"
-        await bsend(kind, tr(lang, key, tid=tid) + "\n" + tr(lang, "sup_rate"), KB([[B(tr(lang, "b_twrite"), "u_tw", "primary")], [B(tr(lang, "b_tclose"), "u_tclose", "danger")], [B(tr(lang, "b_menu"), "u_menu")]]))
+        await bsend(kind, tr(lang, key, tid=tid), KB([[B(tr(lang, "b_twrite"), "u_tw", "primary")], [B(tr(lang, "b_tclose"), "u_tclose", "danger")], [B(tr(lang, "b_menu"), "u_menu")]]))
 
     elif a == "u_tw":   # ✍️ Yaz: bir kez basınca talep kapanana kadar yazılanlar talebe gider
         tid = open_ticket(load_db(), uid)
         if not tid: await send(tr(lang, "sup_closed", tid="—"), KB([[B(tr(lang, "b_menu"), "u_menu")]])); return
         STATE.pop(uid, None); mutate(lambda d: d["tickets"][tid].__setitem__("armed", True))
-        await send(tr(lang, "sup_ask") + "\n" + tr(lang, "sup_rate"), KB([[B(tr(lang, "b_cancel"), "u_twx")]]))
+        await send(tr(lang, "sup_ask"), KB([[B(tr(lang, "b_cancel"), "u_twx")]]))
 
     elif a == "u_twx":   # ✍️ iptal: yazma kapanır (talep açık kalır)
         tid_ = open_ticket(load_db(), uid)
@@ -4253,6 +4259,26 @@ async def copy_with_header(bot, to, from_chat, m, header, kb):
     r = await bot.copy_message(to, from_chat, m.message_id, caption=cap[:1024], parse_mode="HTML", reply_markup=kb)
     return r.message_id
 
+def tlog(d, tid, r, c_):
+    """Talep yazışması (admin talep ekranında görür). r: u (kullanıcı) / ai / adm."""
+    t = d.get("tickets", {}).get(tid)
+    if t is not None: t["log"] = (t.get("log", []) + [{"r": r, "c": c_[:2000], "ts": time.time()}])[-200:]
+
+def media_tag(m):
+    if m.photo: return "[📷 fotoğraf] "
+    if m.video or m.animation or m.video_note: return "[🎬 video] "
+    if m.voice or m.audio: return "[🎤 ses] "
+    if m.document: return "[📎 dosya] "
+    if m.sticker: return "[sticker] "
+    return ""
+
+async def forward_ticket(c, m, user, tid, kind):
+    hdr = f"{'🐞 <b>Hata Raporu' if kind == 'bug' else '🎫 <b>Destek'} #{tid}</b> · {esc(who(user))}"
+    kb = KB([[B("✍️ Yanıtla", f"t_rep:{tid}", "primary"), B("🔒 Kapat", f"t_close:{tid}", "danger")]])
+    for fid in ADMINS:
+        try: remember_tmsg(await copy_with_header(c.bot, fid, user.id, m, hdr, kb), tid)
+        except Exception as e: log.warning("destek iletilemedi: %s", e)
+
 async def user_to_ticket(c, u, tid):
     m, user = u.message, u.effective_user
     uid = user.id; lang = lang_of(load_db(), uid)
@@ -4260,68 +4286,113 @@ async def user_to_ticket(c, u, tid):
     if size > lim * 1024 * 1024:
         await m.reply_text(tr(lang, "sup_big")); return
     mg = getattr(m, "media_group_id", None); now = time.time()
+    ai_on = bool(ai_key()) and load_db().get("ai_sup", True)
     def f(d):
         t = d["tickets"][tid]
         if mg and t.get("mg") == mg and now - t.get("last_user", 0) < 60:   # aynı albümün devamı
             t["last"] = now; return "album"
         if now - t.get("last_user", 0) < SUP_EVERY: return int(SUP_EVERY - (now - t.get("last_user", 0))) + 1
-        if t.get("pending", 0) >= SUP_MAX: return None
+        if t.get("pending", 0) >= SUP_MAX and (t.get("human") or not ai_on): return None
         t["pending"] = t.get("pending", 0) + 1; t["n"] = t.get("n", 0) + 1; t["last"] = now; t["last_user"] = now; t["mg"] = mg
+        tlog(d, tid, "u", media_tag(m) + (m.text or m.caption or ""))
         return True
     r_ = mutate(f)
     if r_ is None:
         await m.reply_text(tr(lang, "sup_wait")); return
     if isinstance(r_, int) and r_ is not True:
         await m.reply_text(tr(lang, "sup_slow", s=r_)); return
-    kind = load_db().get("tickets", {}).get(tid, {}).get("kind")
-    hdr = f"{'🐞 <b>Hata Raporu' if kind == 'bug' else '🎫 <b>Destek'} #{tid}</b> · {esc(who(user))}"
-    kb = KB([[B("✍️ Yanıtla", f"t_rep:{tid}", "primary"), B("🔒 Kapat", f"t_close:{tid}", "danger")]])
-    for fid in ADMINS:
-        try: remember_tmsg(await copy_with_header(c.bot, fid, uid, m, hdr, kb), tid)
-        except Exception as e: log.warning("destek iletilemedi: %s", e)
+    t = load_db().get("tickets", {}).get(tid, {}); kind = t.get("kind")
+    if ai_on and not t.get("human"):   # AI cevaplar; kurucuya sadece "yeni mesaj var" (talep başına bir kez)
+        if r_ == "album": return
+        if not t.get("notified"):
+            mutate(lambda d: d["tickets"][tid].__setitem__("notified", True))
+            await notify_founders(c.application, f"🆕 <b>Yeni {'bug bildirimi' if kind == 'bug' else 'support mesajı'}</b> · #{tid}\n<blockquote>{esc(who(user))}</blockquote>\n<i>AI cevaplıyor; admine bağlanmak isterse yazışmanın tamamı sana gelir.</i>",
+                                  KB([[B("👁 Yazışmayı gör", f"tv:{tid}")]]))
+        asyncio.ensure_future(ai_support(c, uid, tid, lang, m, user))
+        return
+    await forward_ticket(c, m, user, tid, kind)
     if r_ == "album": return
-    await m.reply_text(tr(lang, "sup_sent") + "\n" + tr(lang, "sup_rate"), parse_mode="HTML", reply_markup=KB([[B(tr(lang, "b_twrite"), "u_tw", "primary")], [B(tr(lang, "b_tclose"), "u_tclose", "danger")]]))
-    txt_ = (m.text or m.caption or "").strip()
-    if txt_ and ai_key() and load_db().get("ai_sup", True):
-        asyncio.ensure_future(ai_support(c, uid, tid, txt_, lang, kind, bool(m.photo or m.video or m.document)))
+    await m.reply_text(tr(lang, "sup_sent"), parse_mode="HTML", reply_markup=KB([[B(tr(lang, "b_twrite"), "u_tw", "primary")], [B(tr(lang, "b_tclose"), "u_tclose", "danger")]]))
 
-AI_SUP_RULES = """Şu an bir DESTEK TALEBİNE ilk cevabı veriyorsun. Admin bütün yazışmayı görüyor ve gerekirse kendisi cevap verecek.
-- Soru genel bir bot sorusuysa (nasıl yapılır, fiyat, kurallar, Happ'e ekleme, buton nerede vb.) BİLGİLER'e dayanarak kısa ve net cevap ver.
-- Kişisel/özel bir durumsa CEVAP VERME, admine bırak: para/bakiye/ödeme sorunu, iade isteği, çekim sorunu, çalışmayan/bozuk kod, hesap veya ban, hata (bug) bildirimi, şikâyet, ekli dosya/fotoğraf hakkında soru, emin olmadığın her şey.
-- Asla söz verme (iade, telafi, süre uzatma vb.) ve uydurma.
-- SADECE şu JSON'u döndür: {"escalate": true/false, "answer": "kullanıcıya cevap (escalate ise boş)", "note": "admine tek satır özet"}"""
+AI_SUP_RULES = """Sen bu botun destek ekibindensin ve kullanıcının destek talebine cevap veriyorsun.
+NASIL YAZACAKSIN:
+- Gerçek bir destek çalışanı gibi doğal yaz. Yapay zekâ, bot, otomatik cevap olduğundan kendiliğinden bahsetme. Ama kullanıcı ciddi olarak "bot musun / yapay zekâ mısın" diye sorarsa yalan söyleme: otomatik destek asistanı olduğunu ve isterse admine bağlayabileceğini söyle.
+- Kullanıcının dilinde yaz. Varsayılan kısa ve net cevap; emoji kullanma. Gerekirse (adım adım anlatım vb.) uzun yazabilirsin.
+- Kullanıcının üslubuna uy: kibar ise kibar, samimi ise samimi; küfürlü/kaba yazıyorsa sen de aynı rahatlıkta argo ve küfürle cevap verebilirsin. Ama ırk, din, milliyet, cinsiyet hakareti ve tehdit asla yok.
+- Her soruyu cevapla. BİLGİLER'deki gerçek bilgilere dayan; bilmediğin şeyi uydurma. Asla söz verme (iade, telafi, süre uzatma, para iadesi vb.).
+- Ödeme kontrolü, iade, bozuk kodun düzeltilmesi gibi admin işlemi gereken durumlarda açıkla, gerekli bilgiyi iste ve "istersen seni admine bağlayabilirim" de.
+- Kullanıcı açıkça admine / insana / yetkiliye bağlanmak isterse handoff=true yap ve tek cümleyle admine aktardığını söyle.
+SADECE şu JSON'u döndür: {"handoff": true/false, "answer": "kullanıcıya gidecek mesaj"}"""
 
-async def ai_support(c, uid, tid, text_, lang, kind, has_media):
-    """Destek mesajına AI ilk cevap. Genel soruysa kullanıcıya cevap verir; değilse admine bırakır. Her durumda admine not düşer."""
+async def ai_support(c, uid, tid, lang, m, user):
+    """Destek mesajına AI cevap verir (insan gibi). Kullanıcı admin isterse talep admine geçer ve bütün yazışma kurucuya gider."""
+    async def typing():
+        while True:
+            try: await c.bot.send_chat_action(uid, "typing")
+            except Exception: pass
+            await asyncio.sleep(4)
+    tt = asyncio.ensure_future(typing())
     try:
         t0 = load_db().get("tickets", {}).get(tid) or {}
-        hist = [{"role": x["r"], "content": x["c"]} for x in t0.get("ai_h", [])][-6:]
-        while hist and hist[0]["role"] != "user": hist.pop(0)
-        q_ = ("[Hata raporu] " if kind == "bug" else "") + ("[Ekli fotoğraf/video var] " if has_media else "") + text_[:3000]
+        kind = t0.get("kind")
         msgs = []
-        for h in hist + [{"role": "user", "content": q_}]:   # art arda aynı rol olmasın
-            if msgs and msgs[-1]["role"] == h["role"]: msgs[-1]["content"] += "\n" + h["content"]
-            else: msgs.append(dict(h))
-        raw = await asyncio.to_thread(ai_call, ai_system(lang) + "\n\n" + AI_SUP_RULES, msgs)
-        mj = re.search(r"\{.*\}", raw, re.S); j = json.loads(mj.group(0)) if mj else {"escalate": True, "note": raw[:200]}
-        esc_ = bool(j.get("escalate")) or not (j.get("answer") or "").strip()
-        ans = (j.get("answer") or "").strip()
+        for x in t0.get("log", [])[-31:-1]:   # son yazışma (şimdiki mesaj hariç)
+            role = "user" if x["r"] == "u" else "assistant"
+            c_ = ("[Admin] " if x["r"] == "adm" else "") + x["c"]
+            if msgs and msgs[-1]["role"] == role: msgs[-1]["content"] += "\n" + c_
+            else: msgs.append({"role": role, "content": c_})
+        while msgs and msgs[0]["role"] != "user": msgs.pop(0)
+        q_ = ("[Hata raporu] " if kind == "bug" else "") + media_tag(m) + (m.text or m.caption or "")
+        cur = q_[:3000] or "[mesaj]"
+        if m.photo:
+            try:
+                f_ = await c.bot.get_file(m.photo[-1].file_id); raw = bytes(await f_.download_as_bytearray())
+                cur = [{"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": base64.b64encode(raw).decode()}}, {"type": "text", "text": q_[:3000]}]
+            except Exception as e: log.info("sup photo: %s", e)
+        if msgs and msgs[-1]["role"] == "user":
+            msgs[-1] = {"role": "user", "content": ([{"type": "text", "text": msgs[-1]["content"]}] + cur) if isinstance(cur, list) else msgs[-1]["content"] + "\n" + cur}
+        else: msgs.append({"role": "user", "content": cur})
+        raw_ = await asyncio.to_thread(ai_call, ai_system(lang) + "\n\n" + AI_SUP_RULES, msgs)
+        mj = re.search(r"\{.*\}", raw_, re.S)
+        try: j = json.loads(mj.group(0)) if mj else {"handoff": False, "answer": raw_}
+        except Exception: j = {"handoff": False, "answer": raw_}
+        ans = (j.get("answer") or "").strip(); hand = bool(j.get("handoff"))
+        if not ans and not hand: raise RuntimeError("boş cevap")
         def f(d):
             t = d.get("tickets", {}).get(tid)
             if not t: return
-            h = t.setdefault("ai_h", []); h.append({"r": "user", "c": text_[:1500]})
-            if not esc_: h.append({"r": "assistant", "c": ans[:1500]}); t["pending"] = 0
-            t["ai_h"] = h[-10:]
+            if ans: tlog(d, tid, "ai", ans)
+            t["pending"] = 0
+            if hand: t["human"] = True; t["pending"] = 1
         mutate(f)
-        if not esc_:
-            await c.bot.send_message(uid, tr(lang, "sup_ai", tid=tid, a=esc(ans)[:3500]), parse_mode="HTML",
-                                     reply_markup=KB([[B(tr(lang, "b_twrite"), "u_tw", "primary")], [B(tr(lang, "b_tclose"), "u_tclose", "danger")]]))
-        note = f"🤖 <b>AI #{tid}</b> · " + ("👤 sana bırakıldı" if esc_ else "✅ cevapladı") + (f"\n<blockquote expandable>{esc(ans[:1500])}</blockquote>" if not esc_ else "") + (f"\n<i>{esc(str(j.get('note', ''))[:200])}</i>" if j.get("note") else "")
-        for fid in ADMINS:
-            try: remember_tmsg((await c.bot.send_message(fid, note, parse_mode="HTML", reply_markup=KB([[B("✍️ Yanıtla", f"t_rep:{tid}", "primary"), B("🔒 Kapat", f"t_close:{tid}", "danger")]]))).message_id, tid)
-            except Exception: pass
+        tt.cancel()
+        if ans:
+            await c.bot.send_message(uid, esc(ans)[:4000], parse_mode="HTML", reply_markup=KB([[B(tr(lang, "b_tclose"), "u_tclose")]]))
+        if hand: await send_handoff(c, tid, user)
     except Exception as e:
-        log.warning("ai support: %s", e); RUN["ai_err"] = f"support: {str(e)[:120]}"
+        tt.cancel(); log.warning("ai support: %s", e); RUN["ai_err"] = f"support: {str(e)[:120]}"
+        # AI cevap veremedi: talep admine geçer (kullanıcı cevapsız kalmasın)
+        mutate(lambda d: d.get("tickets", {}).get(tid, {}).__setitem__("human", True))
+        try: await c.bot.send_message(uid, tr(lang, "sup_sent"))
+        except Exception: pass
+        await send_handoff(c, tid, user, err=True)
+
+async def send_handoff(c, tid, user, err=False):
+    """Kurucuya: admine bağlanmak isteyen kullanıcının bütün yazışması."""
+    t = load_db().get("tickets", {}).get(tid) or {}
+    lines = [("👤 " if x["r"] == "u" else "🛠 " if x["r"] == "adm" else "🤖 ") + esc(x["c"]) for x in t.get("log", [])]
+    body, n = [], 0
+    for ln in reversed(lines):
+        n += len(ln)
+        if n > 3300: break
+        body.append(ln)
+    head = f"🙋 <b>{'AI cevap veremedi' if err else 'Admine bağlanmak istiyor'}</b> · #{tid}\n<i>{esc(who(user))}</i>\n"
+    kb = KB([[B("✍️ Yanıtla", f"t_rep:{tid}", "primary"), B("🔒 Kapat", f"t_close:{tid}", "danger")]])
+    for fid in ADMINS:
+        try:
+            r_ = await c.bot.send_message(fid, head + "<blockquote expandable>" + "\n\n".join(reversed(body)) + "</blockquote>", parse_mode="HTML", reply_markup=kb)
+            remember_tmsg(r_.message_id, tid)
+        except Exception as e: log.warning("handoff: %s", e)
 
 async def admin_reply(c, admin_uid, tid, m):
     t = load_db().get("tickets", {}).get(tid)
@@ -4334,7 +4405,7 @@ async def admin_reply(c, admin_uid, tid, m):
         await m.reply_text(f"⚠️ Gönderilemedi: {esc(str(e)[:150])}", parse_mode="HTML"); return
     def f(d):
         x = d["tickets"][tid]; x["pending"] = 0; x["last"] = time.time(); x["n"] = x.get("n", 0) + 1
-        if m.text or m.caption: x["ai_h"] = (x.get("ai_h", []) + [{"r": "assistant", "c": "[Admin] " + (m.text or m.caption)[:1500]}])[-10:]
+        tlog(d, tid, "adm", media_tag(m) + (m.text or m.caption or ""))
     mutate(f)
     await m.reply_text(f"✅ Cevap gönderildi · #{tid}", reply_markup=KB([[B("🔒 Talebi Kapat", f"t_close:{tid}", "danger")]]))
 
@@ -4351,7 +4422,7 @@ async def close_ticket(c, tid, by_admin):
     if by_admin:
         try: await c.bot.send_message(t["uid"], tr(lang_of(load_db(), t["uid"]), "sup_closed_admin", tid=tid))
         except Exception: pass
-    else:
+    elif t.get("human") or not (ai_key() and load_db().get("ai_sup", True)):   # AI'nın tek başına yürüttüğü talepler için haber yok
         await notify_founders(c.application if hasattr(c, "application") else c, f"🔒 Kullanıcı destek talebini kapattı · #{tid}\n<blockquote>{esc(t.get('who'))}</blockquote>")
     return True
 
@@ -5422,17 +5493,17 @@ T["ru"].update({"b_ai_bot": "❓ Вопрос о боте (бесплатно)",
   "aipro_info": "💎 <b>AI Premium</b>\n<blockquote>Все модели: Claude Opus, GPT, Gemini, Grok, Kimi…\n<b>{n}</b> вопросов каждые 5 часов · {days} дней\nЦена  <b>{usdt}$</b> / мес (CryptoBot или баланс)</blockquote>\n<i>Без подписки — {f} вопроса за 2 дня бесплатно.</i>",
   "aipro_ok": "✅ <b>💎 AI Premium активен!</b>\n<blockquote>до {until} · {n} вопросов каждые 5 часов</blockquote>\nВыберите модель через 🤖.",
   "ai_busy": "⚠️ {name} сейчас занят. Выберите другую модель или попробуйте позже. (Вопрос не засчитан.)"})
-T["tr"].update({"sup_ai": '🤖 <b>Otomatik cevap · #{tid}</b>\n<blockquote>{a}</blockquote>\n<i>Sorun çözülmediyse yazmaya devam et; admin de görüyor.</i>', "ai_legend": '🔴 en güçlü · 🔵 güçlü · 🟢 hızlı/hafif · 📷 fotoğraf görür', "ai_img_q": 'Bu fotoğrafı ayrıntılı analiz et.', "img_blocked": '⚠️ Bu istek uygunsuz bulunduğu için fotoğraf oluşturulmadı. Farklı yazıp tekrar dene.', "ai_plim": "⏳ Bu dönemdeki {n} soru hakkın bitti. {r}'de yenilenir.", "ai_novision": '📷 {name} fotoğraf göremez. Fotoğraf için şunlardan birini seç: {v}', "b_ai_new": "Yeni sohbet", "b_ai_hist": "📜 Geçmiş", "b_ai_go": "▶️ Sohbete devam et", "b_ai_del": "🗑 Sil", "ai_q": "soru",
+T["tr"].update({"ai_legend": '🔴 en güçlü · 🔵 güçlü · 🟢 hızlı/hafif · 📷 fotoğraf görür', "ai_img_q": 'Bu fotoğrafı ayrıntılı analiz et.', "img_blocked": '⚠️ Bu istek uygunsuz bulunduğu için fotoğraf oluşturulmadı. Farklı yazıp tekrar dene.', "ai_plim": "⏳ Bu dönemdeki {n} soru hakkın bitti. {r}'de yenilenir.", "ai_novision": '📷 {name} fotoğraf göremez. Fotoğraf için şunlardan birini seç: {v}', "b_ai_new": "Yeni sohbet", "b_ai_hist": "📜 Geçmiş", "b_ai_go": "▶️ Sohbete devam et", "b_ai_del": "🗑 Sil", "ai_q": "soru",
   "ai_cont": "📜 Sohbete devam: <b>{t}</b> (önceki yazışmalar hatırlanıyor)", "ai_new_ok": "🧹 <b>Yeni sohbet</b> · {name}\n<i>Eski sohbet 📜 Geçmiş'te duruyor. Sorunu yaz</i> 👇",
   "ai_hist_t": "📜 <b>Geçmiş sohbetler</b>  <code>{n}</code>\n<i>Birini seç: yazışmaları gör, devam et ya da sil.</i>", "ai_hist_none": "📜 Henüz kayıtlı sohbet yok.",
   "ai_del_q": "🗑 <b>Bu sohbet silinsin mi?</b>\n<i>Yazışmalar geri gelmez.</i>", "ai_deleted": "🗑 Sohbet silindi.",
   "img_wait": "⏳ Fotoğraf oluşturuluyor (yaklaşık 1 dakika)…", "img_err": "⚠️ Fotoğraf oluşturulamadı: <code>{e}</code>\n<i>Sitede geçici bir hata olabilir; biraz sonra tekrar dene.</i>"})
-T["tk"].update({"sup_ai": '🤖 <b>Awtomatik jogap · #{tid}</b>\n<blockquote>{a}</blockquote>\n<i>Mesele çözülmedik bolsa ýazmagy dowam et; admin hem görýär.</i>', "ai_legend": '🔴 iň güýçli · 🔵 güýçli · 🟢 çalt/ýeňil · 📷 surat görýär', "ai_img_q": 'Bu suraty jikme-jik seljer.', "img_blocked": '⚠️ Bu haýyş laýyk däl diýlip tapyldy, surat döredilmedi. Başgaça ýazyp gaýtadan synan.', "ai_plim": '⏳ Bu döwürdäki {n} sorag hakyň gutardy. {r}-da täzelenýär.', "ai_novision": '📷 {name} surat görüp bilmeýär. Surat üçin şulardan birini saýla: {v}', "b_ai_new": "Täze söhbet", "b_ai_hist": "📜 Taryh", "b_ai_go": "▶️ Söhbeti dowam et", "b_ai_del": "🗑 Poz", "ai_q": "sorag",
+T["tk"].update({"ai_legend": '🔴 iň güýçli · 🔵 güýçli · 🟢 çalt/ýeňil · 📷 surat görýär', "ai_img_q": 'Bu suraty jikme-jik seljer.', "img_blocked": '⚠️ Bu haýyş laýyk däl diýlip tapyldy, surat döredilmedi. Başgaça ýazyp gaýtadan synan.', "ai_plim": '⏳ Bu döwürdäki {n} sorag hakyň gutardy. {r}-da täzelenýär.', "ai_novision": '📷 {name} surat görüp bilmeýär. Surat üçin şulardan birini saýla: {v}', "b_ai_new": "Täze söhbet", "b_ai_hist": "📜 Taryh", "b_ai_go": "▶️ Söhbeti dowam et", "b_ai_del": "🗑 Poz", "ai_q": "sorag",
   "ai_cont": "📜 Söhbet dowam edýär: <b>{t}</b> (öňki ýazyşmalar ýatda)", "ai_new_ok": "🧹 <b>Täze söhbet</b> · {name}\n<i>Köne söhbet 📜 Taryh-da dur. Soragyňy ýaz</i> 👇",
   "ai_hist_t": "📜 <b>Öňki söhbetler</b>  <code>{n}</code>\n<i>Birini saýla: ýazyşmalary gör, dowam et ýa-da poz.</i>", "ai_hist_none": "📜 Entek ýazylan söhbet ýok.",
   "ai_del_q": "🗑 <b>Bu söhbet pozulsynmy?</b>\n<i>Ýazyşmalar yzyna gelmez.</i>", "ai_deleted": "🗑 Söhbet pozuldy.",
   "img_wait": "⏳ Surat döredilýär (takmynan 1 minut)…", "img_err": "⚠️ Surat döredip bolmady: <code>{e}</code>\n<i>Saýtda wagtlaýyn ýalňyşlyk bolup biler; birazdan gaýtadan synan.</i>"})
-T["ru"].update({"sup_ai": '🤖 <b>Автоответ · #{tid}</b>\n<blockquote>{a}</blockquote>\n<i>Если вопрос не решён — пишите дальше, админ тоже видит.</i>', "ai_legend": '🔴 самые сильные · 🔵 сильные · 🟢 быстрые/лёгкие · 📷 видит фото', "ai_img_q": 'Подробно проанализируй это фото.', "img_blocked": '⚠️ Запрос признан неприемлемым, фото не создано. Переформулируйте.', "ai_plim": '⏳ Лимит {n} вопросов на этот период исчерпан. Обновится в {r}.', "ai_novision": '📷 {name} не видит фото. Для фото выберите: {v}', "b_ai_new": "Новый чат", "b_ai_hist": "📜 История", "b_ai_go": "▶️ Продолжить чат", "b_ai_del": "🗑 Удалить", "ai_q": "вопр.",
+T["ru"].update({"ai_legend": '🔴 самые сильные · 🔵 сильные · 🟢 быстрые/лёгкие · 📷 видит фото', "ai_img_q": 'Подробно проанализируй это фото.', "img_blocked": '⚠️ Запрос признан неприемлемым, фото не создано. Переформулируйте.', "ai_plim": '⏳ Лимит {n} вопросов на этот период исчерпан. Обновится в {r}.', "ai_novision": '📷 {name} не видит фото. Для фото выберите: {v}', "b_ai_new": "Новый чат", "b_ai_hist": "📜 История", "b_ai_go": "▶️ Продолжить чат", "b_ai_del": "🗑 Удалить", "ai_q": "вопр.",
   "ai_cont": "📜 Продолжаем чат: <b>{t}</b> (прошлая переписка учитывается)", "ai_new_ok": "🧹 <b>Новый чат</b> · {name}\n<i>Старый чат остался в 📜 Истории. Напишите вопрос</i> 👇",
   "ai_hist_t": "📜 <b>Прошлые чаты</b>  <code>{n}</code>\n<i>Выберите: посмотреть, продолжить или удалить.</i>", "ai_hist_none": "📜 Сохранённых чатов пока нет.",
   "ai_del_q": "🗑 <b>Удалить этот чат?</b>\n<i>Переписку не вернуть.</i>", "ai_deleted": "🗑 Чат удалён.",
@@ -5475,14 +5546,11 @@ T["ru"].update({"fake_rej": "🤥 <b>Объявление отклонено: ф
 
 # Destek / Bug: ✍️ Yaz butonu + 60 sn sınırı
 T["tr"].update({"sup_press": '✍️ Talebine (#{tid}) yazmak için önce <b>✍️ Yaz</b> butonuna bas. Bir kez basman yeterli, sonra talep kapanana kadar yazabilirsin.', "sup_cmd_q": '📩 <b>Açık destek talebin var (#{tid}).</b>\nKapatılsın mı?', "b_tclose_yes": '🔒 Evet, kapat', "b_tkeep": '✍️ Hayır, yazmaya devam', "b_twrite": "✍️ Yaz", "sup_ask": "✍️ <b>Mesajını gönder</b>\n<blockquote>Yazı, fotoğraf ya da video — fark etmez.</blockquote>",
-  "sup_rate": "<i>⏱ 5 saniyede tek mesaj gönderebilirsin — hepsini tek mesajda yaz.</i>",
-  "sup_slow": "⏳ 5 saniyede tek mesaj gönderebilirsin. {s} sn sonra tekrar dene — hepsini tek mesajda yaz."})
+  "sup_slow": "⏳ Biraz bekle, {s} sn sonra tekrar yaz."})
 T["tk"].update({"sup_press": '✍️ Soragyňa (#{tid}) ýazmak üçin ilki <b>✍️ Ýaz</b> düwmesine bas. Bir gezek basmak ýeterlik, soňra sorag ýapylýança ýazyp bilersiň.', "sup_cmd_q": '📩 <b>Açyk goldaw soragyň bar (#{tid}).</b>\nÝapylsynmy?', "b_tclose_yes": '🔒 Hawa, ýap', "b_tkeep": '✍️ Ýok, ýazmagy dowam et', "b_twrite": "✍️ Ýaz", "sup_ask": "✍️ <b>Habaryňy iber</b>\n<blockquote>Tekst, surat ýa-da wideo — tapawudy ýok.</blockquote>",
-  "sup_rate": "<i>⏱ 5 sekuntda diňe 1 habar iberip bilersiňiz — hemmesini bir habarda ýazyň.</i>",
-  "sup_slow": "⏳ 5 sekuntda diňe 1 habar iberip bilersiňiz. {s} sek soň gaýtadan synanyşyň — hemmesini bir habarda ýazyň."})
+  "sup_slow": "⏳ Azajyk garaş, {s} sek soň gaýtadan ýaz."})
 T["ru"].update({"sup_press": '✍️ Чтобы написать в обращение (#{tid}), сначала нажмите <b>✍️ Написать</b>. Достаточно один раз — потом можно писать, пока обращение открыто.', "sup_cmd_q": '📩 <b>У вас открыто обращение (#{tid}).</b>\nЗакрыть его?', "b_tclose_yes": '🔒 Да, закрыть', "b_tkeep": '✍️ Нет, продолжить', "b_twrite": "✍️ Написать", "sup_ask": "✍️ <b>Отправьте сообщение</b>\n<blockquote>Текст, фото или видео — неважно.</blockquote>",
-  "sup_rate": "<i>⏱ Можно отправить 1 сообщение в 5 секунд — пишите всё одним сообщением.</i>",
-  "sup_slow": "⏳ Можно отправить 1 сообщение в 5 секунд. Попробуйте через {s} сек — пишите всё одним сообщением."})
+  "sup_slow": "⏳ Подождите {s} сек и напишите снова."})
 
 # Sınırlı abonelik uyarısı (satış)
 T["tr"]["sell_limited"] = "⚠️ <b>Bu abonelik sınırlı</b>\n<blockquote>{lim}\nPazara sadece <b>GB ve süre sınırı olmayan</b> abonelik konabilir.</blockquote>"
