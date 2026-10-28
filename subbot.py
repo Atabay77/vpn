@@ -2714,7 +2714,7 @@ def set_env(key, val):
 
 # ── 🤖 Yardımcı (AI): xKiro üzerinden Anthropic biçimi (/v1/messages) ──
 AI_LIMIT = 20                    # kullanıcı başı günlük soru (kurucuya sınır yok); Admin → 🤖 AI'dan değişir
-AI_HIST = {}                     # uid -> son mesajlar (bellekte, kısa konuşma geçmişi)
+AI_HIST = {}                     # ("t", uid) -> son soru zamanı (art arda spam); sohbetler AI_DIR'de kalıcı
 def ai_key(): return os.environ.get("AI_API_KEY", "")
 def ai_base(): return (os.environ.get("AI_BASE_URL") or "https://api.xkiro.com").rstrip("/")
 def ai_model(): return os.environ.get("AI_MODEL") or "anthropic/claude-opus-5.5"
@@ -2769,6 +2769,62 @@ Her konuda yardım edersin: genel sorular, kod yazma, hata ayıklama, ödev/ders
 - Fotoğraf, video veya ses oluşturamazsın; istenirse bu sohbette sadece yazıyla yardım edebildiğini söyle.
 - Kod istenirse çalışır ve eksiksiz kod ver, ``` kod bloklarını kullan. Gereksiz uzatma.
 - Biçim Telegram içindir: sadece ``` kod blokları, `satır içi kod` ve **kalın** kullan; başlık (#) veya tablo kullanma."""
+
+AI_DIR = os.environ.get("AI_DIR", "/root/ai_chats")   # her kullanıcının sohbetleri: <uid>.json
+AI_CTX_CHARS = 120_000           # bir isteğe gönderilen geçmiş üst sınırı (~30 bin token); daha eskisi kayıtta durur
+AI_MAX_CHATS, AI_MAX_MSGS = 50, 400
+AI_FLOCK = threading.Lock()
+def _aif(uid): return os.path.join(AI_DIR, f"{int(uid)}.json")
+def ai_load(uid):
+    try:
+        with open(_aif(uid), encoding="utf-8") as f: return json.load(f)
+    except Exception: return {"chats": {}, "cur": {}}
+def ai_save(uid, data):
+    os.makedirs(AI_DIR, exist_ok=True)
+    with open(_aif(uid) + ".tmp", "w", encoding="utf-8") as f: json.dump(data, f, ensure_ascii=False)
+    os.replace(_aif(uid) + ".tmp", _aif(uid))
+def ai_cur(uid, mk):
+    d = ai_load(uid); cid = d.get("cur", {}).get(mk)
+    return cid if cid in d.get("chats", {}) else None
+def ai_context(uid, cid, max_chars=AI_CTX_CHARS):
+    """Sohbetin mesajları (en yeniden geriye, sınıra kadar) → API biçimi."""
+    ch = ai_load(uid).get("chats", {}).get(cid) if cid else None
+    out, n = [], 0
+    for x in reversed((ch or {}).get("msgs", [])):
+        n += len(x["c"])
+        if n > max_chars and out: break
+        out.append({"role": x["r"], "content": x["c"]})
+    out.reverse()
+    while out and out[0]["role"] != "user": out.pop(0)   # API ilk mesajı kullanıcıdan ister
+    return out
+def ai_append(uid, mk, cid, q, ans):
+    """Soru + cevabı kaydeder (sohbet yoksa açar). Dönüş: sohbet no."""
+    with AI_FLOCK:
+        d = ai_load(uid); chats = d.setdefault("chats", {}); now = time.time()
+        if not cid or cid not in chats:
+            cid = uuid.uuid4().hex[:8]
+            chats[cid] = {"m": mk, "t": " ".join(q.split())[:40], "ts": now, "msgs": []}
+        ch = chats[cid]; ch["u"] = now
+        ch["msgs"] += [{"r": "user", "c": q, "ts": now}, {"r": "assistant", "c": ans, "ts": now}]
+        ch["msgs"] = ch["msgs"][-AI_MAX_MSGS:]
+        d.setdefault("cur", {})[mk] = cid
+        for old in sorted(chats, key=lambda k: chats[k].get("u", 0))[:-AI_MAX_CHATS]: chats.pop(old, None)
+        ai_save(uid, d)
+    return cid
+
+IMG_MODEL = "openai/gpt-image-2.5"
+def _xk(path, body=None, timeout=60):
+    req = urllib.request.Request(ai_base() + path, data=json.dumps(body).encode("utf-8") if body is not None else None,
+                                 headers={"Authorization": "Bearer " + ai_key(), "content-type": "application/json", "User-Agent": "subbot/1.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r: return json.loads(r.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        try: msg = json.loads(e.read().decode("utf-8")).get("error", {}).get("message", "")
+        except Exception: msg = ""
+        raise RuntimeError(f"HTTP {e.code} {msg}"[:200])
+def img_fetch(url):
+    req = urllib.request.Request(url, headers={"User-Agent": "subbot/1.0"})
+    with urllib.request.urlopen(req, timeout=60) as r: return r.read()
 
 def ai_call(system, msgs, key=None, max_tokens=4000, timeout=120, model=None):
     """Tek istek. Dönüş: cevap yazısı. Hata: RuntimeError."""
@@ -3116,7 +3172,7 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
 
     elif a == "u_ai":   # 🤖 ekranı: ❓ bot yardımcısı (ücretsiz) + modeller (💎 abonelik / 2 günde 3 ücretsiz soru)
         if not ai_key(): await send(tr(lang, "ai_off"), menu_btn); return
-        STATE.pop(uid, None); AI_HIST.pop(uid, None)
+        STATE.pop(uid, None)
         own_, pro_ = uid in ADMINS, ai_is_pro(e); left_, when_ = ai_free_left(e)
         if own_: st_l = tr(lang, "ai_st_own")
         elif pro_: st_l = tr(lang, "ai_st_pro", until=tm_fmt(e["ai_pro_until"]), n=ai_pro_limit(db))
@@ -3125,12 +3181,13 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         body = "\n".join(f"🧠 <b>{n_}</b> — {d_.get(lang, d_['tr'])}" for n_, _, d_ in AI_MODELS.values())
         mb = [B(("🔒 " if lock else "") + n_, f"u_aim:{k_}") for k_, (n_, _, _) in AI_MODELS.items()]
         rows = [[B(tr(lang, "b_ai_bot"), "u_aib", "success")]] + [mb[i:i + 2] for i in range(0, len(mb), 2)]
+        rows.append([B(tr(lang, "b_ai_hist"), "u_aih")] + ([B(tr(lang, "b_img"), "u_aimg", "primary")] if own_ else []))
         if not (own_ or pro_): rows.append([B(tr(lang, "b_aipro", usdt=AIPRO_USDT), "u_aipro", "primary")])
         await send(tr(lang, "ai_menu", st=st_l, body=body), KB(rows + [[B(tr(lang, "b_menu"), "u_menu")]]))
 
     elif a == "u_aib":   # ❓ bot hakkında (ücretsiz, günlük sınırlı)
         if not ai_key(): await send(tr(lang, "ai_off"), menu_btn); return
-        STATE[uid] = {"action": "ai"}; AI_HIST.pop(uid, None)
+        STATE[uid] = {"action": "ai"}
         left = "∞" if uid in ADMINS else max(0, ai_limit(db) - (e.get("ai_n", 0) if e.get("ai_day") == tm_day() else 0))
         await send(tr(lang, "ai_hi", n=left), KB([[B(tr(lang, "b_ai_models"), "u_ai")], [B(tr(lang, "b_ai_end"), "u_aix")]]))
 
@@ -3140,16 +3197,74 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         if not (uid in ADMINS or ai_is_pro(e)) and ai_free_left(e)[0] <= 0:
             await send(tr(lang, "aipro_info", usdt=AIPRO_USDT, days=AIPRO_DAYS, n=ai_pro_limit(db), f=AI_FREE_N),
                        KB([[B(tr(lang, "b_aipro_buy", usdt=AIPRO_USDT), "u_buy:aipro", "success")], [B(tr(lang, "b_ai_models"), "u_ai")]])); return
-        STATE[uid] = {"action": "ai", "model": k_}; AI_HIST.pop(uid, None)
+        cid_ = ai_cur(uid, k_)
+        STATE[uid] = {"action": "ai", "model": k_, "cid": cid_}
         left_ = "∞" if uid in ADMINS else (f"{max(0, ai_pro_limit(db) - (e.get('ai_pn', 0) if e.get('ai_pday') == tm_day() else 0))}" if ai_is_pro(e) else f"{ai_free_left(e)[0]}/{AI_FREE_N}")
-        await send(tr(lang, "ai_pick", name=M_[0], d=M_[2].get(lang, M_[2]["tr"]), n=left_), KB([[B(tr(lang, "b_ai_models"), "u_ai")], [B(tr(lang, "b_ai_end"), "u_aix")]]))
+        ttl_ = (ai_load(uid)["chats"][cid_]["t"] if cid_ else "")
+        await send(tr(lang, "ai_pick", name=M_[0], d=M_[2].get(lang, M_[2]["tr"]), n=left_) + (("\n" + tr(lang, "ai_cont", t=esc(ttl_))) if cid_ else ""),
+                   KB([[B("🧹 " + tr(lang, "b_ai_new"), f"u_ain:{k_}"), B(tr(lang, "b_ai_hist"), "u_aih")], [B(tr(lang, "b_ai_models"), "u_ai"), B(tr(lang, "b_ai_end"), "u_aix")]]))
+
+    elif a.startswith("u_ain:"):   # 🧹 yeni sohbet (eskisi Geçmiş'te kalır)
+        k_ = a.split(":", 1)[1]; M_ = AI_MODELS.get(k_)
+        if not M_: return
+        STATE[uid] = {"action": "ai", "model": k_, "cid": None}
+        await send(tr(lang, "ai_new_ok", name=M_[0]), KB([[B(tr(lang, "b_ai_hist"), "u_aih"), B(tr(lang, "b_ai_models"), "u_ai")], [B(tr(lang, "b_ai_end"), "u_aix")]]))
+
+    elif a == "u_aih":   # 📜 geçmiş sohbetler
+        STATE.pop(uid, None)
+        ch_ = ai_load(uid).get("chats", {})
+        lst = sorted(ch_.items(), key=lambda x: -x[1].get("u", 0))[:15]
+        nm = lambda m_: AI_MODELS[m_][0].split()[-2] if m_ in AI_MODELS else "❓"
+        rows = [[B(f"{'🧠' if v.get('m') in AI_MODELS else '❓'} {nm(v.get('m'))} · {short(v.get('t') or '…', 22)} · {datetime.datetime.fromtimestamp(v.get('u', 0), TM_TZ):%d.%m}", f"u_aic:{k}")] for k, v in lst]
+        await send(tr(lang, "ai_hist_t", n=len(ch_)) if lst else tr(lang, "ai_hist_none"), KB(rows + [[B(tr(lang, "b_ai_models"), "u_ai")]]))
+
+    elif a.startswith("u_aic:"):   # bir sohbetin yazışmaları
+        cid_ = a.split(":", 1)[1]; v = ai_load(uid).get("chats", {}).get(cid_)
+        if not v: await send(tr(lang, "ai_hist_none"), KB([[B(tr(lang, "b_ai_hist"), "u_aih")]])); return
+        lines, n_ = [], 0
+        for x in reversed(v.get("msgs", [])):
+            ln = ("👤 " if x["r"] == "user" else "🤖 ") + esc(short(" ".join(x["c"].split()), 300))
+            n_ += len(ln)
+            if n_ > 3000: break
+            lines.append(ln)
+        mname = AI_MODELS[v["m"]][0] if v.get("m") in AI_MODELS else tr(lang, "b_ai_bot")
+        await send(f"📜 <b>{esc(v.get('t') or '…')}</b>\n<i>{esc(mname)} · {len(v.get('msgs', [])) // 2} {tr(lang, 'ai_q')}</i>\n<blockquote expandable>" + "\n\n".join(reversed(lines)) + "</blockquote>",
+                   KB([[B(tr(lang, "b_ai_go"), f"u_aig:{cid_}", "success")], [B(tr(lang, "b_ai_del"), f"u_aid:{cid_}", "danger"), B(tr(lang, "b_ai_hist"), "u_aih")]]))
+
+    elif a.startswith("u_aig:"):   # ▶️ sohbete devam
+        cid_ = a.split(":", 1)[1]; v = ai_load(uid).get("chats", {}).get(cid_)
+        if not v or not ai_key(): return
+        mk_ = v.get("m")
+        if mk_ in AI_MODELS and not (uid in ADMINS or ai_is_pro(e)) and ai_free_left(e)[0] <= 0:
+            await send(tr(lang, "aipro_info", usdt=AIPRO_USDT, days=AIPRO_DAYS, n=ai_pro_limit(db), f=AI_FREE_N),
+                       KB([[B(tr(lang, "b_aipro_buy", usdt=AIPRO_USDT), "u_buy:aipro", "success")], [B(tr(lang, "b_ai_hist"), "u_aih")]])); return
+        STATE[uid] = {"action": "ai", "model": mk_ if mk_ in AI_MODELS else None, "cid": cid_}
+        await send(tr(lang, "ai_cont", t=esc(v.get("t") or "…")) + "\n<i>" + tr(lang, "ai_text") + "</i>", KB([[B(tr(lang, "b_ai_hist"), "u_aih"), B(tr(lang, "b_ai_end"), "u_aix")]]))
+
+    elif a.startswith("u_aid:"):   # 🗑 sil: önce sor
+        cid_ = a.split(":", 1)[1]
+        await send(tr(lang, "ai_del_q"), KB([[B(tr(lang, "b_ai_del"), f"u_aidy:{cid_}", "danger")], [B(tr(lang, "b_no"), f"u_aic:{cid_}")]]))
+
+    elif a.startswith("u_aidy:"):
+        cid_ = a.split(":", 1)[1]
+        def rm_():
+            with AI_FLOCK:
+                d_ = ai_load(uid); d_.get("chats", {}).pop(cid_, None)
+                d_["cur"] = {k: v for k, v in d_.get("cur", {}).items() if v != cid_}; ai_save(uid, d_)
+        await asyncio.to_thread(rm_)
+        await send(tr(lang, "ai_deleted"), KB([[B(tr(lang, "b_ai_hist"), "u_aih"), B(tr(lang, "b_ai_models"), "u_ai")]]))
+
+    elif a == "u_aimg":   # 🎨 fotoğraf oluştur (sadece kurucu)
+        if uid not in ADMINS or not ai_key(): return
+        STATE[uid] = {"action": "ai_img"}
+        await send(tr(lang, "img_ask"), KB([[B(tr(lang, "b_ai_models"), "u_ai")]]))
 
     elif a == "u_aipro":
         await send(tr(lang, "aipro_info", usdt=AIPRO_USDT, days=AIPRO_DAYS, n=ai_pro_limit(db), f=AI_FREE_N),
                    KB([[B(tr(lang, "b_aipro_buy", usdt=AIPRO_USDT), "u_buy:aipro", "success")], [B(tr(lang, "b_ai_models"), "u_ai")]]))
 
     elif a == "u_aix":
-        STATE.pop(uid, None); AI_HIST.pop(uid, None)
+        STATE.pop(uid, None)
         await show_home(c, uid, getattr(q, "message", None), send=send)
 
     elif a == "u_tclose":
@@ -4042,8 +4157,8 @@ async def close_ticket(c, tid, by_admin):
 
 async def ai_answer(c, u):
     m = u.message; uid = u.effective_user.id; db0 = load_db(); lang = lang_of(db0, uid)
-    own = uid in ADMINS; mk = (STATE.get(uid) or {}).get("model"); M = AI_MODELS.get(mk) if mk else None
-    if M: kb = KB([[B("🧹 " + tr(lang, "b_ai_new"), f"u_aim:{mk}"), B(tr(lang, "b_ai_models"), "u_ai")], [B(tr(lang, "b_ai_end"), "u_aix")]])
+    own = uid in ADMINS; st_ = STATE.get(uid) or {}; mk = st_.get("model"); M = AI_MODELS.get(mk) if mk else None
+    if M: kb = KB([[B("🧹 " + tr(lang, "b_ai_new"), f"u_ain:{mk}"), B(tr(lang, "b_ai_hist"), "u_aih")], [B(tr(lang, "b_ai_models"), "u_ai"), B(tr(lang, "b_ai_end"), "u_aix")]])
     else: kb = KB([[B(tr(lang, "b_ai_models"), "u_ai")], [B(tr(lang, "b_ai_end"), "u_aix"), B(tr(lang, "b_sup"), "u_sup")]])
     q = (m.text or m.caption or "").strip()
     if not q: await m.reply_text(tr(lang, "ai_text"), reply_markup=kb); return
@@ -4064,9 +4179,10 @@ async def ai_answer(c, u):
             x["ai_n"] += 1; return True
         if not mutate(f): await m.reply_text(tr(lang, "ai_lim", n=lim), reply_markup=kb); return
         kind = "bot"
-    hist = AI_HIST.setdefault(uid, [])
-    keep, qmax = (20, 20000) if (own or M) else (8, 2000)
-    msgs = hist[-keep:] + [{"role": "user", "content": q[:qmax]}]
+    qmax = 20000 if (own or M) else 2000
+    cid = st_.get("cid") if "cid" in st_ else ai_cur(uid, mk or "bot")
+    hist = ai_context(uid, cid, AI_CTX_CHARS if (own or M) else 8000) if cid else []
+    msgs = hist + [{"role": "user", "content": q[:qmax]}]
     async def typing():
         while True:
             try: await c.bot.send_chat_action(uid, "typing")
@@ -4084,8 +4200,8 @@ async def ai_answer(c, u):
         busy = M and any(x in str(ex) for x in ("503", "429", "capacity", "overloaded"))
         await m.reply_text(tr(lang, "ai_busy", name=M[0]) if busy else tr(lang, "ai_err"), reply_markup=kb); return
     tt.cancel()
-    hist += [{"role": "user", "content": q[:qmax]}, {"role": "assistant", "content": ans[:20000 if (own or M) else 3000]}]
-    AI_HIST[uid] = hist[-keep:]
+    cid = await asyncio.to_thread(ai_append, uid, mk or "bot", cid, q[:qmax], ans)
+    if (STATE.get(uid) or {}).get("action") == "ai": STATE[uid]["cid"] = cid
     if not M:
         await m.reply_text("🤖 " + esc(ans)[:3900], parse_mode="HTML", reply_markup=kb, disable_web_page_preview=True); return
     chunks = md_tg(ans)
@@ -4094,12 +4210,45 @@ async def ai_answer(c, u):
         try: await m.reply_text((f"🧠 <i>{esc(M[0])}</i>\n" if i_ == 0 else "") + ch_, parse_mode="HTML", reply_markup=kb if last else None, disable_web_page_preview=True)
         except BadRequest: await m.reply_text(_plain(ch_)[:4000], reply_markup=kb if last else None)   # biçim bozuksa düz yazı
 
+async def ai_image(c, u):
+    m = u.message; uid = u.effective_user.id; lang = lang_of(load_db(), uid)
+    kb = KB([[B(tr(lang, "b_img"), "u_aimg"), B(tr(lang, "b_ai_models"), "u_ai")]])
+    prompt_ = (m.text or m.caption or "").strip()
+    if not prompt_: await m.reply_text(tr(lang, "img_ask"), parse_mode="HTML", reply_markup=kb); return
+    wait = await m.reply_text(tr(lang, "img_wait"))
+    async def upload():
+        while True:
+            try: await c.bot.send_chat_action(uid, "upload_photo")
+            except Exception: pass
+            await asyncio.sleep(4)
+    tt = asyncio.ensure_future(upload())
+    try:
+        job = await asyncio.to_thread(_xk, "/v1/images/generations", {"model": IMG_MODEL, "prompt": prompt_[:3000], "n": 1, "size": "1024x1024"})
+        jid, t0, w, res = job.get("id"), time.time(), 2, job
+        while res.get("status") == "processing" and time.time() - t0 < 300:
+            await asyncio.sleep(w); w = min(10, w * 1.5)
+            res = await asyncio.to_thread(_xk, f"/v1/images/generations/{jid}")
+        if res.get("status") != "succeeded" or not res.get("data"):
+            raise RuntimeError(res.get("error") or res.get("status") or "?")
+        data = await asyncio.to_thread(img_fetch, res["data"][0]["url"])
+        tt.cancel()
+        await c.bot.send_photo(uid, data, caption="🎨 " + esc(short(prompt_, 900)), parse_mode="HTML", reply_markup=kb)
+        await c.bot.send_document(uid, data, filename=f"{jid}.png")   # sıkıştırılmamış asıl dosya
+    except Exception as ex:
+        tt.cancel(); log.warning("img: %s", ex); RUN["ai_err"] = f"img: {str(ex)[:130]}"
+        await m.reply_text(tr(lang, "img_err", e=esc(str(ex)[:150])), parse_mode="HTML", reply_markup=kb)
+    try: await wait.delete()
+    except Exception: pass
+
 async def support_router(u: Update, c: ContextTypes.DEFAULT_TYPE):
     """Her mesajdan ÖNCE çalışır: açık destek talebi ya da kurucu cevabı varsa mesajı oraya yönlendirir."""
     m = u.message
     if not m or not u.effective_user or m.chat.type != "private": return
     uid = u.effective_user.id
     st0 = STATE.get(uid) or {}
+    if st0.get("action") == "ai_img" and uid in ADMINS:   # 🎨 kurucu: fotoğraf oluştur
+        await ai_image(c, u)
+        raise ApplicationHandlerStop
     if st0.get("action") == "ai":   # 🤖 Yardımcı
         if not is_banned(uid): await ai_answer(c, u)
         raise ApplicationHandlerStop
@@ -5070,9 +5219,24 @@ T["ru"].update({"b_ai_bot": "❓ Вопрос о боте (бесплатно)",
   "aipro_info": "💎 <b>AI Premium</b>\n<blockquote>Все модели: Claude Opus, GPT, Gemini, Grok, Kimi…\n<b>{n}</b> вопросов в день · {days} дней\nЦена  <b>{usdt}$</b> / мес (CryptoBot или баланс)</blockquote>\n<i>Без подписки — {f} вопроса за 2 дня бесплатно.</i>",
   "aipro_ok": "✅ <b>💎 AI Premium активен!</b>\n<blockquote>до {until} · {n} вопросов в день</blockquote>\nВыберите модель через 🤖.",
   "ai_plim": "⏳ Лимит {n} вопросов на сегодня исчерпан. Продолжите завтра.", "ai_busy": "⚠️ {name} сейчас занят. Выберите другую модель или попробуйте позже. (Вопрос не засчитан.)"})
-T["tr"].update({"b_ai_new": "Yeni sohbet"})
-T["tk"].update({"b_ai_new": "Täze söhbet"})
-T["ru"].update({"b_ai_new": "Новый чат"})
+T["tr"].update({"b_ai_new": "Yeni sohbet", "b_ai_hist": "📜 Geçmiş", "b_ai_go": "▶️ Sohbete devam et", "b_ai_del": "🗑 Sil", "b_img": "🎨 Fotoğraf oluştur", "ai_q": "soru",
+  "ai_cont": "📜 Sohbete devam: <b>{t}</b> (önceki yazışmalar hatırlanıyor)", "ai_new_ok": "🧹 <b>Yeni sohbet</b> · {name}\n<i>Eski sohbet 📜 Geçmiş'te duruyor. Sorunu yaz</i> 👇",
+  "ai_hist_t": "📜 <b>Geçmiş sohbetler</b>  <code>{n}</code>\n<i>Birini seç: yazışmaları gör, devam et ya da sil.</i>", "ai_hist_none": "📜 Henüz kayıtlı sohbet yok.",
+  "ai_del_q": "🗑 <b>Bu sohbet silinsin mi?</b>\n<i>Yazışmalar geri gelmez.</i>", "ai_deleted": "🗑 Sohbet silindi.",
+  "img_ask": "🎨 <b>Fotoğraf oluştur</b>\n<blockquote>Ne çizilsin? Konu, ortam, ışık ve stili yaz (İngilizce daha iyi sonuç verir).\nÖrn: <i>a cozy cafe in Ashgabat at sunset, photorealistic</i></blockquote>",
+  "img_wait": "⏳ Fotoğraf oluşturuluyor (yaklaşık 1 dakika)…", "img_err": "⚠️ Fotoğraf oluşturulamadı: <code>{e}</code>\n<i>Uygunsuz bulunan istekler reddedilir; farklı yazıp tekrar dene.</i>"})
+T["tk"].update({"b_ai_new": "Täze söhbet", "b_ai_hist": "📜 Taryh", "b_ai_go": "▶️ Söhbeti dowam et", "b_ai_del": "🗑 Poz", "b_img": "🎨 Surat döret", "ai_q": "sorag",
+  "ai_cont": "📜 Söhbet dowam edýär: <b>{t}</b> (öňki ýazyşmalar ýatda)", "ai_new_ok": "🧹 <b>Täze söhbet</b> · {name}\n<i>Köne söhbet 📜 Taryh-da dur. Soragyňy ýaz</i> 👇",
+  "ai_hist_t": "📜 <b>Öňki söhbetler</b>  <code>{n}</code>\n<i>Birini saýla: ýazyşmalary gör, dowam et ýa-da poz.</i>", "ai_hist_none": "📜 Entek ýazylan söhbet ýok.",
+  "ai_del_q": "🗑 <b>Bu söhbet pozulsynmy?</b>\n<i>Ýazyşmalar yzyna gelmez.</i>", "ai_deleted": "🗑 Söhbet pozuldy.",
+  "img_ask": "🎨 <b>Surat döret</b>\n<blockquote>Näme çekilsin? Temany, ýeri, ýagtylygy we stili ýaz (iňlisçe has gowy netije berýär).\nMysal: <i>a cozy cafe in Ashgabat at sunset, photorealistic</i></blockquote>",
+  "img_wait": "⏳ Surat döredilýär (takmynan 1 minut)…", "img_err": "⚠️ Surat döredip bolmady: <code>{e}</code>\n<i>Laýyk däl haýyşlar ret edilýär; başgaça ýazyp gaýtadan synan.</i>"})
+T["ru"].update({"b_ai_new": "Новый чат", "b_ai_hist": "📜 История", "b_ai_go": "▶️ Продолжить чат", "b_ai_del": "🗑 Удалить", "b_img": "🎨 Создать фото", "ai_q": "вопр.",
+  "ai_cont": "📜 Продолжаем чат: <b>{t}</b> (прошлая переписка учитывается)", "ai_new_ok": "🧹 <b>Новый чат</b> · {name}\n<i>Старый чат остался в 📜 Истории. Напишите вопрос</i> 👇",
+  "ai_hist_t": "📜 <b>Прошлые чаты</b>  <code>{n}</code>\n<i>Выберите: посмотреть, продолжить или удалить.</i>", "ai_hist_none": "📜 Сохранённых чатов пока нет.",
+  "ai_del_q": "🗑 <b>Удалить этот чат?</b>\n<i>Переписку не вернуть.</i>", "ai_deleted": "🗑 Чат удалён.",
+  "img_ask": "🎨 <b>Создать фото</b>\n<blockquote>Что нарисовать? Опишите объект, место, свет и стиль (на английском результат лучше).\nНапр.: <i>a cozy cafe in Ashgabat at sunset, photorealistic</i></blockquote>",
+  "img_wait": "⏳ Фото создаётся (около минуты)…", "img_err": "⚠️ Не удалось создать фото: <code>{e}</code>\n<i>Неприемлемые запросы отклоняются; переформулируйте.</i>"})
 T["tr"].update({"b_ai": "🤖 Yardımcı", "b_ai_end": "◀️ Menü",
   "ai_hi": "🤖 <b>Yardımcı</b>\n<blockquote>Bot hakkında sorunu yaz: fiyatlar, Pazar, kod alma, Happ'e ekleme, bakiye, kazanç çekme…\n🔢 Bugün kalan soru  <b>{n}</b></blockquote>\n<i>Sorunu mesaj olarak gönder</i> 👇",
   "ai_off": "🤖 Yardımcı şu an kapalı. 🆘 Support'a yazabilirsin.", "ai_text": "✍️ Sorunu yazı olarak gönder.",
