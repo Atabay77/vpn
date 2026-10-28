@@ -1151,6 +1151,7 @@ async def post_init(app):
     except Exception: log.exception("market init")
     app.bot_data["mkt"] = asyncio.create_task(market_loop(app))
     app.bot_data["aiw"] = asyncio.create_task(ai_usage_watch(app))
+    app.bot_data["aim"] = asyncio.create_task(ai_log_watch(app))
     if load_db().get("off_msg") != CODE_OFF_MSG: asyncio.create_task(asyncio.to_thread(rewrite_off_files))
     if load_db().get("file_fmt") != FILE_FMT:   # dosya biçimi değişti: bütün abonelik dosyaları bir kez yeniden yazılsın
         mutate(lambda d: d.__setitem__("file_fmt", FILE_FMT)); start_refresh(app, "Abonelik dosyası biçimi güncellendi")
@@ -1848,7 +1849,7 @@ async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
         log.exception("msg_handler")
         await send_error(c, uid, f"mesaj:{act}", e)
 
-FOUNDER_ONLY = {"ban_menu", "ban_find", "hp", "hp_set", "hp_del", "hp_new", "ref_test", "mk_admin", "mk_price", "mk_oph", "mk_ods", "mk_odr", "bal_find", "usearch", "rep_today", "rep_yday", "tickets_bug", "t_cancel", "tickets", "cp_test", "cp", "cp_set", "cp_del", "ai_adm", "ai_set", "ai_lim", "ai_plim", "ai_del", "ai_use", "ul_open", "stats", "chans", "ch_add", "pay_set", "bcast", "bcast_yes", "rollback", "rollback_yes", "auto_ann", "toggle_sys", "mk_rev", "ad_post", "ip_need", "ping_max", "admin", "sources", "s_add", "logs", "upd_now", "get_zip", "sa_menu", "sa_add", "bulk_ann", "bulk_title", "bulk_yes"}
+FOUNDER_ONLY = {"ban_menu", "ban_find", "hp", "hp_set", "hp_del", "hp_new", "ref_test", "mk_admin", "mk_price", "mk_oph", "mk_ods", "mk_odr", "bal_find", "usearch", "rep_today", "rep_yday", "tickets_bug", "t_cancel", "tickets", "cp_test", "cp", "cp_set", "cp_del", "ai_adm", "ai_set", "ai_lim", "ai_plim", "ai_del", "ai_use", "ai_tsup", "ai_tmon", "ul_open", "stats", "chans", "ch_add", "pay_set", "bcast", "bcast_yes", "rollback", "rollback_yes", "auto_ann", "toggle_sys", "mk_rev", "ad_post", "ip_need", "ping_max", "admin", "sources", "s_add", "logs", "upd_now", "get_zip", "sa_menu", "sa_add", "bulk_ann", "bulk_title", "bulk_yes"}
 OWNED = ("kv", "kt", "kn", "ka", "kd", "kdy")   # alt admin sadece kendi kodunda
 def src_find(db, h): return next((s for s in db["sources"] if hashlib.md5(s.encode()).hexdigest()[:8] == h), None)
 
@@ -2187,6 +2188,11 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
     elif a == "ai_lim":
         STATE[uid] = {"action": "ai_lim"}
         await safe_edit(q, *prompt("🔢 <b>Günlük soru sınırı</b>", f"Kullanıcı başı günde kaç soru? (şu an {ai_limit()})", "ai_adm"))
+
+    elif a in ("ai_tsup", "ai_tmon"):
+        fld_ = "ai_sup" if a == "ai_tsup" else "ai_mon"
+        mutate(lambda d: d.__setitem__(fld_, not d.get(fld_, True))); audit(uid, f"{fld_} toggle")
+        await safe_edit(q, *(await asyncio.to_thread(ai_view)))
 
     elif a == "ai_use":
         await safe_edit(q, *(await asyncio.to_thread(ai_usage_view)))
@@ -3982,7 +3988,11 @@ def ai_view():
     t = ("🤖 <b>AI Yardımcı</b>\n<blockquote>" + ("🟢 Bağlı" if on else "⚪️ Bağlı değil — kullanıcılar butonu görür ama kapalı der") +
          f"\n🌐 <code>{esc(ai_base())}</code>\n🧠 Bot yardımcısı: <code>{esc(ai_model())}</code> · {len(AI_MODELS)} model seçilebilir\n🔢 Bot yardımcısı  <b>{ai_limit(db)}</b> soru/gün\n💎 Premium  <b>{AIPRO_USDT}$</b>/{AIPRO_DAYS} gün · <b>{ai_pro_limit(db)}</b> soru / site 5 saati · abone <b>{sum(1 for x in db.get('users', {}).values() if ai_is_pro(x))}</b>\n🎁 Ücretsiz: 2 günde {AI_FREE_N} soru\n📊 Bugün bot yardımcısı  <b>{today}</b> soru" + (("\n" + site) if site else "") + "</blockquote>"
          + (f"\n⚠️ Son hata: <code>{esc(RUN.get('ai_err', ''))}</code>" if RUN.get("ai_err") else ""))
-    return t, KB([[B("📊 Site Kullanımı", "ai_use", "success")], [B("🔑 Anahtar Gir", "ai_set", "primary")], [B("🔢 Bot Yardımcısı Sınırı", "ai_lim")], [B("💎 Premium Sınır (5 saat)", "ai_plim")]] + ([[B("🗑 Anahtarı Kaldır", "ai_del", "danger")]] if on else []) + [[B("◀️ Admin", "admin")]])
+    sup_on, mon_on = db.get("ai_sup", True), db.get("ai_mon", True)
+    t += f"\n🎫 Support'a AI ilk cevap: <b>{'açık' if sup_on else 'kapalı'}</b>\n🛡 Log izleme (Haiku, 5 dk): <b>{'açık' if mon_on else 'kapalı'}</b>" + (f" · son: {esc(RUN['ai_mon_last'])}" if RUN.get("ai_mon_last") else "")
+    return t, KB([[B("📊 Site Kullanımı", "ai_use", "success")],
+                  [B(f"🎫 Support AI: {'🟢' if sup_on else '🔴'}", "ai_tsup"), B(f"🛡 Log izleme: {'🟢' if mon_on else '🔴'}", "ai_tmon")],
+                  [B("🔑 Anahtar Gir", "ai_set", "primary")], [B("🔢 Bot Yardımcısı Sınırı", "ai_lim")], [B("💎 Premium Sınır (5 saat)", "ai_plim")]] + ([[B("🗑 Anahtarı Kaldır", "ai_del", "danger")]] if on else []) + [[B("◀️ Admin", "admin")]])
 
 def _bar(p): n = max(0, min(10, round(p * 10))); return "▰" * n + "▱" * (10 - n)
 
@@ -4003,6 +4013,47 @@ def ai_usage_view():
     lines.append(f"👛 Cüzdan  <b>${float(wl.get('balance_usd', 0)):.2f}</b> · Plan <b>{esc(str(u.get('plan', '?')).upper())}</b>")
     t = "📊 <b>Site kullanımı (xKiro)</b>\n<blockquote>" + "\n\n".join(lines) + f"</blockquote>\n<i>Limitin %{int(AI_ALERT_AT * 100)}'ine gelince sana uyarı gelir.</i>"
     return t, KB([[B("🔄 Yenile", "ai_use", "primary")], [B("◀️ AI", "ai_adm")]])
+
+AI_MON_MODEL = "anthropic/claude-haiku-5.5"   # log izleme: ucuz model
+AI_MON_EVERY = 300
+AI_MON_RULES = """Sen bir Telegram VPN pazar botunun log denetçisisin. Bot: kullanıcılar VPN kodu alır/satar, bakiye yükler (CryptoBot USDT), satıcılar kazanç çeker, davetle ücretsiz kod alınır, destek talepleri açılır.
+Sana son dakikalardaki kullanıcı logları ve sistem hataları gelecek. Sahibinin HEMEN müdahale etmesi gereken bir durum var mı bak:
+- ödeme/çekim/transfer hataları, yetersiz bakiye, para tutarsızlığı
+- aynı kişinin kısa sürede anormal sayıda işlemi (spam, sistem istismarı, sahte davet çiftliği, çok sayıda yeni hesap)
+- tekrarlayan bot hataları, Drive/abonelik/telefon testi çökmesi, hiç kod alınamaması
+- şikâyet/öfke içeren destek talepleri, olası dolandırıcılık
+Normal işlemler (tek tük sipariş, kod alma, tek bir başarılı çekim, rutin kontroller) için UYARI VERME. Emin değilsen uyarma.
+SADECE şu JSON'u döndür: {"alert": true/false, "level": "low/medium/high", "summary": "Türkçe, kısa, ne oldu ve ne yapılmalı (en fazla 4 satır)"}"""
+MON = {"vpos": None}
+
+async def ai_log_watch(app):
+    """5 dakikada bir: son kontrolden beri yeni kullanıcı logu + sistem hatası varsa Haiku'ya sorar; şüpheli ise kuruculara yazar."""
+    while True:
+        await asyncio.sleep(AI_MON_EVERY)
+        try:
+            if not ai_key() or not load_db().get("ai_mon", True): continue
+            since = load_db().get("ai_mon_ts") or time.time() - AI_MON_EVERY
+            new_u = [x for x in ulog_lines() if x.get("t", 0) > since][-200:]
+            new_v = []
+            try:
+                size = os.path.getsize(VIP_LOG)
+                if MON["vpos"] is None or size < MON["vpos"]: MON["vpos"] = size   # ilk turda geçmişi okuma
+                with open(VIP_LOG, encoding="utf-8", errors="ignore") as f_:
+                    f_.seek(MON["vpos"]); new_v = [l.strip() for l in f_ if ("❌" in l or "⚠️" in l)][-60:]
+                MON["vpos"] = size
+            except Exception: pass
+            now = time.time()
+            mutate(lambda d: d.__setitem__("ai_mon_ts", now))
+            if not new_u and not new_v: continue   # yeni bir şey yok: istek atılmaz
+            txt_ = "KULLANICI LOGLARI:\n" + "\n".join(f"[{datetime.datetime.fromtimestamp(x['t'], TM_TZ):%H:%M:%S}] {x.get('x', '')[:300]}" for x in new_u) + \
+                   ("\n\nSİSTEM HATALARI:\n" + "\n".join(l[:300] for l in new_v) if new_v else "")
+            raw = await asyncio.to_thread(ai_call, AI_MON_RULES, [{"role": "user", "content": txt_[:30000]}], None, 1500, 120, AI_MON_MODEL)
+            mj = re.search(r"\{.*\}", raw, re.S); j = json.loads(mj.group(0)) if mj else {}
+            RUN["ai_mon_last"] = f"{datetime.datetime.now(TM_TZ):%H:%M} · {len(new_u)} log, {len(new_v)} hata → {'⚠️ uyarı' if j.get('alert') else 'normal'}"
+            if j.get("alert"):
+                lv = {"high": "🔴", "medium": "🟠"}.get(j.get("level"), "🟡")
+                await notify_founders(app, f"{lv} <b>AI log uyarısı</b>\n<blockquote>{esc(str(j.get('summary', ''))[:900])}</blockquote>", KB([[B("👥 Kullanıcı Logları", "ul_open"), B("📜 Loglar", "logs")]]))
+        except Exception as e: log.info("ai log watch: %s", e); RUN["ai_mon_last"] = f"hata: {str(e)[:80]}"
 
 AI_ALERT_AT = 0.8
 async def ai_usage_watch(app):
@@ -4213,6 +4264,47 @@ async def user_to_ticket(c, u, tid):
         except Exception as e: log.warning("destek iletilemedi: %s", e)
     if r_ == "album": return
     await m.reply_text(tr(lang, "sup_sent") + "\n" + tr(lang, "sup_rate"), parse_mode="HTML", reply_markup=KB([[B(tr(lang, "b_twrite"), "u_tw", "primary")], [B(tr(lang, "b_tclose"), "u_tclose", "danger")]]))
+    txt_ = (m.text or m.caption or "").strip()
+    if txt_ and ai_key() and load_db().get("ai_sup", True):
+        asyncio.ensure_future(ai_support(c, uid, tid, txt_, lang, kind, bool(m.photo or m.video or m.document)))
+
+AI_SUP_RULES = """Şu an bir DESTEK TALEBİNE ilk cevabı veriyorsun. Admin bütün yazışmayı görüyor ve gerekirse kendisi cevap verecek.
+- Soru genel bir bot sorusuysa (nasıl yapılır, fiyat, kurallar, Happ'e ekleme, buton nerede vb.) BİLGİLER'e dayanarak kısa ve net cevap ver.
+- Kişisel/özel bir durumsa CEVAP VERME, admine bırak: para/bakiye/ödeme sorunu, iade isteği, çekim sorunu, çalışmayan/bozuk kod, hesap veya ban, hata (bug) bildirimi, şikâyet, ekli dosya/fotoğraf hakkında soru, emin olmadığın her şey.
+- Asla söz verme (iade, telafi, süre uzatma vb.) ve uydurma.
+- SADECE şu JSON'u döndür: {"escalate": true/false, "answer": "kullanıcıya cevap (escalate ise boş)", "note": "admine tek satır özet"}"""
+
+async def ai_support(c, uid, tid, text_, lang, kind, has_media):
+    """Destek mesajına AI ilk cevap. Genel soruysa kullanıcıya cevap verir; değilse admine bırakır. Her durumda admine not düşer."""
+    try:
+        t0 = load_db().get("tickets", {}).get(tid) or {}
+        hist = [{"role": x["r"], "content": x["c"]} for x in t0.get("ai_h", [])][-6:]
+        while hist and hist[0]["role"] != "user": hist.pop(0)
+        q_ = ("[Hata raporu] " if kind == "bug" else "") + ("[Ekli fotoğraf/video var] " if has_media else "") + text_[:3000]
+        msgs = []
+        for h in hist + [{"role": "user", "content": q_}]:   # art arda aynı rol olmasın
+            if msgs and msgs[-1]["role"] == h["role"]: msgs[-1]["content"] += "\n" + h["content"]
+            else: msgs.append(dict(h))
+        raw = await asyncio.to_thread(ai_call, ai_system(lang) + "\n\n" + AI_SUP_RULES, msgs)
+        mj = re.search(r"\{.*\}", raw, re.S); j = json.loads(mj.group(0)) if mj else {"escalate": True, "note": raw[:200]}
+        esc_ = bool(j.get("escalate")) or not (j.get("answer") or "").strip()
+        ans = (j.get("answer") or "").strip()
+        def f(d):
+            t = d.get("tickets", {}).get(tid)
+            if not t: return
+            h = t.setdefault("ai_h", []); h.append({"r": "user", "c": text_[:1500]})
+            if not esc_: h.append({"r": "assistant", "c": ans[:1500]}); t["pending"] = 0
+            t["ai_h"] = h[-10:]
+        mutate(f)
+        if not esc_:
+            await c.bot.send_message(uid, tr(lang, "sup_ai", tid=tid, a=esc(ans)[:3500]), parse_mode="HTML",
+                                     reply_markup=KB([[B(tr(lang, "b_twrite"), "u_tw", "primary")], [B(tr(lang, "b_tclose"), "u_tclose", "danger")]]))
+        note = f"🤖 <b>AI #{tid}</b> · " + ("👤 sana bırakıldı" if esc_ else "✅ cevapladı") + (f"\n<blockquote expandable>{esc(ans[:1500])}</blockquote>" if not esc_ else "") + (f"\n<i>{esc(str(j.get('note', ''))[:200])}</i>" if j.get("note") else "")
+        for fid in ADMINS:
+            try: remember_tmsg((await c.bot.send_message(fid, note, parse_mode="HTML", reply_markup=KB([[B("✍️ Yanıtla", f"t_rep:{tid}", "primary"), B("🔒 Kapat", f"t_close:{tid}", "danger")]]))).message_id, tid)
+            except Exception: pass
+    except Exception as e:
+        log.warning("ai support: %s", e); RUN["ai_err"] = f"support: {str(e)[:120]}"
 
 async def admin_reply(c, admin_uid, tid, m):
     t = load_db().get("tickets", {}).get(tid)
@@ -4225,6 +4317,7 @@ async def admin_reply(c, admin_uid, tid, m):
         await m.reply_text(f"⚠️ Gönderilemedi: {esc(str(e)[:150])}", parse_mode="HTML"); return
     def f(d):
         x = d["tickets"][tid]; x["pending"] = 0; x["last"] = time.time(); x["n"] = x.get("n", 0) + 1
+        if m.text or m.caption: x["ai_h"] = (x.get("ai_h", []) + [{"r": "assistant", "c": "[Admin] " + (m.text or m.caption)[:1500]}])[-10:]
     mutate(f)
     await m.reply_text(f"✅ Cevap gönderildi · #{tid}", reply_markup=KB([[B("🔒 Talebi Kapat", f"t_close:{tid}", "danger")]]))
 
@@ -5314,17 +5407,17 @@ T["ru"].update({"b_ai_bot": "❓ Вопрос о боте (бесплатно)",
   "aipro_info": "💎 <b>AI Premium</b>\n<blockquote>Все модели: Claude Opus, GPT, Gemini, Grok, Kimi…\n<b>{n}</b> вопросов каждые 5 часов · {days} дней\nЦена  <b>{usdt}$</b> / мес (CryptoBot или баланс)</blockquote>\n<i>Без подписки — {f} вопроса за 2 дня бесплатно.</i>",
   "aipro_ok": "✅ <b>💎 AI Premium активен!</b>\n<blockquote>до {until} · {n} вопросов каждые 5 часов</blockquote>\nВыберите модель через 🤖.",
   "ai_busy": "⚠️ {name} сейчас занят. Выберите другую модель или попробуйте позже. (Вопрос не засчитан.)"})
-T["tr"].update({"ai_legend": '🟢 en güçlü · 🔵 güçlü · ⚪️ hızlı/hafif · 📷 fotoğraf görür', "ai_img_q": 'Bu fotoğrafı ayrıntılı analiz et.', "img_blocked": '⚠️ Bu istek uygunsuz bulunduğu için fotoğraf oluşturulmadı. Farklı yazıp tekrar dene.', "ai_plim": "⏳ Bu dönemdeki {n} soru hakkın bitti. {r}'de yenilenir.", "ai_novision": '📷 {name} fotoğraf göremez. Fotoğraf için şunlardan birini seç: {v}', "b_ai_new": "Yeni sohbet", "b_ai_hist": "📜 Geçmiş", "b_ai_go": "▶️ Sohbete devam et", "b_ai_del": "🗑 Sil", "ai_q": "soru",
+T["tr"].update({"sup_ai": '🤖 <b>Otomatik cevap · #{tid}</b>\n<blockquote>{a}</blockquote>\n<i>Sorun çözülmediyse yazmaya devam et; admin de görüyor.</i>', "ai_legend": '🟢 en güçlü · 🔵 güçlü · ⚪️ hızlı/hafif · 📷 fotoğraf görür', "ai_img_q": 'Bu fotoğrafı ayrıntılı analiz et.', "img_blocked": '⚠️ Bu istek uygunsuz bulunduğu için fotoğraf oluşturulmadı. Farklı yazıp tekrar dene.', "ai_plim": "⏳ Bu dönemdeki {n} soru hakkın bitti. {r}'de yenilenir.", "ai_novision": '📷 {name} fotoğraf göremez. Fotoğraf için şunlardan birini seç: {v}', "b_ai_new": "Yeni sohbet", "b_ai_hist": "📜 Geçmiş", "b_ai_go": "▶️ Sohbete devam et", "b_ai_del": "🗑 Sil", "ai_q": "soru",
   "ai_cont": "📜 Sohbete devam: <b>{t}</b> (önceki yazışmalar hatırlanıyor)", "ai_new_ok": "🧹 <b>Yeni sohbet</b> · {name}\n<i>Eski sohbet 📜 Geçmiş'te duruyor. Sorunu yaz</i> 👇",
   "ai_hist_t": "📜 <b>Geçmiş sohbetler</b>  <code>{n}</code>\n<i>Birini seç: yazışmaları gör, devam et ya da sil.</i>", "ai_hist_none": "📜 Henüz kayıtlı sohbet yok.",
   "ai_del_q": "🗑 <b>Bu sohbet silinsin mi?</b>\n<i>Yazışmalar geri gelmez.</i>", "ai_deleted": "🗑 Sohbet silindi.",
   "img_wait": "⏳ Fotoğraf oluşturuluyor (yaklaşık 1 dakika)…", "img_err": "⚠️ Fotoğraf oluşturulamadı: <code>{e}</code>\n<i>Sitede geçici bir hata olabilir; biraz sonra tekrar dene.</i>"})
-T["tk"].update({"ai_legend": '🟢 iň güýçli · 🔵 güýçli · ⚪️ çalt/ýeňil · 📷 surat görýär', "ai_img_q": 'Bu suraty jikme-jik seljer.', "img_blocked": '⚠️ Bu haýyş laýyk däl diýlip tapyldy, surat döredilmedi. Başgaça ýazyp gaýtadan synan.', "ai_plim": '⏳ Bu döwürdäki {n} sorag hakyň gutardy. {r}-da täzelenýär.', "ai_novision": '📷 {name} surat görüp bilmeýär. Surat üçin şulardan birini saýla: {v}', "b_ai_new": "Täze söhbet", "b_ai_hist": "📜 Taryh", "b_ai_go": "▶️ Söhbeti dowam et", "b_ai_del": "🗑 Poz", "ai_q": "sorag",
+T["tk"].update({"sup_ai": '🤖 <b>Awtomatik jogap · #{tid}</b>\n<blockquote>{a}</blockquote>\n<i>Mesele çözülmedik bolsa ýazmagy dowam et; admin hem görýär.</i>', "ai_legend": '🟢 iň güýçli · 🔵 güýçli · ⚪️ çalt/ýeňil · 📷 surat görýär', "ai_img_q": 'Bu suraty jikme-jik seljer.', "img_blocked": '⚠️ Bu haýyş laýyk däl diýlip tapyldy, surat döredilmedi. Başgaça ýazyp gaýtadan synan.', "ai_plim": '⏳ Bu döwürdäki {n} sorag hakyň gutardy. {r}-da täzelenýär.', "ai_novision": '📷 {name} surat görüp bilmeýär. Surat üçin şulardan birini saýla: {v}', "b_ai_new": "Täze söhbet", "b_ai_hist": "📜 Taryh", "b_ai_go": "▶️ Söhbeti dowam et", "b_ai_del": "🗑 Poz", "ai_q": "sorag",
   "ai_cont": "📜 Söhbet dowam edýär: <b>{t}</b> (öňki ýazyşmalar ýatda)", "ai_new_ok": "🧹 <b>Täze söhbet</b> · {name}\n<i>Köne söhbet 📜 Taryh-da dur. Soragyňy ýaz</i> 👇",
   "ai_hist_t": "📜 <b>Öňki söhbetler</b>  <code>{n}</code>\n<i>Birini saýla: ýazyşmalary gör, dowam et ýa-da poz.</i>", "ai_hist_none": "📜 Entek ýazylan söhbet ýok.",
   "ai_del_q": "🗑 <b>Bu söhbet pozulsynmy?</b>\n<i>Ýazyşmalar yzyna gelmez.</i>", "ai_deleted": "🗑 Söhbet pozuldy.",
   "img_wait": "⏳ Surat döredilýär (takmynan 1 minut)…", "img_err": "⚠️ Surat döredip bolmady: <code>{e}</code>\n<i>Saýtda wagtlaýyn ýalňyşlyk bolup biler; birazdan gaýtadan synan.</i>"})
-T["ru"].update({"ai_legend": '🟢 самые сильные · 🔵 сильные · ⚪️ быстрые/лёгкие · 📷 видит фото', "ai_img_q": 'Подробно проанализируй это фото.', "img_blocked": '⚠️ Запрос признан неприемлемым, фото не создано. Переформулируйте.', "ai_plim": '⏳ Лимит {n} вопросов на этот период исчерпан. Обновится в {r}.', "ai_novision": '📷 {name} не видит фото. Для фото выберите: {v}', "b_ai_new": "Новый чат", "b_ai_hist": "📜 История", "b_ai_go": "▶️ Продолжить чат", "b_ai_del": "🗑 Удалить", "ai_q": "вопр.",
+T["ru"].update({"sup_ai": '🤖 <b>Автоответ · #{tid}</b>\n<blockquote>{a}</blockquote>\n<i>Если вопрос не решён — пишите дальше, админ тоже видит.</i>', "ai_legend": '🟢 самые сильные · 🔵 сильные · ⚪️ быстрые/лёгкие · 📷 видит фото', "ai_img_q": 'Подробно проанализируй это фото.', "img_blocked": '⚠️ Запрос признан неприемлемым, фото не создано. Переформулируйте.', "ai_plim": '⏳ Лимит {n} вопросов на этот период исчерпан. Обновится в {r}.', "ai_novision": '📷 {name} не видит фото. Для фото выберите: {v}', "b_ai_new": "Новый чат", "b_ai_hist": "📜 История", "b_ai_go": "▶️ Продолжить чат", "b_ai_del": "🗑 Удалить", "ai_q": "вопр.",
   "ai_cont": "📜 Продолжаем чат: <b>{t}</b> (прошлая переписка учитывается)", "ai_new_ok": "🧹 <b>Новый чат</b> · {name}\n<i>Старый чат остался в 📜 Истории. Напишите вопрос</i> 👇",
   "ai_hist_t": "📜 <b>Прошлые чаты</b>  <code>{n}</code>\n<i>Выберите: посмотреть, продолжить или удалить.</i>", "ai_hist_none": "📜 Сохранённых чатов пока нет.",
   "ai_del_q": "🗑 <b>Удалить этот чат?</b>\n<i>Переписку не вернуть.</i>", "ai_deleted": "🗑 Чат удалён.",
