@@ -1150,6 +1150,7 @@ async def post_init(app):
     try: mutate(ensure_own)   # bizim ilan pazarda hep olsun
     except Exception: log.exception("market init")
     app.bot_data["mkt"] = asyncio.create_task(market_loop(app))
+    app.bot_data["aiw"] = asyncio.create_task(ai_usage_watch(app))
     if load_db().get("off_msg") != CODE_OFF_MSG: asyncio.create_task(asyncio.to_thread(rewrite_off_files))
     if load_db().get("file_fmt") != FILE_FMT:   # dosya biçimi değişti: bütün abonelik dosyaları bir kez yeniden yazılsın
         mutate(lambda d: d.__setitem__("file_fmt", FILE_FMT)); start_refresh(app, "Abonelik dosyası biçimi güncellendi")
@@ -1847,7 +1848,7 @@ async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
         log.exception("msg_handler")
         await send_error(c, uid, f"mesaj:{act}", e)
 
-FOUNDER_ONLY = {"ban_menu", "ban_find", "hp", "hp_set", "hp_del", "hp_new", "ref_test", "mk_admin", "mk_price", "mk_oph", "mk_ods", "mk_odr", "bal_find", "usearch", "rep_today", "rep_yday", "tickets_bug", "t_cancel", "tickets", "cp_test", "cp", "cp_set", "cp_del", "ai_adm", "ai_set", "ai_lim", "ai_plim", "ai_del", "ul_open", "stats", "chans", "ch_add", "pay_set", "bcast", "bcast_yes", "rollback", "rollback_yes", "auto_ann", "toggle_sys", "mk_rev", "ad_post", "ip_need", "ping_max", "admin", "sources", "s_add", "logs", "upd_now", "get_zip", "sa_menu", "sa_add", "bulk_ann", "bulk_title", "bulk_yes"}
+FOUNDER_ONLY = {"ban_menu", "ban_find", "hp", "hp_set", "hp_del", "hp_new", "ref_test", "mk_admin", "mk_price", "mk_oph", "mk_ods", "mk_odr", "bal_find", "usearch", "rep_today", "rep_yday", "tickets_bug", "t_cancel", "tickets", "cp_test", "cp", "cp_set", "cp_del", "ai_adm", "ai_set", "ai_lim", "ai_plim", "ai_del", "ai_use", "ul_open", "stats", "chans", "ch_add", "pay_set", "bcast", "bcast_yes", "rollback", "rollback_yes", "auto_ann", "toggle_sys", "mk_rev", "ad_post", "ip_need", "ping_max", "admin", "sources", "s_add", "logs", "upd_now", "get_zip", "sa_menu", "sa_add", "bulk_ann", "bulk_title", "bulk_yes"}
 OWNED = ("kv", "kt", "kn", "ka", "kd", "kdy")   # alt admin sadece kendi kodunda
 def src_find(db, h): return next((s for s in db["sources"] if hashlib.md5(s.encode()).hexdigest()[:8] == h), None)
 
@@ -2186,6 +2187,9 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
     elif a == "ai_lim":
         STATE[uid] = {"action": "ai_lim"}
         await safe_edit(q, *prompt("🔢 <b>Günlük soru sınırı</b>", f"Kullanıcı başı günde kaç soru? (şu an {ai_limit()})", "ai_adm"))
+
+    elif a == "ai_use":
+        await safe_edit(q, *(await asyncio.to_thread(ai_usage_view)))
 
     elif a == "ai_plim":
         STATE[uid] = {"action": "ai_plim"}
@@ -2733,6 +2737,7 @@ AI_MODELS = {
  "mimo":     ("MiMo v2.6 Pro", "xiaomi/mimo-v2.6-pro", {"tr": "matematik ve mantık, hızlı", "tk": "matematika we logika, çalt", "ru": "математика и логика, быстрый"}),
  "nemotron": ("Nemotron 3 Ultra", "nvidia/nemotron-3-ultra", {"tr": "teknik sorular, akıl yürütme", "tk": "tehniki soraglar, pikir ýöretmek", "ru": "технические вопросы, рассуждения"}),
 }
+AI_TIER = {"opus": "success", "gpt": "success", "kimi": "primary", "grok": "primary", "gemini": "primary"}   # 🟢 en güçlü · 🔵 güçlü · ⚪️ hızlı/hafif
 AIPRO_USDT, AIPRO_DAYS = 5, 30           # 💎 AI Premium: aylık 5$ (CryptoBot / bakiye)
 AI_FREE_N, AI_FREE_WIN = 3, 2 * 86400    # abone olmayana: 2 günde 3 soru (bütün modeller toplam)
 AI_PRO_LIMIT = 50                        # aboneye sitenin 5 saatlik limit penceresi başına (Admin'den değişir)
@@ -3223,8 +3228,9 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
             st_l = tr(lang, "ai_st_pro", until=tm_fmt(e["ai_pro_until"]), n=max(0, ai_pro_limit(db) - ai_pro_used(e, win_)), lim=ai_pro_limit(db), r=tm_fmt(win_)[-5:])
         else: st_l = tr(lang, "ai_st_free", n=left_, w=(tm_fmt(when_) if when_ else "—"))
         lock = not (own_ or pro_) and left_ <= 0
-        body = "\n".join(f"🧠 <b>{n_}</b> — {d_.get(lang, d_['tr'])}" + (" · 📷" if k_ in AI_VISION else "") for k_, (n_, _, d_) in AI_MODELS.items())
-        mb = [B(("🔒 " if lock else "") + n_, f"u_aim:{k_}") for k_, (n_, _, _) in AI_MODELS.items()]
+        dot = {"success": "🟢", "primary": "🔵"}
+        body = tr(lang, "ai_legend") + "\n" + "\n".join(f"{dot.get(AI_TIER.get(k_), '⚪️')} <b>{n_}</b> — {d_.get(lang, d_['tr'])}" + (" · 📷" if k_ in AI_VISION else "") for k_, (n_, _, d_) in AI_MODELS.items())
+        mb = [B(("🔒 " if lock else "") + n_, f"u_aim:{k_}", AI_TIER.get(k_)) for k_, (n_, _, _) in AI_MODELS.items()]
         rows = [[B(tr(lang, "b_ai_bot"), "u_aib", "success")]] + [mb[i:i + 2] for i in range(0, len(mb), 2)]
         rows.append([B(tr(lang, "b_ai_hist"), "u_aih")])
         if not (own_ or pro_): rows.append([B(tr(lang, "b_aipro", usdt=AIPRO_USDT), "u_aipro", "primary")])
@@ -3976,7 +3982,46 @@ def ai_view():
     t = ("🤖 <b>AI Yardımcı</b>\n<blockquote>" + ("🟢 Bağlı" if on else "⚪️ Bağlı değil — kullanıcılar butonu görür ama kapalı der") +
          f"\n🌐 <code>{esc(ai_base())}</code>\n🧠 Bot yardımcısı: <code>{esc(ai_model())}</code> · {len(AI_MODELS)} model seçilebilir\n🔢 Bot yardımcısı  <b>{ai_limit(db)}</b> soru/gün\n💎 Premium  <b>{AIPRO_USDT}$</b>/{AIPRO_DAYS} gün · <b>{ai_pro_limit(db)}</b> soru / site 5 saati · abone <b>{sum(1 for x in db.get('users', {}).values() if ai_is_pro(x))}</b>\n🎁 Ücretsiz: 2 günde {AI_FREE_N} soru\n📊 Bugün bot yardımcısı  <b>{today}</b> soru" + (("\n" + site) if site else "") + "</blockquote>"
          + (f"\n⚠️ Son hata: <code>{esc(RUN.get('ai_err', ''))}</code>" if RUN.get("ai_err") else ""))
-    return t, KB([[B("🔑 Anahtar Gir", "ai_set", "primary")], [B("🔢 Bot Yardımcısı Sınırı", "ai_lim")], [B("💎 Premium Sınır (5 saat)", "ai_plim")]] + ([[B("🗑 Anahtarı Kaldır", "ai_del", "danger")]] if on else []) + [[B("◀️ Admin", "admin")]])
+    return t, KB([[B("📊 Site Kullanımı", "ai_use", "success")], [B("🔑 Anahtar Gir", "ai_set", "primary")], [B("🔢 Bot Yardımcısı Sınırı", "ai_lim")], [B("💎 Premium Sınır (5 saat)", "ai_plim")]] + ([[B("🗑 Anahtarı Kaldır", "ai_del", "danger")]] if on else []) + [[B("◀️ Admin", "admin")]])
+
+def _bar(p): n = max(0, min(10, round(p * 10))); return "▰" * n + "▱" * (10 - n)
+
+def ai_usage_view():
+    AI_WIN["ts"] = 0
+    try: ai_window()
+    except Exception: pass
+    u = AI_WIN.get("usage")
+    if not u: return "📊 <b>Site kullanımı</b>\n<blockquote>⚠️ Siteden bilgi alınamadı.</blockquote>", KB([[B("🔄 Yenile", "ai_use")], [B("◀️ AI", "ai_adm")]])
+    lines = []
+    for w in u.get("windows", []):
+        sp, cap = float(w.get("spent_usd", 0)), float(w.get("cap_usd", 0)) or 1
+        rs = datetime.datetime.fromtimestamp(time.time() + int(w.get("resets_in_sec", 0)), TM_TZ)
+        lines.append(f"{'⏱ 5 saat' if w.get('kind') == 'short' else '📅 7 gün'}  <b>${sp:.2f} / ${cap:.0f}</b>  ({sp / cap:.0%})\n{_bar(sp / cap)}\n↻ {rs:%d.%m %H:%M}")
+    ft = u.get("free_tokens") or {}
+    if ft: lines.append(f"🆓 Ücretsiz modeller  <b>{int(ft.get('used_today', 0)):,} / {int(ft.get('limit_per_day', 0)):,}</b> token (bugün)")
+    wl = u.get("wallet") or {}
+    lines.append(f"👛 Cüzdan  <b>${float(wl.get('balance_usd', 0)):.2f}</b> · Plan <b>{esc(str(u.get('plan', '?')).upper())}</b>")
+    t = "📊 <b>Site kullanımı (xKiro)</b>\n<blockquote>" + "\n\n".join(lines) + f"</blockquote>\n<i>Limitin %{int(AI_ALERT_AT * 100)}'ine gelince sana uyarı gelir.</i>"
+    return t, KB([[B("🔄 Yenile", "ai_use", "primary")], [B("◀️ AI", "ai_adm")]])
+
+AI_ALERT_AT = 0.8
+async def ai_usage_watch(app):
+    """5 dakikada bir site limitine bakar; %80'i geçen pencere için kuruculara bir kez uyarı."""
+    while True:
+        await asyncio.sleep(300)
+        if not ai_key(): continue
+        try:
+            await asyncio.to_thread(ai_window)
+            for w in (AI_WIN.get("usage") or {}).get("windows", []):
+                sp, cap = float(w.get("spent_usd", 0)), float(w.get("cap_usd", 0))
+                if not cap or sp / cap < AI_ALERT_AT: continue
+                end = int((time.time() + int(w.get("resets_in_sec", 0))) // 1800)   # aynı pencere için tekrar gönderme
+                if load_db().get("ai_alert", {}).get(w.get("kind")) == end: continue
+                mutate(lambda d: d.setdefault("ai_alert", {}).__setitem__(w.get("kind"), end))
+                rs = datetime.datetime.fromtimestamp(time.time() + int(w.get("resets_in_sec", 0)), TM_TZ)
+                await notify_founders(app, f"⚠️ <b>AI site limiti %{sp / cap:.0%} doldu</b>\n<blockquote>{'⏱ 5 saatlik' if w.get('kind') == 'short' else '📅 7 günlük'} pencere: <b>${sp:.2f} / ${cap:.0f}</b>\n↻ Yenilenme {rs:%d.%m %H:%M}</blockquote>\n<i>Dolarsa yenilenene kadar AI cevap veremez.</i>",
+                                      KB([[B("📊 Kullanım", "ai_use")]]))
+        except Exception as e: log.info("ai usage watch: %s", e)
 
 def crypto_view():
     tok = crypto_token()
@@ -4271,7 +4316,7 @@ async def ai_answer(c, u):
         wait = await m.reply_text(tr(lang, "img_wait"))
         try:
             data, jid = await gen_image(img_p)
-            await c.bot.send_photo(uid, data, caption="🎨 " + esc(short(img_p, 900)), parse_mode="HTML")
+            await c.bot.send_photo(uid, data, caption=f"🎨 <i>{esc(IMG_MODEL.split('/')[-1])} ile çizildi</i>\n" + esc(short(img_p, 900)), parse_mode="HTML")
             await c.bot.send_document(uid, data, filename=f"{jid}.png", reply_markup=kb)   # sıkıştırılmamış asıl dosya
             note = f"[🎨 Fotoğraf oluşturuldu: {img_p}]"
         except Exception as ex:
@@ -5269,17 +5314,17 @@ T["ru"].update({"b_ai_bot": "❓ Вопрос о боте (бесплатно)",
   "aipro_info": "💎 <b>AI Premium</b>\n<blockquote>Все модели: Claude Opus, GPT, Gemini, Grok, Kimi…\n<b>{n}</b> вопросов каждые 5 часов · {days} дней\nЦена  <b>{usdt}$</b> / мес (CryptoBot или баланс)</blockquote>\n<i>Без подписки — {f} вопроса за 2 дня бесплатно.</i>",
   "aipro_ok": "✅ <b>💎 AI Premium активен!</b>\n<blockquote>до {until} · {n} вопросов каждые 5 часов</blockquote>\nВыберите модель через 🤖.",
   "ai_busy": "⚠️ {name} сейчас занят. Выберите другую модель или попробуйте позже. (Вопрос не засчитан.)"})
-T["tr"].update({"ai_img_q": 'Bu fotoğrafı ayrıntılı analiz et.', "img_blocked": '⚠️ Bu istek uygunsuz bulunduğu için fotoğraf oluşturulmadı. Farklı yazıp tekrar dene.', "ai_plim": "⏳ Bu dönemdeki {n} soru hakkın bitti. {r}'de yenilenir.", "ai_novision": '📷 {name} fotoğraf göremez. Fotoğraf için şunlardan birini seç: {v}', "b_ai_new": "Yeni sohbet", "b_ai_hist": "📜 Geçmiş", "b_ai_go": "▶️ Sohbete devam et", "b_ai_del": "🗑 Sil", "ai_q": "soru",
+T["tr"].update({"ai_legend": '🟢 en güçlü · 🔵 güçlü · ⚪️ hızlı/hafif · 📷 fotoğraf görür', "ai_img_q": 'Bu fotoğrafı ayrıntılı analiz et.', "img_blocked": '⚠️ Bu istek uygunsuz bulunduğu için fotoğraf oluşturulmadı. Farklı yazıp tekrar dene.', "ai_plim": "⏳ Bu dönemdeki {n} soru hakkın bitti. {r}'de yenilenir.", "ai_novision": '📷 {name} fotoğraf göremez. Fotoğraf için şunlardan birini seç: {v}', "b_ai_new": "Yeni sohbet", "b_ai_hist": "📜 Geçmiş", "b_ai_go": "▶️ Sohbete devam et", "b_ai_del": "🗑 Sil", "ai_q": "soru",
   "ai_cont": "📜 Sohbete devam: <b>{t}</b> (önceki yazışmalar hatırlanıyor)", "ai_new_ok": "🧹 <b>Yeni sohbet</b> · {name}\n<i>Eski sohbet 📜 Geçmiş'te duruyor. Sorunu yaz</i> 👇",
   "ai_hist_t": "📜 <b>Geçmiş sohbetler</b>  <code>{n}</code>\n<i>Birini seç: yazışmaları gör, devam et ya da sil.</i>", "ai_hist_none": "📜 Henüz kayıtlı sohbet yok.",
   "ai_del_q": "🗑 <b>Bu sohbet silinsin mi?</b>\n<i>Yazışmalar geri gelmez.</i>", "ai_deleted": "🗑 Sohbet silindi.",
   "img_wait": "⏳ Fotoğraf oluşturuluyor (yaklaşık 1 dakika)…", "img_err": "⚠️ Fotoğraf oluşturulamadı: <code>{e}</code>\n<i>Sitede geçici bir hata olabilir; biraz sonra tekrar dene.</i>"})
-T["tk"].update({"ai_img_q": 'Bu suraty jikme-jik seljer.', "img_blocked": '⚠️ Bu haýyş laýyk däl diýlip tapyldy, surat döredilmedi. Başgaça ýazyp gaýtadan synan.', "ai_plim": '⏳ Bu döwürdäki {n} sorag hakyň gutardy. {r}-da täzelenýär.', "ai_novision": '📷 {name} surat görüp bilmeýär. Surat üçin şulardan birini saýla: {v}', "b_ai_new": "Täze söhbet", "b_ai_hist": "📜 Taryh", "b_ai_go": "▶️ Söhbeti dowam et", "b_ai_del": "🗑 Poz", "ai_q": "sorag",
+T["tk"].update({"ai_legend": '🟢 iň güýçli · 🔵 güýçli · ⚪️ çalt/ýeňil · 📷 surat görýär', "ai_img_q": 'Bu suraty jikme-jik seljer.', "img_blocked": '⚠️ Bu haýyş laýyk däl diýlip tapyldy, surat döredilmedi. Başgaça ýazyp gaýtadan synan.', "ai_plim": '⏳ Bu döwürdäki {n} sorag hakyň gutardy. {r}-da täzelenýär.', "ai_novision": '📷 {name} surat görüp bilmeýär. Surat üçin şulardan birini saýla: {v}', "b_ai_new": "Täze söhbet", "b_ai_hist": "📜 Taryh", "b_ai_go": "▶️ Söhbeti dowam et", "b_ai_del": "🗑 Poz", "ai_q": "sorag",
   "ai_cont": "📜 Söhbet dowam edýär: <b>{t}</b> (öňki ýazyşmalar ýatda)", "ai_new_ok": "🧹 <b>Täze söhbet</b> · {name}\n<i>Köne söhbet 📜 Taryh-da dur. Soragyňy ýaz</i> 👇",
   "ai_hist_t": "📜 <b>Öňki söhbetler</b>  <code>{n}</code>\n<i>Birini saýla: ýazyşmalary gör, dowam et ýa-da poz.</i>", "ai_hist_none": "📜 Entek ýazylan söhbet ýok.",
   "ai_del_q": "🗑 <b>Bu söhbet pozulsynmy?</b>\n<i>Ýazyşmalar yzyna gelmez.</i>", "ai_deleted": "🗑 Söhbet pozuldy.",
   "img_wait": "⏳ Surat döredilýär (takmynan 1 minut)…", "img_err": "⚠️ Surat döredip bolmady: <code>{e}</code>\n<i>Saýtda wagtlaýyn ýalňyşlyk bolup biler; birazdan gaýtadan synan.</i>"})
-T["ru"].update({"ai_img_q": 'Подробно проанализируй это фото.', "img_blocked": '⚠️ Запрос признан неприемлемым, фото не создано. Переформулируйте.', "ai_plim": '⏳ Лимит {n} вопросов на этот период исчерпан. Обновится в {r}.', "ai_novision": '📷 {name} не видит фото. Для фото выберите: {v}', "b_ai_new": "Новый чат", "b_ai_hist": "📜 История", "b_ai_go": "▶️ Продолжить чат", "b_ai_del": "🗑 Удалить", "ai_q": "вопр.",
+T["ru"].update({"ai_legend": '🟢 самые сильные · 🔵 сильные · ⚪️ быстрые/лёгкие · 📷 видит фото', "ai_img_q": 'Подробно проанализируй это фото.', "img_blocked": '⚠️ Запрос признан неприемлемым, фото не создано. Переформулируйте.', "ai_plim": '⏳ Лимит {n} вопросов на этот период исчерпан. Обновится в {r}.', "ai_novision": '📷 {name} не видит фото. Для фото выберите: {v}', "b_ai_new": "Новый чат", "b_ai_hist": "📜 История", "b_ai_go": "▶️ Продолжить чат", "b_ai_del": "🗑 Удалить", "ai_q": "вопр.",
   "ai_cont": "📜 Продолжаем чат: <b>{t}</b> (прошлая переписка учитывается)", "ai_new_ok": "🧹 <b>Новый чат</b> · {name}\n<i>Старый чат остался в 📜 Истории. Напишите вопрос</i> 👇",
   "ai_hist_t": "📜 <b>Прошлые чаты</b>  <code>{n}</code>\n<i>Выберите: посмотреть, продолжить или удалить.</i>", "ai_hist_none": "📜 Сохранённых чатов пока нет.",
   "ai_del_q": "🗑 <b>Удалить этот чат?</b>\n<i>Переписку не вернуть.</i>", "ai_deleted": "🗑 Чат удалён.",
@@ -5350,9 +5395,9 @@ T["ru"].update({"b_msy": "✅ Да, купить", "b_msn": "✖️ Отмена
     "ms_q": "🛒 <b>Вы уверены, что хотите купить?</b>\n<blockquote>🏪 {title}\n💵 Плата за запуск  <b>{fee}$</b> (не возвращается)\n⏳ Первые 5 часов сразу  <b>{ph} TMT</b> (не возвращается)\n⏱ Затем каждую минуту  <b>{pm} TMT</b> списывается с баланса\n💰 Баланс  <b>{bal} USDT</b></blockquote>\n<i>Остановить можно в любой момент.</i>"})
 
 # ⚙️ Ayarlar ekranı (dil seçimi burada)
-T["tr"].update({"b_set": "⚙️ Ayarlar", "set_t": "⚙️ <b>Ayarlar</b>\n<blockquote>🌐 Dil  <b>{lname}</b>\n🆔 ID  <code>{id}</code></blockquote>\n<i>Dili değiştirmek için aşağıdan seç.</i>"})
-T["tk"].update({"b_set": "⚙️ Sazlamalar", "set_t": "⚙️ <b>Sazlamalar</b>\n<blockquote>🌐 Dil  <b>{lname}</b>\n🆔 ID  <code>{id}</code></blockquote>\n<i>Dili üýtgetmek üçin aşakdan saýlaň.</i>"})
-T["ru"].update({"b_set": "⚙️ Настройки", "set_t": "⚙️ <b>Настройки</b>\n<blockquote>🌐 Язык  <b>{lname}</b>\n🆔 ID  <code>{id}</code></blockquote>\n<i>Выберите язык ниже.</i>"})
+T["tr"].update({"b_set": "🌐 Dil · 🇹🇲 🇹🇷 🇷🇺", "set_t": "⚙️ <b>Ayarlar</b>\n<blockquote>🌐 Dil  <b>{lname}</b>\n🆔 ID  <code>{id}</code></blockquote>\n<i>Dili değiştirmek için aşağıdan seç.</i>"})
+T["tk"].update({"b_set": "🌐 Dil · 🇹🇲 🇹🇷 🇷🇺", "set_t": "⚙️ <b>Sazlamalar</b>\n<blockquote>🌐 Dil  <b>{lname}</b>\n🆔 ID  <code>{id}</code></blockquote>\n<i>Dili üýtgetmek üçin aşakdan saýlaň.</i>"})
+T["ru"].update({"b_set": "🌐 Язык · 🇹🇲 🇹🇷 🇷🇺", "set_t": "⚙️ <b>Настройки</b>\n<blockquote>🌐 Язык  <b>{lname}</b>\n🆔 ID  <code>{id}</code></blockquote>\n<i>Выберите язык ниже.</i>"})
 
 def money_tmt(micro, d=2):
     v = micro * USDT_RATE / UM
