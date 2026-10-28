@@ -2933,6 +2933,7 @@ def _plain(t):
 
 # Botun yenilikleri: her güncellemede en üste eklenir; AI (yardımcı + destek) bunları bilir.
 CHANGELOG = [
+ ("29.10", "Bazar/Pazar ilan kartı yeni sade tasarım: hizalı fiyat tablosu, ayraçlar."),
  ("28.10", "Destekte cevapları bot sahibi adına veren asistan; kullanıcının eski talepleri hatırlanır."),
  ("28.10", "Destek: ✍️ Ýaz'a bir kez basılır, talep kapanana kadar yazılabilir; mesajlar arası 5 sn."),
  ("28.10", "🤖 Kömekçi: 8 yapay zekâ modeli (Claude Opus, GPT, Gemini, Grok, Kimi, Mistral, MiMo, Nemotron); 2 günde 3 ücretsiz soru, 💎 Premium 5$/ay (her 5 saatte 50 soru); fotoğraf analizi; 📜 sohbet geçmişi."),
@@ -5505,6 +5506,20 @@ T["tk"] = {
  "chk_head2": "\n🔍 <b>Serwerler</b>\n<blockquote>{lines}</blockquote>\n✅ {work} işleýär · ❌ {dead} işlemeýär · ⏳ {wait} garaşýar\n🎯 ýurt dogry · ⚠️ ýurt nädogry\n🕒 Soňky TM testi: {ago}",
  "b_mcheck": "🔍 Barla"
 }
+
+# 🃏 İlan kartı: sade-premium tasarım (Fable 5 önerisi A)
+T["tk"].update({"head_own": "🏆 <b>BOTUŇ RESMI KODY</b>", "head_vip": "💎 <b>VIP SERWER</b>", "head_std": "🏷 <b>STANDART SERWER</b>",
+  "card2": "{head}\n━━━━━━━━━━━━━━\n<b>{title}</b>\n\n<b>Bahalar</b>\n<blockquote>{prices}</blockquote>\n<i>Serwerleri we ýurtlary görmek üçin «Barla» bas.</i>",
+  "prices": "<code>1 minut</code>   <b>{mi} TMT</b>\n<code>1 sagat</code>   <b>{h} TMT</b>\n<code>1 hepde</code>   <b>{w} TMT</b>\n<code>1 aý   </code>   <b>{m} TMT</b>",
+  "mkt_bal": "\n━━━━━━━━━━━━━━\n👛 Balansyň: <b>{bal} USDT</b>", "mkt_none": "\n<i>Häzirlikçe başga satyjy ýok.</i>"})
+T["tr"].update({"head_own": "🏆 <b>BOTUN RESMİ KODU</b>", "head_vip": "💎 <b>VIP SUNUCU</b>", "head_std": "🏷 <b>STANDART SUNUCU</b>",
+  "card2": "{head}\n━━━━━━━━━━━━━━\n<b>{title}</b>\n\n<b>Fiyatlar</b>\n<blockquote>{prices}</blockquote>\n<i>Sunucular ve ülkeler için «Kontrol Et»e bas.</i>",
+  "prices": "<code>1 dakika</code>   <b>{mi} TMT</b>\n<code>1 saat  </code>   <b>{h} TMT</b>\n<code>1 hafta </code>   <b>{w} TMT</b>\n<code>1 ay    </code>   <b>{m} TMT</b>",
+  "mkt_bal": "\n━━━━━━━━━━━━━━\n👛 Bakiyen: <b>{bal} USDT</b>", "mkt_none": "\n<i>Şimdilik başka satıcı yok.</i>"})
+T["ru"].update({"head_own": "🏆 <b>ОФИЦИАЛЬНЫЙ КОД БОТА</b>", "head_vip": "💎 <b>VIP СЕРВЕР</b>", "head_std": "🏷 <b>СТАНДАРТНЫЙ СЕРВЕР</b>",
+  "card2": "{head}\n━━━━━━━━━━━━━━\n<b>{title}</b>\n\n<b>Цены</b>\n<blockquote>{prices}</blockquote>\n<i>Серверы и страны — кнопка «Проверить».</i>",
+  "prices": "<code>1 минута</code>   <b>{mi} TMT</b>\n<code>1 час   </code>   <b>{h} TMT</b>\n<code>1 неделя</code>   <b>{w} TMT</b>\n<code>1 месяц </code>   <b>{m} TMT</b>",
+  "mkt_bal": "\n━━━━━━━━━━━━━━\n👛 Баланс: <b>{bal} USDT</b>", "mkt_none": "\n<i>Других продавцов пока нет.</i>"})
 
 # 📜 İlan kullanım geçmişi (satıcı, kodlarının sadece satın alanlarca kullanıldığını kendi panelinden karşılaştırabilsin)
 T["tr"].update({"b_mlh": "📜 Kullanım geçmişi · {t}", "mlh_none": "Henüz kimse kullanmadı.", "mlh_now": "şu an açık",
