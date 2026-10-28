@@ -867,7 +867,8 @@ def check_cycle(force=False):
     add_due = time.time() - db.get("tm_add_ts", 0) >= TM_ADD_EVERY
     exch = RUN.pop("exits_changed", False)
     if exch and not add_due: RUN["exits_changed"] = True   # ülke değişikliği de saatlik eklemeyle yazılır
-    tm_changed = bool(bad_listed) or (bool(gained or exch) and add_due)
+    was_stale = tm_fresh and not db.get("tm_fresh_w") and planned != listed   # liste test eskiyken yazıldı, şimdi güncel test var → hemen düzelt
+    tm_changed = bool(bad_listed) or (bool(gained or exch) and add_due) or was_stale
     need = ip_need(db)
     if not force and old and len(new) < need and not tm_changed:
         RUN["last_msg"] = f"✅ {len(codes)} kod, {len(new)} yeni IP → değişiklik yok"
@@ -875,7 +876,7 @@ def check_cycle(force=False):
         return None
 
     why = "⚡ Elle güncelleme" if force else (f"🚨 {len(new)} yeni IP bulundu" if (not old or len(new) >= need) else
-                                            f"📱 Listedeki {len(bad_listed)} kod bozuldu/yavaşladı" if bad_listed else f"📱 {len(gained)} yeni çalışan kod eklenecek" if gained else "📱 Ülke bilgisi değişti")
+                                            f"📱 Listedeki {len(bad_listed)} kod bozuldu/yavaşladı" if bad_listed else "📱 Telefon testi geldi → liste çalışan kodlarla yazılıyor" if was_stale else f"📱 {len(gained)} yeni çalışan kod eklenecek" if gained else "📱 Ülke bilgisi değişti")
     vlog(f"{why} → {len(codes)} kod yenileniyor...")
     if dead_tm:
         keep = [c for c in codes if code_key(c) not in dead_tm]
@@ -895,7 +896,7 @@ def check_cycle(force=False):
 
     def f(d):
         d["template"] = renamed
-        d["last_update"] = time.time()
+        d["last_update"] = time.time(); d["tm_fresh_w"] = tm_fresh
         if not bad:   # hata varsa eskileri kalsın, sonraki turda tekrar dener
             d["seen_ips"] = sorted(ips)
             d["tm_dead_pushed"] = sorted(dead_tm)
