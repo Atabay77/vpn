@@ -2291,13 +2291,13 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
 
     elif a == "bcast":
         STATE[uid] = {"action": "bcast"}
-        await safe_edit(q, *prompt("📣 <b>Herkese Mesaj</b>", "Bütün kullanıcılara gidecek mesajı yaz.", "admin"))
+        await safe_edit(q, *prompt("📣 <b>Herkese Mesaj</b>", "Bütün kullanıcılara gidecek mesajı gönder: yazı, fotoğraf ya da video (açıklamasıyla).", "admin"))
 
     elif a == "bcast_yes":
         st = STATE.pop(uid, None)
         if not st or st.get("action") != "bcast_ok":
             await safe_edit(q, "⚠️ Süre geçti, baştan başla.", back("admin")); return
-        c.application.create_task(broadcast(c.application, st["text"], uid))
+        c.application.create_task(broadcast(c.application, st.get("text", ""), uid, st.get("copy")))
         await safe_edit(q, "📣 Gönderiliyor... Bitince bildirim gelecek.", back("admin"))
 
     elif a.startswith(("ord_ok:", "ord_no:")):
@@ -4260,11 +4260,15 @@ async def add_channel(c, txt, fwd_chat=None):
     JOINED.clear()
     return f"✅ Kanal eklendi: <b>{esc(chat.title)}</b>" if ok else "ℹ️ Bu kanal zaten ekli."
 
-async def broadcast(app, text, admin_uid):
+async def broadcast(app, text, admin_uid, copy=None):
+    """copy={"chat", "mid"}: fotoğraf/video (açıklamasıyla) olduğu gibi kopyalanır."""
     ids = [int(k) for k in load_db().get("users", {}) if int(k) not in ADMINS]
     ok = bad = 0
     for i in ids:
-        try: await app.bot.send_message(i, text, disable_web_page_preview=True); ok += 1
+        try:
+            if copy: await app.bot.copy_message(i, copy["chat"], copy["mid"])
+            else: await app.bot.send_message(i, text, disable_web_page_preview=True)
+            ok += 1
         except Exception: bad += 1
         await asyncio.sleep(0.05)   # Telegram sınırı: saniyede ~30 mesaj
     audit(admin_uid, f"broadcast ok={ok} bad={bad}")
@@ -4657,6 +4661,14 @@ async def support_router(u: Update, c: ContextTypes.DEFAULT_TYPE):
         raise ApplicationHandlerStop
     if uid in ADMINS:
         st = STATE.get(uid) or {}
+        if st.get("action") == "bcast" and not m.text:   # 📣 herkese mesaj: fotoğraf / video (+ açıklama)
+            if not (m.photo or m.video or m.animation or m.document or m.voice or m.audio):
+                await m.reply_text("⚠️ Yazı, fotoğraf ya da video gönder."); raise ApplicationHandlerStop
+            STATE[uid] = {"action": "bcast_ok", "copy": {"chat": uid, "mid": m.message_id}}
+            n = sum(1 for k in load_db().get("users", {}) if int(k) not in ADMINS)
+            await m.reply_text(f"📣 <b>Onay</b>\n<blockquote>Yukarıdaki {'fotoğraf' if m.photo else 'medya'}{' + açıklama' if m.caption else ''} olduğu gibi gidecek.</blockquote>\n<b>{n}</b> kullanıcıya gönderilecek.",
+                               parse_mode="HTML", reply_markup=KB([[B("✅ Gönder", "bcast_yes", "success"), B("✖️ İptal", "admin", "danger")]]))
+            raise ApplicationHandlerStop
         if st.get("action") == "own_photo":
             if not m.photo: await m.reply_text("⚠️ Fotoğraf gönder."); raise ApplicationHandlerStop
             STATE.pop(uid, None); fid_ = m.photo[-1].file_id
