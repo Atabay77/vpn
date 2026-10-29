@@ -1,4 +1,4 @@
-import os, sys, io, re, json, html, uuid, base64, asyncio, zipfile, shutil, fcntl, logging, datetime, time, socket, random, hashlib, warnings, unicodedata, threading
+import os, sys, io, re, json, html, uuid, base64, asyncio, types, zipfile, shutil, fcntl, logging, datetime, time, socket, random, hashlib, warnings, unicodedata, threading
 import urllib.request, urllib.parse, urllib.error
 from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor
@@ -1866,7 +1866,7 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         miss = await missing_channels(c.bot, uid)
         if miss:
             await q.answer(); await safe_edit(q, *join_view(lang_of(load_db(), uid), miss)); return
-    if uid not in ADMINS and (a in FOUNDER_ONLY or a.startswith(("sv:", "se:", "sd:", "sa_del:", "sa_ext:", "sa_lim:", "kx:", "kxs:", "ul:", "chd:", "ord_ok:", "ord_no:", "t_rep:", "t_close:", "tv:", "ug:", "ux:", "uxc:", "ub:", "uv:", "ubal:", "mk_l:", "mk_ok:", "mk_rm:", "mk_ph:", "mk_real:", "mk_fake:", "mk_fakey:", "mk_rv:",  "mk_pok:", "mk_pno:", "mk_prj:", "mk_rjx:", "hl:", "hlp:", "ubn:", "bnd:", "bnq:", "ai_ndel:"))):
+    if uid not in ADMINS and (a in FOUNDER_ONLY or a.startswith(("sv:", "se:", "sd:", "sa_del:", "sa_ext:", "sa_lim:", "kx:", "kxs:", "ul:", "chd:", "ord_ok:", "ord_no:", "t_rep:", "t_close:", "t_ai:", "tv:", "ug:", "ux:", "uxc:", "ub:", "uv:", "ubal:", "mk_l:", "mk_ok:", "mk_rm:", "mk_ph:", "mk_real:", "mk_fake:", "mk_fakey:", "mk_rv:",  "mk_pok:", "mk_pno:", "mk_prj:", "mk_rjx:", "hl:", "hlp:", "ubn:", "bnd:", "bnq:", "ai_ndel:"))):
         await q.answer(L(uid, "⛔ Erişim yok", "⛔ Нет доступа"), show_alert=True); return
     if a not in ("toggle_sys", "upd_now"):
         await q.answer()
@@ -2169,13 +2169,36 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
             lines_.append(ln)
         await safe_edit(q, f"{'🐞' if t.get('kind') == 'bug' else '🎫'} <b>#{tid}</b> · {esc(t.get('who'))}\n<i>{ago(t.get('ts'))} · {t.get('n', 0)} mesaj · " + ("🙋 admin istedi" if t.get("human") else "🤖 AI cevaplıyor") + "</i>"
                            + (("\n<blockquote expandable>" + "\n\n".join(reversed(lines_)) + "</blockquote>") if lines_ else ""),
-                        KB([[B("✍️ Yanıtla", f"t_rep:{tid}", "primary"), B("🔒 Kapat", f"t_close:{tid}", "danger")], [B("◀️ Talepler", "tickets")]]))
+                        KB([[B("✍️ Yanıtla", f"t_rep:{tid}", "primary"), B("🔒 Kapat", f"t_close:{tid}", "danger")]] + ([[B("🤖 AI'ye devret", f"t_ai:{tid}")]] if t.get("human") and ai_key() and db.get("ai_sup", True) else []) + [[B("◀️ Talepler", "tickets")]]))
 
     elif a.startswith("t_rep:"):   # mesaj medya olabilir: üzerine yazma, yeni mesaj gönder
         tid = a.split(":", 1)[1]
         STATE[uid] = {"action": "t_reply", "tid": tid}
         await c.bot.send_message(uid, f"✍️ <b>#{tid}</b> için cevabını yaz.\n<blockquote>Yazı, fotoğraf, video, dosya... ne gönderirsen kullanıcıya gider.</blockquote>",
                                  parse_mode="HTML", reply_markup=KB([[B("✖️ İptal", "t_cancel")]]))
+
+    elif a.startswith("t_ai:"):   # 🤖 talebi AI'ye geri ver: kullanıcının cevapsız son mesajına hemen cevap verir
+        tid = a.split(":", 1)[1]
+        if not (ai_key() and load_db().get("ai_sup", True)): await q.answer("⚠️ Destek AI'si kapalı.", show_alert=True); return
+        def f(d):
+            t = d.get("tickets", {}).get(tid)
+            if not t or t.get("status") != "open": return None
+            t["human"] = False; t["curse_n"] = 0; t["notified"] = True
+            lg_ = t.get("log", [])
+            return t["uid"], (lg_[-1]["c"] if lg_ and lg_[-1]["r"] == "u" else None)
+        r_ = mutate(f)
+        if not r_: await c.bot.send_message(uid, f"ℹ️ Talep #{tid} kapalı."); return
+        tuid, last_ = r_
+        if STATE.get(uid, {}).get("tid") == tid: STATE.pop(uid, None)
+        audit(uid, f"ticket {tid} → AI")
+        try: await q.edit_message_reply_markup(None)
+        except Exception: pass
+        await c.bot.send_message(uid, f"🤖 Talep #{tid} AI'ye devredildi." + (" Son mesaja şimdi cevap veriyor." if last_ else " Kullanıcı yazınca AI cevaplar."))
+        if last_:
+            try: tu = await c.bot.get_chat(tuid)
+            except Exception: tu = types.SimpleNamespace(id=tuid, username=None, full_name="?")
+            fake = types.SimpleNamespace(text=last_, caption=None, **{k: None for k in ("photo", "video", "animation", "video_note", "voice", "audio", "document", "sticker")})
+            asyncio.ensure_future(ai_support(c, tuid, tid, lang_of(load_db(), tuid), fake, tu))
 
     elif a == "t_cancel":
         STATE.pop(uid, None)
@@ -4336,7 +4359,8 @@ def media_tag(m):
 
 async def forward_ticket(c, m, user, tid, kind):
     hdr = f"{'🐞 <b>Hata Raporu' if kind == 'bug' else '🎫 <b>Destek'} #{tid}</b> · {esc(who(user))}"
-    kb = KB([[B("✍️ Yanıtla", f"t_rep:{tid}", "primary"), B("🔒 Kapat", f"t_close:{tid}", "danger")]])
+    ai_on = bool(ai_key()) and load_db().get("ai_sup", True)
+    kb = KB([[B("✍️ Yanıtla", f"t_rep:{tid}", "primary"), B("🔒 Kapat", f"t_close:{tid}", "danger")]] + ([[B("🤖 AI'ye devret", f"t_ai:{tid}")]] if ai_on else []))
     for fid in ADMINS:
         try: remember_tmsg(await copy_with_header(c.bot, fid, user.id, m, hdr, kb), tid)
         except Exception as e: log.warning("destek iletilemedi: %s", e)
@@ -4483,7 +4507,7 @@ async def send_handoff(c, tid, user, err=False, curse=False):
         if n > 3300: break
         body.append(ln)
     head = f"🙋 <b>{'AI cevap veremedi' if err else f'Üst üste {SUP_CURSE_MAX} kez küfür etti — AI cevap vermiyor' if curse else 'Admine bağlanmak istiyor'}</b> · #{tid}\n<i>{esc(who(user))}</i>\n"
-    kb = KB([[B("✍️ Yanıtla", f"t_rep:{tid}", "primary"), B("🔒 Kapat", f"t_close:{tid}", "danger")]])
+    kb = KB([[B("✍️ Yanıtla", f"t_rep:{tid}", "primary"), B("🔒 Kapat", f"t_close:{tid}", "danger")], [B("🤖 AI'ye devret", f"t_ai:{tid}")]])
     for fid in ADMINS:
         try:
             r_ = await c.bot.send_message(fid, head + "<blockquote expandable>" + "\n\n".join(reversed(body)) + "</blockquote>", parse_mode="HTML", reply_markup=kb)
@@ -4506,7 +4530,8 @@ async def admin_reply(c, admin_uid, tid, m):
         if (m.text or m.caption) and last_q:   # AI sahibinin cevaplarından öğrenir
             d["ai_learn"] = (d.get("ai_learn", []) + [{"q": last_q[:400], "a": (m.text or m.caption)[:600], "ts": time.time()}])[-AI_LEARN_MAX:]
     mutate(f)
-    await m.reply_text(f"✅ Cevap gönderildi · #{tid}", reply_markup=KB([[B("🔒 Talebi Kapat", f"t_close:{tid}", "danger")]]))
+    ai_on = bool(ai_key()) and load_db().get("ai_sup", True)
+    await m.reply_text(f"✅ Cevap gönderildi · #{tid}", reply_markup=KB([[B("🔒 Talebi Kapat", f"t_close:{tid}", "danger")]] + ([[B("🤖 AI'ye devret", f"t_ai:{tid}")]] if ai_on else [])))
 
 async def close_ticket(c, tid, by_admin):
     def f(d):
