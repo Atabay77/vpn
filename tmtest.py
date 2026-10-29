@@ -367,7 +367,7 @@ def cycle():
 
 # ───────── Telegram MTProto proxy testi (gerçek el sıkışma) ─────────
 PX_CHANNEL = "tmproxy.txt"
-PX_INTERVAL = 30 * 60
+PX_INTERVAL = 5 * 60
 
 _SBOX = []
 def _aes_init():

@@ -6635,7 +6635,7 @@ def px_admin_view():
          f"📱 TM testi: <b>{px.get('good', 0)}</b>/{px.get('tested', 0)} çalışıyor · {ago(px.get('ok_ts'))}\n📢 Kanal: {len(chs)}</blockquote>\n"
          f"<blockquote expandable>{body}</blockquote>\n"
          "<i>Kanallar 30 dk'da bir taranır; proxy kanallarında anılan yeni kanallar kendiliğinden eklenir, 3 saat boş kalan çıkarılır. "
-         "Telefon 30 dk'da bir hepsine gerçekten bağlanmayı dener (tmtest güncel olmalı).</i>")
+         "Telefon 5 dk'da bir hepsine gerçekten bağlanmayı dener (tmtest güncel olmalı).</i>")
     return t, KB([[B("🔄 Şimdi topla", "px_now", "primary")], [B("◀️ Admin", "admin")]])
 
 async def market_loop(app):
