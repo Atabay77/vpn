@@ -948,11 +948,16 @@ async def monitor(app):
 
 # ───────── SÜRE / YEDEK ─────────
 def make_backup():
-    buf = io.BytesIO()
+    """Botun bütün verisi: ayarlar, veritabanı, loglar, banner'lar, ülke önbellekleri, AI sohbet kayıtları."""
+    buf = io.BytesIO(); n = 0
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        for f in [DB_FILE, SA_FILE, ENV_FILE, VIP_LOG, AUDIT_LOG, USERS_LOG, GEO_FILE, "/root/sohbet.txt", os.path.abspath(__file__), BANNER_FILE]:
-            if os.path.exists(f): zf.write(f, os.path.basename(f))
-    buf.seek(0)
+        for f in [DB_FILE, SA_FILE, ENV_FILE, VIP_LOG, AUDIT_LOG, USERS_LOG, GEO_FILE, EXIT_FILE, "/root/sohbet.txt", os.path.abspath(__file__), BANNER_FILE]:
+            if os.path.exists(f): zf.write(f, os.path.basename(f)); n += 1
+        if os.path.isdir(AI_DIR):   # 🤖 kullanıcıların AI sohbetleri
+            for fn in sorted(os.listdir(AI_DIR)):
+                fp = os.path.join(AI_DIR, fn)
+                if os.path.isfile(fp) and fn.endswith(".json"): zf.write(fp, "ai_chats/" + fn); n += 1
+    buf.seek(0); RUN["backup_n"] = n
     return buf
 
 async def watchdog(app):
@@ -1068,7 +1073,7 @@ async def watchdog(app):
                     try: os.remove(os.path.join(BACKUP_DIR, old))
                     except Exception: pass
                 for fid in ADMINS:
-                    try: await app.bot.send_document(chat_id=fid, document=io.BytesIO(data), filename=fn, caption="🗄 Günlük otomatik yedek")
+                    try: await app.bot.send_document(chat_id=fid, document=io.BytesIO(data), filename=fn, caption=f"🗄 Günlük otomatik yedek · {RUN.get('backup_n', '?')} dosya")
                     except Exception as e: log.warning("auto-backup send: %s", e)
         except Exception: log.exception("watchdog backup")
 
