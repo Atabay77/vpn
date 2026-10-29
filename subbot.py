@@ -2803,7 +2803,14 @@ AI_MODELS = {
  "mistral":  ("Mistral Large 4", "mistralai/mistral-large-4-0", {"tr": "hızlı, çeviri ve yazı", "tk": "çalt, terjime we tekst", "ru": "быстрый, перевод и тексты"}),
  "mimo":     ("MiMo v2.6 Pro", "xiaomi/mimo-v2.6-pro", {"tr": "matematik ve mantık, hızlı", "tk": "matematika we logika, çalt", "ru": "математика и логика, быстрый"}),
  "nemotron": ("Nemotron 3 Ultra", "nvidia/nemotron-3-ultra", {"tr": "teknik sorular, akıl yürütme", "tk": "tehniki soraglar, pikir ýöretmek", "ru": "технические вопросы, рассуждения"}),
+ # 🆓 ücretsiz modeller (sitede Free): herkese günde AI_FREE_DAY soru, Premium gerekmez
+ "fqmax":    ("Qwen3.8 Max", "qwen/qwen3.8-max:free", {"tr": "genel sorular, kod, ayrıntılı cevap", "tk": "umumy soraglar, kod, giňişleýin jogap", "ru": "общие вопросы, код, подробные ответы"}),
+ "fqflash":  ("Qwen3.8 Omni Flash", "qwen/qwen3.8-omni-flash:free", {"tr": "çok hızlı, kısa cevap", "tk": "örän çalt, gysga jogap", "ru": "очень быстрый, кратко"}),
+ "fmistral": ("Mistral Large 3", "mistralai/mistral-large-2512", {"tr": "yazı ve çeviri", "tk": "tekst we terjime", "ru": "тексты и перевод"}),
+ "fcmd":     ("Command A+", "cohere/command-a-plus", {"tr": "uzun metin ve özetleme", "tk": "uzyn tekst we gysgaltmak", "ru": "длинные тексты и пересказ"}),
 }
+AI_FREEM = {"fqmax", "fqflash", "fmistral", "fcmd"}   # renksiz butonlar, ❓ Bot barada'nın altında
+AI_FREE_DAY = 100                                      # ücretsiz modeller: kişi başı günde 100 soru (toplam)
 AI_TIER = {"opus": "danger", "gpt": "danger", "kimi": "primary", "grok": "primary", "gemini": "primary", "mistral": "success", "mimo": "success", "nemotron": "success"}   # 🔴 en güçlü · 🔵 güçlü · 🟢 hızlı/hafif
 AIPRO_USDT, AIPRO_DAYS = 5, 30           # 💎 AI Premium: aylık 5$ (CryptoBot / bakiye)
 AI_FREE_N, AI_FREE_WIN = 3, 2 * 86400    # abone olmayana: 2 günde 3 soru (bütün modeller toplam)
@@ -2835,10 +2842,16 @@ def ai_is_pro(x): return x.get("ai_pro_until", 0) > time.time()
 
 def ai_pro_used(x, win): return x.get("ai_pn", 0) if x.get("ai_pwin") == win else 0
 
-def ai_take(d, uid, win=0):
-    """Modelli soru hakkı düşer. Dönüş: 'admin' | 'pro' | 'free' | 'lock' | 'plim'."""
+def ai_fm_used(x):
+    return x.get("ai_fn", 0) if x.get("ai_fday") == tm_day() else 0
+
+def ai_take(d, uid, win=0, mk=None):
+    """Modelli soru hakkı düşer. Dönüş: 'admin' | 'pro' | 'free' | 'lock' | 'plim' | 'fm' | 'flim'."""
     x = d["users"].setdefault(str(uid), {})
     if uid in ADMINS: return "admin"
+    if mk in AI_FREEM:   # 🆓 ücretsiz model: günlük sınır
+        if ai_fm_used(x) >= AI_FREE_DAY: return "flim"
+        x["ai_fday"], x["ai_fn"] = tm_day(), ai_fm_used(x) + 1; return "fm"
     if ai_is_pro(x):
         if x.get("ai_pwin") != win: x["ai_pwin"], x["ai_pn"] = win, 0
         if x["ai_pn"] >= ai_pro_limit(d): return "plim"
@@ -2849,6 +2862,7 @@ def ai_take(d, uid, win=0):
 def ai_give_back(d, uid, kind):
     x = d["users"].setdefault(str(uid), {})
     if kind == "pro": x["ai_pn"] = max(0, x.get("ai_pn", 1) - 1)
+    elif kind == "fm": x["ai_fn"] = max(0, x.get("ai_fn", 1) - 1)
     elif kind == "free" and x.get("ai_free"): x["ai_free"].pop()
 
 IMG_TOOL = {"name": "generate_image", "description": "Create an image. Call ONLY when the user explicitly asks you to create/draw/generate a picture or photo. Write a detailed English prompt.",
@@ -2962,6 +2976,7 @@ def _plain(t):
 
 # Botun yenilikleri: her güncellemede en üste eklenir; AI (yardımcı + destek) bunları bilir.
 CHANGELOG = [
+ ("30.10", "🤖 Kömekçi: 4 ücretsiz model (Qwen3.8 Max, Qwen3.8 Omni Flash, Mistral Large 3, Command A+), herkese günde 100 soru, Premium gerekmez."),
  ("29.10", "📡 Telegram Proxy: Türkmenistan'dan test edilmiş, çalışan Telegram proxy'leri ücretsiz (menüde). Kapanınca yenileri gelir."),
  ("29.10", "Pazar: 18+ / uygunsuz fotoğraflı ilan anında reddedilir ve son uyarı verilir; tekrarlayan otomatik banlanır."),
  ("29.10", "Pazar: ilan fotoğrafını AI otomatik kontrol eder (gerçek testle uyuşmazsa fotoğraf gösterilmez); 5'ten fazla çalışmayan sunucusu olan ilan reddedilir."),
@@ -3341,9 +3356,11 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         else: st_l = tr(lang, "ai_st_free", n=left_, w=(tm_fmt(when_) if when_ else "—"))
         lock = not (own_ or pro_) and left_ <= 0
         dot = {"danger": "🔴", "primary": "🔵", "success": "🟢"}
-        body = tr(lang, "ai_legend") + "\n" + "\n".join(f"{dot.get(AI_TIER.get(k_), '⚪️')} <b>{n_}</b> — {d_.get(lang, d_['tr'])}" + (" · 📷" if k_ in AI_VISION else "") for k_, (n_, _, d_) in AI_MODELS.items())
-        mb = [B(("🔒 " if lock else "") + n_, f"u_aim:{k_}", AI_TIER.get(k_)) for k_, (n_, _, _) in AI_MODELS.items()]
-        rows = [[B(tr(lang, "b_ai_bot"), "u_aib")]] + [mb[i:i + 2] for i in range(0, len(mb), 2)]
+        body = tr(lang, "ai_legend") + "\n" + "\n".join(f"{dot.get(AI_TIER.get(k_), '⚪️')} <b>{n_}</b> — {d_.get(lang, d_['tr'])}" + (" · 📷" if k_ in AI_VISION else "") for k_, (n_, _, d_) in AI_MODELS.items() if k_ not in AI_FREEM)
+        body += "\n\n" + tr(lang, "ai_fm_t", n=AI_FREE_DAY) + "\n" + "\n".join(f"⚪️ <b>{n_}</b> — {d_.get(lang, d_['tr'])}" for k_, (n_, _, d_) in AI_MODELS.items() if k_ in AI_FREEM)
+        mb = [B(("🔒 " if lock else "") + n_, f"u_aim:{k_}", AI_TIER.get(k_)) for k_, (n_, _, _) in AI_MODELS.items() if k_ not in AI_FREEM]
+        fb = [B(n_, f"u_aim:{k_}") for k_, (n_, _, _) in AI_MODELS.items() if k_ in AI_FREEM]   # 🆓 renksiz
+        rows = [mb[i:i + 2] for i in range(0, len(mb), 2)] + [[B(tr(lang, "b_ai_bot"), "u_aib")]] + [fb[i:i + 2] for i in range(0, len(fb), 2)]
         rows.append([B(tr(lang, "b_ai_hist"), "u_aih")])
         if not (own_ or pro_): rows.append([B(tr(lang, "b_aipro", usdt=AIPRO_USDT), "u_aipro", "primary")])
         await send(tr(lang, "ai_menu", st=st_l, body=body), KB(rows + [[B(tr(lang, "b_menu"), "u_menu")]]))
@@ -3357,12 +3374,12 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
     elif a.startswith("u_aim:"):   # model seç
         k_ = a.split(":", 1)[1]; M_ = AI_MODELS.get(k_)
         if not M_ or not ai_key(): await send(tr(lang, "ai_off"), menu_btn); return
-        if not (uid in ADMINS or ai_is_pro(e)) and ai_free_left(e)[0] <= 0:
+        if k_ not in AI_FREEM and not (uid in ADMINS or ai_is_pro(e)) and ai_free_left(e)[0] <= 0:
             await send(tr(lang, "aipro_info", usdt=AIPRO_USDT, days=AIPRO_DAYS, n=ai_pro_limit(db), f=AI_FREE_N),
                        KB([[B(tr(lang, "b_aipro_buy", usdt=AIPRO_USDT), "u_buy:aipro", "success")], [B(tr(lang, "b_ai_models"), "u_ai")]])); return
         cid_ = ai_cur(uid, k_)
         STATE[uid] = {"action": "ai", "model": k_, "cid": cid_}
-        left_ = "∞" if uid in ADMINS else (f"{max(0, ai_pro_limit(db) - ai_pro_used(e, await asyncio.to_thread(ai_window)))}/{ai_pro_limit(db)}" if ai_is_pro(e) else f"{ai_free_left(e)[0]}/{AI_FREE_N}")
+        left_ = "∞" if uid in ADMINS else f"{max(0, AI_FREE_DAY - ai_fm_used(e))}/{AI_FREE_DAY}" if k_ in AI_FREEM else (f"{max(0, ai_pro_limit(db) - ai_pro_used(e, await asyncio.to_thread(ai_window)))}/{ai_pro_limit(db)}" if ai_is_pro(e) else f"{ai_free_left(e)[0]}/{AI_FREE_N}")
         ttl_ = (ai_load(uid)["chats"][cid_]["t"] if cid_ else "")
         await send(tr(lang, "ai_pick", name=M_[0], d=M_[2].get(lang, M_[2]["tr"]) + (" · 📷" if k_ in AI_VISION else ""), n=left_) + (("\n" + tr(lang, "ai_cont", t=esc(ttl_))) if cid_ else ""),
                    KB([[B("🧹 " + tr(lang, "b_ai_new"), f"u_ain:{k_}"), B(tr(lang, "b_ai_hist"), "u_aih")], [B(tr(lang, "b_ai_models"), "u_ai"), B(tr(lang, "b_ai_end"), "u_aix")]]))
@@ -3398,7 +3415,7 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         cid_ = a.split(":", 1)[1]; v = ai_load(uid).get("chats", {}).get(cid_)
         if not v or not ai_key(): return
         mk_ = v.get("m")
-        if mk_ in AI_MODELS and not (uid in ADMINS or ai_is_pro(e)) and ai_free_left(e)[0] <= 0:
+        if mk_ in AI_MODELS and mk_ not in AI_FREEM and not (uid in ADMINS or ai_is_pro(e)) and ai_free_left(e)[0] <= 0:
             await send(tr(lang, "aipro_info", usdt=AIPRO_USDT, days=AIPRO_DAYS, n=ai_pro_limit(db), f=AI_FREE_N),
                        KB([[B(tr(lang, "b_aipro_buy", usdt=AIPRO_USDT), "u_buy:aipro", "success")], [B(tr(lang, "b_ai_hist"), "u_aih")]])); return
         STATE[uid] = {"action": "ai", "model": mk_ if mk_ in AI_MODELS else None, "cid": cid_}
@@ -4568,7 +4585,8 @@ async def ai_answer(c, u):
     AI_HIST[("t", uid)] = time.time()
     if M:
         win = await asyncio.to_thread(ai_window) if not own else 0
-        kind = mutate(lambda d: ai_take(d, uid, win))
+        kind = mutate(lambda d: ai_take(d, uid, win, mk))
+        if kind == "flim": await m.reply_text(tr(lang, "ai_flim", n=AI_FREE_DAY), reply_markup=kb); return
         if kind == "lock":
             await m.reply_text(tr(lang, "aipro_info", usdt=AIPRO_USDT, days=AIPRO_DAYS, n=ai_pro_limit(), f=AI_FREE_N), parse_mode="HTML",
                                reply_markup=KB([[B(tr(lang, "b_aipro_buy", usdt=AIPRO_USDT), "u_buy:aipro", "success")], [B(tr(lang, "b_ai_models"), "u_ai")]])); return
@@ -4596,7 +4614,7 @@ async def ai_answer(c, u):
         q_save = "[📷] " + q[:qmax]
     else: cur, q_save = q[:qmax], q[:qmax]
     msgs = hist + [{"role": "user", "content": cur}]
-    can_img = own and bool(M) and mk != "mistral"   # sohbetten fotoğraf oluşturma: sadece kurucu
+    can_img = own and bool(M) and mk != "mistral" and mk not in AI_FREEM   # sohbetten fotoğraf oluşturma: sadece kurucu
     async def typing():
         while True:
             try: await c.bot.send_chat_action(uid, "typing")
@@ -5645,6 +5663,9 @@ T["ru"].update({"b_ai_bot": "❓ Вопрос о боте (бесплатно)",
   "aipro_info": "💎 <b>AI Premium</b>\n<blockquote>Все модели: Claude Opus, GPT, Gemini, Grok, Kimi…\n<b>{n}</b> вопросов каждые 5 часов · {days} дней\nЦена  <b>{usdt}$</b> / мес (CryptoBot или баланс)</blockquote>\n<i>Без подписки — {f} вопроса за 2 дня бесплатно.</i>",
   "aipro_ok": "✅ <b>💎 AI Premium активен!</b>\n<blockquote>до {until} · {n} вопросов каждые 5 часов</blockquote>\nВыберите модель через 🤖.",
   "ai_busy": "⚠️ {name} сейчас занят. Выберите другую модель или попробуйте позже. (Вопрос не засчитан.)"})
+T["tr"].update({"ai_fm_t": "🆓 <b>Ücretsiz modeller</b> · günde {n} soru", "ai_flim": "⏳ Ücretsiz modellerde bugünkü {n} soru hakkın bitti. Yarın tekrar sorabilirsin."})
+T["tk"].update({"ai_fm_t": "🆓 <b>Mugt modeller</b> · günde {n} sorag", "ai_flim": "⏳ Mugt modellerde şu günki {n} sorag hakyň gutardy. Ertir gaýtadan sorap bilersiň."})
+T["ru"].update({"ai_fm_t": "🆓 <b>Бесплатные модели</b> · {n} вопросов в день", "ai_flim": "⏳ Лимит {n} вопросов в день для бесплатных моделей исчерпан. Спросите завтра."})
 T["tr"].update({"ai_legend": '🔴 en güçlü · 🔵 güçlü · 🟢 hızlı/hafif · 📷 fotoğraf görür', "ai_img_q": 'Bu fotoğrafı ayrıntılı analiz et.', "img_blocked": '⚠️ Bu istek uygunsuz bulunduğu için fotoğraf oluşturulmadı. Farklı yazıp tekrar dene.', "ai_plim": "⏳ Bu dönemdeki {n} soru hakkın bitti. {r}'de yenilenir.", "ai_novision": '📷 {name} fotoğraf göremez. Fotoğraf için şunlardan birini seç: {v}', "b_ai_new": "Yeni sohbet", "b_ai_hist": "📜 Geçmiş", "b_ai_go": "▶️ Sohbete devam et", "b_ai_del": "🗑 Sil", "ai_q": "soru",
   "ai_cont": "📜 Sohbete devam: <b>{t}</b> (önceki yazışmalar hatırlanıyor)", "ai_new_ok": "🧹 <b>Yeni sohbet</b> · {name}\n<i>Eski sohbet 📜 Geçmiş'te duruyor. Sorunu yaz</i> 👇",
   "ai_hist_t": "📜 <b>Geçmiş sohbetler</b>  <code>{n}</code>\n<i>Birini seç: yazışmaları gör, devam et ya da sil.</i>", "ai_hist_none": "📜 Henüz kayıtlı sohbet yok.",
