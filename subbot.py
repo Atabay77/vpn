@@ -923,9 +923,9 @@ async def run_check(app, force=False):
         # kodlar sohbete yazılmaz; ayrıntı 📜 Loglar'da
         head = (f"🔄 Kodlar güncellendi{' (elle)' if r['force'] else ''}: {len(r['codes'])} kod · "
                 f"Drive {r['ok']}/{r['total']} {'✅' if not r['bad'] else '⚠️'}")
-        await notify_founders(app, head, KB([[B("📜 Loglar", callback_data="logs")]]))
+        await notify_founders(app, head, KB([[B("📜 Loglar", callback_data="logs")]]), silent=True)   # sessiz bildirim
     alert = RUN.pop("tm_alert", None)
-    if alert: await notify_founders(app, esc(alert))
+    if alert: await notify_founders(app, esc(alert), silent=True)
     return r
 
 def start_refresh(app, why):
@@ -1437,9 +1437,9 @@ async def safe_edit(q, text, kb=None):
     except BadRequest as e:
         if "not modified" not in str(e).lower(): log.warning("edit: %s", e)
 
-async def notify_founders(app, text, kb=None):
+async def notify_founders(app, text, kb=None, silent=False):
     for fid in ADMINS:
-        try: await app.bot.send_message(chat_id=fid, text=text, parse_mode="HTML", disable_web_page_preview=True, reply_markup=kb)
+        try: await app.bot.send_message(chat_id=fid, text=text, parse_mode="HTML", disable_web_page_preview=True, reply_markup=kb, disable_notification=silent)
         except Exception as e: log.warning("notify: %s", e)
 
 def prompt(title, text, cancel_to, uid=None):
