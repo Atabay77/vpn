@@ -2939,6 +2939,7 @@ def _plain(t):
 
 # Botun yenilikleri: her güncellemede en üste eklenir; AI (yardımcı + destek) bunları bilir.
 CHANGELOG = [
+ ("29.10", "Pazar: ilan fotoğrafını AI otomatik kontrol eder (gerçek testle uyuşmazsa fotoğraf gösterilmez); 5'ten fazla çalışmayan sunucusu olan ilan reddedilir."),
  ("29.10", "İlan fotoğrafları (uzun ekran görüntüleri) kırpılmadan tam görünür."),
  ("29.10", "Bazar/Pazar ilan kartı yeni sade tasarım: hizalı fiyat tablosu, ayraçlar."),
  ("28.10", "Destekte cevapları bot sahibi adına veren asistan; kullanıcının eski talepleri hatırlanır."),
@@ -4817,7 +4818,7 @@ TOPUP_MIN = 0.1                  # en az bakiye yükleme (USDT)
 WITHDRAW_MIN = UM                # en az kazanç çekme: 1 USDT (CryptoBot 1$ altını göndermiyor)
 WITHDRAW_MIN_ADMIN = UM          # kurucu da 1 USDT
 def wd_min(uid): return WITHDRAW_MIN_ADMIN if uid in ADMINS else WITHDRAW_MIN
-MIN_COUNTRIES, MAX_DEAD = 4, 4   # başvuruda en az 4 gerçek ülke; 4'ten fazla çalışmayan (N/A) sunucu olmamalı
+MIN_COUNTRIES, MAX_DEAD = 4, 5   # başvuruda en az 4 gerçek ülke; 5'ten fazla çalışmayan (N/A) sunucu varsa ret
 BAD_WINDOW = 30 * 60             # kural ihlali bu kadar sürerse ilan kaldırılır
 BAN_DEAD_H = 3                   # N/A kuralı ihlalinde yasak (saat): yasakta kod verilmez, iade yok
 VIP_FEE, VIP_HOURS = 200_000, 36 # 💎 VIP: 0.2 USDT -> 36 saat en üstte (bizim ilanın altında)
@@ -5050,7 +5051,7 @@ T["tr"].update({
   "m_removed": "⛔ <b>İlanın pazardan kaldırıldı</b>\n<blockquote>🏪 {title}\n{why}</blockquote>\n⏳ {h} saat pazar yasağın var.",
   "r_dead": "3'ten fazla sunucu 30 dakika boyunca çalışmadı.", "r_lowc": "Gerçek ülke sayısı 30 dakika boyunca 4'ün altında kaldı.",
   "r_link": "Abonelik linki 30 dakika boyunca açılmadı.", "rj_lowc": "En az 4 farklı gerçek ülke yok (ölçülen: {n}).",
-  "rj_dead": "{n} sunucu çalışmıyor (en fazla 4 olabilir).", "rj_link": "Abonelik linki açılmadı.",
+  "rj_dead": "{n} sunucu çalışmıyor (en fazla 5 olabilir).", "rj_link": "Abonelik linki açılmadı.",
   "m_paid_sent": "🎉 <b>Tebrikler!</b>\n<blockquote>🏪 {title}\n⏱ Alıcı kodunu {dur} kullandı\n💰 Ödemen  <b>{usdt} USDT</b> (≈{tmt} TMT)</blockquote>\n💸 CryptoBot hesabına gönderildi.",
   "m_paid_bal": "🎉 <b>Tebrikler!</b>\n<blockquote>🏪 {title}\n⏱ Alıcı kodunu {dur} kullandı\n💰 Ödemen  <b>{usdt} USDT</b> (≈{tmt} TMT)</blockquote>\n💼 Bot bakiyene eklendi. Profil → 💸 Kazancı Çek.",
   "myl": "📦 <b>İlanlarım</b>", "myl_none": "📦 <b>İlanlarım</b>\n<blockquote>İlanın yok.</blockquote>",
@@ -5102,7 +5103,7 @@ T["ru"].update({
   "m_removed": "⛔ <b>Объявление снято с биржи</b>\n<blockquote>🏪 {title}\n{why}</blockquote>\n⏳ Бан на бирже: {h} ч.",
   "r_dead": "Больше 3 серверов не работали 30 минут.", "r_lowc": "Реальных стран меньше 4 в течение 30 минут.",
   "r_link": "Ссылка подписки не открывалась 30 минут.", "rj_lowc": "Нет минимум 4 разных реальных стран (измерено: {n}).",
-  "rj_dead": "Не работают {n} серверов (максимум 4).", "rj_link": "Ссылка подписки не открылась.",
+  "rj_dead": "Не работают {n} серверов (максимум 5).", "rj_link": "Ссылка подписки не открылась.",
   "m_paid_sent": "🎉 <b>Поздравляем!</b>\n<blockquote>🏪 {title}\n⏱ Покупатель использовал ваш код {dur}\n💰 Выплата  <b>{usdt} USDT</b> (≈{tmt} TMT)</blockquote>\n💸 Отправлено на ваш счёт в CryptoBot.",
   "m_paid_bal": "🎉 <b>Поздравляем!</b>\n<blockquote>🏪 {title}\n⏱ Покупатель использовал ваш код {dur}\n💰 Выплата  <b>{usdt} USDT</b> (≈{tmt} TMT)</blockquote>\n💼 Зачислено на ваш баланс в боте. Профиль → 💸 Вывести доход.",
   "myl": "📦 <b>Мои объявления</b>", "myl_none": "📦 <b>Мои объявления</b>\n<blockquote>Объявлений нет.</blockquote>",
@@ -5440,7 +5441,7 @@ T["tk"] = {
  "r_lowc": "Hakyky ýurtlaryň sany 30 minutyň dowamynda 4-den az boldy.",
  "r_link": "Podpiska linki 30 minutyň dowamynda açylmady.",
  "rj_lowc": "Azyndan 4 dürli hakyky ýurt ýok (tapylany: {n}).",
- "rj_dead": "{n} serwer işlemeýär (iň köp 4 bolup biler).",
+ "rj_dead": "{n} serwer işlemeýär (iň köp 5 bolup biler).",
  "rj_link": "Podpiska linki açylmady.",
  "m_paid_sent": "🎉 <b>Gutlaýarys!</b>\n<blockquote>🏪 {title}\n⏱ Alyjy kodyňy {dur} ulandy\n💰 Gazanjyň  <b>{usdt} USDT</b> (≈{tmt} TMT)</blockquote>\n💸 CryptoBot hasabyňa iberildi.",
  "m_paid_bal": "🎉 <b>Gutlaýarys!</b>\n<blockquote>🏪 {title}\n⏱ Alyjy kodyňy {dur} ulandy\n💰 Gazanjyň  <b>{usdt} USDT</b> (≈{tmt} TMT)</blockquote>\n💼 Botdaky balansyňa goşuldy. Profil → 💸 Gazanjy çek.",
@@ -5631,6 +5632,9 @@ T["ru"].update({"b_ai": "🤖 Помощник", "b_ai_end": "◀️ Меню",
   "ai_off": "🤖 Помощник сейчас выключен. Напишите в 🆘 Поддержку.", "ai_text": "✍️ Отправьте вопрос текстом.",
   "ai_lim": "⏳ Лимит {n} вопросов на сегодня исчерпан. Спросите завтра или напишите в 🆘 Поддержку.",
   "ai_err": "⚠️ Помощник сейчас не ответил, попробуйте позже или напишите в 🆘 Поддержку. (Вопрос не засчитан.)"})
+T["tr"]["m_photo_ai"] = "📷 <b>İlanının fotoğrafı gösterilmeyecek</b>\n<blockquote>🏪 {title}\n{why}</blockquote>\n<i>İlanın yayında, sadece fotoğrafsız görünüyor. Gerçek ekran görüntüsüyle yeni ilan verebilirsin.</i>"
+T["tk"]["m_photo_ai"] = "📷 <b>Bildirişiňiň suraty görkezilmez</b>\n<blockquote>🏪 {title}\n{why}</blockquote>\n<i>Bildirişiň bazarda, diňe suratsyz görünýär. Hakyky skrinşot bilen täze bildiriş goýup bilersiň.</i>"
+T["ru"]["m_photo_ai"] = "📷 <b>Фото вашего объявления не будет показано</b>\n<blockquote>🏪 {title}\n{why}</blockquote>\n<i>Объявление на бирже, но без фото. Можно подать новое с настоящим скриншотом.</i>"
 T["tr"]["m_own"] = "⚠️ <b>Kendi ilanını satın alamazsın.</b>"
 T["tk"]["m_own"] = "⚠️ <b>Öz bildirişiňizi satyn alyp bilmeýärsiňiz.</b>"
 T["ru"]["m_own"] = "⚠️ <b>Нельзя купить своё собственное объявление.</b>"
@@ -5718,6 +5722,52 @@ def photo_kb(lid, lg="tr", extra=()):
 def seller_fee(e):
     """İlan ücreti: yalan ping cezası varsa bir sonraki ilan 2 kat."""
     return MKT_FEE * (2 if e.get("fee_x2") else 1)
+
+AI_PHOTO_MODEL = "anthropic/claude-opus-5.5"
+AI_PHOTO_RULES = """Bir VPN pazarında satıcının ilanına koyduğu ekran görüntüsünü denetliyorsun. Yanında botun Türkmenistan'dan GERÇEKTEN ölçtüğü sonuçlar var.
+Kontrol et:
+1) vpn: Görüntü gerçekten bir VPN uygulamasının (Happ, v2rayNG, Hiddify vb.) sunucu/abonelik ekranı mı?
+2) bad: Uygunsuz içerik var mı (çıplaklık, şiddet, hakaret, başka ürün reklamı, iletişim bilgisi/telefon/kanal linki ile müşteri kaçırma)?
+3) misleading: Görüntüdeki iddia gerçek ölçümle belirgin şekilde çelişiyor mu? (ör. görüntüde 10+ ülke ama gerçekte 4; görüntüde hepsi düşük ping ama gerçekte çoğu çalışmıyor). Küçük farklar, isim/bayrak farkı, ping'in biraz farklı olması çelişki DEĞİLDİR. Emin değilsen false.
+SADECE JSON döndür: {"vpn": true/false, "bad": true/false, "misleading": true/false, "reason": "Türkçe tek cümle"}"""
+
+async def ai_photo_check(app, lid):
+    """İlan yayına girince: AI fotoğrafı onaylar ya da gizler (kurucu her zaman geri alabilir)."""
+    if not ai_key(): return
+    L = load_db().get("market", {}).get(lid)
+    if not L or L.get("own") or not L.get("photo") or L.get("photo_ok"): return
+    try:
+        f_ = await app.bot.get_file(L["photo"]); raw = bytes(await f_.download_as_bytearray())
+        real = _plain(await real_report(lid, "tr"))
+        msgs = [{"role": "user", "content": [{"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": base64.b64encode(raw).decode()}},
+                                              {"type": "text", "text": f"İlan: {L.get('title', '')}\nGERÇEK ÖLÇÜM:\n{real[:3000]}"}]}]
+        out = await asyncio.to_thread(ai_call, AI_PHOTO_RULES, msgs, None, 1500, 120, AI_PHOTO_MODEL)
+        mj = re.search(r"\{.*\}", out, re.S); j = json.loads(mj.group(0)) if mj else {}
+    except Exception as e:
+        log.warning("ai photo: %s", e); RUN["ai_err"] = f"photo: {str(e)[:120]}"; return   # karar yok → eskisi gibi kurucu onayı bekler
+    ok = bool(j.get("vpn")) and not j.get("bad") and not j.get("misleading")
+    why = str(j.get("reason") or "")[:300]
+    def f(d):
+        x = d.get("market", {}).get(lid)
+        if not x or x.get("photo_ok"): return None
+        x["photo_ok"] = ok; x["ai_photo"] = {"ok": ok, "why": why, "ts": time.time()}
+        return x.get("owner"), x.get("title")
+    r_ = mutate(f)
+    if not r_: return
+    ow, title = r_
+    ulog("m_ai_photo", f"🤖 AI fotoğraf {'onayladı' if ok else 'gizledi'}: {title} · {why}")
+    if ok:
+        await notify_founders(app, f"🤖✅ <b>AI fotoğrafı onayladı</b>\n<blockquote>{esc(title)}\n{esc(why)}</blockquote>", silent=True)
+        return
+    lg = lang_of(load_db(), ow)
+    try: await app.bot.send_message(ow, tr(lg, "m_photo_ai", title=esc(title), why=esc(why)), parse_mode="HTML")
+    except Exception: pass
+    cap = f"🤖❌ <b>AI fotoğrafı gizledi</b> (ilan yayında, fotoğrafsız)\n<blockquote>{esc(title)}\n{esc(why)}</blockquote>\n<i>Yanlışsa ✅ Foto uygun'a bas.</i>"
+    for fid_ in ADMINS:
+        try: await app.bot.send_photo(fid_, L["photo"], caption=cap, parse_mode="HTML", reply_markup=photo_kb(lid, alang(fid_)))
+        except Exception:
+            try: await app.bot.send_message(fid_, cap, parse_mode="HTML", reply_markup=photo_kb(lid, alang(fid_)))
+            except Exception: pass
 
 async def real_report(lid, lang="tr"):
     """Telefonun ölçtüğü gerçek ping / gerçek ülke (Proxy GET ile, satıcının ekran görüntüsünden bağımsız)."""
@@ -6353,6 +6403,7 @@ async def market_tick(app):
                     except Exception: pass
                 if kind == "approved":
                     ulog("m_live", f"🟢 İlan yayında: {L.get('title')} · satıcı {ow}")
+                    asyncio.ensure_future(ai_photo_check(app, lid))   # 🤖 fotoğraf otomatik kontrol
                     await notify_founders(app, f"🟢 <b>Pazar ilanı yayında</b>\n<blockquote>{esc(L.get('title'))} · 🌍 {len(st.get('cc', []))} ülke · ✅ {st.get('work', 0)}/{st.get('tested', 0)}</blockquote>")
                     await app.bot.send_message(ow, tr(lg, "m_approved", title=esc(L["title"]), ncc=len(st.get("cc", [])), work=st.get("work", 0), tested=st.get("tested", 0)), parse_mode="HTML")
                 elif kind == "rereview":
