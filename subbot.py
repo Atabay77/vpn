@@ -2813,7 +2813,7 @@ AI_FREEM = {"fqmax", "fqflash", "fmistral", "fcmd"}   # renksiz butonlar, ❓ Bo
 AI_FREE_DAY = 100                                      # ücretsiz modeller: kişi başı günde 100 soru (toplam)
 AI_TIER = {"opus": "danger", "gpt": "danger", "kimi": "primary", "grok": "primary", "gemini": "primary", "mistral": "success", "mimo": "success", "nemotron": "success"}   # 🔴 en güçlü · 🔵 güçlü · 🟢 hızlı/hafif
 AIPRO_USDT, AIPRO_DAYS = 5, 30           # 💎 AI Premium: aylık 5$ (CryptoBot / bakiye)
-AI_FREE_N, AI_FREE_WIN = 3, 2 * 86400    # abone olmayana: 2 günde 3 soru (bütün modeller toplam)
+AI_FREE_N, AI_FREE_WIN = 0, 2 * 86400    # ücretli modeller: deneme hakkı yok, sadece 💎 Premium
 AI_PRO_LIMIT = 50                        # aboneye sitenin 5 saatlik limit penceresi başına (Admin'den değişir)
 AI_VISION = {"opus", "gpt", "gemini", "grok", "kimi", "mimo"}   # fotoğraf görebilen modeller (Mistral, Nemotron göremiyor)
 AI_WIN = {"end": 0, "ts": 0, "usage": None}
@@ -2837,7 +2837,7 @@ def ai_pro_limit(db=None):
     except Exception: return AI_PRO_LIMIT
 def ai_free_left(x):
     fr = [t for t in x.get("ai_free", []) if t > time.time() - AI_FREE_WIN]
-    return max(0, AI_FREE_N - len(fr)), (min(fr) + AI_FREE_WIN if len(fr) >= AI_FREE_N else None)
+    return max(0, AI_FREE_N - len(fr)), (min(fr) + AI_FREE_WIN if fr and len(fr) >= AI_FREE_N else None)
 def ai_is_pro(x): return x.get("ai_pro_until", 0) > time.time()
 
 def ai_pro_used(x, win): return x.get("ai_pn", 0) if x.get("ai_pwin") == win else 0
@@ -2976,6 +2976,7 @@ def _plain(t):
 
 # Botun yenilikleri: her güncellemede en üste eklenir; AI (yardımcı + destek) bunları bilir.
 CHANGELOG = [
+ ("30.10", "🤖 Ücretli modeller (Claude Opus, GPT, Gemini, Grok, Kimi, Mistral Large 4, MiMo, Nemotron) artık sadece 💎 Premium ile (5$/ay, 30 gün); deneme hakkı yok. Ücretsiz modeller herkese günde 100 soru."),
  ("30.10", "🤖 Kömekçi: 4 ücretsiz model (Qwen3.8 Max, Qwen3.8 Omni Flash, Mistral Large 3, Command A+), herkese günde 100 soru, Premium gerekmez."),
  ("29.10", "📡 Telegram Proxy: Türkmenistan'dan test edilmiş, çalışan Telegram proxy'leri ücretsiz (menüde). Kapanınca yenileri gelir."),
  ("29.10", "Pazar: 18+ / uygunsuz fotoğraflı ilan anında reddedilir ve son uyarı verilir; tekrarlayan otomatik banlanır."),
@@ -4624,7 +4625,10 @@ async def ai_answer(c, u):
     try:
         img_p = None
         if M:
-            j_ = await asyncio.to_thread(ai_req, ai_system_model(lang, M[0], M[1], can_img, mk in AI_VISION), msgs, None, 16000 if own else 8000, 300, M[1], [IMG_TOOL] if can_img else None)
+            sys_m = ai_system_model(lang, M[0], M[1], can_img, mk in AI_VISION)
+            if mk in AI_FREEM:   # 🆓 ücretsiz modeller bot sorularını da cevaplar
+                sys_m += "\n\nBu sohbet @" + (BOT.get('un') or 'SuBDrive_bot') + " botunun içinde. Kullanıcı bu bot hakkında sorarsa SADECE aşağıdaki bilgilere dayan, uydurma; emin değilsen Support butonuna yönlendir.\nBOT BİLGİLERİ:\n" + ai_system(lang).split("BİLGİLER:\n", 1)[-1]
+            j_ = await asyncio.to_thread(ai_req, sys_m, msgs, None, 16000 if own else 8000, 300, M[1], [IMG_TOOL] if can_img else None)
             ans = "".join(b.get("text", "") for b in j_.get("content", []) if b.get("type") == "text").strip()
             img_p = next((b.get("input", {}).get("prompt") for b in j_.get("content", []) if b.get("type") == "tool_use" and b.get("name") == "generate_image"), None)
             if not ans and not img_p: raise RuntimeError("boş cevap")
@@ -5644,23 +5648,23 @@ T["ru"].update({"vip_q": "💎 <b>Сделать объявление VIP?</b>\n
   "b_yes_vip": "✅ Да, сделать VIP", "mld_q": "🗑 <b>Удалить объявление?</b>\n<blockquote>🏪 {title}\n👥 Сейчас пользуются  <b>{n}</b>\nОбъявление уйдёт с биржи, отменить нельзя.</blockquote>", "b_yes_mld": "🗑 Да, удалить"})
 T["tr"].update({"b_ai_bot": "❓ Bot hakkında soru (ücretsiz)", "b_ai_models": "🧠 Modeller", "b_aipro": "💎 Premium · {usdt}$/ay", "b_aipro_buy": "💎 Satın al · {usdt}$", "it_aipro": "💎 AI Premium · 30 gün",
   "ai_menu": "🤖 <b>Yapay Zekâ</b>\n<blockquote>{st}</blockquote>\n<blockquote expandable>{body}</blockquote>\n<i>❓ Bot hakkındaki sorular ücretsiz. Modellerle her konuda sorabilirsin (kod, ders, çeviri…). Fotoğraf/video oluşturulmaz.</i>",
-  "ai_st_own": "👑 Kurucu · sınırsız", "ai_st_pro": "💎 Premium · {until}'e kadar\nKalan soru <b>{n}/{lim}</b> · yenilenme {r}", "ai_st_free": "🎁 Ücretsiz: 2 günde 3 soru · kalan <b>{n}</b> · yenilenme {w}",
+  "ai_st_own": "👑 Kurucu · sınırsız", "ai_st_pro": "💎 Premium · {until}'e kadar\nKalan soru <b>{n}/{lim}</b> · yenilenme {r}", "ai_st_free": "🔒 Ücretli modeller sadece 💎 Premium ile\n🆓 Ücretsiz modeller: günde 100 soru",
   "ai_pick": "🧠 <b>{name}</b>\n<blockquote>{d}\nKalan soru  <b>{n}</b></blockquote>\n<i>Sorunu yaz</i> 👇",
-  "aipro_info": "💎 <b>AI Premium</b>\n<blockquote>Bütün modeller: Claude Opus, GPT, Gemini, Grok, Kimi…\nHer 5 saatte <b>{n}</b> soru · {days} gün\nÜcret  <b>{usdt}$</b> / ay (CryptoBot ya da bakiye)</blockquote>\n<i>Abone olmadan 2 günde {f} soru ücretsiz.</i>",
+  "aipro_info": "💎 <b>AI Premium</b>\n<blockquote>Bütün modeller: Claude Opus, GPT, Gemini, Grok, Kimi…\nHer 5 saatte <b>{n}</b> soru · {days} gün\nÜcret  <b>{usdt}$</b> / ay (CryptoBot ya da bakiye)</blockquote>\n<i>Abone olmadan ücretsiz modelleri kullanabilirsin (günde 100 soru).</i>",
   "aipro_ok": "✅ <b>💎 AI Premium aktif!</b>\n<blockquote>{until}'e kadar · her 5 saatte {n} soru</blockquote>\n🤖 butonundan modeli seç.",
   "ai_busy": "⚠️ {name} şu an meşgul. Başka model seç ya da biraz sonra dene. (Hakkın düşülmedi.)"})
 T["tk"].update({"b_ai_bot": "❓ Bot barada sorag (mugt)", "b_ai_models": "🧠 Modeller", "b_aipro": "💎 Premium · {usdt}$/aý", "b_aipro_buy": "💎 Satyn al · {usdt}$", "it_aipro": "💎 AI Premium · 30 gün",
   "ai_menu": "🤖 <b>Emeli aň</b>\n<blockquote>{st}</blockquote>\n<blockquote expandable>{body}</blockquote>\n<i>❓ Bot barada soraglar mugt. Modellerden islendik zat barada sorap bilersiň (kod, sapak, terjime…). Surat/wideo döredilmeýär.</i>",
-  "ai_st_own": "👑 Esasy admin · çäksiz", "ai_st_pro": "💎 Premium · {until} çenli\nGalan sorag <b>{n}/{lim}</b> · täzelenýär {r}", "ai_st_free": "🎁 Mugt: 2 günde 3 sorag · galan <b>{n}</b> · täzelenýär {w}",
+  "ai_st_own": "👑 Esasy admin · çäksiz", "ai_st_pro": "💎 Premium · {until} çenli\nGalan sorag <b>{n}/{lim}</b> · täzelenýär {r}", "ai_st_free": "🔒 Tölegli modeller diňe 💎 Premium bilen\n🆓 Mugt modeller: günde 100 sorag",
   "ai_pick": "🧠 <b>{name}</b>\n<blockquote>{d}\nGalan sorag  <b>{n}</b></blockquote>\n<i>Soragyňy ýaz</i> 👇",
-  "aipro_info": "💎 <b>AI Premium</b>\n<blockquote>Ähli modeller: Claude Opus, GPT, Gemini, Grok, Kimi…\nHer 5 sagatda <b>{n}</b> sorag · {days} gün\nBahasy  <b>{usdt}$</b> / aý (CryptoBot ýa-da balans)</blockquote>\n<i>Abuna bolmazdan 2 günde {f} sorag mugt.</i>",
+  "aipro_info": "💎 <b>AI Premium</b>\n<blockquote>Ähli modeller: Claude Opus, GPT, Gemini, Grok, Kimi…\nHer 5 sagatda <b>{n}</b> sorag · {days} gün\nBahasy  <b>{usdt}$</b> / aý (CryptoBot ýa-da balans)</blockquote>\n<i>Abuna bolmazdan mugt modelleri ulanyp bilersiň (günde 100 sorag).</i>",
   "aipro_ok": "✅ <b>💎 AI Premium işjeň!</b>\n<blockquote>{until} çenli · her 5 sagatda {n} sorag</blockquote>\n🤖 düwmesinden model saýla.",
   "ai_busy": "⚠️ {name} häzir meşgul. Başga model saýla ýa-da birazdan synan. (Hakyň aýrylmady.)"})
 T["ru"].update({"b_ai_bot": "❓ Вопрос о боте (бесплатно)", "b_ai_models": "🧠 Модели", "b_aipro": "💎 Premium · {usdt}$/мес", "b_aipro_buy": "💎 Купить · {usdt}$", "it_aipro": "💎 AI Premium · 30 дней",
   "ai_menu": "🤖 <b>Искусственный интеллект</b>\n<blockquote>{st}</blockquote>\n<blockquote expandable>{body}</blockquote>\n<i>❓ Вопросы о боте бесплатны. Моделям можно задавать любые вопросы (код, учёба, перевод…). Фото/видео не создаются.</i>",
-  "ai_st_own": "👑 Основатель · без лимита", "ai_st_pro": "💎 Premium · до {until}\nОсталось <b>{n}/{lim}</b> · обновление в {r}", "ai_st_free": "🎁 Бесплатно: 3 вопроса за 2 дня · осталось <b>{n}</b> · обновление {w}",
+  "ai_st_own": "👑 Основатель · без лимита", "ai_st_pro": "💎 Premium · до {until}\nОсталось <b>{n}/{lim}</b> · обновление в {r}", "ai_st_free": "🔒 Платные модели только с 💎 Premium\n🆓 Бесплатные модели: 100 вопросов в день",
   "ai_pick": "🧠 <b>{name}</b>\n<blockquote>{d}\nОсталось вопросов  <b>{n}</b></blockquote>\n<i>Напишите вопрос</i> 👇",
-  "aipro_info": "💎 <b>AI Premium</b>\n<blockquote>Все модели: Claude Opus, GPT, Gemini, Grok, Kimi…\n<b>{n}</b> вопросов каждые 5 часов · {days} дней\nЦена  <b>{usdt}$</b> / мес (CryptoBot или баланс)</blockquote>\n<i>Без подписки — {f} вопроса за 2 дня бесплатно.</i>",
+  "aipro_info": "💎 <b>AI Premium</b>\n<blockquote>Все модели: Claude Opus, GPT, Gemini, Grok, Kimi…\n<b>{n}</b> вопросов каждые 5 часов · {days} дней\nЦена  <b>{usdt}$</b> / мес (CryptoBot или баланс)</blockquote>\n<i>Без подписки доступны бесплатные модели (100 вопросов в день).</i>",
   "aipro_ok": "✅ <b>💎 AI Premium активен!</b>\n<blockquote>до {until} · {n} вопросов каждые 5 часов</blockquote>\nВыберите модель через 🤖.",
   "ai_busy": "⚠️ {name} сейчас занят. Выберите другую модель или попробуйте позже. (Вопрос не засчитан.)"})
 T["tr"].update({"ai_fm_t": "🆓 <b>Ücretsiz modeller</b> · günde {n} soru", "ai_flim": "⏳ Ücretsiz modellerde bugünkü {n} soru hakkın bitti. Yarın tekrar sorabilirsin."})
@@ -6346,8 +6350,8 @@ def market_bill():
 # ── 📢 Reklam postu: banner + yazı + 🇹🇲/🇷🇺 butonları (basınca yazı o dile döner) ──
 # Satırlar telefonda tek satıra sığacak kadar kısa. uid verilirse son satır + "Bota gir" o kişinin davet linki olur.
 AD_TXT = {
- "tk": ['🛡 <b>DRIVE BOT · VPN BAZARY</b> 🌐\n\n<blockquote>❌ Telegram açylmaýarmy?\n❌ Proksi gözläp ýadadyňyzmy?\n❌ Alan VPN kodyňyz işlemedimi?</blockquote>\n<b>Drive Bot-da beýle zat ýok ✅</b>\n\n📡 <b><u>MUGT TELEGRAM PROKSI</u></b>\n<blockquote>🔄 Her 5 minutda TM-den barlanýar\n✅ Diňe häzir işleýänler berilýär\n👆 Bir basyşda birikdirilýär\n♻️ Ýapylsa — botdan täzesini alyň</blockquote>\n\n🛒 <b><u>KOD SATYN ALÝANLAR ÜÇIN</u></b>\n<blockquote>📡 Serwerler TM-den barlanýar\n🎯 Diňe <b>hakyky ýurtlar</b>\n⏱ Minut, sagat, hepde, aý\n⏹ Islän wagtyňyz yzyna gowşuryň</blockquote>\n\n🪪 <b><u>KOD SATÝANLAR ÜÇIN</u></b>\n<blockquote>💰 Bahany özüňiz goýýarsyňyz\n💸 Pul CryptoBot-a özi gelýär\n🤖 Satyşy bot özi ýöredýär\n📢 Bildiriş — bary-ýogy <b>0.05$</b></blockquote>\n\n🤖 <b><u>KÖMEKÇI — EMELI AŇ</u></b>\n<blockquote>💬 Bot hakda soraglara mugt jogap\n🧠 8 AI: Claude, GPT, Gemini, Grok\n🆓 2 günde 3 sorag mugt\n⭐ Premium — aýda 5$</blockquote>\n\n🎁 <b><u>DOSTUŇYZY ÇAGYRYŇ</u></b>\n<blockquote>👥 Her dost üçin <b>0.25 TMT</b> bonus\n🛒 Market-de kod almaga ulanyň</blockquote>\n\n👇 <i>Başlamak üçin</i>\n{link}'],
- "ru": ['🛡 <b>DRIVE BOT · БИРЖА VPN</b> 🌐\n\n<blockquote>❌ Не открывается Telegram?\n❌ Устали искать прокси?\n❌ Купленный код не работает?</blockquote>\n<b>В Drive Bot такого нет ✅</b>\n\n📡 <b><u>БЕСПЛАТНЫЕ ПРОКСИ TG</u></b>\n<blockquote>🔄 Проверка из TM каждые 5 мин\n✅ Только работающие сейчас\n👆 Подключение в одно касание\n♻️ Отключился — возьмите новый</blockquote>\n\n🛒 <b><u>ПОКУПАТЕЛЯМ КОДОВ</u></b>\n<blockquote>📡 Серверы проверяются из TM\n🎯 Только <b>реальные страны</b>\n⏱ Минута, час, неделя, месяц\n⏹ Остановите в любой момент</blockquote>\n\n🪪 <b><u>ПРОДАВЦАМ КОДОВ</u></b>\n<blockquote>💰 Цену ставите сами\n💸 Деньги сами идут в CryptoBot\n🤖 Продажи ведёт бот\n📢 Объявление — всего <b>0.05$</b></blockquote>\n\n🤖 <b><u>ПОМОЩНИК — ИИ</u></b>\n<blockquote>💬 Бесплатно ответит о боте\n🧠 8 ИИ: Claude, GPT, Gemini, Grok\n🆓 3 вопроса бесплатно за 2 дня\n⭐ Premium — 5$ в месяц</blockquote>\n\n🎁 <b><u>ПРИГЛАСИ ДРУГА</u></b>\n<blockquote>👥 За каждого друга <b>0.25 TMT</b>\n🛒 Тратьте на коды в Маркете</blockquote>\n\n👇 <i>Начать</i>\n{link}']}
+ "tk": ['🛡 <b>DRIVE BOT · VPN BAZARY</b> 🌐\n\n<blockquote>❌ Telegram açylmaýarmy?\n❌ Proksi gözläp ýadadyňyzmy?\n❌ Alan VPN kodyňyz işlemedimi?</blockquote>\n<b>Drive Bot-da beýle zat ýok ✅</b>\n\n📡 <b><u>MUGT TELEGRAM PROKSI</u></b>\n<blockquote>🔄 Her 5 minutda TM-den barlanýar\n✅ Diňe häzir işleýänler berilýär\n👆 Bir basyşda birikdirilýär\n♻️ Ýapylsa — botdan täzesini alyň</blockquote>\n\n🛒 <b><u>KOD SATYN ALÝANLAR ÜÇIN</u></b>\n<blockquote>📡 Serwerler TM-den barlanýar\n🎯 Diňe <b>hakyky ýurtlar</b>\n⏱ Minut, sagat, hepde, aý\n⏹ Islän wagtyňyz yzyna gowşuryň</blockquote>\n\n🪪 <b><u>KOD SATÝANLAR ÜÇIN</u></b>\n<blockquote>💰 Bahany özüňiz goýýarsyňyz\n💸 Pul CryptoBot-a özi gelýär\n🤖 Satyşy bot özi ýöredýär\n📢 Bildiriş — bary-ýogy <b>0.05$</b></blockquote>\n\n🤖 <b><u>KÖMEKÇI — EMELI AŇ</u></b>\n<blockquote>💬 Bot hakda soraglara mugt jogap\n🧠 8 AI: Claude, GPT, Gemini, Grok\n🆓 Mugt modeller: günde 100 sorag\n⭐ Premium — aýda 5$</blockquote>\n\n🎁 <b><u>DOSTUŇYZY ÇAGYRYŇ</u></b>\n<blockquote>👥 Her dost üçin <b>0.25 TMT</b> bonus\n🛒 Market-de kod almaga ulanyň</blockquote>\n\n👇 <i>Başlamak üçin</i>\n{link}'],
+ "ru": ['🛡 <b>DRIVE BOT · БИРЖА VPN</b> 🌐\n\n<blockquote>❌ Не открывается Telegram?\n❌ Устали искать прокси?\n❌ Купленный код не работает?</blockquote>\n<b>В Drive Bot такого нет ✅</b>\n\n📡 <b><u>БЕСПЛАТНЫЕ ПРОКСИ TG</u></b>\n<blockquote>🔄 Проверка из TM каждые 5 мин\n✅ Только работающие сейчас\n👆 Подключение в одно касание\n♻️ Отключился — возьмите новый</blockquote>\n\n🛒 <b><u>ПОКУПАТЕЛЯМ КОДОВ</u></b>\n<blockquote>📡 Серверы проверяются из TM\n🎯 Только <b>реальные страны</b>\n⏱ Минута, час, неделя, месяц\n⏹ Остановите в любой момент</blockquote>\n\n🪪 <b><u>ПРОДАВЦАМ КОДОВ</u></b>\n<blockquote>💰 Цену ставите сами\n💸 Деньги сами идут в CryptoBot\n🤖 Продажи ведёт бот\n📢 Объявление — всего <b>0.05$</b></blockquote>\n\n🤖 <b><u>ПОМОЩНИК — ИИ</u></b>\n<blockquote>💬 Бесплатно ответит о боте\n🧠 8 ИИ: Claude, GPT, Gemini, Grok\n🆓 Бесплатные модели: 100 в день\n⭐ Premium — 5$ в месяц</blockquote>\n\n🎁 <b><u>ПРИГЛАСИ ДРУГА</u></b>\n<blockquote>👥 За каждого друга <b>0.25 TMT</b>\n🛒 Тратьте на коды в Маркете</blockquote>\n\n👇 <i>Начать</i>\n{link}']}
 
 def ad_link(uid=None):
     un = BOT.get("un") or "SuBDrive_bot"
