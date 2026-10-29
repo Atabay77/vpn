@@ -698,19 +698,19 @@ def _tm_write(svc, fid, data, name=None):
     body = {"name": name} if name else {}
     svc.files().update(fileId=fid, body=body, media_body=media).execute(num_retries=2)
 
-def _tm_create(svc, db, data):
+def _tm_create(svc, db, data, name=TM_NAME):
     """Önce adla var olanı bul, yoksa yeni dosya oluştur, o da olmazsa boş bir dosyayı kullan."""
-    r = svc.files().list(q=f"name='{TM_NAME}' and trashed=false", fields="files(id)", orderBy="modifiedTime desc", pageSize=1).execute()
+    r = svc.files().list(q=f"name='{name}' and trashed=false", fields="files(id)", orderBy="modifiedTime desc", pageSize=1).execute()
     if r.get("files"): return r["files"][0]["id"]
     media = MediaIoBaseUpload(io.BytesIO(json.dumps(data).encode("utf-8")), mimetype="text/plain")
     try:
-        return svc.files().create(body={"name": TM_NAME, "mimeType": "text/plain"}, media_body=media, fields="id").execute()["id"]
+        return svc.files().create(body={"name": name, "mimeType": "text/plain"}, media_body=media, fields="id").execute()["id"]
     except Exception as e:
         log.warning("tm create: %s", e)
     used = used_fids(db) | set(db["free_files"])
     fid = find_free_file(svc, used)
     if not fid: raise RuntimeError("Drive'da kanal için boş dosya yok")
-    _tm_write(svc, fid, data, TM_NAME)
+    _tm_write(svc, fid, data, name)
     return fid
 
 def load_exits():
@@ -1157,6 +1157,7 @@ async def post_init(app):
     app.bot_data["mkt"] = asyncio.create_task(market_loop(app))
     app.bot_data["aiw"] = asyncio.create_task(ai_usage_watch(app))
     app.bot_data["aim"] = asyncio.create_task(ai_log_watch(app))
+    app.bot_data["px"] = asyncio.create_task(proxy_loop(app))
     if ADMINS: asyncio.create_task(pad_old_photos(app))
     if load_db().get("off_msg") != CODE_OFF_MSG: asyncio.create_task(asyncio.to_thread(rewrite_off_files))
     if load_db().get("file_fmt") != FILE_FMT:   # dosya biçimi değişti: bütün abonelik dosyaları bir kez yeniden yazılsın
@@ -1240,6 +1241,7 @@ def _main_kb(uid):
     except Exception: n_rev = 0
     return KB([[B(tr(lg, "b_pazar"), "u_mkt", "success")],
                [B(tr(lg, "b_ai"), "u_ai", "primary")],
+               [B(tr(lg, "b_px"), "u_px")],
                [B(tr(lg, "b_free"), "u_free"), B(tr(lg, "b_mine"), "my_keys")],
                [B(tr(lg, "b_prof"), "u_prof"), B(tr(lg, "b_market"), "u_market")],
                [B(tr(lg, "b_sup"), "tickets"), B(tr(lg, "b_bug"), "tickets_bug")],
@@ -1338,7 +1340,7 @@ def admin_kb(uid=None):
         [B("🚫 Ban / Unban", "ban_menu")],
         [B(a_("rep"), "rep_today"), B(a_("stats"), "stats")],
         [B(a_("chans"), "chans"), B("🪙 CryptoBot", "cp")],
-        [B("🤖 AI Yardımcı", "ai_adm")],
+        [B("🤖 AI Yardımcı", "ai_adm"), B("📡 Proxy", "px_adm")],
         [B(a_("mk"), "mk_admin"), B("💳 TMT 🔜", "pay_set")],
         [B(a_("bcast"), "bcast")],
         [B(a_("ad"), "ad_post")],
@@ -1850,7 +1852,7 @@ async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
         log.exception("msg_handler")
         await send_error(c, uid, f"mesaj:{act}", e)
 
-FOUNDER_ONLY = {"ban_menu", "ban_find", "hp", "hp_set", "hp_del", "hp_new", "ref_test", "mk_admin", "mk_price", "mk_oph", "mk_ods", "mk_odr", "bal_find", "usearch", "rep_today", "rep_yday", "tickets_bug", "t_cancel", "tickets", "cp_test", "cp", "cp_set", "cp_del", "ai_adm", "ai_set", "ai_lim", "ai_plim", "ai_del", "ai_use", "ai_tsup", "ai_tmon", "ai_notes", "ai_nadd", "ai_learnv", "ai_lclr", "ul_open", "stats", "chans", "ch_add", "pay_set", "bcast", "bcast_yes", "rollback", "rollback_yes", "auto_ann", "toggle_sys", "mk_rev", "ad_post", "ip_need", "ping_max", "admin", "sources", "s_add", "logs", "upd_now", "get_zip", "sa_menu", "sa_add", "bulk_ann", "bulk_title", "bulk_yes"}
+FOUNDER_ONLY = {"px_adm", "px_now", "ban_menu", "ban_find", "hp", "hp_set", "hp_del", "hp_new", "ref_test", "mk_admin", "mk_price", "mk_oph", "mk_ods", "mk_odr", "bal_find", "usearch", "rep_today", "rep_yday", "tickets_bug", "t_cancel", "tickets", "cp_test", "cp", "cp_set", "cp_del", "ai_adm", "ai_set", "ai_lim", "ai_plim", "ai_del", "ai_use", "ai_tsup", "ai_tmon", "ai_notes", "ai_nadd", "ai_learnv", "ai_lclr", "ul_open", "stats", "chans", "ch_add", "pay_set", "bcast", "bcast_yes", "rollback", "rollback_yes", "auto_ann", "toggle_sys", "mk_rev", "ad_post", "ip_need", "ping_max", "admin", "sources", "s_add", "logs", "upd_now", "get_zip", "sa_menu", "sa_add", "bulk_ann", "bulk_title", "bulk_yes"}
 OWNED = ("kv", "kt", "kn", "ka", "kd", "kdy")   # alt admin sadece kendi kodunda
 def src_find(db, h): return next((s for s in db["sources"] if hashlib.md5(s.encode()).hexdigest()[:8] == h), None)
 
@@ -2188,6 +2190,12 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
 
     elif a == "cp":
         await safe_edit(q, *(await asyncio.to_thread(crypto_view)))
+
+    elif a in ("px_adm", "px_now"):
+        if a == "px_now": PX["next"] = 0
+        t_, kb_ = px_admin_view()
+        if a == "px_now": t_ += "\n⏳ <b>Toplama başladı</b>, 2-3 dk içinde Yenile."
+        await safe_edit(q, t_, kb_)
 
     elif a == "ai_adm":
         await safe_edit(q, *(await asyncio.to_thread(ai_view)))
@@ -2931,6 +2939,7 @@ def _plain(t):
 
 # Botun yenilikleri: her güncellemede en üste eklenir; AI (yardımcı + destek) bunları bilir.
 CHANGELOG = [
+ ("29.10", "📡 Telegram Proxy: Türkmenistan'dan test edilmiş, çalışan Telegram proxy'leri ücretsiz (menüde). Kapanınca yenileri gelir."),
  ("29.10", "Pazar: 18+ / uygunsuz fotoğraflı ilan anında reddedilir ve son uyarı verilir; tekrarlayan otomatik banlanır."),
  ("29.10", "Pazar: ilan fotoğrafını AI otomatik kontrol eder (gerçek testle uyuşmazsa fotoğraf gösterilmez); 5'ten fazla çalışmayan sunucusu olan ilan reddedilir."),
  ("29.10", "İlan fotoğrafları (uzun ekran görüntüleri) kırpılmadan tam görünür."),
@@ -3128,7 +3137,7 @@ def pub_menu(db, uid):
     lang = lang_of(db, uid)
     e = db.get("users", {}).get(str(uid), {})
     t = with_bal(tr(lang, "menu", avail=max(0, avail_refs(e)), need=REF_NEED, codes=len(user_codes(db, uid))), e, lang) + open_mkt_text(db, uid, lang)
-    kb = KB([[B(tr(lang, "b_pazar"), "u_mkt", "success")], [B(tr(lang, "b_ai"), "u_ai", "primary")]] + open_mkt_row(db, uid, lang) + [
+    kb = KB([[B(tr(lang, "b_pazar"), "u_mkt", "success")], [B(tr(lang, "b_ai"), "u_ai", "primary")]] + open_mkt_row(db, uid, lang) + [[B(tr(lang, "b_px"), "u_px")],
              [B(tr(lang, "b_free"), "u_free"), B(tr(lang, "b_mine"), "u_mine")],
              [B(tr(lang, "b_prof"), "u_prof"), B(tr(lang, "b_market"), "u_market")],
              [B(tr(lang, "b_sup"), "u_sup"), B(tr(lang, "b_bug"), "u_bug")],
@@ -3294,6 +3303,9 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         if tid_: mutate(lambda d: d["tickets"][tid_].pop("armed", None))
         STATE.pop(uid, None)
         await show_home(c, uid, getattr(q, "message", None), send=send)
+
+    elif a == "u_px":   # 📡 Türkmenistan'da test edilmiş Telegram proxy'leri
+        await send(*px_user_view(lang))
 
     elif a == "u_ai":   # 🤖 ekranı: ❓ bot yardımcısı (ücretsiz) + modeller (💎 abonelik / 2 günde 3 ücretsiz soru)
         if not ai_key(): await send(tr(lang, "ai_off"), menu_btn); return
@@ -4860,7 +4872,7 @@ def proto_of(c):
 
 def used_fids(db):
     """Şu an bir koda/oturuma bağlı Drive dosyaları (boş dosya seçerken bunlar alınmaz)."""
-    u = {v.get("file_id") for v in db["subs"].values() if v.get("file_id")} | {db.get("tm_fid")} | source_fids(db)
+    u = {v.get("file_id") for v in db["subs"].values() if v.get("file_id")} | {db.get("tm_fid"), db.get("px_fid")} | source_fids(db)
     u |= {s.get("fid") for s in db.get("msess", {}).values() if s.get("status") == "on"}
     return u
 
@@ -5611,16 +5623,25 @@ T["ru"].update({"ai_legend": '🔴 самые сильные · 🔵 сильн�
   "ai_hist_t": "📜 <b>Прошлые чаты</b>  <code>{n}</code>\n<i>Выберите: посмотреть, продолжить или удалить.</i>", "ai_hist_none": "📜 Сохранённых чатов пока нет.",
   "ai_del_q": "🗑 <b>Удалить этот чат?</b>\n<i>Переписку не вернуть.</i>", "ai_deleted": "🗑 Чат удалён.",
   "img_wait": "⏳ Фото создаётся (около минуты)…", "img_err": "⚠️ Не удалось создать фото: <code>{e}</code>\n<i>Возможен временный сбой на сайте; попробуйте чуть позже.</i>"})
+T["tr"].update({"b_px": "📡 Telegram Proxy", "b_px_re": "🔄 Yenile",
+  "px_t": "📡 <b>Telegram Proxy</b>\n<blockquote>Türkmenistan'dan test edildi, şu an çalışıyor.\n🕒 Son test: {ago}</blockquote>\n<i>Birine bas → Telegram'da bağlan. Çalışmazsa 🔄 Yenile.</i>",
+  "px_none": "📡 Şu an test edilmiş çalışan proxy yok. Biraz sonra tekrar bak."})
 T["tr"].update({"b_ai": "🤖 Yardımcı", "b_ai_end": "◀️ Menü",
   "ai_hi": "🤖 <b>Yardımcı</b>\n<blockquote>Bot hakkında sorunu yaz: fiyatlar, Pazar, kod alma, Happ'e ekleme, bakiye, kazanç çekme…\n🔢 Bugün kalan soru  <b>{n}</b></blockquote>\n<i>Sorunu mesaj olarak gönder</i> 👇",
   "ai_off": "🤖 Yardımcı şu an kapalı. 🆘 Support'a yazabilirsin.", "ai_text": "✍️ Sorunu yazı olarak gönder.",
   "ai_lim": "⏳ Bugünkü {n} soru hakkın bitti. Yarın tekrar sorabilir ya da 🆘 Support'a yazabilirsin.",
   "ai_err": "⚠️ Yardımcı şu an cevap veremedi, biraz sonra tekrar dene ya da 🆘 Support'a yaz. (Hakkın düşülmedi.)"})
+T["tk"].update({"b_px": "📡 Telegram Proksi", "b_px_re": "🔄 Täzele",
+  "px_t": "📡 <b>Telegram Proksi</b>\n<blockquote>Türkmenistandan barlandy, häzir işleýär.\n🕒 Soňky barlag: {ago}</blockquote>\n<i>Birine bas → Telegramda birikdir. Işlemese 🔄 Täzele.</i>",
+  "px_none": "📡 Häzir barlanan işleýän proksi ýok. Birazdan gaýtadan seret."})
 T["tk"].update({"b_ai": "🤖 Kömekçi", "b_ai_end": "◀️ Menýu",
   "ai_hi": "🤖 <b>Kömekçi</b>\n<blockquote>Bot barada soragyňy ýaz: bahalar, Bazar, kod almak, Happ-a goşmak, balans, gazanç çekmek…\n🔢 Şu gün galan sorag  <b>{n}</b></blockquote>\n<i>Soragyňy habar edip iber</i> 👇",
   "ai_off": "🤖 Kömekçi häzir ýapyk. 🆘 Goldaw-a ýazyp bilersiň.", "ai_text": "✍️ Soragyňy tekst görnüşinde iber.",
   "ai_lim": "⏳ Şu günki {n} sorag hakyň gutardy. Ertir gaýtadan sorap ýa-da 🆘 Goldaw-a ýazyp bilersiň.",
   "ai_err": "⚠️ Kömekçi häzir jogap berip bilmedi, birazdan gaýtadan synan ýa-da 🆘 Goldaw-a ýaz. (Hakyň aýrylmady.)"})
+T["ru"].update({"b_px": "📡 Telegram Прокси", "b_px_re": "🔄 Обновить",
+  "px_t": "📡 <b>Telegram Прокси</b>\n<blockquote>Проверены из Туркменистана, сейчас работают.\n🕒 Последняя проверка: {ago}</blockquote>\n<i>Нажмите на любой → подключите в Telegram. Не работает — 🔄 Обновить.</i>",
+  "px_none": "📡 Сейчас нет проверенных рабочих прокси. Загляните чуть позже."})
 T["ru"].update({"b_ai": "🤖 Помощник", "b_ai_end": "◀️ Меню",
   "ai_hi": "🤖 <b>Помощник</b>\n<blockquote>Задайте вопрос о боте: цены, Биржа, покупка кода, добавление в Happ, баланс, вывод…\n🔢 Осталось вопросов сегодня  <b>{n}</b></blockquote>\n<i>Отправьте вопрос сообщением</i> 👇",
   "ai_off": "🤖 Помощник сейчас выключен. Напишите в 🆘 Поддержку.", "ai_text": "✍️ Отправьте вопрос текстом.",
@@ -6498,6 +6519,124 @@ async def market_tick(app):
             ulog("m_pay", f"💸 Günlük satıcı ödemesi: {info['title']} · {fmt_u(info['payout'])} USDT")
             await notify_payout(app, info)
         await asyncio.to_thread(market_refresh_files)
+
+# ───────── 📡 Telegram proxy: açık kanallardan toplanır, Türkmenistan'daki telefonda gerçek el sıkışmayla test edilir ─────────
+PX_SEEDS = ["ProxyMTProto", "Proxy_MTM", "TelMTProto", "MTProtoProxies", "proxymtprotoir", "Myporoxy", "iRoProxy", "MTP_roto",
+            "ProxyMTProto_tel", "Proxy_Qavi", "NetAccount", "MProxy_ir", "Mtproto_Proxy", "vpnandproxyfree", "proxy_kafee", "hack_proxy"]
+PX_LISTS = ["https://raw.githubusercontent.com/SoliSpirit/mtproto/master/all_proxies.txt"]   # GitHub'daki toplu liste
+PX_EVERY, PX_MAX_CH, PX_POOL, PX_SHOW, PX_FRESH = 30 * 60, 60, 400, 8, 6 * 3600
+PX_NAME = "tmproxy.txt"   # telefonla ayrı kanal (ana kanal 15 sn'de bir okunuyor; büyük liste oraya konmaz)
+PX_RE = re.compile(r"(?:tg://proxy|https?://t\.me/proxy)\?[^\"'<>\s]+")
+PX_SKIP = {"proxy", "share", "joinchat", "addlist", "socks", "iv", "addstickers", "boost", "contact"}
+PX = {"next": 0, "tried": {}}
+
+def px_norm(link):
+    """Proxy linki → tek biçim (https://t.me/proxy?server=&port=&secret=). Bozuksa None."""
+    try:
+        qs = urllib.parse.parse_qs(urllib.parse.urlsplit(html.unescape(link).replace("+", "%2B")).query)
+        h, pt, sec = qs["server"][0].strip().lower(), int(qs["port"][0]), qs["secret"][0].strip()
+        if not re.fullmatch(r"[a-z0-9.\-]{3,253}", h) or not 0 < pt < 65536 or not re.fullmatch(r"[\w\-+/=]{16,300}", sec): return None
+        return f"https://t.me/proxy?server={h}&port={pt}&secret={urllib.parse.quote(sec, safe='')}"
+    except Exception: return None
+
+def _px_get(url):
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    with urllib.request.urlopen(req, timeout=20) as r: return html.unescape(r.read(3000000).decode("utf-8", "ignore"))
+
+def _px_page(name):
+    """Açık kanalın web önizlemesi (t.me/s/…): proxy linkleri + anılan kanallar. Açılmazsa links=None."""
+    try:
+        t = _px_get("https://t.me/s/" + name)
+        return name, PX_RE.findall(t), {x.lower() for x in re.findall(r"t\.me/([A-Za-z]\w{4,31})", t)}
+    except Exception: return name, None, set()
+
+def px_collect(db):
+    """Bloklayan iş. Kanallardan + listeden proxy toplar, yeni kanal keşfeder. Dönüş: (havuz, kanallar)."""
+    chans = {k: dict(v) for k, v in (db.get("px", {}).get("chans") or {x: {"n": 0, "z": 0} for x in PX_SEEDS}).items()}
+    found, ment = [], {}
+    with ThreadPoolExecutor(8) as ex: res = list(ex.map(_px_page, list(chans)))
+    known = {k.lower() for k in chans}
+    for name, links, mm in res:
+        if links is None: continue   # sayfa açılmadı: sayılmaz
+        n = len({px_norm(l) for l in links} - {None})
+        chans[name] = {**chans[name], "n": n, "z": 0 if n else chans[name].get("z", 0) + 1}
+        found += links
+        if n:
+            for m_ in mm - known - PX_SKIP: ment[m_] = ment.get(m_, 0) + 1
+    # 🔎 keşif: proxy kanallarında anılan yeni kanallar (günde bir kez denenir; ≥3 proxy varsa eklenir)
+    now = time.time()
+    cand = [k for k in sorted(ment, key=lambda k: -ment[k]) if now - PX["tried"].get(k, 0) > 86400][:15]
+    if cand and len(chans) < PX_MAX_CH:
+        for k in cand: PX["tried"][k] = now
+        with ThreadPoolExecutor(8) as ex: res2 = list(ex.map(_px_page, cand))
+        for name, links, _ in res2:
+            n = len({px_norm(l) for l in (links or [])} - {None})
+            if n >= 3 and len(chans) < PX_MAX_CH:
+                chans[name] = {"n": n, "z": 0, "new": int(now)}; found += links
+                vlog(f"📡 Yeni proxy kanalı bulundu: @{name} ({n} proxy)")
+    chans = {k: v for k, v in chans.items() if v.get("z", 0) < 6}   # 6 tarama (3 saat) üst üste boş: çıkarılır
+    for u in PX_LISTS:
+        try: found += PX_RE.findall(_px_get(u))
+        except Exception as e: log.info("px list: %s", e)
+    return list(dict.fromkeys(x for x in map(px_norm, found) if x))[:PX_POOL], chans   # önce kanallar (taze), sonra liste
+
+def px_channel(fn=None):
+    """Telefonla proxy kanalı (Drive: tmproxy.txt). fn(ch) True dönerse yazılır. Dönüş: kanal içeriği."""
+    svc = new_service(); db = load_db(); fid = db.get("px_fid"); ch = None
+    if fid:
+        try:
+            raw = svc.files().get_media(fileId=fid).execute(num_retries=2).decode("utf-8", "ignore").strip()
+            ch = json.loads(raw) if raw.startswith("{") else {}
+        except Exception as e:
+            if "404" not in str(e) and "notFound" not in str(e): raise
+            fid = None
+    if not fid:
+        if fn is None: return {}
+        fid = _tm_create(svc, db, {}, PX_NAME); mutate(lambda d: d.__setitem__("px_fid", fid)); ch = {}
+    if fn and fn(ch): _tm_write(svc, fid, ch)
+    return ch
+
+def px_tick():
+    """Bloklayan iş (2 dk'da bir): 30 dk'da bir toplar → telefona verir; telefonun sonucunu okur."""
+    now = time.time()
+    if now >= PX["next"]:
+        PX["next"] = now + PX_EVERY
+        pool, chans = px_collect(load_db())
+        mutate(lambda d: d.setdefault("px", {}).update(chans=chans, pool_n=len(pool), col_ts=int(now)))
+        if pool:
+            def put(ch):
+                if ch.get("px_list") == pool: return False
+                ch["px_list"], ch["px_ts"] = pool, int(now); return True
+            px_channel(put)
+    ch = px_channel()
+    r, ts = ch.get("px_res") or {}, ch.get("px_res_ts") or 0
+    if ts and ts != load_db().get("px", {}).get("ok_ts"):
+        ok = sorted(([l, ms] for l, ms in r.items() if isinstance(ms, int) and ms > 0), key=lambda x: x[1])[:30]
+        mutate(lambda d: d.setdefault("px", {}).update(ok=ok, ok_ts=ts, tested=len(r), good=sum(1 for v in r.values() if isinstance(v, int) and v > 0)))
+
+async def proxy_loop(app):
+    await asyncio.sleep(20)
+    while True:
+        try: await asyncio.to_thread(px_tick)
+        except Exception as e: log.warning("proxy tick: %s", e)
+        await asyncio.sleep(120)
+
+def px_user_view(lang):
+    px = load_db().get("px", {}); ok = px.get("ok") or []
+    back_ = [[B(tr(lang, "b_px_re"), "u_px", "primary")], [B(tr(lang, "b_menu"), "u_menu")]]
+    if not ok or time.time() - px.get("ok_ts", 0) > PX_FRESH: return tr(lang, "px_none"), KB(back_)
+    rows = [[B(f"⚡ Proxy {i + 1} · {ms} ms", url=l)] for i, (l, ms) in enumerate(ok[:PX_SHOW])]
+    return tr(lang, "px_t", ago=ago_l(px["ok_ts"], lang)), KB(rows + back_)
+
+def px_admin_view():
+    px = load_db().get("px", {}); chs = px.get("chans", {})
+    body = "\n".join(f"{'🆕' if v.get('new') else '•'} @{esc(k)} · {v.get('n', 0)}" for k, v in sorted(chs.items(), key=lambda x: -x[1].get("n", 0))) or "—"
+    t = (f"📡 <b>Telegram Proxy</b>\n<blockquote>📥 Toplanan: <b>{px.get('pool_n', 0)}</b> · {ago(px.get('col_ts'))}\n"
+         f"📱 TM testi: <b>{px.get('good', 0)}</b>/{px.get('tested', 0)} çalışıyor · {ago(px.get('ok_ts'))}\n📢 Kanal: {len(chs)}</blockquote>\n"
+         f"<blockquote expandable>{body}</blockquote>\n"
+         "<i>Kanallar 30 dk'da bir taranır; proxy kanallarında anılan yeni kanallar kendiliğinden eklenir, 3 saat boş kalan çıkarılır. "
+         "Telefon 30 dk'da bir hepsine gerçekten bağlanmayı dener (tmtest güncel olmalı).</i>")
+    return t, KB([[B("🔄 Şimdi topla", "px_now", "primary")], [B("◀️ Admin", "admin")]])
 
 async def market_loop(app):
     while True:

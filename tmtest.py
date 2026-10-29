@@ -1,9 +1,9 @@
 """Türkmenistan test programı (Termux).
 Happ'te Termux "Bypass" olmalı ki testler VPN'siz, TM internetinden yapılsın.
-Komutlar: tmtest start | stop | once | log | status
+Komutlar: tmtest start | stop | once | proxy | log | status
 Çalışma: Drive'daki tmtest.txt'den abonelik linklerini okur, kodları çeker, Xray ile her koda
 gerçekten bağlanıp ms ölçer, sonucu aynı dosyaya yazar. Bot sonucu okuyup çalışmayan kodları çıkarır."""
-import os, sys, re, io, json, time, base64, signal, socket, subprocess, datetime, urllib.request, urllib.parse
+import os, sys, re, io, json, time, base64, signal, socket, struct, hashlib, hmac, subprocess, datetime, urllib.request, urllib.parse
 from concurrent.futures import ThreadPoolExecutor
 
 H = os.path.expanduser("~")
@@ -365,6 +365,202 @@ def cycle():
         % (len(results), time.time() - t0, good, len(results) - good, len(codes) - len(results)))
 
 
+# ───────── Telegram MTProto proxy testi (gerçek el sıkışma) ─────────
+PX_CHANNEL = "tmproxy.txt"
+PX_INTERVAL = 30 * 60
+
+_SBOX = []
+def _aes_init():
+    p = q = 1; sb = [0] * 256
+    while True:
+        p = p ^ ((p << 1) & 0xff) ^ (0x1b if p & 0x80 else 0)
+        q ^= q << 1; q ^= q << 2; q ^= q << 4; q &= 0xff
+        if q & 0x80: q ^= 0x09
+        x = q ^ ((q << 1 | q >> 7) & 0xff) ^ ((q << 2 | q >> 6) & 0xff) ^ ((q << 3 | q >> 5) & 0xff) ^ ((q << 4 | q >> 4) & 0xff)
+        sb[p] = x ^ 0x63
+        if p == 1: break
+    sb[0] = 0x63
+    _SBOX.extend(sb)
+
+def _xt(a): return ((a << 1) ^ 0x1b) & 0xff if a & 0x80 else a << 1
+
+class _AES256:
+    """Sadece şifreleme (CTR için yeterli). Saf Python: kütüphane gerekmez."""
+    def __init__(s, key):
+        if not _SBOX: _aes_init()
+        w = [list(key[i:i + 4]) for i in range(0, 32, 4)]; rc = 1
+        for i in range(8, 60):
+            t = list(w[i - 1])
+            if i % 8 == 0:
+                t = [_SBOX[b] for b in t[1:] + t[:1]]; t[0] ^= rc; rc = _xt(rc)
+            elif i % 8 == 4: t = [_SBOX[b] for b in t]
+            w.append([a ^ b for a, b in zip(w[i - 8], t)])
+        s.rk = [sum(w[r * 4:r * 4 + 4], []) for r in range(15)]
+    def enc(s, blk):
+        S = _SBOX; st = [b ^ k for b, k in zip(blk, s.rk[0])]
+        for r in range(1, 15):
+            st = [S[b] for b in st]
+            st = [st[(i + 4 * (i % 4)) % 16] for i in range(16)]   # ShiftRows (sütun sıralı)
+            if r < 14:
+                o = []
+                for c in range(4):
+                    a = st[4 * c:4 * c + 4]; t = a[0] ^ a[1] ^ a[2] ^ a[3]
+                    o += [a[i] ^ t ^ _xt(a[i] ^ a[(i + 1) % 4]) for i in range(4)]
+                st = o
+            st = [b ^ k for b, k in zip(st, s.rk[r])]
+        return bytes(st)
+
+class _CTR:
+    def __init__(s, key, iv):
+        try:
+            from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+            s.c = Cipher(algorithms.AES(key), modes.CTR(iv)).encryptor(); return
+        except Exception: s.c = None
+        s.a = _AES256(key); s.n = int.from_bytes(iv, "big"); s.buf = b""
+    def __call__(s, data):
+        if s.c: return s.c.update(data)
+        while len(s.buf) < len(data):
+            s.buf += s.a.enc(s.n.to_bytes(16, "big")); s.n = (s.n + 1) % (1 << 128)
+        ks, s.buf = s.buf[:len(data)], s.buf[len(data):]
+        return bytes(a ^ b for a, b in zip(data, ks))
+
+def parse_secret(sec):
+    """hex ya da base64 → (16 bayt anahtar, tür 'plain'/'dd'/'ee', ee için alan adı)."""
+    sec = sec.strip()
+    raw = None
+    if re.fullmatch(r"[0-9a-fA-F]+", sec) and len(sec) % 2 == 0: raw = bytes.fromhex(sec)
+    else:
+        try: raw = base64.urlsafe_b64decode(sec.replace("+", "-").replace("/", "_") + "=" * (-len(sec) % 4))
+        except Exception: return None
+    if len(raw) == 16: return raw, "plain", ""
+    if len(raw) == 17 and raw[0] == 0xdd: return raw[1:], "dd", ""
+    if len(raw) > 17 and raw[0] == 0xee: return raw[1:17], "ee", raw[17:].decode("ascii", "ignore")
+    return None
+
+def parse_proxy(link):
+    """tg://proxy?... ya da https://t.me/proxy?... → (server, port, secret) / None"""
+    try:
+        q = urllib.parse.parse_qs(urllib.parse.urlsplit(link.replace("&amp;", "&")).query)
+        h, p, s = q["server"][0].strip(), int(q["port"][0]), q["secret"][0].strip()
+        if not h or not (0 < p < 65536) or not parse_secret(s): return None
+        return h.lower(), p, s
+    except Exception: return None
+
+def _recv(sk, n):
+    b = b""
+    while len(b) < n:
+        x = sk.recv(n - len(b))
+        if not x: raise ConnectionError("bağlantı kapandı")
+        b += x
+    return b
+
+def _client_hello(domain, key):
+    r = os.urandom
+    def ext(t, d): return struct.pack(">HH", t, len(d)) + d
+    sni = domain.encode()
+    exts = (ext(0x0a0a, b"") + ext(0, struct.pack(">HBH", len(sni) + 3, 0, len(sni)) + sni) + ext(0x17, b"") + ext(0xff01, b"\x00")
+            + ext(0x0a, bytes.fromhex("000a0a0a001d00170018")) + ext(0x0b, b"\x01\x00") + ext(0x23, b"")
+            + ext(0x10, bytes.fromhex("000c02683208687474702f312e31")) + ext(0x05, bytes.fromhex("0100000000"))
+            + ext(0x0d, bytes.fromhex("001004030804040105030805050108060601")) + ext(0x12, b"")
+            + ext(0x33, bytes.fromhex("00290a0a000100001d0020") + r(32)) + ext(0x2d, b"\x01\x01")
+            + ext(0x2b, bytes.fromhex("060a0a03040303")) + ext(0x1b, bytes.fromhex("020002")))
+    ciphers = bytes.fromhex("0a0a130113021303c02bc02fc02cc030cca9cca8c013c014009c009d002f0035")
+    body = b"\x03\x03" + b"\x00" * 32 + b"\x20" + r(32) + struct.pack(">H", len(ciphers)) + ciphers + b"\x01\x00"
+    pad = 517 - 9 - len(body) - 2 - len(exts) - 4
+    if pad > 0: exts += ext(0x15, b"\x00" * pad)
+    body += struct.pack(">H", len(exts)) + exts
+    hs = b"\x01" + len(body).to_bytes(3, "big") + body
+    rec = b"\x16\x03\x01" + struct.pack(">H", len(hs)) + hs
+    dg = bytearray(hmac.new(key, rec, hashlib.sha256).digest())
+    dg[28:32] = bytes(a ^ b for a, b in zip(dg[28:32], struct.pack("<I", int(time.time()))))
+    return rec[:11] + bytes(dg) + rec[43:], bytes(dg)
+
+def check_proxy(server, port, secret, timeout=8, dc=2):
+    """Gerçek el sıkışma. Dönüş: ms (çalışıyor) ya da -1."""
+    ps = parse_secret(secret)
+    if not ps: return -1
+    key, kind, domain = ps
+    t0 = time.time()
+    try:
+        sk = socket.create_connection((server, port), timeout); sk.settimeout(timeout)
+    except Exception: return -1
+    try:
+        tls = kind == "ee"
+        if tls:
+            hello, cdg = _client_hello(domain, key)
+            sk.sendall(hello)
+            resp = b""
+            for want in (0x16, 0x14, 0x17):   # ServerHello, ChangeCipherSpec, ilk uygulama verisi
+                h = _recv(sk, 5)
+                if h[0] != want: return -1
+                resp += h + _recv(sk, struct.unpack(">H", h[3:5])[0])
+            zr = resp[:11] + b"\x00" * 32 + resp[43:]
+            if not hmac.compare_digest(hmac.new(key, cdg + zr, hashlib.sha256).digest(), resp[11:43]): return -1
+        while True:
+            init = bytearray(os.urandom(64))
+            if init[0] != 0xef and bytes(init[:4]) not in (b"HEAD", b"POST", b"GET ", b"OPTI", b"\x16\x03\x01\x02", b"\xdd" * 4, b"\xee" * 4) and init[4:8] != b"\0" * 4: break
+        init[56:60] = (b"\xee" if kind == "plain" else b"\xdd") * 4; init[60:62] = struct.pack("<h", dc)   # Telegram uygulamasıyla aynı
+        rev = bytes(init[8:56])[::-1]
+        enc = _CTR(hashlib.sha256(bytes(init[8:40]) + key).digest(), bytes(init[40:56]))
+        dec = _CTR(hashlib.sha256(rev[:32] + key).digest(), rev[32:48])
+        head = bytes(init[:56]) + enc(bytes(init))[56:]
+        nonce = os.urandom(16)
+        msg = b"\0" * 8 + struct.pack("<q", (int(time.time()) << 32) | (int.from_bytes(os.urandom(2), "little") << 2)) + struct.pack("<I", 20) + struct.pack("<I", 0xbe7e8ef1) + nonce
+        pay = enc(struct.pack("<I", len(msg)) + msg)
+        out = head + pay
+        sk.sendall((b"\x14\x03\x03\x00\x01\x01" + b"\x17\x03\x03" + struct.pack(">H", len(out)) + out) if tls else out)
+        buf = b""
+        def more():
+            nonlocal buf
+            if tls:
+                h = _recv(sk, 5)
+                d = _recv(sk, struct.unpack(">H", h[3:5])[0])
+                if h[0] != 0x17: return
+                buf += dec(d)
+            else:
+                d = sk.recv(4096)
+                if not d: raise ConnectionError("bağlantı kapandı")
+                buf += dec(d)
+        while len(buf) < 4: more()
+        n = struct.unpack("<I", buf[:4])[0] & 0x7fffffff
+        if n < 40 or n > 4096: return -1
+        while len(buf) < 4 + n: more()
+        m = buf[4:4 + n]
+        if m[:8] != b"\0" * 8 or struct.unpack("<I", m[20:24])[0] != 0x05162463 or m[24:40] != nonce: return -1
+        return max(1, int((time.time() - t0) * 1000))
+    except Exception:
+        return -1
+    finally:
+        try: sk.close()
+        except Exception: pass
+
+def px_cycle():
+    """Bot tmproxy.txt'ye proxy listesi koyar; her birine gerçekten bağlanmayı dener, ms'i geri yazar."""
+    svc = drive_cached()
+    r = svc.files().list(q="name='%s' and trashed=false" % PX_CHANNEL, fields="files(id)", orderBy="modifiedTime desc", pageSize=1).execute(num_retries=2)
+    if not r.get("files"): return
+    fid = r["files"][0]["id"]
+    links = (read_channel(svc, fid).get("px_list") or [])[:600]
+    if not links: return
+    cc, cname = country()
+    if cc not in ("TM", "?"):
+        log("⚠️ Proxy testi atlandı: Termux TM'den çıkmıyor (%s)" % cname); return
+    t0 = time.time()
+    px = [parse_proxy(l) for l in links]
+    def one(i): return check_proxy(*px[i]) if px[i] else -1
+    with ThreadPoolExecutor(48) as ex: res = list(ex.map(one, range(len(links))))
+    bad = [i for i, v in enumerate(res) if v < 0 and px[i]]
+    if bad:   # anlık kopma olmasın: çalışmayanlar bir kez daha
+        time.sleep(5)
+        with ThreadPoolExecutor(48) as ex:
+            for i, v in zip(bad, ex.map(one, bad)):
+                if v > 0: res[i] = v
+    ch = read_channel(svc, fid)   # test sürerken bot yeni liste koymuş olabilir
+    ch.update({"px_res": dict(zip(links, res)), "px_res_ts": int(time.time())})
+    write_channel(svc, fid, ch)
+    log("📡 Proxy: %d test edildi, %d çalışıyor (%d sn)" % (len(links), sum(1 for v in res if v > 0), time.time() - t0))
+
+
 SELF = os.path.abspath(__file__)
 
 def my_sha():
@@ -447,7 +643,7 @@ def drive_cached():
 def loop():
     open(PIDF, "w").write(str(os.getpid()))
     log("▶️ Test başladı: her %d dk, kodlar değişince hemen" % (INTERVAL // 60))
-    last_run, last_sig = 0, None
+    last_run, last_sig, last_px = 0, None, 0
     while True:
         sig = codes_sig()
         if time.time() - last_run >= INTERVAL or (sig is not None and last_sig is not None and sig != last_sig):
@@ -456,6 +652,10 @@ def loop():
             except Exception as e: log("❌ Hata: %s" % str(e)[:200])
             last_run = time.time()
         if sig is not None: last_sig = sig
+        if time.time() - last_px >= PX_INTERVAL:
+            last_px = time.time()
+            try: px_cycle()
+            except Exception as e: _SVC.clear(); log("❌ Proxy testi: %s" % str(e)[:150])
         time.sleep(QUICK_POLL)
 
 def running():
@@ -472,6 +672,9 @@ def main():
     elif cmd == "once":
         try: cycle()
         except Exception as e: log("❌ Hata: %s" % str(e)[:200])
+    elif cmd == "proxy":
+        try: px_cycle()
+        except Exception as e: log("❌ Proxy testi: %s" % str(e)[:200])
     elif cmd == "start":
         if running(): print("Zaten çalışıyor (pid %s)" % running()); return
         subprocess.run(["termux-wake-lock"], stderr=subprocess.DEVNULL)
