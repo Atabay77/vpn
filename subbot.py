@@ -6506,7 +6506,8 @@ async def market_tick(app):
 
 # ───────── 📡 Telegram proxy: açık kanallardan toplanır, Türkmenistan'daki telefonda gerçek el sıkışmayla test edilir ─────────
 PX_SEEDS = ["ProxyMTProto", "Proxy_MTM", "TelMTProto", "MTProtoProxies", "proxymtprotoir", "Myporoxy", "iRoProxy", "MTP_roto",
-            "ProxyMTProto_tel", "Proxy_Qavi", "NetAccount", "MProxy_ir", "Mtproto_Proxy", "vpnandproxyfree", "proxy_kafee", "hack_proxy"]
+            "ProxyMTProto_tel", "Proxy_Qavi", "NetAccount", "MProxy_ir", "Mtproto_Proxy", "vpnandproxyfree", "proxy_kafee", "hack_proxy",
+            "SecureMTProto", "BLACK_SERWERS"]
 PX_LISTS = ["https://raw.githubusercontent.com/SoliSpirit/mtproto/master/all_proxies.txt"]   # GitHub'daki toplu liste
 PX_EVERY, PX_MAX_CH, PX_POOL, PX_SHOW, PX_FRESH = 30 * 60, 60, 400, 8, 6 * 3600
 PX_NAME = "tmproxy.txt"   # telefonla ayrı kanal (ana kanal 15 sn'de bir okunuyor; büyük liste oraya konmaz)
@@ -6536,7 +6537,10 @@ def _px_page(name):
 
 def px_collect(db):
     """Bloklayan iş. Kanallardan + listeden proxy toplar, yeni kanal keşfeder. Dönüş: (havuz, kanallar)."""
-    chans = {k: dict(v) for k, v in (db.get("px", {}).get("chans") or {x: {"n": 0, "z": 0} for x in PX_SEEDS}).items()}
+    chans = {k: dict(v) for k, v in (db.get("px", {}).get("chans") or {}).items()}
+    low = {k.lower() for k in chans}
+    for x in PX_SEEDS:   # başlangıç kanalları hep listede (sonradan eklenenler de çalışan bota geçer)
+        if x.lower() not in low: chans[x] = {"n": 0, "z": 0}
     found, ment = [], {}
     with ThreadPoolExecutor(8) as ex: res = list(ex.map(_px_page, list(chans)))
     known = {k.lower() for k in chans}
