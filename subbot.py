@@ -3361,7 +3361,7 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         body += "\n\n" + tr(lang, "ai_fm_t", n=AI_FREE_DAY) + "\n" + "\n".join(f"⚪️ <b>{n_}</b> — {d_.get(lang, d_['tr'])}" for k_, (n_, _, d_) in AI_MODELS.items() if k_ in AI_FREEM)
         mb = [B(("🔒 " if lock else "") + n_, f"u_aim:{k_}", AI_TIER.get(k_)) for k_, (n_, _, _) in AI_MODELS.items() if k_ not in AI_FREEM]
         fb = [B(n_, f"u_aim:{k_}") for k_, (n_, _, _) in AI_MODELS.items() if k_ in AI_FREEM]   # 🆓 renksiz
-        rows = [mb[i:i + 2] for i in range(0, len(mb), 2)] + [[B(tr(lang, "b_ai_bot"), "u_aib")]] + [fb[i:i + 2] for i in range(0, len(fb), 2)]
+        rows = [mb[i:i + 2] for i in range(0, len(mb), 2)] + [fb[i:i + 2] for i in range(0, len(fb), 2)]
         rows.append([B(tr(lang, "b_ai_hist"), "u_aih")])
         if not (own_ or pro_): rows.append([B(tr(lang, "b_aipro", usdt=AIPRO_USDT), "u_aipro", "primary")])
         await send(tr(lang, "ai_menu", st=st_l, body=body), KB(rows + [[B(tr(lang, "b_menu"), "u_menu")]]))
@@ -5647,21 +5647,21 @@ T["tk"].update({"vip_q": "💎 <b>Bildiriş VIP edilsinmi?</b>\n<blockquote>🏪
 T["ru"].update({"vip_q": "💎 <b>Сделать объявление VIP?</b>\n<blockquote>🏪 {title}\n⏳ {h} ч на самом верху биржи\n💵 Стоимость  <b>{fee} USDT</b> (не возвращается)\n💰 Баланс  <b>{bal} USDT</b></blockquote>",
   "b_yes_vip": "✅ Да, сделать VIP", "mld_q": "🗑 <b>Удалить объявление?</b>\n<blockquote>🏪 {title}\n👥 Сейчас пользуются  <b>{n}</b>\nОбъявление уйдёт с биржи, отменить нельзя.</blockquote>", "b_yes_mld": "🗑 Да, удалить"})
 T["tr"].update({"b_ai_bot": "❓ Bot hakkında soru (ücretsiz)", "b_ai_models": "🧠 Modeller", "b_aipro": "💎 Premium · {usdt}$/ay", "b_aipro_buy": "💎 Satın al · {usdt}$", "it_aipro": "💎 AI Premium · 30 gün",
-  "ai_menu": "🤖 <b>Yapay Zekâ</b>\n<blockquote>{st}</blockquote>\n<blockquote expandable>{body}</blockquote>\n<i>❓ Bot hakkındaki sorular ücretsiz. Modellerle her konuda sorabilirsin (kod, ders, çeviri…). Fotoğraf/video oluşturulmaz.</i>",
+  "ai_menu": "🤖 <b>Yapay Zekâ</b>\n<blockquote>{st}</blockquote>\n<blockquote expandable>{body}</blockquote>\n<i>🆓 Ücretsiz modeller bot hakkındaki soruları da cevaplar. Modellerle her konuda sorabilirsin (kod, ders, çeviri…). Fotoğraf/video oluşturulmaz.</i>",
   "ai_st_own": "👑 Kurucu · sınırsız", "ai_st_pro": "💎 Premium · {until}'e kadar\nKalan soru <b>{n}/{lim}</b> · yenilenme {r}", "ai_st_free": "🔒 Ücretli modeller sadece 💎 Premium ile\n🆓 Ücretsiz modeller: günde 100 soru",
   "ai_pick": "🧠 <b>{name}</b>\n<blockquote>{d}\nKalan soru  <b>{n}</b></blockquote>\n<i>Sorunu yaz</i> 👇",
   "aipro_info": "💎 <b>AI Premium</b>\n<blockquote>Bütün modeller: Claude Opus, GPT, Gemini, Grok, Kimi…\nHer 5 saatte <b>{n}</b> soru · {days} gün\nÜcret  <b>{usdt}$</b> / ay (CryptoBot ya da bakiye)</blockquote>\n<i>Abone olmadan ücretsiz modelleri kullanabilirsin (günde 100 soru).</i>",
   "aipro_ok": "✅ <b>💎 AI Premium aktif!</b>\n<blockquote>{until}'e kadar · her 5 saatte {n} soru</blockquote>\n🤖 butonundan modeli seç.",
   "ai_busy": "⚠️ {name} şu an meşgul. Başka model seç ya da biraz sonra dene. (Hakkın düşülmedi.)"})
 T["tk"].update({"b_ai_bot": "❓ Bot barada sorag (mugt)", "b_ai_models": "🧠 Modeller", "b_aipro": "💎 Premium · {usdt}$/aý", "b_aipro_buy": "💎 Satyn al · {usdt}$", "it_aipro": "💎 AI Premium · 30 gün",
-  "ai_menu": "🤖 <b>Emeli aň</b>\n<blockquote>{st}</blockquote>\n<blockquote expandable>{body}</blockquote>\n<i>❓ Bot barada soraglar mugt. Modellerden islendik zat barada sorap bilersiň (kod, sapak, terjime…). Surat/wideo döredilmeýär.</i>",
+  "ai_menu": "🤖 <b>Emeli aň</b>\n<blockquote>{st}</blockquote>\n<blockquote expandable>{body}</blockquote>\n<i>🆓 Mugt modeller bot barada soraglara hem jogap berýär. Modellerden islendik zat barada sorap bilersiň (kod, sapak, terjime…). Surat/wideo döredilmeýär.</i>",
   "ai_st_own": "👑 Esasy admin · çäksiz", "ai_st_pro": "💎 Premium · {until} çenli\nGalan sorag <b>{n}/{lim}</b> · täzelenýär {r}", "ai_st_free": "🔒 Tölegli modeller diňe 💎 Premium bilen\n🆓 Mugt modeller: günde 100 sorag",
   "ai_pick": "🧠 <b>{name}</b>\n<blockquote>{d}\nGalan sorag  <b>{n}</b></blockquote>\n<i>Soragyňy ýaz</i> 👇",
   "aipro_info": "💎 <b>AI Premium</b>\n<blockquote>Ähli modeller: Claude Opus, GPT, Gemini, Grok, Kimi…\nHer 5 sagatda <b>{n}</b> sorag · {days} gün\nBahasy  <b>{usdt}$</b> / aý (CryptoBot ýa-da balans)</blockquote>\n<i>Abuna bolmazdan mugt modelleri ulanyp bilersiň (günde 100 sorag).</i>",
   "aipro_ok": "✅ <b>💎 AI Premium işjeň!</b>\n<blockquote>{until} çenli · her 5 sagatda {n} sorag</blockquote>\n🤖 düwmesinden model saýla.",
   "ai_busy": "⚠️ {name} häzir meşgul. Başga model saýla ýa-da birazdan synan. (Hakyň aýrylmady.)"})
 T["ru"].update({"b_ai_bot": "❓ Вопрос о боте (бесплатно)", "b_ai_models": "🧠 Модели", "b_aipro": "💎 Premium · {usdt}$/мес", "b_aipro_buy": "💎 Купить · {usdt}$", "it_aipro": "💎 AI Premium · 30 дней",
-  "ai_menu": "🤖 <b>Искусственный интеллект</b>\n<blockquote>{st}</blockquote>\n<blockquote expandable>{body}</blockquote>\n<i>❓ Вопросы о боте бесплатны. Моделям можно задавать любые вопросы (код, учёба, перевод…). Фото/видео не создаются.</i>",
+  "ai_menu": "🤖 <b>Искусственный интеллект</b>\n<blockquote>{st}</blockquote>\n<blockquote expandable>{body}</blockquote>\n<i>🆓 Бесплатные модели отвечают и на вопросы о боте. Моделям можно задавать любые вопросы (код, учёба, перевод…). Фото/видео не создаются.</i>",
   "ai_st_own": "👑 Основатель · без лимита", "ai_st_pro": "💎 Premium · до {until}\nОсталось <b>{n}/{lim}</b> · обновление в {r}", "ai_st_free": "🔒 Платные модели только с 💎 Premium\n🆓 Бесплатные модели: 100 вопросов в день",
   "ai_pick": "🧠 <b>{name}</b>\n<blockquote>{d}\nОсталось вопросов  <b>{n}</b></blockquote>\n<i>Напишите вопрос</i> 👇",
   "aipro_info": "💎 <b>AI Premium</b>\n<blockquote>Все модели: Claude Opus, GPT, Gemini, Grok, Kimi…\n<b>{n}</b> вопросов каждые 5 часов · {days} дней\nЦена  <b>{usdt}$</b> / мес (CryptoBot или баланс)</blockquote>\n<i>Без подписки доступны бесплатные модели (100 вопросов в день).</i>",
