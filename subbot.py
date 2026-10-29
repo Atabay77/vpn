@@ -2127,7 +2127,7 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
             e = d.get("users", {}).get(tid_)
             if e is None: return None
             e["banned"] = ban_
-            if not ban_: e.pop("ban_until", None)
+            if not ban_: e.pop("ban_until", None); e.pop("nsfw_n", None)   # yanlış ban açıldı: 18+ sayacı da sıfırlanır
             return e.get("name") or tid_
         nm_ = mutate(f)
         if nm_ is not None:
@@ -2931,6 +2931,7 @@ def _plain(t):
 
 # Botun yenilikleri: her güncellemede en üste eklenir; AI (yardımcı + destek) bunları bilir.
 CHANGELOG = [
+ ("29.10", "Pazar: 18+ / uygunsuz fotoğraflı ilan anında reddedilir ve son uyarı verilir; tekrarlayan otomatik banlanır."),
  ("29.10", "Pazar: ilan fotoğrafını AI otomatik kontrol eder (gerçek testle uyuşmazsa fotoğraf gösterilmez); 5'ten fazla çalışmayan sunucusu olan ilan reddedilir."),
  ("29.10", "İlan fotoğrafları (uzun ekran görüntüleri) kırpılmadan tam görünür."),
  ("29.10", "Bazar/Pazar ilan kartı yeni sade tasarım: hizalı fiyat tablosu, ayraçlar."),
@@ -5625,6 +5626,12 @@ T["ru"].update({"b_ai": "🤖 Помощник", "b_ai_end": "◀️ Меню",
   "ai_off": "🤖 Помощник сейчас выключен. Напишите в 🆘 Поддержку.", "ai_text": "✍️ Отправьте вопрос текстом.",
   "ai_lim": "⏳ Лимит {n} вопросов на сегодня исчерпан. Спросите завтра или напишите в 🆘 Поддержку.",
   "ai_err": "⚠️ Помощник сейчас не ответил, попробуйте позже или напишите в 🆘 Поддержку. (Вопрос не засчитан.)"})
+T["tr"]["m_nsfw_warn"] = "⛔ <b>İlanın reddedildi</b>\n<blockquote>🏪 {title}\nSebep: 18+ / uygunsuz fotoğraf.</blockquote>\n⚠️ <b>Son uyarı:</b> tekrarlarsan bottan kalıcı olarak banlanırsın."
+T["tk"]["m_nsfw_warn"] = "⛔ <b>Bildirişiň ret edildi</b>\n<blockquote>🏪 {title}\nSebäp: 18+ / ýerliksiz surat.</blockquote>\n⚠️ <b>Soňky duýduryş:</b> gaýtalasaň, botdan hemişelik ban alarsyň."
+T["ru"]["m_nsfw_warn"] = "⛔ <b>Объявление отклонено</b>\n<blockquote>🏪 {title}\nПричина: 18+ / неприемлемое фото.</blockquote>\n⚠️ <b>Последнее предупреждение:</b> при повторе — вечный бан."
+T["tr"]["m_nsfw_ban"] = "🚫 <b>Banlandın</b>\n<blockquote>İkinci kez 18+ / uygunsuz fotoğraf gönderdin.</blockquote>"
+T["tk"]["m_nsfw_ban"] = "🚫 <b>Ban aldyň</b>\n<blockquote>Ikinji gezek 18+ / ýerliksiz surat iberdiň.</blockquote>"
+T["ru"]["m_nsfw_ban"] = "🚫 <b>Вы заблокированы</b>\n<blockquote>Повторно отправлено 18+ / неприемлемое фото.</blockquote>"
 T["tr"]["m_photo_ai"] = "📷 <b>İlanının fotoğrafı gösterilmeyecek</b>\n<blockquote>🏪 {title}\n{why}</blockquote>\n<i>İlanın yayında, sadece fotoğrafsız görünüyor. Gerçek ekran görüntüsüyle yeni ilan verebilirsin.</i>"
 T["tk"]["m_photo_ai"] = "📷 <b>Bildirişiňiň suraty görkezilmez</b>\n<blockquote>🏪 {title}\n{why}</blockquote>\n<i>Bildirişiň bazarda, diňe suratsyz görünýär. Hakyky skrinşot bilen täze bildiriş goýup bilersiň.</i>"
 T["ru"]["m_photo_ai"] = "📷 <b>Фото вашего объявления не будет показано</b>\n<blockquote>🏪 {title}\n{why}</blockquote>\n<i>Объявление на бирже, но без фото. Можно подать новое с настоящим скриншотом.</i>"
@@ -5763,17 +5770,36 @@ async def ai_photo_precheck(app, lid):
     def f(d):
         x = d.get("market", {}).get(lid)
         if not x: return None
+        ow = x.get("owner"); founder = ow in ADMINS   # kurucu test ediyor olabilir: ret/uyarı/ban YOK
         x["photo"], x["photo_ok"] = None, False; x["ai_photo"] = {"ok": False, "bad": True, "why": why, "ts": time.time()}
-        return x.get("owner"), x.get("title")
+        n = 0
+        if not founder:
+            if x.get("status") in ("pending", "live", "suspended"): x["status"] = "rejected"; x["removed_ts"] = time.time(); x["removed_why"] = "nsfw"
+            e = d["users"].setdefault(str(ow), {}); e["nsfw_n"] = e.get("nsfw_n", 0) + 1; n = e["nsfw_n"]
+            if n >= 2: e["banned"] = True   # ikinci kez: kalıcı ban (kurucu tek tuşla açabilir)
+        return ow, x.get("title"), founder, n
     r_ = mutate(f)
     if not r_: return
-    ow, title = r_
-    ulog("m_ai_photo", f"🔞 AI uygunsuz fotoğrafı kaldırdı: {title} · satıcı {ow} · {why}")
+    ow, title, founder, n = r_
+    if founder:
+        await notify_founders(app, f"🧪 <b>Test: AI uygunsuz fotoğrafı yakaladı</b>\n<blockquote>{esc(title)}\n{esc(why)}</blockquote>\n<i>Senin ilanın olduğu için ret / uyarı / ban uygulanmadı, sadece fotoğraf kaldırıldı.</i>")
+        return
     lg = lang_of(load_db(), ow)
-    try: await app.bot.send_message(ow, tr(lg, "m_photo_ai", title=esc(title), why=esc(why)), parse_mode="HTML")
+    if n >= 2:
+        ulog("ban", f"🚫 AI otomatik ban (2. kez 18+ fotoğraf): {title} · satıcı {ow}")
+        for sid_, x_ in list(load_db().get("msess", {}).items()):   # açık pazar kodları durur
+            if x_.get("buyer") == ow and x_.get("status") == "on": await stop_session(app, sid_, "user")
+        try: await app.bot.send_message(ow, tr(lg, "m_nsfw_ban"), parse_mode="HTML")
+        except Exception: pass
+        nm = load_db().get("users", {}).get(str(ow), {}).get("name") or ow
+        await notify_founders(app, f"🚫 <b>Banlandı: {esc(str(nm))}</b> <code>{ow}</code>\n<blockquote>2. kez 18+ / uygunsuz fotoğraf gönderdi.\nSon ilan: {esc(title)}\n{esc(why)}</blockquote>\n<i>Yanlışlık varsa buradan aç.</i>",
+                              KB([[B("✅ Banı kaldır", f"ubn:{ow}", "success")]]))
+        return
+    ulog("m_rej", f"🔞 AI uygunsuz fotoğraf: ilan reddedildi (1. uyarı) · {title} · satıcı {ow}")
+    try: await app.bot.send_message(ow, tr(lg, "m_nsfw_warn", title=esc(title)), parse_mode="HTML")
     except Exception: pass
-    await notify_founders(app, f"🔞 <b>AI uygunsuz fotoğrafı kaldırdı</b>\n<blockquote>{esc(title)} · satıcı <code>{ow}</code>\n{esc(why)}</blockquote>\n<i>İlan incelemede, fotoğrafsız. Satıcıyı cezalandırmak için 🔞, ilanı reddetmek için ❌.</i>",
-                          KB([[B("🔞 İlanı kaldır + engelle", f"mk_pno:{lid}", "danger")], [B("❌ İlanı reddet", f"mk_prj:{lid}")]]))
+    await notify_founders(app, f"🔞 <b>AI uygunsuz fotoğraf: ilan reddedildi</b> (1. uyarı)\n<blockquote>{esc(title)} · satıcı <code>{ow}</code>\n{esc(why)}</blockquote>\n<i>Tekrarlarsa otomatik ban.</i>",
+                          KB([[B("🚫 Şimdi banla", f"bnq:{ow}", "danger")]]))
 
 async def ai_photo_check(app, lid):
     """İlan yayına girince: AI fotoğrafı onaylar ya da gizler (kurucu her zaman geri alabilir)."""
