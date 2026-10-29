@@ -1747,20 +1747,8 @@ async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
                                        reply_markup=KB([[B(f"{short(us[k].get('name') or k, 20)} · {k}", f"bnq:{k}")] for k in found[:10]] + [[B("◀️ Geri", "ban_menu")]]))
 
         elif act == "mk_rej":
-            lid = st["lid"]; why = "" if txt.strip() == "-" else txt.strip()[:300]
-            def f(d):
-                L = d.get("market", {}).get(lid)
-                if not L or L.get("own") or L.get("status") not in ("pending", "live", "suspended"): return None
-                L["status"] = "rejected"; L["removed_ts"] = time.time(); L["removed_why"] = "admin"
-                return L.get("owner"), L.get("title")
-            r = mutate(f)
-            if not r: await u.message.reply_text("⚠️ İlan bulunamadı ya da zaten kapalı.", reply_markup=back("mk_admin")); return
-            audit(uid, f"mk_reject {lid}")
-            ulog("m_rej", f"❌ Admin ilanı reddetti: {r[1]} · satıcı {r[0]}" + (f" · {why}" if why else ""))
-            lg = lang_of(load_db(), r[0])
-            try: await c.bot.send_message(r[0], tr(lg, "m_rejected", title=esc(r[1] or "?"), why=esc(why) if why else tr(lg, "rj_admin")), parse_mode="HTML")
-            except Exception: pass
-            await u.message.reply_text("✅ İlan reddedildi, satıcıya bildirildi.", reply_markup=back("mk_admin"))
+            why = "" if txt.strip() == "-" else txt.strip()[:300]
+            await u.message.reply_text(await reject_listing(c, uid, st["lid"], why), reply_markup=back("mk_admin"))
 
         elif act == "hp_paste":
             kid = st["kid"]
@@ -1876,7 +1864,7 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         miss = await missing_channels(c.bot, uid)
         if miss:
             await q.answer(); await safe_edit(q, *join_view(lang_of(load_db(), uid), miss)); return
-    if uid not in ADMINS and (a in FOUNDER_ONLY or a.startswith(("sv:", "se:", "sd:", "sa_del:", "sa_ext:", "sa_lim:", "kx:", "kxs:", "ul:", "chd:", "ord_ok:", "ord_no:", "t_rep:", "t_close:", "tv:", "ug:", "ux:", "uxc:", "ub:", "uv:", "ubal:", "mk_l:", "mk_ok:", "mk_rm:", "mk_ph:", "mk_real:", "mk_fake:", "mk_fakey:", "mk_rv:",  "mk_pok:", "mk_pno:", "mk_prj:", "hl:", "hlp:", "ubn:", "bnd:", "bnq:", "ai_ndel:"))):
+    if uid not in ADMINS and (a in FOUNDER_ONLY or a.startswith(("sv:", "se:", "sd:", "sa_del:", "sa_ext:", "sa_lim:", "kx:", "kxs:", "ul:", "chd:", "ord_ok:", "ord_no:", "t_rep:", "t_close:", "tv:", "ug:", "ux:", "uxc:", "ub:", "uv:", "ubal:", "mk_l:", "mk_ok:", "mk_rm:", "mk_ph:", "mk_real:", "mk_fake:", "mk_fakey:", "mk_rv:",  "mk_pok:", "mk_pno:", "mk_prj:", "mk_rjx:", "hl:", "hlp:", "ubn:", "bnd:", "bnq:", "ai_ndel:"))):
         await q.answer(L(uid, "⛔ Erişim yok", "⛔ Нет доступа"), show_alert=True); return
     if a not in ("toggle_sys", "upd_now"):
         await q.answer()
@@ -2046,11 +2034,15 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         except Exception as ex_: log.info("fake msg: %s", ex_)
         await safe_edit(q, f"🤥 <b>Yalan ping: ilan reddedildi</b>\n<blockquote>🏷 {esc(title_ or '?')}\nSatıcıya gerçek ping ve ülkeleriyle mesaj gitti." + ("\n⚠️ 2. kez: bir sonraki ilanı 2 kat ücretli." if x2 else "\nTekrar ederse bir sonraki ilanı 2 kat ücretli olacak.") + "</blockquote>", back("mk_admin"))
 
+    elif a.startswith("mk_rjx:"):   # sebepsiz reddet
+        STATE.pop(uid, None)
+        await safe_edit(q, await reject_listing(c, uid, a.split(":", 1)[1], ""), back("mk_admin"))
+
     elif a.startswith("mk_prj:"):   # fotoğraf/ilan reddi: ceza yok, sebep yazılabilir
         lid = a.split(":", 1)[1]
         STATE[uid] = {"action": "mk_rej", "lid": lid}
-        t, kb = prompt("❌ <b>İlanı reddet</b>", "Sebebini yaz, satıcıya gönderilir. Sebep yazmadan reddetmek için <code>-</code> gönder.\n<i>Ceza / engel yok.</i>", "mk_admin")
-        await c.bot.send_message(uid, t, parse_mode="HTML", reply_markup=kb)
+        t, _ = prompt("❌ <b>İlanı reddet</b>", "Sebebini yaz, satıcıya gönderilir. Ya da aşağıdan sebepsiz reddet.\n<i>Ceza / engel yok.</i>", "mk_admin")
+        await c.bot.send_message(uid, t, parse_mode="HTML", reply_markup=KB([[B("❌ Sebepsiz reddet", f"mk_rjx:{lid}", "danger")], [B("✖️ İptal", "mk_admin")]]))
         try: await q.edit_message_reply_markup(None)
         except Exception: pass
 
@@ -3563,7 +3555,8 @@ async def pub_cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         ulog("m_list", f"📤 Pazara ilan verdi: {who(user)} · {st_['title']} · {fmt_u(st_['price'])} USDT/dk")
         await send(tr(lang, "sell_sent"), KB([[B(tr(lang, "b_myl"), "u_myl")], [B(tr(lang, "b_back_mkt"), "u_mkt")]]))
         cap_ = (f"📤 <b>Yeni pazar ilanı</b> (incelemede)\n<blockquote>{esc(who(user))}\n🏷 {esc(st_['title'])} · {money_tmt(float(st_['price']) * 43200)} TMT/ay</blockquote>\n"
-                "<i>⏳ Telefon testi bekleniyor. Fotoğrafı sen onaylayana kadar pazarda fotoğrafsız görünür.</i>")
+                "<i>⏳ Telefon testi bekleniyor. 🤖 AI fotoğrafı kontrol ediyor; onaylanana kadar pazarda fotoğrafsız görünür.</i>")
+        asyncio.ensure_future(ai_photo_precheck(c.application, new_lid))
         for fid_ in ADMINS:
             kb_ = photo_kb(new_lid, alang(fid_))
             try: await c.bot.send_photo(fid_, st_["photo"], caption=cap_, parse_mode="HTML", reply_markup=kb_)
@@ -5730,6 +5723,57 @@ Kontrol et:
 2) bad: Uygunsuz içerik var mı (çıplaklık, şiddet, hakaret, başka ürün reklamı, iletişim bilgisi/telefon/kanal linki ile müşteri kaçırma)?
 3) misleading: Görüntüdeki iddia gerçek ölçümle belirgin şekilde çelişiyor mu? (ör. görüntüde 10+ ülke ama gerçekte 4; görüntüde hepsi düşük ping ama gerçekte çoğu çalışmıyor). Küçük farklar, isim/bayrak farkı, ping'in biraz farklı olması çelişki DEĞİLDİR. Emin değilsen false.
 SADECE JSON döndür: {"vpn": true/false, "bad": true/false, "misleading": true/false, "reason": "Türkçe tek cümle"}"""
+
+AI_PHOTO_PRE = """Bir VPN pazarında satıcının ilanına koyduğu fotoğrafı denetliyorsun.
+bad: Uygunsuz içerik var mı? (çıplaklık/cinsel içerik, şiddet, kan, hakaret, nefret, uyuşturucu, başka ürün reklamı, telefon/kanal linkiyle müşteri kaçırma)
+vpn: Görüntü bir VPN uygulamasının sunucu/abonelik ekranı mı?
+SADECE JSON döndür: {"bad": true/false, "vpn": true/false, "reason": "Türkçe tek cümle"}"""
+
+async def reject_listing(c, admin_uid, lid, why):
+    """Kurucu ilanı reddeder (ceza yok). Dönüş: kurucuya gösterilecek yazı."""
+    def f(d):
+        L = d.get("market", {}).get(lid)
+        if not L or L.get("own") or L.get("status") not in ("pending", "live", "suspended"): return None
+        L["status"] = "rejected"; L["removed_ts"] = time.time(); L["removed_why"] = "admin"
+        return L.get("owner"), L.get("title")
+    r = mutate(f)
+    if not r: return "⚠️ İlan bulunamadı ya da zaten kapalı."
+    audit(admin_uid, f"mk_reject {lid}")
+    ulog("m_rej", f"❌ Admin ilanı reddetti: {r[1]} · satıcı {r[0]}" + (f" · {why}" if why else ""))
+    lg = lang_of(load_db(), r[0])
+    try: await c.bot.send_message(r[0], tr(lg, "m_rejected", title=esc(r[1] or "?"), why=esc(why) if why else tr(lg, "rj_admin")), parse_mode="HTML")
+    except Exception: pass
+    return "✅ İlan reddedildi, satıcıya bildirildi."
+
+async def ai_photo_precheck(app, lid):
+    """İlan gelir gelmez: uygunsuz fotoğraf hemen kaldırılır (telefon testini beklemez)."""
+    if not ai_key(): return
+    L = load_db().get("market", {}).get(lid)
+    if not L or not L.get("photo"): return
+    try:
+        f_ = await app.bot.get_file(L["photo"]); raw = bytes(await f_.download_as_bytearray())
+        msgs = [{"role": "user", "content": [{"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": base64.b64encode(raw).decode()}},
+                                              {"type": "text", "text": "Bu fotoğrafı denetle."}]}]
+        out = await asyncio.to_thread(ai_call, AI_PHOTO_PRE, msgs, None, 800, 120, AI_PHOTO_MODEL)
+        mj = re.search(r"\{.*\}", out, re.S); j = json.loads(mj.group(0)) if mj else {}
+    except Exception as e:
+        log.warning("ai photo pre: %s", e); RUN["ai_err"] = f"photo pre: {str(e)[:120]}"; return
+    if not j.get("bad"): return   # VPN ekranı mı / gerçekle uyumlu mu: telefon testinden sonra bakılır
+    why = str(j.get("reason") or "")[:300]
+    def f(d):
+        x = d.get("market", {}).get(lid)
+        if not x: return None
+        x["photo"], x["photo_ok"] = None, False; x["ai_photo"] = {"ok": False, "bad": True, "why": why, "ts": time.time()}
+        return x.get("owner"), x.get("title")
+    r_ = mutate(f)
+    if not r_: return
+    ow, title = r_
+    ulog("m_ai_photo", f"🔞 AI uygunsuz fotoğrafı kaldırdı: {title} · satıcı {ow} · {why}")
+    lg = lang_of(load_db(), ow)
+    try: await app.bot.send_message(ow, tr(lg, "m_photo_ai", title=esc(title), why=esc(why)), parse_mode="HTML")
+    except Exception: pass
+    await notify_founders(app, f"🔞 <b>AI uygunsuz fotoğrafı kaldırdı</b>\n<blockquote>{esc(title)} · satıcı <code>{ow}</code>\n{esc(why)}</blockquote>\n<i>İlan incelemede, fotoğrafsız. Satıcıyı cezalandırmak için 🔞, ilanı reddetmek için ❌.</i>",
+                          KB([[B("🔞 İlanı kaldır + engelle", f"mk_pno:{lid}", "danger")], [B("❌ İlanı reddet", f"mk_prj:{lid}")]]))
 
 async def ai_photo_check(app, lid):
     """İlan yayına girince: AI fotoğrafı onaylar ya da gizler (kurucu her zaman geri alabilir)."""
