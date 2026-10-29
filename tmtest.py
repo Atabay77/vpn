@@ -446,9 +446,13 @@ def parse_proxy(link):
         return h.lower(), p, s
     except Exception: return None
 
-def _recv(sk, n):
+def _recv(sk, n, dl=None):
     b = b""
     while len(b) < n:
+        if dl:
+            left = dl - time.time()
+            if left <= 0: raise socket.timeout("süre doldu")
+            sk.settimeout(left)
         x = sk.recv(n - len(b))
         if not x: raise ConnectionError("bağlantı kapandı")
         b += x
@@ -480,7 +484,7 @@ def check_proxy(server, port, secret, timeout=8, dc=2):
     ps = parse_secret(secret)
     if not ps: return -1
     key, kind, domain = ps
-    t0 = time.time()
+    t0 = time.time(); dl = t0 + timeout + 4   # bir proxy için toplam en fazla ~12 sn
     try:
         sk = socket.create_connection((server, port), timeout); sk.settimeout(timeout)
     except Exception: return -1
@@ -491,9 +495,9 @@ def check_proxy(server, port, secret, timeout=8, dc=2):
             sk.sendall(hello)
             resp = b""
             for want in (0x16, 0x14, 0x17):   # ServerHello, ChangeCipherSpec, ilk uygulama verisi
-                h = _recv(sk, 5)
+                h = _recv(sk, 5, dl)
                 if h[0] != want: return -1
-                resp += h + _recv(sk, struct.unpack(">H", h[3:5])[0])
+                resp += h + _recv(sk, struct.unpack(">H", h[3:5])[0], dl)
             zr = resp[:11] + b"\x00" * 32 + resp[43:]
             if not hmac.compare_digest(hmac.new(key, cdg + zr, hashlib.sha256).digest(), resp[11:43]): return -1
         while True:
@@ -513,12 +517,14 @@ def check_proxy(server, port, secret, timeout=8, dc=2):
         def more():
             nonlocal buf
             if tls:
-                h = _recv(sk, 5)
-                d = _recv(sk, struct.unpack(">H", h[3:5])[0])
+                h = _recv(sk, 5, dl)
+                d = _recv(sk, struct.unpack(">H", h[3:5])[0], dl)
                 if h[0] != 0x17: return
                 buf += dec(d)
             else:
-                d = sk.recv(4096)
+                left = dl - time.time()
+                if left <= 0: raise socket.timeout("süre doldu")
+                sk.settimeout(left); d = sk.recv(4096)
                 if not d: raise ConnectionError("bağlantı kapandı")
                 buf += dec(d)
         while len(buf) < 4: more()
@@ -536,7 +542,7 @@ def check_proxy(server, port, secret, timeout=8, dc=2):
 
 def px_cycle():
     """Bot tmproxy.txt'ye proxy listesi koyar; her birine gerçekten bağlanmayı dener, ms'i geri yazar."""
-    svc = drive_cached()
+    svc = drive()   # kendi bağlantısı: VPN testiyle aynı anda çalışır
     r = svc.files().list(q="name='%s' and trashed=false" % PX_CHANNEL, fields="files(id)", orderBy="modifiedTime desc", pageSize=1).execute(num_retries=2)
     if not r.get("files"): return
     fid = r["files"][0]["id"]
@@ -548,13 +554,20 @@ def px_cycle():
     t0 = time.time()
     px = [parse_proxy(l) for l in links]
     def one(i): return check_proxy(*px[i]) if px[i] else -1
-    with ThreadPoolExecutor(48) as ex: res = list(ex.map(one, range(len(links))))
+    def run(idx, limit):
+        """Takılan olursa beklemez: süre dolunca bitmeyenler çalışmıyor sayılır."""
+        from concurrent.futures import wait
+        ex = ThreadPoolExecutor(48); fs = {ex.submit(one, i): i for i in idx}
+        done, _ = wait(fs, timeout=limit)
+        ex.shutdown(wait=False, cancel_futures=True)
+        return {fs[f]: f.result() for f in done if not f.exception()}
+    res = [-1] * len(links)
+    for i, v in run(range(len(links)), 150).items(): res[i] = v
     bad = [i for i, v in enumerate(res) if v < 0 and px[i]]
     if bad:   # anlık kopma olmasın: çalışmayanlar bir kez daha
         time.sleep(5)
-        with ThreadPoolExecutor(48) as ex:
-            for i, v in zip(bad, ex.map(one, bad)):
-                if v > 0: res[i] = v
+        for i, v in run(bad, 150).items():
+            if v > 0: res[i] = v
     ch = read_channel(svc, fid)   # test sürerken bot yeni liste koymuş olabilir
     ch.update({"px_res": dict(zip(links, res)), "px_res_ts": int(time.time())})
     write_channel(svc, fid, ch)
@@ -640,10 +653,19 @@ def drive_cached():
     if "s" not in _SVC: _SVC["s"] = drive()
     return _SVC["s"]
 
+def px_loop():
+    time.sleep(60)
+    while True:
+        try: px_cycle()
+        except Exception as e: log("❌ Proxy testi: %s" % str(e)[:150])
+        time.sleep(PX_INTERVAL)
+
 def loop():
     open(PIDF, "w").write(str(os.getpid()))
     log("▶️ Test başladı: her %d dk, kodlar değişince hemen" % (INTERVAL // 60))
-    last_run, last_sig, last_px = 0, None, 0
+    last_run, last_sig = 0, None
+    import threading
+    threading.Thread(target=px_loop, daemon=True).start()   # proxy testi ayrı: VPN testini bekletmez
     while True:
         sig = codes_sig()
         if time.time() - last_run >= INTERVAL or (sig is not None and last_sig is not None and sig != last_sig):
@@ -652,10 +674,6 @@ def loop():
             except Exception as e: log("❌ Hata: %s" % str(e)[:200])
             last_run = time.time()
         if sig is not None: last_sig = sig
-        if time.time() - last_px >= PX_INTERVAL:
-            last_px = time.time()
-            try: px_cycle()
-            except Exception as e: _SVC.clear(); log("❌ Proxy testi: %s" % str(e)[:150])
         time.sleep(QUICK_POLL)
 
 def running():
