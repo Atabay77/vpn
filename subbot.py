@@ -6569,7 +6569,7 @@ async def market_tick(app):
 # ───────── 📡 Telegram proxy: açık kanallardan toplanır, Türkmenistan'daki telefonda gerçek el sıkışmayla test edilir ─────────
 PX_SEEDS = ["ProxyMTProto", "Proxy_MTM", "TelMTProto", "MTProtoProxies", "proxymtprotoir", "Myporoxy", "iRoProxy", "MTP_roto",
             "ProxyMTProto_tel", "Proxy_Qavi", "NetAccount", "MProxy_ir", "Mtproto_Proxy", "vpnandproxyfree", "proxy_kafee", "hack_proxy",
-            "SecureMTProto", "BLACK_SERWERS"]
+            "SecureMTProto", "BLACK_SERWERS", "blindproxy"]
 PX_LISTS = ["https://raw.githubusercontent.com/SoliSpirit/mtproto/master/all_proxies.txt",   # GitHub'daki toplu listeler
             "https://raw.githubusercontent.com/MhdiTaheri/ProxyCollector/main/proxy.txt"]
 PX_EVERY, PX_MAX_CH, PX_POOL, PX_SHOW, PX_FRESH = 30 * 60, 100, 1000, 8, 6 * 3600
