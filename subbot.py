@@ -6586,6 +6586,15 @@ def px_norm(link):
         return f"https://t.me/proxy?server={h}&port={pt}&secret={urllib.parse.quote(sec, safe='')}"
     except Exception: return None
 
+def px_kind(link):
+    """Gizli kodun türü: 'dd' / 'ee' / 'plain' (düz kod Telegram uygulamasında çalışmıyor) / None."""
+    try:
+        sec = urllib.parse.unquote(re.search(r"secret=([^&]+)", link).group(1)).strip()
+        if re.fullmatch(r"[0-9a-fA-F]+", sec) and len(sec) % 2 == 0: raw = bytes.fromhex(sec)
+        else: raw = base64.urlsafe_b64decode(sec.replace("+", "-").replace("/", "_") + "=" * (-len(sec) % 4))
+        return "dd" if len(raw) == 17 and raw[0] == 0xdd else "ee" if len(raw) > 17 and raw[0] == 0xee else "plain" if len(raw) == 16 else None
+    except Exception: return None
+
 def _px_get(url):
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
     with urllib.request.urlopen(req, timeout=20) as r: return html.unescape(r.read(3000000).decode("utf-8", "ignore"))
@@ -6663,7 +6672,7 @@ def px_tick():
     if ts and ts != load_db().get("px", {}).get("ok_ts"):
         def f(d):
             px = d.setdefault("px", {}); old = px.get("st") or {}
-            st = {l: old.get(l, 0) + 1 for l, ms in r.items() if isinstance(ms, int) and ms > 0}   # üst üste kaç testi geçti
+            st = {l: old.get(l, 0) + 1 for l, ms in r.items() if isinstance(ms, int) and ms > 0 and px_kind(l) in ("dd", "ee")}   # üst üste kaç testi geçti; düz kodlular gösterilmez
             ipl = lambda l: re.sub(r"server=[^&]+", "server=" + ips[l], l, count=1) if re.fullmatch(r"[0-9.]{7,15}", str(ips.get(l, ""))) else l
             order = sorted(st, key=lambda l: r[l])
             good = [[ipl(l), r[l]] for l in order]   # kullanıcıya IP'li link (Türkmenistan DNS'iyle çözüldü)
