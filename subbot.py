@@ -6570,8 +6570,10 @@ async def market_tick(app):
 PX_SEEDS = ["ProxyMTProto", "Proxy_MTM", "TelMTProto", "MTProtoProxies", "proxymtprotoir", "Myporoxy", "iRoProxy", "MTP_roto",
             "ProxyMTProto_tel", "Proxy_Qavi", "NetAccount", "MProxy_ir", "Mtproto_Proxy", "vpnandproxyfree", "proxy_kafee", "hack_proxy",
             "SecureMTProto", "BLACK_SERWERS"]
-PX_LISTS = ["https://raw.githubusercontent.com/SoliSpirit/mtproto/master/all_proxies.txt"]   # GitHub'daki toplu liste
-PX_EVERY, PX_MAX_CH, PX_POOL, PX_SHOW, PX_FRESH = 30 * 60, 60, 400, 8, 6 * 3600
+PX_LISTS = ["https://raw.githubusercontent.com/SoliSpirit/mtproto/master/all_proxies.txt",   # GitHub'daki toplu listeler
+            "https://raw.githubusercontent.com/MhdiTaheri/ProxyCollector/main/proxy.txt"]
+PX_EVERY, PX_MAX_CH, PX_POOL, PX_SHOW, PX_FRESH = 30 * 60, 100, 1000, 8, 6 * 3600
+PX_PAGES, PX_STABLE = 3, 3   # kanal başına okunan sayfa (~20 gönderi/sayfa) · listede görünmek için üst üste geçilmesi gereken test
 PX_NAME = "tmproxy.txt"   # telefonla ayrı kanal (ana kanal 15 sn'de bir okunuyor; büyük liste oraya konmaz)
 PX_RE = re.compile(r"(?:tg://proxy|https?://t\.me/proxy)\?[^\"'<>\s]+")
 PX_SKIP = {"proxy", "share", "joinchat", "addlist", "socks", "iv", "addstickers", "boost", "contact"}
@@ -6599,11 +6601,15 @@ def _px_get(url):
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
     with urllib.request.urlopen(req, timeout=20) as r: return html.unescape(r.read(3000000).decode("utf-8", "ignore"))
 
-def _px_page(name):
-    """Açık kanalın web önizlemesi (t.me/s/…): proxy linkleri + anılan kanallar. Açılmazsa links=None."""
+def _px_page(name, pages=PX_PAGES):
+    """Açık kanalın web önizlemesi (t.me/s/…, son birkaç sayfa): proxy linkleri + anılan kanallar. Açılmazsa links=None."""
     try:
-        t = _px_get("https://t.me/s/" + name)
-        return name, PX_RE.findall(t), {x.lower() for x in re.findall(r"t\.me/([A-Za-z]\w{4,31})", t)}
+        t = _px_get("https://t.me/s/" + name); allt = t
+        for _ in range(pages - 1):
+            ids = [int(x) for x in re.findall(r'data-post="[^"/]+/(\d+)"', t)]
+            if not ids: break
+            t = _px_get(f"https://t.me/s/{name}?before={min(ids)}"); allt += t
+        return name, PX_RE.findall(allt), {x.lower() for x in re.findall(r"t\.me/([A-Za-z]\w{4,31})", allt)}
     except Exception: return name, None, set()
 
 def px_collect(db):
@@ -6624,10 +6630,10 @@ def px_collect(db):
             for m_ in mm - known - PX_SKIP: ment[m_] = ment.get(m_, 0) + 1
     # 🔎 keşif: proxy kanallarında anılan yeni kanallar (günde bir kez denenir; ≥3 proxy varsa eklenir)
     now = time.time()
-    cand = [k for k in sorted(ment, key=lambda k: -ment[k]) if now - PX["tried"].get(k, 0) > 86400][:15]
+    cand = [k for k in sorted(ment, key=lambda k: -ment[k]) if now - PX["tried"].get(k, 0) > 86400][:30]
     if cand and len(chans) < PX_MAX_CH:
         for k in cand: PX["tried"][k] = now
-        with ThreadPoolExecutor(8) as ex: res2 = list(ex.map(_px_page, cand))
+        with ThreadPoolExecutor(8) as ex: res2 = list(ex.map(lambda k: _px_page(k, 1), cand))
         for name, links, _ in res2:
             n = len({px_norm(l) for l in (links or [])} - {None})
             if n >= 3 and len(chans) < PX_MAX_CH:
@@ -6637,7 +6643,7 @@ def px_collect(db):
     for u in PX_LISTS:
         try: found += PX_RE.findall(_px_get(u))
         except Exception as e: log.info("px list: %s", e)
-    return list(dict.fromkeys(x for x in map(px_norm, found) if x))[:PX_POOL], chans   # önce kanallar (taze), sonra liste
+    return list(dict.fromkeys(x for x in map(px_norm, found) if x and px_kind(x) in ("dd", "ee")))[:PX_POOL], chans   # sadece Telegram'da çalışan türler; önce kanallar (taze), sonra listeler
 
 def px_channel(fn=None):
     """Telefonla proxy kanalı (Drive: tmproxy.txt). fn(ch) True dönerse yazılır. Dönüş: kanal içeriği."""
@@ -6676,7 +6682,7 @@ def px_tick():
             ipl = lambda l: re.sub(r"server=[^&]+", "server=" + ips[l], l, count=1) if re.fullmatch(r"[0-9.]{7,15}", str(ips.get(l, ""))) else l
             order = sorted(st, key=lambda l: r[l])
             good = [[ipl(l), r[l]] for l in order]   # kullanıcıya IP'li link (Türkmenistan DNS'iyle çözüldü)
-            stable = [[ipl(l), r[l]] for l in order if st[l] >= 2]   # en az 2 test üst üste: anlık açılıp kapananlar gösterilmez
+            stable = [[ipl(l), r[l]] for l in order if st[l] >= PX_STABLE]   # en az PX_STABLE test üst üste: anlık açılıp kapananlar gösterilmez
             px.update(ok=(stable or good)[:30], ok_ts=ts, tested=len(r), good=len(good), stable=len(stable), st=st)
         mutate(f)
 
@@ -6698,10 +6704,10 @@ def px_admin_view():
     px = load_db().get("px", {}); chs = px.get("chans", {})
     body = "\n".join(f"{'🆕' if v.get('new') else '•'} @{esc(k)} · {v.get('n', 0)}" for k, v in sorted(chs.items(), key=lambda x: -x[1].get("n", 0))) or "—"
     t = (f"📡 <b>Telegram Proxy</b>\n<blockquote>📥 Toplanan: <b>{px.get('pool_n', 0)}</b> · {ago(px.get('col_ts'))}\n"
-         f"📱 TM testi: <b>{px.get('good', 0)}</b>/{px.get('tested', 0)} çalışıyor, <b>{px.get('stable', 0)}</b> kararlı (üst üste 2 test) · {ago(px.get('ok_ts'))}\n📢 Kanal: {len(chs)}</blockquote>\n"
+         f"📱 TM testi: <b>{px.get('good', 0)}</b>/{px.get('tested', 0)} çalışıyor, <b>{px.get('stable', 0)}</b> kararlı (üst üste 3 test) · {ago(px.get('ok_ts'))}\n📢 Kanal: {len(chs)}</blockquote>\n"
          f"<blockquote expandable>{body}</blockquote>\n"
          "<i>Kanallar 30 dk'da bir taranır; proxy kanallarında anılan yeni kanallar kendiliğinden eklenir, 3 saat boş kalan çıkarılır. "
-         "Telefon 5 dk'da bir hepsine gerçekten bağlanmayı dener; bütün Telegram sunucularına (DC 1-5) ulaşan ve üst üste 2 testi geçenler gösterilir.</i>")
+         "Telefon 5 dk'da bir hepsine gerçekten bağlanmayı dener; bütün Telegram sunucularına (DC 1-5) ulaşan ve üst üste 3 testi geçenler gösterilir.</i>")
     return t, KB([[B("🔄 Şimdi topla", "px_now", "primary")], [B("◀️ Admin", "admin")]])
 
 async def market_loop(app):

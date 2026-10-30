@@ -546,7 +546,7 @@ def px_cycle():
     r = svc.files().list(q="name='%s' and trashed=false" % PX_CHANNEL, fields="files(id)", orderBy="modifiedTime desc", pageSize=1).execute(num_retries=2)
     if not r.get("files"): return
     fid = r["files"][0]["id"]
-    links = (read_channel(svc, fid).get("px_list") or [])[:600]
+    links = (read_channel(svc, fid).get("px_list") or [])[:1000]
     if not links: return
     cc, cname = country()
     if cc not in ("TM", "?"):
@@ -557,16 +557,16 @@ def px_cycle():
     def run(idx, limit, fn=one):
         """Takılan olursa beklemez: süre dolunca bitmeyenler çalışmıyor sayılır."""
         from concurrent.futures import wait
-        ex = ThreadPoolExecutor(48); fs = {ex.submit(fn, i): i for i in idx}
+        ex = ThreadPoolExecutor(96); fs = {ex.submit(fn, i): i for i in idx}
         done, _ = wait(fs, timeout=limit)
         ex.shutdown(wait=False, cancel_futures=True)
         return {fs[f]: f.result() for f in done if not f.exception()}
     res = [-1] * len(links)
-    for i, v in run(range(len(links)), 150).items(): res[i] = v
+    for i, v in run(range(len(links)), 240).items(): res[i] = v
     bad = [i for i, v in enumerate(res) if v < 0 and px[i]]
     if bad:   # anlık kopma olmasın: çalışmayanlar bir kez daha
         time.sleep(5)
-        for i, v in run(bad, 150).items():
+        for i, v in run(bad, 240).items():
             if v > 0: res[i] = v
     # Telegram uygulaması hesabın bulunduğu sunucuya (DC 1-5) bağlanır: proxy hepsine ulaşmalı
     def all_dc(i):
@@ -574,7 +574,7 @@ def px_cycle():
             if check_proxy(*px[i], dc=dc) < 0 and check_proxy(*px[i], dc=dc) < 0: return -1
         return res[i]
     first = [i for i, v in enumerate(res) if v > 0]
-    full = run(first, 120, all_dc)
+    full = run(first, 180, all_dc)
     for i in first: res[i] = full.get(i, -1)
     ips = {}   # Telegram alan adını kendi yöntemiyle (Google DNS) çözemeyebiliyor: çalışanların IP'si bota verilir
     for i, v in enumerate(res):
