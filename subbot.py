@@ -6680,7 +6680,10 @@ def px_tick():
             px = d.setdefault("px", {}); old = px.get("st") or {}
             st = {l: old.get(l, 0) + 1 for l, ms in r.items() if isinstance(ms, int) and ms > 0 and px_kind(l) in ("dd", "ee")}   # üst üste kaç testi geçti; düz kodlular gösterilmez
             ipl = lambda l: re.sub(r"server=[^&]+", "server=" + ips[l], l, count=1) if re.fullmatch(r"[0-9.]{7,15}", str(ips.get(l, ""))) else l
-            order = sorted(st, key=lambda l: r[l])
+            order, seen_ = [], set()
+            for l in sorted(st, key=lambda l: r[l]):   # aynı sunucu:port bir kez (alan adı ve IP'si ayrı linkler olabiliyor)
+                hp_ = re.search(r"server=([^&]+)&port=(\d+)", ipl(l)).groups()
+                if hp_ not in seen_: seen_.add(hp_); order.append(l)
             good = [[ipl(l), r[l]] for l in order]   # kullanıcıya IP'li link (Türkmenistan DNS'iyle çözüldü)
             stable = [[ipl(l), r[l]] for l in order if st[l] >= PX_STABLE]   # en az PX_STABLE test üst üste: anlık açılıp kapananlar gösterilmez
             px.update(ok=(stable or good)[:30], ok_ts=ts, tested=len(r), good=len(good), stable=len(stable), st=st)
