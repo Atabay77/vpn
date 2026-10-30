@@ -576,8 +576,13 @@ def px_cycle():
     first = [i for i, v in enumerate(res) if v > 0]
     full = run(first, 120, all_dc)
     for i in first: res[i] = full.get(i, -1)
+    ips = {}   # Telegram alan adını kendi yöntemiyle (Google DNS) çözemeyebiliyor: çalışanların IP'si bota verilir
+    for i, v in enumerate(res):
+        if v > 0 and not re.fullmatch(r"[0-9.]+", px[i][0]):
+            try: ips[links[i]] = socket.gethostbyname(px[i][0].rstrip("."))
+            except Exception: pass
     ch = read_channel(svc, fid)   # test sürerken bot yeni liste koymuş olabilir
-    ch.update({"px_res": dict(zip(links, res)), "px_res_ts": int(time.time())})
+    ch.update({"px_res": dict(zip(links, res)), "px_ip": ips, "px_res_ts": int(time.time())})
     write_channel(svc, fid, ch)
     log("📡 Proxy: %d test edildi, %d ilk testi geçti, %d bütün sunuculara (DC 1-5) ulaşıyor (%d sn)" % (len(links), len(first), sum(1 for v in res if v > 0), time.time() - t0))
 

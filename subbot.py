@@ -6659,13 +6659,15 @@ def px_tick():
                 ch["px_list"], ch["px_ts"] = pool, int(now); return True
             px_channel(put)
     ch = px_channel()
-    r, ts = ch.get("px_res") or {}, ch.get("px_res_ts") or 0
+    r, ts, ips = ch.get("px_res") or {}, ch.get("px_res_ts") or 0, ch.get("px_ip") or {}
     if ts and ts != load_db().get("px", {}).get("ok_ts"):
         def f(d):
             px = d.setdefault("px", {}); old = px.get("st") or {}
             st = {l: old.get(l, 0) + 1 for l, ms in r.items() if isinstance(ms, int) and ms > 0}   # üst üste kaç testi geçti
-            good = sorted(([l, r[l]] for l in st), key=lambda x: x[1])
-            stable = [x for x in good if st[x[0]] >= 2]   # en az 2 test üst üste: anlık açılıp kapananlar gösterilmez
+            ipl = lambda l: re.sub(r"server=[^&]+", "server=" + ips[l], l, count=1) if re.fullmatch(r"[0-9.]{7,15}", str(ips.get(l, ""))) else l
+            order = sorted(st, key=lambda l: r[l])
+            good = [[ipl(l), r[l]] for l in order]   # kullanıcıya IP'li link (Türkmenistan DNS'iyle çözüldü)
+            stable = [[ipl(l), r[l]] for l in order if st[l] >= 2]   # en az 2 test üst üste: anlık açılıp kapananlar gösterilmez
             px.update(ok=(stable or good)[:30], ok_ts=ts, tested=len(r), good=len(good), stable=len(stable), st=st)
         mutate(f)
 
