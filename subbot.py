@@ -6661,8 +6661,13 @@ def px_tick():
     ch = px_channel()
     r, ts = ch.get("px_res") or {}, ch.get("px_res_ts") or 0
     if ts and ts != load_db().get("px", {}).get("ok_ts"):
-        ok = sorted(([l, ms] for l, ms in r.items() if isinstance(ms, int) and ms > 0), key=lambda x: x[1])[:30]
-        mutate(lambda d: d.setdefault("px", {}).update(ok=ok, ok_ts=ts, tested=len(r), good=sum(1 for v in r.values() if isinstance(v, int) and v > 0)))
+        def f(d):
+            px = d.setdefault("px", {}); old = px.get("st") or {}
+            st = {l: old.get(l, 0) + 1 for l, ms in r.items() if isinstance(ms, int) and ms > 0}   # üst üste kaç testi geçti
+            good = sorted(([l, r[l]] for l in st), key=lambda x: x[1])
+            stable = [x for x in good if st[x[0]] >= 2]   # en az 2 test üst üste: anlık açılıp kapananlar gösterilmez
+            px.update(ok=(stable or good)[:30], ok_ts=ts, tested=len(r), good=len(good), stable=len(stable), st=st)
+        mutate(f)
 
 async def proxy_loop(app):
     await asyncio.sleep(20)
@@ -6682,10 +6687,10 @@ def px_admin_view():
     px = load_db().get("px", {}); chs = px.get("chans", {})
     body = "\n".join(f"{'🆕' if v.get('new') else '•'} @{esc(k)} · {v.get('n', 0)}" for k, v in sorted(chs.items(), key=lambda x: -x[1].get("n", 0))) or "—"
     t = (f"📡 <b>Telegram Proxy</b>\n<blockquote>📥 Toplanan: <b>{px.get('pool_n', 0)}</b> · {ago(px.get('col_ts'))}\n"
-         f"📱 TM testi: <b>{px.get('good', 0)}</b>/{px.get('tested', 0)} çalışıyor · {ago(px.get('ok_ts'))}\n📢 Kanal: {len(chs)}</blockquote>\n"
+         f"📱 TM testi: <b>{px.get('good', 0)}</b>/{px.get('tested', 0)} çalışıyor, <b>{px.get('stable', 0)}</b> kararlı (üst üste 2 test) · {ago(px.get('ok_ts'))}\n📢 Kanal: {len(chs)}</blockquote>\n"
          f"<blockquote expandable>{body}</blockquote>\n"
          "<i>Kanallar 30 dk'da bir taranır; proxy kanallarında anılan yeni kanallar kendiliğinden eklenir, 3 saat boş kalan çıkarılır. "
-         "Telefon 5 dk'da bir hepsine gerçekten bağlanmayı dener (tmtest güncel olmalı).</i>")
+         "Telefon 5 dk'da bir hepsine gerçekten bağlanmayı dener; bütün Telegram sunucularına (DC 1-5) ulaşan ve üst üste 2 testi geçenler gösterilir.</i>")
     return t, KB([[B("🔄 Şimdi topla", "px_now", "primary")], [B("◀️ Admin", "admin")]])
 
 async def market_loop(app):

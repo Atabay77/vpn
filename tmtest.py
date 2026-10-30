@@ -554,10 +554,10 @@ def px_cycle():
     t0 = time.time()
     px = [parse_proxy(l) for l in links]
     def one(i): return check_proxy(*px[i]) if px[i] else -1
-    def run(idx, limit):
+    def run(idx, limit, fn=one):
         """Takılan olursa beklemez: süre dolunca bitmeyenler çalışmıyor sayılır."""
         from concurrent.futures import wait
-        ex = ThreadPoolExecutor(48); fs = {ex.submit(one, i): i for i in idx}
+        ex = ThreadPoolExecutor(48); fs = {ex.submit(fn, i): i for i in idx}
         done, _ = wait(fs, timeout=limit)
         ex.shutdown(wait=False, cancel_futures=True)
         return {fs[f]: f.result() for f in done if not f.exception()}
@@ -568,10 +568,18 @@ def px_cycle():
         time.sleep(5)
         for i, v in run(bad, 150).items():
             if v > 0: res[i] = v
+    # Telegram uygulaması hesabın bulunduğu sunucuya (DC 1-5) bağlanır: proxy hepsine ulaşmalı
+    def all_dc(i):
+        for dc in (1, 3, 4, 5):
+            if check_proxy(*px[i], dc=dc) < 0 and check_proxy(*px[i], dc=dc) < 0: return -1
+        return res[i]
+    first = [i for i, v in enumerate(res) if v > 0]
+    full = run(first, 120, all_dc)
+    for i in first: res[i] = full.get(i, -1)
     ch = read_channel(svc, fid)   # test sürerken bot yeni liste koymuş olabilir
     ch.update({"px_res": dict(zip(links, res)), "px_res_ts": int(time.time())})
     write_channel(svc, fid, ch)
-    log("📡 Proxy: %d test edildi, %d çalışıyor (%d sn)" % (len(links), sum(1 for v in res if v > 0), time.time() - t0))
+    log("📡 Proxy: %d test edildi, %d ilk testi geçti, %d bütün sunuculara (DC 1-5) ulaşıyor (%d sn)" % (len(links), len(first), sum(1 for v in res if v > 0), time.time() - t0))
 
 
 SELF = os.path.abspath(__file__)
