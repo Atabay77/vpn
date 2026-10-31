@@ -6588,12 +6588,17 @@ def px_norm(link):
         return f"https://t.me/proxy?server={h}&port={pt}&secret={urllib.parse.quote(sec, safe='')}"
     except Exception: return None
 
+# Testi geçtiği hâlde Telegram uygulamasında hep "geçersiz" çıkan işletmecilerin anahtarı (kullanıcı denemeleriyle görüldü)
+PX_BAD_KEYS = {"104462821249bd7ac519130220c25d09"}
+
 def px_kind(link):
-    """Gizli kodun türü: 'dd' / 'ee' / 'plain' (düz kod Telegram uygulamasında çalışmıyor) / None."""
+    """Gizli kodun türü: 'dd' / 'ee' / 'plain' (düz kod Telegram uygulamasında çalışmıyor) / 'bad' (engelli işletmeci) / None."""
     try:
         sec = urllib.parse.unquote(re.search(r"secret=([^&]+)", link).group(1)).strip()
         if re.fullmatch(r"[0-9a-fA-F]+", sec) and len(sec) % 2 == 0: raw = bytes.fromhex(sec)
         else: raw = base64.urlsafe_b64decode(sec.replace("+", "-").replace("/", "_") + "=" * (-len(sec) % 4))
+        key = raw[1:17] if len(raw) > 16 else raw
+        if key.hex() in PX_BAD_KEYS: return "bad"
         return "dd" if len(raw) == 17 and raw[0] == 0xdd else "ee" if len(raw) > 17 and raw[0] == 0xee else "plain" if len(raw) == 16 else None
     except Exception: return None
 
