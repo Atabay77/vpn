@@ -3,7 +3,7 @@ Happ'te Termux "Bypass" olmalı ki testler VPN'siz, TM internetinden yapılsın.
 Komutlar: tmtest start | stop | once | proxy | log | status
 Çalışma: Drive'daki tmtest.txt'den abonelik linklerini okur, kodları çeker, Xray ile her koda
 gerçekten bağlanıp ms ölçer, sonucu aynı dosyaya yazar. Bot sonucu okuyup çalışmayan kodları çıkarır."""
-import os, sys, re, io, json, time, base64, signal, socket, struct, hashlib, hmac, subprocess, datetime, urllib.request, urllib.parse
+import os, sys, re, io, json, time, base64, signal, socket, struct, hashlib, hmac, random, subprocess, datetime, urllib.request, urllib.parse
 from concurrent.futures import ThreadPoolExecutor
 
 H = os.path.expanduser("~")
@@ -479,65 +479,244 @@ def _client_hello(domain, key):
     dg[28:32] = bytes(a ^ b for a, b in zip(dg[28:32], struct.pack("<I", int(time.time()))))
     return rec[:11] + bytes(dg) + rec[43:], bytes(dg)
 
-def check_proxy(server, port, secret, timeout=8, dc=2):
-    """Gerçek el sıkışma. Dönüş: ms (çalışıyor) ya da -1."""
+def _px_session(server, port, secret, timeout, dc, dl):
+    """Proxy üzerinden Telegram'a (dc) bağlantı. Dönüş: (soket, tx) — tx(mesaj) bir cevap mesajı döner."""
     ps = parse_secret(secret)
-    if not ps: return -1
+    if not ps: raise ValueError("gizli kod bozuk")
     key, kind, domain = ps
-    t0 = time.time(); dl = t0 + timeout + 4   # bir proxy için toplam en fazla ~12 sn
-    try:
-        sk = socket.create_connection((server, port), timeout); sk.settimeout(timeout)
-    except Exception: return -1
-    try:
-        tls = kind == "ee"
+    sk = socket.create_connection((server, port), timeout); sk.settimeout(timeout)
+    tls = kind == "ee"
+    if tls:
+        hello, cdg = _client_hello(domain, key)
+        sk.sendall(hello)
+        resp = b""
+        for want in (0x16, 0x14, 0x17):   # ServerHello, ChangeCipherSpec, ilk uygulama verisi
+            h = _recv(sk, 5, dl)
+            if h[0] != want: raise ValueError("TLS cevabı yanlış")
+            resp += h + _recv(sk, struct.unpack(">H", h[3:5])[0], dl)
+        zr = resp[:11] + b"\x00" * 32 + resp[43:]
+        if not hmac.compare_digest(hmac.new(key, cdg + zr, hashlib.sha256).digest(), resp[11:43]): raise ValueError("TLS imzası yanlış")
+    while True:
+        init = bytearray(os.urandom(64))
+        if init[0] != 0xef and bytes(init[:4]) not in (b"HEAD", b"POST", b"GET ", b"OPTI", b"\x16\x03\x01\x02", b"\xdd" * 4, b"\xee" * 4) and init[4:8] != b"\0" * 4: break
+    init[56:60] = (b"\xee" if kind == "plain" else b"\xdd") * 4; init[60:62] = struct.pack("<h", dc)   # Telegram uygulamasıyla aynı
+    rev = bytes(init[8:56])[::-1]
+    enc = _CTR(hashlib.sha256(bytes(init[8:40]) + key).digest(), bytes(init[40:56]))
+    dec = _CTR(hashlib.sha256(rev[:32] + key).digest(), rev[32:48])
+    st = {"head": bytes(init[:56]) + enc(bytes(init))[56:], "buf": b""}
+    def more():
         if tls:
-            hello, cdg = _client_hello(domain, key)
-            sk.sendall(hello)
-            resp = b""
-            for want in (0x16, 0x14, 0x17):   # ServerHello, ChangeCipherSpec, ilk uygulama verisi
-                h = _recv(sk, 5, dl)
-                if h[0] != want: return -1
-                resp += h + _recv(sk, struct.unpack(">H", h[3:5])[0], dl)
-            zr = resp[:11] + b"\x00" * 32 + resp[43:]
-            if not hmac.compare_digest(hmac.new(key, cdg + zr, hashlib.sha256).digest(), resp[11:43]): return -1
-        while True:
-            init = bytearray(os.urandom(64))
-            if init[0] != 0xef and bytes(init[:4]) not in (b"HEAD", b"POST", b"GET ", b"OPTI", b"\x16\x03\x01\x02", b"\xdd" * 4, b"\xee" * 4) and init[4:8] != b"\0" * 4: break
-        init[56:60] = (b"\xee" if kind == "plain" else b"\xdd") * 4; init[60:62] = struct.pack("<h", dc)   # Telegram uygulamasıyla aynı
-        rev = bytes(init[8:56])[::-1]
-        enc = _CTR(hashlib.sha256(bytes(init[8:40]) + key).digest(), bytes(init[40:56]))
-        dec = _CTR(hashlib.sha256(rev[:32] + key).digest(), rev[32:48])
-        head = bytes(init[:56]) + enc(bytes(init))[56:]
+            h = _recv(sk, 5, dl)
+            d = _recv(sk, struct.unpack(">H", h[3:5])[0], dl)
+            if h[0] == 0x17: st["buf"] += dec(d)
+        else:
+            left = dl - time.time()
+            if left <= 0: raise socket.timeout("süre doldu")
+            sk.settimeout(left); d = sk.recv(4096)
+            if not d: raise ConnectionError("bağlantı kapandı")
+            st["buf"] += dec(d)
+    def tx(msg):
+        out = st.pop("head", b"") + enc(struct.pack("<I", len(msg)) + msg)
+        if tls: out = (b"" if "first" in st else b"\x14\x03\x03\x00\x01\x01") + b"\x17\x03\x03" + struct.pack(">H", len(out)) + out
+        st["first"] = 1
+        sk.sendall(out)
+        while len(st["buf"]) < 4: more()
+        n = struct.unpack("<I", st["buf"][:4])[0] & 0x7fffffff
+        if n < 8 or n > 1 << 20: raise ValueError("çerçeve bozuk")
+        while len(st["buf"]) < 4 + n: more()
+        m, st["buf"] = st["buf"][4:4 + n], st["buf"][4 + n:]
+        return m
+    return sk, tx
+
+def check_proxy(server, port, secret, timeout=8, dc=2):
+    """Hızlı ilk test (req_pq). Dönüş: ms (çalışıyor) ya da -1."""
+    t0 = time.time(); dl = t0 + timeout + 4   # bir proxy için toplam en fazla ~12 sn
+    sk = None
+    try:
+        sk, tx = _px_session(server, port, secret, timeout, dc, dl)
         nonce = os.urandom(16)
-        msg = b"\0" * 8 + struct.pack("<q", (int(time.time()) << 32) | (int.from_bytes(os.urandom(2), "little") << 2)) + struct.pack("<I", 20) + struct.pack("<I", 0xbe7e8ef1) + nonce
-        pay = enc(struct.pack("<I", len(msg)) + msg)
-        out = head + pay
-        sk.sendall((b"\x14\x03\x03\x00\x01\x01" + b"\x17\x03\x03" + struct.pack(">H", len(out)) + out) if tls else out)
-        buf = b""
-        def more():
-            nonlocal buf
-            if tls:
-                h = _recv(sk, 5, dl)
-                d = _recv(sk, struct.unpack(">H", h[3:5])[0], dl)
-                if h[0] != 0x17: return
-                buf += dec(d)
-            else:
-                left = dl - time.time()
-                if left <= 0: raise socket.timeout("süre doldu")
-                sk.settimeout(left); d = sk.recv(4096)
-                if not d: raise ConnectionError("bağlantı kapandı")
-                buf += dec(d)
-        while len(buf) < 4: more()
-        n = struct.unpack("<I", buf[:4])[0] & 0x7fffffff
-        if n < 40 or n > 4096: return -1
-        while len(buf) < 4 + n: more()
-        m = buf[4:4 + n]
-        if m[:8] != b"\0" * 8 or struct.unpack("<I", m[20:24])[0] != 0x05162463 or m[24:40] != nonce: return -1
+        m = tx(b"\0" * 8 + struct.pack("<q", (int(time.time()) << 32) | (int.from_bytes(os.urandom(2), "little") << 2)) + struct.pack("<I", 20) + struct.pack("<I", 0xbe7e8ef1) + nonce)
+        if len(m) < 40 or m[:8] != b"\0" * 8 or struct.unpack("<I", m[20:24])[0] != 0x05162463 or m[24:40] != nonce: return -1
         return max(1, int((time.time() - t0) * 1000))
     except Exception:
         return -1
     finally:
-        try: sk.close()
+        try: sk and sk.close()
+        except Exception: pass
+
+# Telegram sunucu RSA anahtarları (parmak izi: (n, e)) — Telegram uygulamasındakilerle aynı
+TG_KEYS = {
+ 847625836280919973: (0xaeec36c8ffc109cb099624685b97815415657bd76d8c9c3e398103d7ad16c9bba6f525ed0412d7ae2c2de2b44e77d72cbf4b7438709a4e646a05c43427c7f184debf72947519680e651500890c6832796dd11f772c25ff8f576755afe055b0a3752c696eb7d8da0d8be1faf38c9bdd97ce0a77d3916230c4032167100edd0f9e7a3a9b602d04367b689536af0d64b613ccba7962939d3b57682beb6dae5b608130b2e52aca78ba023cf6ce806b1dc49c72cf928a7199d22e3d7ac84e47bc9427d0236945d10dbd15177bab413fbf0edfda09f014c7a7da088dde9759702ca760af2b8e4e97cc055c617bd74c3d97008635b98dc4d621b4891da9fb0473047927, 65537),
+ 1562291298945373506: (0xbdf2c77d81f6afd47bd30f29ac76e55adfe70e487e5e48297e5a9055c9c07d2b93b4ed3994d3eca5098bf18d978d54f8b7c713eb10247607e69af9ef44f38e28f8b439f257a11572945cc0406fe3f37bb92b79112db69eedf2dc71584a661638ea5becb9e23585074b80d57d9f5710dd30d2da940e0ada2f1b878397dc1a72b5ce2531b6f7dd158e09c828d03450ca0ff8a174deacebcaa22dde84ef66ad370f259d18af806638012da0ca4a70baa83d9c158f3552bc9158e69bf332a45809e1c36905a5caa12348dd57941a482131be7b2355a5f4635374f3bd3ddf5ff925bf4809ee27c1e67d9120c5fe08a9de458b1b4a3c5d0a428437f2beca81f4e2d5ff, 65537),
+ -5859577972006586033: (0xb3f762b739be98f343eb1921cf0148cfa27ff7af02b6471213fed9daa0098976e667750324f1abcea4c31e43b7d11f1579133f2b3d9fe27474e462058884e5e1b123be9cbbc6a443b2925c08520e7325e6f1a6d50e117eb61ea49d2534c8bb4d2ae4153fabe832b9edf4c5755fdd8b19940b81d1d96cf433d19e6a22968a85dc80f0312f596bd2530c1cfb28b5fe019ac9bc25cd9c2a5d8a0f3a1c0c79bcca524d315b5e21b5c26b46babe3d75d06d1cd33329ec782a0f22891ed1db42a1d6c0dea431428bc4d7aabdcf3e0eb6fda4e23eb7733e7727e9a1915580796c55188d2596d2665ad1182ba7abf15aaa5a8b779ea996317a20ae044b820bff35b6e8a1, 65537),
+ 6491968696586960280: (0xbe6a71558ee577ff03023cfa17aab4e6c86383cff8a7ad38edb9fafe6f323f2d5106cbc8cafb83b869cffd1ccf121cd743d509e589e68765c96601e813dc5b9dfc4be415c7a6526132d0035ca33d6d6075d4f535122a1cdfe017041f1088d1419f65c8e5490ee613e16dbf662698c0f54870f0475fa893fc41eb55b08ff1ac211bc045ded31be27d12c96d8d3cfc6a7ae8aa50bf2ee0f30ed507cc2581e3dec56de94f5dc0a7abee0be990b893f2887bd2c6310a1e0a9e3e38bd34fded2541508dc102a9c9b4c95effd9dd2dfe96c29be647d6c69d66ca500843cfaed6e440196f1dbe0e2e22163c61ca48c79116fa77216726749a976a1c4b0944b5121e8c01, 65537),
+ -4344800451088585951: (0xc150023e2f70db7985ded064759cfecf0af328e69a41daf4d6f01b538135a6f91f8f8b2a0ec9ba9720ce352efcf6c5680ffc424bd634864902de0b4bd6d49f4e580230e3ae97d95c8b19442b3c0a10d8f5633fecedd6926a7f6dab0ddb7d457f9ea81b8465fcd6fffeed114011df91c059caedaf97625f6c96ecc74725556934ef781d866b34f011fce4d835a090196e9a5f0e4449af7eb697ddb9076494ca5f81104a305b6dd27665722c46b60e5df680fb16b210607ef217652e60236c255f6a28315f4083a96791d7214bf64c1df4fd0db1944fb26a2a57031b32eee64ad15a8ba68885cde74a5bfc920f6abf59ba5c75506373e7130f9042da922179251f, 65537),
+ -7306692244673891685: (0xc6aeda78b02a251db4b6441031f467fa871faed32526c436524b1fb3b5dca28efb8c089dd1b46d92c895993d87108254951c5f001a0f055f3063dcd14d431a300eb9e29517e359a1c9537e5e87ab1b116faecf5d17546ebc21db234d9d336a693efcb2b6fbcca1e7d1a0be414dca408a11609b9c4269a920b09fed1f9a1597be02761430f09e4bc48fcafbe289054c99dba51b6b5eb7d9c3a2ab4e490545b4676bd620e93804bcac93bf94f73f92c729ca899477ff17625ef14a934d51dc11d5f8650a3364586b3a52fcff2fedec8a8406cac4e751705a472e55707e3c8cd5594342b119c6c3293532d85dbe9271ed54a2fd18b4dc79c04a30951107d5639397, 65537),
+ -5738946642031285640: (0xb1066749655935f0a5936f517034c943bea7f3365a8931ae52c8bcb14856f004b83d26cf2839be0f22607470d67481771c1ce5ec31de16b20bbaa4ecd2f7d2ecf6b6356f27501c226984263edc046b89fb6d3981546b01d7bd34fedcfcc1058e2d494bda732ff813e50e1c6ae249890b225f82b22b1e55fcb063dc3c0e18e91c28d0c4aa627dec8353eee6038a95a4fd1ca984eb09f94aeb7a2220635a8ceb450ea7e61d915cdb4eecedaa083aa3801daf071855ec1fb38516cb6c2996d2d60c0ecbcfa57e4cf1fb0ed39b2f37e94ab4202ecf595e167b3ca62669a6da520859fb6d6c6203dfdfc79c75ec3ee97da8774b2da903e3435f2cd294670a75a526c1, 65537),
+ 8205599988028290019: (0xc2a8c55b4a62e2b78a19b91cf692bcdc4ba7c23fe4d06f194e2a0c30f6d9996f7d1a2bcc89bc1ac4333d44359a6c433252d1a8402d9970378b5912b75bc8cc3fa76710a025bcb9032df0b87d7607cc53b928712a174ea2a80a8176623588119d42ffce40205c6d72160860d8d80b22a8b8651907cf388effbef29cd7cf2b4eb8a872052da1351cfe7fec214ce48304ea472bd66329d60115b3420d08f6894b0410b6ab9450249967617670c932f7cbdb5d6fbcce1e492c595f483109999b2661fcdeec31b196429b7834c7211a93c6789d9ee601c18c39e521fda9d7264e61e518add6f0712d2d5228204b851e13c4f322e5c5431c3b7f31089668486aadc59f, 65537),
+}
+
+_INV = []
+def _aes_dec_init():
+    if not _SBOX: _aes_init()
+    _INV.extend([0] * 256)
+    for i, v in enumerate(_SBOX): _INV[v] = i
+
+def _mul(a, b):
+    r = 0
+    while b:
+        if b & 1: r ^= a
+        a = _xt(a); b >>= 1
+    return r
+
+class _AESD(_AES256):
+    """AES-256 şifre çözme (IGE için)."""
+    def dec(s, blk):
+        if not _INV: _aes_dec_init()
+        I = _INV; st = [b ^ k for b, k in zip(blk, s.rk[14])]
+        for r in range(13, -1, -1):
+            st = [st[(i - 4 * (i % 4)) % 16] for i in range(16)]   # InvShiftRows
+            st = [I[b] for b in st]
+            st = [b ^ k for b, k in zip(st, s.rk[r])]
+            if r > 0:
+                o = []
+                for c in range(4):
+                    a = st[4 * c:4 * c + 4]
+                    o += [_mul(a[0], m0) ^ _mul(a[1], m1) ^ _mul(a[2], m2) ^ _mul(a[3], m3)
+                          for m0, m1, m2, m3 in ((14, 11, 13, 9), (9, 14, 11, 13), (13, 9, 14, 11), (11, 13, 9, 14))]
+                st = o
+        return bytes(st)
+
+def _ecb(key):
+    try:
+        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+        c = Cipher(algorithms.AES(key), modes.ECB())
+        return (lambda b: c.encryptor().update(b)), (lambda b: c.decryptor().update(b))
+    except Exception:
+        a = _AESD(key); return a.enc, a.dec
+
+def ige(data, key, iv, enc=True):
+    E, D = _ecb(key)
+    c_prev, p_prev = iv[:16], iv[16:]
+    out = b""
+    for i in range(0, len(data), 16):
+        x = data[i:i + 16]
+        if enc:
+            y = bytes(a ^ b for a, b in zip(E(bytes(a ^ b for a, b in zip(x, c_prev))), p_prev)); p_prev, c_prev = x, y
+        else:
+            y = bytes(a ^ b for a, b in zip(D(bytes(a ^ b for a, b in zip(x, p_prev))), c_prev)); c_prev, p_prev = x, y
+        out += y
+    return out
+
+def _tlb(x):
+    r = (bytes([len(x)]) if len(x) < 254 else b"\xfe" + len(x).to_bytes(3, "little")) + x
+    return r + b"\0" * (-len(r) % 4)
+
+def _rtlb(b, i):
+    if b[i] < 254: n, i = b[i], i + 1; s = b[i:i + n]; i += n; i += (-(n + 1)) % 4
+    else: n = int.from_bytes(b[i + 1:i + 4], "little"); i += 4; s = b[i:i + n]; i += n; i += (-n) % 4
+    return s, i
+
+def _ib(n): return n.to_bytes((n.bit_length() + 7) // 8, "big")
+
+def _factor(pq):
+    if pq % 2 == 0: return 2, pq // 2
+    while True:   # Pollard-Brent
+        y, c, m = random.randrange(1, pq), random.randrange(1, pq), 128
+        g = r = q = 1
+        while g == 1:
+            x = y
+            for _ in range(r): y = (y * y + c) % pq
+            k = 0
+            while k < r and g == 1:
+                ys = y
+                for _ in range(min(m, r - k)): y = (y * y + c) % pq; q = q * abs(x - y) % pq
+                g = __import__("math").gcd(q, pq); k += m
+            r *= 2
+        if g == pq:
+            while True:
+                ys = (ys * ys + c) % pq; g = __import__("math").gcd(abs(x - ys), pq)
+                if g > 1: break
+        if g != pq: p, q_ = sorted((g, pq // g)); return p, q_
+
+def _msgid():
+    t = time.time(); return (int(t) << 32) | (int((t % 1) * 2 ** 32) & ~3)
+
+def _plain(body): return b"\0" * 8 + struct.pack("<qI", _msgid(), len(body)) + body
+
+def _sha1(*a): return hashlib.sha1(b"".join(a)).digest()
+def _sha256(*a): return hashlib.sha256(b"".join(a)).digest()
+
+def _rsa_pad(data, n, e):
+    """sha1(data) + data + rastgele (Telegram'ın kabul ettiği; RSA_PAD HTTP 404 aldı)."""
+    te = _sha1(data) + data + os.urandom(235 - len(data))
+    return pow(int.from_bytes(te, "big"), e, n).to_bytes(256, "big")
+
+def tg_ping(tx, keys):
+    """tx(bytes)->bytes. Anahtar oluşturur + şifreli ping/pong. Başarılıysa True; değilse hata fırlatır."""
+    nonce = os.urandom(16)
+    r = tx(_plain(struct.pack("<I", 0xbe7e8ef1) + nonce))
+    b = r[20:]
+    if struct.unpack("<I", b[:4])[0] != 0x05162463 or b[4:20] != nonce: raise ValueError("resPQ yok")
+    snonce = b[20:36]; pqb, i = _rtlb(b, 36)
+    assert struct.unpack("<I", b[i:i + 4])[0] == 0x1cb5c415
+    fps = [struct.unpack("<q", b[i + 8 + 8 * k:i + 16 + 8 * k])[0] for k in range(struct.unpack("<I", b[i + 4:i + 8])[0])]
+    fp = next((f for f in fps if f in keys), None)
+    if fp is None: raise ValueError("bilinen RSA anahtarı yok")
+    p, q = _factor(int.from_bytes(pqb, "big"))
+    nn = os.urandom(32)
+    inner = struct.pack("<I", 0x83c95aec) + _tlb(pqb) + _tlb(_ib(p)) + _tlb(_ib(q)) + nonce + snonce + nn
+    enc = _rsa_pad(inner, *keys[fp])
+    r = tx(_plain(struct.pack("<I", 0xd712e4be) + nonce + snonce + _tlb(_ib(p)) + _tlb(_ib(q)) + struct.pack("<q", fp) + _tlb(enc)))
+    b = r[20:]
+    if struct.unpack("<I", b[:4])[0] != 0xd0e8075c: raise ValueError("server_DH_params_ok yok")
+    ea, _ = _rtlb(b, 36)
+    k = _sha1(nn, snonce) + _sha1(snonce, nn)[:12]
+    iv = _sha1(snonce, nn)[12:] + _sha1(nn, nn) + nn[:4]
+    ans = ige(ea, k, iv, False)[20:]
+    assert struct.unpack("<I", ans[:4])[0] == 0xb5890dba
+    g = struct.unpack("<i", ans[36:40])[0]; dhp, j = _rtlb(ans, 40); ga, j = _rtlb(ans, j)
+    dhp, ga = int.from_bytes(dhp, "big"), int.from_bytes(ga, "big")
+    bb = int.from_bytes(os.urandom(256), "big")
+    gb = pow(g, bb, dhp)
+    cin = struct.pack("<I", 0x6643b654) + nonce + snonce + struct.pack("<q", 0) + _tlb(gb.to_bytes(256, "big"))
+    cwh = _sha1(cin) + cin; cwh += os.urandom(-len(cwh) % 16)
+    r = tx(_plain(struct.pack("<I", 0xf5045f1f) + nonce + snonce + _tlb(ige(cwh, k, iv))))
+    b = r[20:]
+    if struct.unpack("<I", b[:4])[0] != 0x3bcbf734: raise ValueError("dh_gen_ok yok")
+    ak = pow(ga, bb, dhp).to_bytes(256, "big")
+    if b[36:52] != _sha1(nn, b"\x01", _sha1(ak)[:8])[4:]: raise ValueError("anahtar doğrulanamadı")
+    akid = _sha1(ak)[-8:]
+    salt = bytes(a ^ c for a, c in zip(nn[:8], snonce[:8])); sid = os.urandom(8)
+    pid = random.getrandbits(63)
+    for _ in range(2):   # bad_server_salt gelirse yeni tuzla bir kez daha
+        body = struct.pack("<Iq", 0x7abe77ec, pid)
+        pt = salt + sid + struct.pack("<qII", _msgid(), 1, len(body)) + body
+        pt += os.urandom(12 + (-(len(pt) + 12) % 16))
+        mk = _sha256(ak[88:120], pt)[8:24]
+        a = _sha256(mk, ak[0:36]); c = _sha256(ak[40:76], mk)
+        r = tx(akid + mk + ige(pt, a[:8] + c[8:24] + a[24:32], c[:8] + a[8:24] + c[24:32]))
+        if len(r) < 40 or r[:8] != akid: raise ValueError("şifreli cevap yok")
+        r = r[:24 + (len(r) - 24) // 16 * 16]   # dolgulu taşıma (dd/ee) sona rastgele bayt ekler
+        mk2 = r[8:24]
+        a = _sha256(mk2, ak[8:44]); c = _sha256(ak[48:84], mk2)
+        d = ige(r[24:], a[:8] + c[8:24] + a[24:32], c[:8] + a[8:24] + c[24:32], False)
+        if struct.pack("<I", 0x347773c5) in d and struct.pack("<q", pid) in d: return True
+        i = d.find(struct.pack("<I", 0xedab447b))
+        if i < 0: raise ValueError("pong yok")
+        salt = d[i + 4 + 8 + 4 + 4:i + 4 + 8 + 4 + 4 + 8]   # bad_server_salt: new_server_salt
+    raise ValueError("pong yok")
+
+def check_full(server, port, secret, timeout=10, dc=2):
+    """Telegram uygulaması gibi: proxy üzerinden şifreli anahtar oluşturup ping atar. pong gelirse True."""
+    sk = None
+    try:
+        sk, tx = _px_session(server, port, secret, timeout, dc, time.time() + 30)
+        return tg_ping(tx, TG_KEYS)
+    except Exception:
+        return False
+    finally:
+        try: sk and sk.close()
         except Exception: pass
 
 def px_cycle():
@@ -557,7 +736,7 @@ def px_cycle():
     def run(idx, limit, fn=one):
         """Takılan olursa beklemez: süre dolunca bitmeyenler çalışmıyor sayılır."""
         from concurrent.futures import wait
-        ex = ThreadPoolExecutor(96); fs = {ex.submit(fn, i): i for i in idx}
+        ex = ThreadPoolExecutor(64); fs = {ex.submit(fn, i): i for i in idx}
         done, _ = wait(fs, timeout=limit)
         ex.shutdown(wait=False, cancel_futures=True)
         return {fs[f]: f.result() for f in done if not f.exception()}
@@ -570,6 +749,7 @@ def px_cycle():
             if v > 0: res[i] = v
     # Telegram uygulaması hesabın bulunduğu sunucuya (DC 1-5) bağlanır: proxy hepsine ulaşmalı
     def all_dc(i):
+        if not (check_full(*px[i]) or check_full(*px[i])): return -1   # Telegram'a tam bağlanıp ping/pong
         for dc in (1, 3, 4, 5):
             if check_proxy(*px[i], dc=dc) < 0 and check_proxy(*px[i], dc=dc) < 0: return -1
         return res[i]
@@ -584,7 +764,7 @@ def px_cycle():
     ch = read_channel(svc, fid)   # test sürerken bot yeni liste koymuş olabilir
     ch.update({"px_res": dict(zip(links, res)), "px_ip": ips, "px_res_ts": int(time.time())})
     write_channel(svc, fid, ch)
-    log("📡 Proxy: %d test edildi, %d ilk testi geçti, %d bütün sunuculara (DC 1-5) ulaşıyor (%d sn)" % (len(links), len(first), sum(1 for v in res if v > 0), time.time() - t0))
+    log("📡 Proxy: %d test edildi, %d ilk testi geçti, %d Telegram'a tam bağlandı (ping/pong) ve bütün sunuculara ulaşıyor (%d sn)" % (len(links), len(first), sum(1 for v in res if v > 0), time.time() - t0))
 
 
 SELF = os.path.abspath(__file__)
