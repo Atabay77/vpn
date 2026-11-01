@@ -1242,7 +1242,7 @@ def _main_kb(uid):
     try: n_rev = len(review_list(load_db()))
     except Exception: n_rev = 0
     return KB([[B(tr(lg, "b_pazar"), "u_mkt", "success")],
-               [B(tr(lg, "b_ai"), "u_ai", "primary"), B(tr(lg, "b_px"), "u_px")],
+               [B(tr(lg, "b_ai"), "u_ai"), B(tr(lg, "b_px"), "u_px")],
                [B(tr(lg, "b_vsell"), "u_sell")],
                [B(tr(lg, "b_free"), "u_free"), B(tr(lg, "b_mine"), "my_keys")],
                [B(tr(lg, "b_prof"), "u_prof"), B(tr(lg, "b_market"), "u_market")],
@@ -3178,7 +3178,7 @@ def pub_menu(db, uid):
     lang = lang_of(db, uid)
     e = db.get("users", {}).get(str(uid), {})
     t = with_bal(tr(lang, "menu", avail=max(0, avail_refs(e)), need=REF_NEED, codes=len(user_codes(db, uid))), e, lang) + open_mkt_text(db, uid, lang)
-    kb = KB([[B(tr(lang, "b_pazar"), "u_mkt", "success")], [B(tr(lang, "b_ai"), "u_ai", "primary"), B(tr(lang, "b_px"), "u_px")]] + open_mkt_row(db, uid, lang) + [[B(tr(lang, "b_vsell"), "u_sell")],
+    kb = KB([[B(tr(lang, "b_pazar"), "u_mkt", "success")], [B(tr(lang, "b_ai"), "u_ai"), B(tr(lang, "b_px"), "u_px")]] + open_mkt_row(db, uid, lang) + [[B(tr(lang, "b_vsell"), "u_sell")],
              [B(tr(lang, "b_free"), "u_free"), B(tr(lang, "b_mine"), "u_mine")],
              [B(tr(lang, "b_prof"), "u_prof"), B(tr(lang, "b_market"), "u_market")],
              [B(tr(lang, "b_sup"), "u_sup"), B(tr(lang, "b_bug"), "u_bug")],
