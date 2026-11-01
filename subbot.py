@@ -386,6 +386,8 @@ def fetch_codes(url):
         if l.lower().startswith(PROTOS) and l not in out: out.append(l)
     return out
 
+SELL_MIN_GB, SELL_MIN_DAYS = 50, 7   # pazara konan abonelikte kalmış olması gereken en az trafik / süre
+
 def sub_limits(url):
     """Abonelik sınırları (panelin 'subscription-userinfo' başlığı): {'total': bayt, 'expire': unix}. Bilinmiyorsa {}."""
     try:
@@ -1240,8 +1242,8 @@ def _main_kb(uid):
     try: n_rev = len(review_list(load_db()))
     except Exception: n_rev = 0
     return KB([[B(tr(lg, "b_pazar"), "u_mkt", "success")],
-               [B(tr(lg, "b_ai"), "u_ai", "primary")],
-               [B(tr(lg, "b_px"), "u_px")],
+               [B(tr(lg, "b_ai"), "u_ai", "primary"), B(tr(lg, "b_px"), "u_px")],
+               [B(tr(lg, "b_vsell"), "u_sell")],
                [B(tr(lg, "b_free"), "u_free"), B(tr(lg, "b_mine"), "my_keys")],
                [B(tr(lg, "b_prof"), "u_prof"), B(tr(lg, "b_market"), "u_market")],
                [B(tr(lg, "b_sup"), "tickets"), B(tr(lg, "b_bug"), "tickets_bug")],
@@ -3025,7 +3027,7 @@ BAKİYE: Profil → "{b('b_top')}". Hazır tutarlar 1/3/5/10 USDT ya da başka t
 PAZAR ({b('b_pazar')}) — satıcıların kodları, dakika başı ödeme:
 {_plain(b('rules'))}
 Alıcı: ilanı seç → "Satın Al" → onay. Başlatma {fmt_u(MKT_FEE)}$ + ilk {PREPAY_MIN // 60} saat peşin (iade edilmez), sonra her dakika bakiyeden düşer. Durdurmak: {b('b_mine')} → ⏹. Aynı ilan 24 saatte en fazla {MAX_STARTS_DAY} kez başlatılır. Bakiye bitince kod durur.
-Satıcı: Pazar → "{b('b_sell')}" (5 adım: abonelik linki, başlık, ekran görüntüsü, açıklama, fiyat). İlan ücreti {fmt_u(MKT_FEE)}$. Abonelik GB ve süre sınırsız olmalı. Kendi ilanını satın alamazsın. İlanlar telefonla Türkmenistan'dan test edilir ve admin onaylar. 💎 VIP: {fmt_u(VIP_FEE)}$ ile {VIP_HOURS} saat en üstte. İlanlarım → kullanım geçmişi, VIP, sil (sorulur).
+Satıcı: Pazar → "{b('b_sell')}" (5 adım: abonelik linki, başlık, ekran görüntüsü, açıklama, fiyat). İlan ücreti {fmt_u(MKT_FEE)}$. Abonelikte en az 50 GB ve en az 7 gün kalmış olmalı (sınırsız da kabul). Kendi ilanını satın alamazsın. İlanlar telefonla Türkmenistan'dan test edilir ve admin onaylar. 💎 VIP: {fmt_u(VIP_FEE)}$ ile {VIP_HOURS} saat en üstte. İlanlarım → kullanım geçmişi, VIP, sil (sorulur).
 KAZANÇ ÇEKME: Profil → "{b('b_wd')}", en az {fmt_u(WITHDRAW_MIN)} USDT, CryptoBot hesabına gider (@CryptoBot'u en az bir kez açmış olmak gerekir). Kazanç alıcı durdurunca ya da her 24 saatte satıcıya geçer. Yüklenen bakiye çekilemez, sadece satış kazancı çekilir.
 
 KODLARIM ({b('b_mine')}): aktif kodlar ve abonelik linkleri. Kullanım: linki kopyala → Happ uygulaması → sağ üstteki + → panodan ekle (ya da linke dokun). Kodlar düzenli kontrol edilir; Happ'te aboneliği yenile (↻) ile güncel sunucular gelir.
@@ -3176,7 +3178,7 @@ def pub_menu(db, uid):
     lang = lang_of(db, uid)
     e = db.get("users", {}).get(str(uid), {})
     t = with_bal(tr(lang, "menu", avail=max(0, avail_refs(e)), need=REF_NEED, codes=len(user_codes(db, uid))), e, lang) + open_mkt_text(db, uid, lang)
-    kb = KB([[B(tr(lang, "b_pazar"), "u_mkt", "success")], [B(tr(lang, "b_ai"), "u_ai", "primary")]] + open_mkt_row(db, uid, lang) + [[B(tr(lang, "b_px"), "u_px")],
+    kb = KB([[B(tr(lang, "b_pazar"), "u_mkt", "success")], [B(tr(lang, "b_ai"), "u_ai", "primary"), B(tr(lang, "b_px"), "u_px")]] + open_mkt_row(db, uid, lang) + [[B(tr(lang, "b_vsell"), "u_sell")],
              [B(tr(lang, "b_free"), "u_free"), B(tr(lang, "b_mine"), "u_mine")],
              [B(tr(lang, "b_prof"), "u_prof"), B(tr(lang, "b_market"), "u_market")],
              [B(tr(lang, "b_sup"), "u_sup"), B(tr(lang, "b_bug"), "u_bug")],
@@ -5108,7 +5110,7 @@ T["tr"].update({
   "sell_5": "➕ <b>Kodumu Sat · 5/5</b>\n<blockquote>Dakika başı fiyatını <b>USDT</b> olarak yaz.\nÖrnek: <code>0.0001</code> = günde 0.144 USDT · 30 günde 4.32 USDT</blockquote>",
   "sell_badprice": "⚠️ Geçerli bir fiyat yaz (0.00001 ile 0.01 USDT arası), ör. <code>0.0001</code>.",
   "sell_confirm": "🧾 <b>İlan özeti</b>\n<blockquote>🏷 {title}\n📡 {n} sunucu · {protos}\n📝 {desc}</blockquote>\n💲 <b>Fiyat hesaplayıcı</b>\n<blockquote>{calc}</blockquote>\n<i>Onaylarsan bakiyenden <b>0.05$</b> ilan ücreti alınır (iade edilmez). Bot kodlarını test eder; kurallara uyuyorsa birkaç dakika içinde yayına alınır.</i>",
-  "b_sellok": "✅ Limitsiz olduğunu onaylıyorum · 0.05$ öde", "b_sellp": "✏️ Fiyatı değiştir",
+  "b_sellok": "✅ En az 50 GB / 7 gün, onaylıyorum · 0.05$ öde", "b_sellp": "✏️ Fiyatı değiştir",
   "sell_nobal": "⚠️ İlan ücreti için bakiyen yetersiz (0.05$). Önce bakiye yükle.",
   "sell_sent": "⏳ <b>İlanın incelemede</b>\n<blockquote>Bot kodlarını Türkmenistan'dan test ediyor. Uygunsa birkaç dakika içinde yayına alınır, sana haber gelir.</blockquote>",
   "m_approved": "✅ <b>İlanın yayında!</b>\n<blockquote>🏪 {title}\n🌍 {ncc} gerçek ülke · ✅ {work}/{tested} sunucu çalışıyor</blockquote>",
@@ -5122,7 +5124,7 @@ T["tr"].update({
   "myl": "📦 <b>İlanlarım</b>", "myl_none": "📦 <b>İlanlarım</b>\n<blockquote>İlanın yok.</blockquote>",
   "myl_item": "<blockquote>{st} <b>{title}</b>\n💲 {p} USDT/dk · 👥 {n} alıcı · 💰 {earned} USDT kazanç</blockquote>",
   "st_pending": "⏳", "st_live": "🟢", "st_removed": "⛔", "st_rejected": "❌",
-  "rules": "📜 <b>Pazar kuralları</b>\n\n🏪 <b><u>SATICI</u></b>\n<blockquote>• Her ilan 0.05$ (iade edilmez).\n• Abonelik limitsiz olmalı; ekran görüntüsü zorunlu.\n• Başvuruda en az 4 farklı gerçek ülke (bot ölçer, bayraklara bakılmaz).\n• 💎 VIP: 0.2$ ile 36 saat en üstte.\n• Kazanç: alıcı durdurunca, uzun kullanımda her 24 saatte bir gönderilir.\n• 🔒 Kodların sadece satın alan kişinin dosyasına yazılır, durdurunca silinir. Her kullanım İlanlarım → 📜 Kullanım geçmişi'nde görünür.</blockquote>\n\n🛒 <b><u>ALICI</u></b>\n<blockquote>• Her başlatma 0.05$ + ilk 5 saat peşin (iade edilmez).\n• Aynı ilan 24 saatte en fazla 3 kez başlatılır.\n• Dakika başı ücret bakiyenden düşer (kullansan da kullanmasan da).\n• İstediğin an durdurursun; bakiye bitince kod durur.\n• Bakiye en az 0.1$ yüklenir; yüklenen bakiye geri çekilmez.</blockquote>",
+  "rules": "📜 <b>Pazar kuralları</b>\n\n🏪 <b><u>SATICI</u></b>\n<blockquote>• Her ilan 0.05$ (iade edilmez).\n• Abonelikte en az 50 GB ve 7 gün kalmış olmalı; ekran görüntüsü zorunlu.\n• Başvuruda en az 4 farklı gerçek ülke (bot ölçer, bayraklara bakılmaz).\n• 💎 VIP: 0.2$ ile 36 saat en üstte.\n• Kazanç: alıcı durdurunca, uzun kullanımda her 24 saatte bir gönderilir.\n• 🔒 Kodların sadece satın alan kişinin dosyasına yazılır, durdurunca silinir. Her kullanım İlanlarım → 📜 Kullanım geçmişi'nde görünür.</blockquote>\n\n🛒 <b><u>ALICI</u></b>\n<blockquote>• Her başlatma 0.05$ + ilk 5 saat peşin (iade edilmez).\n• Aynı ilan 24 saatte en fazla 3 kez başlatılır.\n• Dakika başı ücret bakiyenden düşer (kullansan da kullanmasan da).\n• İstediğin an durdurursun; bakiye bitince kod durur.\n• Bakiye en az 0.1$ yüklenir; yüklenen bakiye geri çekilmez.</blockquote>",
   "bal_line": "\n\n💰 <b>Bakiye</b> {bal} USDT ≈ {tmt} TMT" , "earn_line": "\n💼 <b>Çekilebilir kazanç</b>  {earn} USDT",
   "top": "➕ <b>Bakiye Yükle</b>\n<blockquote>CryptoBot ile USDT. En az 0.1 USDT.\n💰 Bakiyen  <b>{bal} USDT</b></blockquote>",
   "top_ask": "✏️ Kaç USDT yüklemek istiyorsun? (en az 0.1)", "top_bad": "⚠️ En az 0.1 USDT, sayı yaz (ör. 2.5).",
@@ -5160,7 +5162,7 @@ T["ru"].update({
   "sell_5": "➕ <b>Продать код · 5/5</b>\n<blockquote>Укажите цену за минуту в <b>USDT</b>.\nПример: <code>0.0001</code> = 0.144 USDT в день · 4.32 USDT за 30 дней</blockquote>",
   "sell_badprice": "⚠️ Укажите цену от 0.00001 до 0.01 USDT, напр. <code>0.0001</code>.",
   "sell_confirm": "🧾 <b>Итог объявления</b>\n<blockquote>🏷 {title}\n📡 {n} серверов · {protos}\n📝 {desc}</blockquote>\n💲 <b>Калькулятор цены</b>\n<blockquote>{calc}</blockquote>\n<i>При подтверждении с баланса спишется <b>0.05$</b> (не возвращается). Бот проверит коды; если всё по правилам — объявление появится через несколько минут.</i>",
-  "b_sellok": "✅ Подтверждаю безлимит · оплатить 0.05$", "b_sellp": "✏️ Изменить цену",
+  "b_sellok": "✅ Подтверждаю: от 50 ГБ / 7 дней · оплатить 0.05$", "b_sellp": "✏️ Изменить цену",
   "sell_nobal": "⚠️ Недостаточно баланса для оплаты объявления (0.05$). Сначала пополните.",
   "sell_sent": "⏳ <b>Объявление на проверке</b>\n<blockquote>Бот проверяет коды из Туркменистана. Если всё в порядке — опубликует через несколько минут и сообщит вам.</blockquote>",
   "m_approved": "✅ <b>Объявление опубликовано!</b>\n<blockquote>🏪 {title}\n🌍 {ncc} реальных стран · ✅ {work}/{tested} серверов работают</blockquote>",
@@ -5173,7 +5175,7 @@ T["ru"].update({
   "m_paid_bal": "🎉 <b>Поздравляем!</b>\n<blockquote>🏪 {title}\n⏱ Покупатель использовал ваш код {dur}\n💰 Выплата  <b>{usdt} USDT</b> (≈{tmt} TMT)</blockquote>\n💼 Зачислено на ваш баланс в боте. Профиль → 💸 Вывести доход.",
   "myl": "📦 <b>Мои объявления</b>", "myl_none": "📦 <b>Мои объявления</b>\n<blockquote>Объявлений нет.</blockquote>",
   "myl_item": "<blockquote>{st} <b>{title}</b>\n💲 {p} USDT/мин · 👥 {n} покуп. · 💰 {earned} USDT доход</blockquote>",
-  "rules": "📜 <b>Правила биржи</b>\n\n🏪 <b><u>ПРОДАВЕЦ</u></b>\n<blockquote>• Каждое объявление 0.05$ (не возвращается).\n• Подписка должна быть безлимитной; скриншот обязателен.\n• При подаче минимум 4 разные реальные страны (бот измеряет сам, флаги не учитываются).\n• 💎 VIP: 0.2$ — 36 часов на самом верху.\n• Выплата: после остановки покупателем, при долгом использовании — каждые 24 ч.\n• 🔒 Ваши коды записываются только в файл купившего и удаляются после остановки. Каждое использование видно в Мои объявления → 📜 История.</blockquote>\n\n🛒 <b><u>ПОКУПАТЕЛЬ</u></b>\n<blockquote>• Каждый запуск 0.05$ + первые 5 часов сразу (не возвращается).\n• Одно объявление — не больше 3 запусков за 24 ч.\n• Поминутная оплата списывается с баланса (пользуетесь или нет).\n• Остановить можно в любой момент; при нулевом балансе код останавливается.\n• Пополнение от 0.1$; пополненный баланс не выводится.</blockquote>",
+  "rules": "📜 <b>Правила биржи</b>\n\n🏪 <b><u>ПРОДАВЕЦ</u></b>\n<blockquote>• Каждое объявление 0.05$ (не возвращается).\n• В подписке должно оставаться минимум 50 ГБ и 7 дней; скриншот обязателен.\n• При подаче минимум 4 разные реальные страны (бот измеряет сам, флаги не учитываются).\n• 💎 VIP: 0.2$ — 36 часов на самом верху.\n• Выплата: после остановки покупателем, при долгом использовании — каждые 24 ч.\n• 🔒 Ваши коды записываются только в файл купившего и удаляются после остановки. Каждое использование видно в Мои объявления → 📜 История.</blockquote>\n\n🛒 <b><u>ПОКУПАТЕЛЬ</u></b>\n<blockquote>• Каждый запуск 0.05$ + первые 5 часов сразу (не возвращается).\n• Одно объявление — не больше 3 запусков за 24 ч.\n• Поминутная оплата списывается с баланса (пользуетесь или нет).\n• Остановить можно в любой момент; при нулевом балансе код останавливается.\n• Пополнение от 0.1$; пополненный баланс не выводится.</blockquote>",
   "bal_line": "\n\n💰 <b>Баланс</b> {bal} USDT ≈ {tmt} TMT", "earn_line": "\n💼 <b>Доход к выводу</b>  {earn} USDT",
   "top": "➕ <b>Пополнение</b>\n<blockquote>USDT через CryptoBot. Минимум 0.1 USDT.\n💰 Баланс  <b>{bal} USDT</b></blockquote>",
   "top_ask": "✏️ Сколько USDT пополнить? (минимум 0.1)", "top_bad": "⚠️ Минимум 0.1 USDT, напишите число (напр. 2.5).",
@@ -5205,7 +5207,7 @@ T["tr"].update({
   "m_removed": "⛔ <b>İlanın {h} saat yasaklandı</b>\n<blockquote>🏪 {title}\n{why}</blockquote>\n<i>Yasak süresince kodların verilmez, iade yapılmaz. Yasak bitince ilan kendiliğinden yeniden incelenir.</i>",
   "myl_item": "<blockquote>{st} <b>{title}</b>{vip}\n💲 {m} TMT/30 gün · 👥 {n} alıcı · 💰 {earned} USDT{extra}</blockquote>",
   "myl_pend": "\n⏳ Teste gönderildi {ago} · test {a}/{b}", "myl_susp": "\n⛔ Yasak bitişi: {left} sonra", "st_suspended": "⛔",
-  "rules": "📜 <b>Pazar kuralları</b>\n\n🏪 <b><u>SATICI</u></b>\n<blockquote>• Her ilan 0.05$ (iade edilmez).\n• Abonelik limitsiz olmalı; ekran görüntüsü zorunlu.\n• Başvuruda en az 4 farklı gerçek ülke (bot ölçer, bayraklara bakılmaz).\n• 💎 VIP: 0.2$ ile 36 saat en üstte.\n• Kazanç: alıcı durdurunca, uzun kullanımda her 24 saatte bir gönderilir.\n• 🔒 Kodların sadece satın alan kişinin dosyasına yazılır, durdurunca silinir. Her kullanım İlanlarım → 📜 Kullanım geçmişi'nde görünür.</blockquote>\n\n🛒 <b><u>ALICI</u></b>\n<blockquote>• Her başlatma 0.05$ + ilk 5 saat peşin (iade edilmez).\n• Aynı ilan 24 saatte en fazla 3 kez başlatılır.\n• Dakika başı ücret bakiyenden düşer (kullansan da kullanmasan da).\n• İstediğin an durdurursun; bakiye bitince kod durur.\n• Bakiye en az 0.1$ yüklenir; yüklenen bakiye geri çekilmez.</blockquote>",
+  "rules": "📜 <b>Pazar kuralları</b>\n\n🏪 <b><u>SATICI</u></b>\n<blockquote>• Her ilan 0.05$ (iade edilmez).\n• Abonelikte en az 50 GB ve 7 gün kalmış olmalı; ekran görüntüsü zorunlu.\n• Başvuruda en az 4 farklı gerçek ülke (bot ölçer, bayraklara bakılmaz).\n• 💎 VIP: 0.2$ ile 36 saat en üstte.\n• Kazanç: alıcı durdurunca, uzun kullanımda her 24 saatte bir gönderilir.\n• 🔒 Kodların sadece satın alan kişinin dosyasına yazılır, durdurunca silinir. Her kullanım İlanlarım → 📜 Kullanım geçmişi'nde görünür.</blockquote>\n\n🛒 <b><u>ALICI</u></b>\n<blockquote>• Her başlatma 0.05$ + ilk 5 saat peşin (iade edilmez).\n• Aynı ilan 24 saatte en fazla 3 kez başlatılır.\n• Dakika başı ücret bakiyenden düşer (kullansan da kullanmasan da).\n• İstediğin an durdurursun; bakiye bitince kod durur.\n• Bakiye en az 0.1$ yüklenir; yüklenen bakiye geri çekilmez.</blockquote>",
 })
 T["ru"].update({
   "b_pazar": "🏪 Биржа", "b_start": "▶️ Запустить", "b_live": "📊 Онлайн", "b_vip": "💎 VIP · 36 ч · 0.2$", "b_yes_stop": "✅ Да, остановить", "b_no": "✖️ Отмена",
@@ -5226,7 +5228,7 @@ T["ru"].update({
   "m_removed": "⛔ <b>Объявление заблокировано на {h} ч</b>\n<blockquote>🏪 {title}\n{why}</blockquote>\n<i>Во время бана коды не выдаются, возврата нет. После бана объявление автоматически проверяется снова.</i>",
   "myl_item": "<blockquote>{st} <b>{title}</b>{vip}\n💲 {m} TMT/30 дн · 👥 {n} покуп. · 💰 {earned} USDT{extra}</blockquote>",
   "myl_pend": "\n⏳ Отправлено на тест {ago} · проверено {a}/{b}", "myl_susp": "\n⛔ Бан закончится через {left}", "st_suspended": "⛔",
-  "rules": "📜 <b>Правила биржи</b>\n\n🏪 <b><u>ПРОДАВЕЦ</u></b>\n<blockquote>• Каждое объявление 0.05$ (не возвращается).\n• Подписка должна быть безлимитной; скриншот обязателен.\n• При подаче минимум 4 разные реальные страны (бот измеряет сам, флаги не учитываются).\n• 💎 VIP: 0.2$ — 36 часов на самом верху.\n• Выплата: после остановки покупателем, при долгом использовании — каждые 24 ч.\n• 🔒 Ваши коды записываются только в файл купившего и удаляются после остановки. Каждое использование видно в Мои объявления → 📜 История.</blockquote>\n\n🛒 <b><u>ПОКУПАТЕЛЬ</u></b>\n<blockquote>• Каждый запуск 0.05$ + первые 5 часов сразу (не возвращается).\n• Одно объявление — не больше 3 запусков за 24 ч.\n• Поминутная оплата списывается с баланса (пользуетесь или нет).\n• Остановить можно в любой момент; при нулевом балансе код останавливается.\n• Пополнение от 0.1$; пополненный баланс не выводится.</blockquote>",
+  "rules": "📜 <b>Правила биржи</b>\n\n🏪 <b><u>ПРОДАВЕЦ</u></b>\n<blockquote>• Каждое объявление 0.05$ (не возвращается).\n• В подписке должно оставаться минимум 50 ГБ и 7 дней; скриншот обязателен.\n• При подаче минимум 4 разные реальные страны (бот измеряет сам, флаги не учитываются).\n• 💎 VIP: 0.2$ — 36 часов на самом верху.\n• Выплата: после остановки покупателем, при долгом использовании — каждые 24 ч.\n• 🔒 Ваши коды записываются только в файл купившего и удаляются после остановки. Каждое использование видно в Мои объявления → 📜 История.</blockquote>\n\n🛒 <b><u>ПОКУПАТЕЛЬ</u></b>\n<blockquote>• Каждый запуск 0.05$ + первые 5 часов сразу (не возвращается).\n• Одно объявление — не больше 3 запусков за 24 ч.\n• Поминутная оплата списывается с баланса (пользуетесь или нет).\n• Остановить можно в любой момент; при нулевом балансе код останавливается.\n• Пополнение от 0.1$; пополненный баланс не выводится.</blockquote>",
 })
 
 T["tr"].update({
@@ -5313,7 +5315,7 @@ T["tr"].update({
   "link_below": "🔗 linki almak için aşağıdaki butona bas",
   "del_q": "🗑 <b>Bu kod silinsin mi?</b>\n<blockquote>🎟 {name}\nAbonelik linki artık çalışmaz.</blockquote>", "b_yes_del": "🗑 Evet, sil", "deleted": "🗑 Kod silindi",
   "menu_bal": "\n💰 Bakiye  <b>{bal} USDT</b>  <i>≈ {tmt} TMT</i>",
-  "sell_1": "➕ <b>Kodumu Sat · 1/5</b>\n<blockquote>🔗 Abonelik linkini gönder\n<b>(GB limiti ya da süre sınırı olmamalı!)</b></blockquote>",
+  "sell_1": "➕ <b>Kodumu Sat · 1/5</b>\n<blockquote>🔗 Abonelik linkini gönder\n<b>(en az 50 GB ve en az 7 gün kalmış olmalı; sınırsız da olur)</b></blockquote>",
   "m_photo_bad": "🔞 <b>İlanın kaldırıldı</b>\n<blockquote>🏪 {title}\nFotoğraf uygunsuz bulundu.</blockquote>\n⛔ {h} saat botu kullanamazsın. Ücret iade edilmez.",
   "rj_admin": "Admin tarafından reddedildi.",
   "open_line": "\n\n🟢 <b>Açık pazar kodun: {n}</b>\n<i>Dakikada {pm} TMT düşüyor · şimdiye kadar {spent} TMT.\nKullanmıyorsan 🎟 Kodlarım → ⏹ Durdur.</i>",
@@ -5340,7 +5342,7 @@ T["ru"].update({
   "link_below": "🔗 ссылка — кнопкой ниже",
   "del_q": "🗑 <b>Удалить этот код?</b>\n<blockquote>🎟 {name}\nСсылка подписки перестанет работать.</blockquote>", "b_yes_del": "🗑 Да, удалить", "deleted": "🗑 Код удалён",
   "menu_bal": "\n💰 Баланс  <b>{bal} USDT</b>  <i>≈ {tmt} TMT</i>",
-  "sell_1": "➕ <b>Продать код · 1/5</b>\n<blockquote>🔗 Отправьте ссылку подписки\n<b>(без лимита ГБ и без ограничения срока!)</b></blockquote>",
+  "sell_1": "➕ <b>Продать код · 1/5</b>\n<blockquote>🔗 Отправьте ссылку подписки\n<b>(должно оставаться минимум 50 ГБ и 7 дней; безлимит тоже подходит)</b></blockquote>",
   "m_photo_bad": "🔞 <b>Объявление удалено</b>\n<blockquote>🏪 {title}\nФото признано неприемлемым.</blockquote>\n⛔ {h} ч вы не можете пользоваться ботом. Плата не возвращается.",
   "rj_admin": "Отклонено администратором.",
   "open_line": "\n\n🟢 <b>Открытых кодов с биржи: {n}</b>\n<i>Списывается {pm} TMT в минуту · всего {spent} TMT.\nЕсли не пользуетесь: 🎟 Мои коды → ⏹ Стоп.</i>",
@@ -5369,7 +5371,7 @@ T["tk"] = {
  "link_below": "🔗 linki almak üçin aşakdaky knopka bas",
  "del_q": "🗑 <b>Bu kod pozulsynmy?</b>\n<blockquote>🎟 {name}\nPodpiska linki indi işlemez.</blockquote>", "b_yes_del": "🗑 Hawa, poz", "deleted": "🗑 Kod pozuldy",
  "menu_bal": "\n💰 Balans  <b>{bal} USDT</b>  <i>≈ {tmt} TMT</i>",
- "sell_1": "➕ <b>Kodumy sat · 1/5</b>\n<blockquote>🔗 Podpiska linkini iber\n<b>(GB limiti ýa-da möhlet çägi bolmaly däl!)</b></blockquote>",
+ "sell_1": "➕ <b>Kodumy sat · 1/5</b>\n<blockquote>🔗 Podpiska linkini iber\n<b>(azyndan 50 GB we azyndan 7 gün galan bolmaly; çäksiz hem bolýar)</b></blockquote>",
  "m_photo_bad": "🔞 <b>Bildirişiň aýryldy</b>\n<blockquote>🏪 {title}\nSurat ýerliksiz diýlip tapyldy.</blockquote>\n⛔ {h} sagat boty ulanyp bilmersiň. Töleg yzyna gaýtarylmaýar.",
  "rj_admin": "Admin tarapyndan ret edildi.",
  "open_line": "\n\n🟢 <b>Açyk bazar kodyň: {n}</b>\n<i>Her minutda {pm} TMT alynýar · şu wagta çenli {spent} TMT.\nUlanmaýan bolsaň 🎟 Kodlarym → ⏹ Yzyna gowşur.</i>",
@@ -5495,7 +5497,7 @@ T["tk"] = {
  "sell_4": "➕ <b>Kodumy sat · 4/5</b>\n<blockquote>Düşündiriş ýaz (tizligi, aýratynlyklary, habarlaşmak üçin...). Geçmek üçin <code>-</code> iber.</blockquote>",
  "sell_badprice": "⚠️ 1 bilen 10000 arasynda san ýaz (aýlyk TMT), mysal: <code>100</code>.",
  "sell_confirm": "🧾 <b>Bildiriş barada gysgaça</b>\n<blockquote>🏷 {title}\n📡 {n} serwer · {protos}\n📝 {desc}</blockquote>\n💲 <b>Baha hasaplaýjy</b>\n<blockquote>{calc}</blockquote>\n<i>Tassyklasaň, balansyňdan <b>0.05$</b> bildiriş tölegi alynýar (yzyna gaýtarylmaýar). Bot kodlaryňy barlaýar; düzgünlere laýyk bolsa, birnäçe minutdan bazara çykýar.</i>",
- "b_sellok": "✅ Limitsiz, tassyklaýaryn · 0.05$ töle",
+ "b_sellok": "✅ Azyndan 50 GB / 7 gün, tassyklaýaryn · 0.05$ töle",
  "b_sellp": "✏️ Bahany üýtget",
  "sell_nobal": "⚠️ Bildiriş tölegi üçin balansyň ýetenok (0.05$). Ilki balansy doldur.",
  "sell_sent": "⏳ <b>Bildirişiň barlagda</b>\n<blockquote>Bot kodlaryňy Türkmenistandan barlaýar. Hemme zat düzgün bolsa, birnäçe minutdan bazara çykar, saňa habar geler.</blockquote>",
@@ -5517,7 +5519,7 @@ T["tk"] = {
  "st_live": "🟢",
  "st_removed": "⛔",
  "st_rejected": "❌",
- "rules": "📜 <b>Bazaryň düzgünleri</b>\n\n🏪 <b><u>SATYJY</u></b>\n<blockquote>• Her bildiriş 0.05$ (yzyna gaýtarylmaýar).\n• Podpiska limitsiz bolmaly; skrinşot hökman.\n• Bildiriş berlende azyndan 4 dürli hakyky ýurt bolmaly (bot özi ölçeýär, baýdaklara seredilmeýär).\n• 💎 VIP: 0.2$ töläp, 36 sagat iň ýokarda durýar.\n• Gazanç: alyjy kody yzyna gowşuranda, uzak ulanylsa her 24 sagatda bir gezek iberilýär.\n• 🔒 Kodlaryňyz diňe satyn alan adamyň faýlyna ýazylýar, yzyna gowşurylanda pozulýar. Her ulanylyşy Bildirişlerim → 📜 Ulanyş taryhy bölüminde görünýär.</blockquote>\n\n🛒 <b><u>ALYJY</u></b>\n<blockquote>• Her gezek başlamak 0.05$ + ilkinji 5 sagat öňünden (yzyna gaýtarylmaýar).\n• Bir bildiriş 24 sagatda iň köp 3 gezek başladylýar.\n• Minutlyk töleg balansyňdan aýrylýar (ulansaň-da, ulanmasaň-da).\n• Islän wagtyň yzyna gowşurup bilersiň; balans gutarsa, kod özi yzyna gowşurylýar.\n• Balans azyndan 0.1$ doldurylýar; doldurylan balansy yzyna çekip bolmaýar.</blockquote>",
+ "rules": "📜 <b>Bazaryň düzgünleri</b>\n\n🏪 <b><u>SATYJY</u></b>\n<blockquote>• Her bildiriş 0.05$ (yzyna gaýtarylmaýar).\n• Podpiskada azyndan 50 GB we 7 gün galan bolmaly; skrinşot hökman.\n• Bildiriş berlende azyndan 4 dürli hakyky ýurt bolmaly (bot özi ölçeýär, baýdaklara seredilmeýär).\n• 💎 VIP: 0.2$ töläp, 36 sagat iň ýokarda durýar.\n• Gazanç: alyjy kody yzyna gowşuranda, uzak ulanylsa her 24 sagatda bir gezek iberilýär.\n• 🔒 Kodlaryňyz diňe satyn alan adamyň faýlyna ýazylýar, yzyna gowşurylanda pozulýar. Her ulanylyşy Bildirişlerim → 📜 Ulanyş taryhy bölüminde görünýär.</blockquote>\n\n🛒 <b><u>ALYJY</u></b>\n<blockquote>• Her gezek başlamak 0.05$ + ilkinji 5 sagat öňünden (yzyna gaýtarylmaýar).\n• Bir bildiriş 24 sagatda iň köp 3 gezek başladylýar.\n• Minutlyk töleg balansyňdan aýrylýar (ulansaň-da, ulanmasaň-da).\n• Islän wagtyň yzyna gowşurup bilersiň; balans gutarsa, kod özi yzyna gowşurylýar.\n• Balans azyndan 0.1$ doldurylýar; doldurylan balansy yzyna çekip bolmaýar.</blockquote>",
  "bal_line": "\n\n💰 <b>Balans</b> {bal} USDT ≈ {tmt} TMT",
  "earn_line": "\n💼 <b>Çekip boljak gazanç</b>  {earn} USDT",
  "top": "➕ <b>Balansy doldur</b>\n<blockquote>CryptoBot arkaly USDT. Azyndan 0.1 USDT.\n💰 Balansyň  <b>{bal} USDT</b></blockquote>",
@@ -5685,7 +5687,10 @@ T["ru"].update({"ai_legend": '🔴 самые сильные · 🔵 сильн�
   "ai_hist_t": "📜 <b>Прошлые чаты</b>  <code>{n}</code>\n<i>Выберите: посмотреть, продолжить или удалить.</i>", "ai_hist_none": "📜 Сохранённых чатов пока нет.",
   "ai_del_q": "🗑 <b>Удалить этот чат?</b>\n<i>Переписку не вернуть.</i>", "ai_deleted": "🗑 Чат удалён.",
   "img_wait": "⏳ Фото создаётся (около минуты)…", "img_err": "⚠️ Не удалось создать фото: <code>{e}</code>\n<i>Возможен временный сбой на сайте; попробуйте чуть позже.</i>"})
-T["tr"].update({"b_px": "📡 Telegram Proxy", "b_px_re": "🔄 Yenile",
+T["tr"]["b_vsell"] = "🪪 VPN Sat"
+T["tk"]["b_vsell"] = "🪪 VPN satmak"
+T["ru"]["b_vsell"] = "🪪 Продать VPN"
+T["tr"].update({"b_px": "📡 TG Proxy", "b_px_re": "🔄 Yenile",
   "px_t": "📡 <b>Telegram Proxy</b>\n<blockquote>Türkmenistan'dan test edildi, şu an çalışıyor.\n🕒 Son test: {ago}</blockquote>\n<i>Birine bas → Telegram'da bağlan. Çalışmazsa 🔄 Yenile.</i>",
   "px_none": "📡 Şu an test edilmiş çalışan proxy yok. Biraz sonra tekrar bak."})
 T["tr"].update({"b_ai": "🤖 Yardımcı", "b_ai_end": "◀️ Menü",
@@ -5693,7 +5698,7 @@ T["tr"].update({"b_ai": "🤖 Yardımcı", "b_ai_end": "◀️ Menü",
   "ai_off": "🤖 Yardımcı şu an kapalı. 🆘 Support'a yazabilirsin.", "ai_text": "✍️ Sorunu yazı olarak gönder.",
   "ai_lim": "⏳ Bugünkü {n} soru hakkın bitti. Yarın tekrar sorabilir ya da 🆘 Support'a yazabilirsin.",
   "ai_err": "⚠️ Yardımcı şu an cevap veremedi, biraz sonra tekrar dene ya da 🆘 Support'a yaz. (Hakkın düşülmedi.)"})
-T["tk"].update({"b_px": "📡 Telegram Proksi", "b_px_re": "🔄 Täzele",
+T["tk"].update({"b_px": "📡 TG Proksi", "b_px_re": "🔄 Täzele",
   "px_t": "📡 <b>Telegram Proksi</b>\n<blockquote>Türkmenistandan barlandy, häzir işleýär.\n🕒 Soňky barlag: {ago}</blockquote>\n<i>Birine bas → Telegramda birikdir. Işlemese 🔄 Täzele.</i>",
   "px_none": "📡 Häzir barlanan işleýän proksi ýok. Birazdan gaýtadan seret."})
 T["tk"].update({"b_ai": "🤖 Kömekçi", "b_ai_end": "◀️ Menýu",
@@ -5701,7 +5706,7 @@ T["tk"].update({"b_ai": "🤖 Kömekçi", "b_ai_end": "◀️ Menýu",
   "ai_off": "🤖 Kömekçi häzir ýapyk. 🆘 Goldaw-a ýazyp bilersiň.", "ai_text": "✍️ Soragyňy tekst görnüşinde iber.",
   "ai_lim": "⏳ Şu günki {n} sorag hakyň gutardy. Ertir gaýtadan sorap ýa-da 🆘 Goldaw-a ýazyp bilersiň.",
   "ai_err": "⚠️ Kömekçi häzir jogap berip bilmedi, birazdan gaýtadan synan ýa-da 🆘 Goldaw-a ýaz. (Hakyň aýrylmady.)"})
-T["ru"].update({"b_px": "📡 Telegram Прокси", "b_px_re": "🔄 Обновить",
+T["ru"].update({"b_px": "📡 TG Прокси", "b_px_re": "🔄 Обновить",
   "px_t": "📡 <b>Telegram Прокси</b>\n<blockquote>Проверены из Туркменистана, сейчас работают.\n🕒 Последняя проверка: {ago}</blockquote>\n<i>Нажмите на любой → подключите в Telegram. Не работает — 🔄 Обновить.</i>",
   "px_none": "📡 Сейчас нет проверенных рабочих прокси. Загляните чуть позже."})
 T["ru"].update({"b_ai": "🤖 Помощник", "b_ai_end": "◀️ Меню",
@@ -5748,9 +5753,9 @@ T["ru"].update({"sup_press": '✍️ Чтобы написать в обраще
   "sup_slow": "⏳ Подождите {s} сек и напишите снова."})
 
 # Sınırlı abonelik uyarısı (satış)
-T["tr"]["sell_limited"] = "⚠️ <b>Bu abonelik sınırlı</b>\n<blockquote>{lim}\nPazara sadece <b>GB ve süre sınırı olmayan</b> abonelik konabilir.</blockquote>"
-T["tk"]["sell_limited"] = "⚠️ <b>Bu podpiskanyň çägi bar</b>\n<blockquote>{lim}\nBazara diňe <b>GB we möhlet çägi bolmadyk</b> podpiska goýup bolýar.</blockquote>"
-T["ru"]["sell_limited"] = "⚠️ <b>У подписки есть ограничения</b>\n<blockquote>{lim}\nНа биржу можно выставить только подписку <b>без лимита ГБ и срока</b>.</blockquote>"
+T["tr"]["sell_limited"] = "⚠️ <b>Bu abonelik yetersiz</b>\n<blockquote>Kalan: {lim}\nPazara konan abonelikte <b>en az 50 GB</b> ve <b>en az 7 gün</b> kalmış olmalı.</blockquote>"
+T["tk"]["sell_limited"] = "⚠️ <b>Bu podpiska ýeterlik däl</b>\n<blockquote>Galan: {lim}\nBazara goýulýan podpiskada <b>azyndan 50 GB</b> we <b>azyndan 7 gün</b> galan bolmaly.</blockquote>"
+T["ru"]["sell_limited"] = "⚠️ <b>Подписки недостаточно</b>\n<blockquote>Осталось: {lim}\nВ подписке на бирже должно оставаться <b>минимум 50 ГБ</b> и <b>минимум 7 дней</b>.</blockquote>"
 
 # Happ şifreli link uyarısı (satış)
 T["tr"]["sell_happ"] = "⚠️ <b>Happ şifreli linkleri kabul edilmiyor</b>\n<blockquote>happ://crypt… gibi şifreli ya da kapalı linklerin içindeki kodlar okunamaz.\nAçık abonelik linkini gönder (<code>https://</code> ile başlayan).</blockquote>"
@@ -6802,10 +6807,12 @@ async def market_input(c, u, st):
         try: codes = await asyncio.to_thread(fetch_codes, link)
         except Exception: codes = []
         if not codes: await say(tr(lang, "sell_badlink")); return
-        lim = await asyncio.to_thread(sub_limits, link)   # GB ya da süre sınırı varsa kabul edilmez
+        lim = await asyncio.to_thread(sub_limits, link)   # kalan trafik en az SELL_MIN_GB, kalan süre en az SELL_MIN_DAYS (sınırsız da olur)
         gb = lim.get("total", 0); exp = lim.get("expire", 0)
-        if gb > 0 or exp > time.time():
-            parts = ([f"📦 {gb / 1024 ** 3:.0f} GB"] if gb > 0 else []) + ([f"⏳ {datetime.datetime.fromtimestamp(exp, TM_TZ).strftime('%d.%m.%Y')}"] if exp > time.time() else [])
+        left_gb = (gb - lim.get("upload", 0) - lim.get("download", 0)) / 1024 ** 3 if gb > 0 else None
+        left_d = (exp - time.time()) / 86400 if exp > 0 else None
+        if (left_gb is not None and left_gb < SELL_MIN_GB) or (left_d is not None and left_d < SELL_MIN_DAYS):
+            parts = ([f"📦 {max(0, left_gb):.0f} GB"] if left_gb is not None else []) + ([f"⏳ {max(0, left_d):.0f} gün" if lang != "ru" else f"⏳ {max(0, left_d):.0f} дн."] if left_d is not None else [])
             await say(tr(lang, "sell_limited", lim=" · ".join(parts))); return
         if uid not in ADMINS and any(L.get("link") == link and L.get("status") in ("pending", "live") for L in load_db().get("market", {}).values()):
             STATE.pop(uid, None); await say(tr(lang, "sell_dup"), KB([[B(tr(lang, "b_back_mkt"), "u_mkt")]])); return
