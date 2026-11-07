@@ -691,7 +691,7 @@ def rename_raw(codes, geo, ms=None, exits=None):
     """Yeni mod: çalışıp çalışmadığına bakılmaz, kaynaktaki bütün kodlar.
     - Aynı ülkeden birden fazla kod varsa en iyi ms'li kalır (ölçüm yoksa kaynakta önce gelen).
     - Orijinal isminde "pubg" geçen kod PUBG gaming sunucusu olarak adlandırılır, elenmez.
-    - Kaynakta 1. sırada olan kod rastgele 4-7. sıraya konur; diğerlerinin sırası aynı kalır.
+    - Bütün kodların sırası rastgele.
     Dönüş: (yeni kodlar, log satırları)."""
     ms, exits = ms or {}, exits or {}
     info = []
@@ -705,8 +705,7 @@ def rename_raw(codes, geo, ms=None, exits=None):
         if x["ex"] and not x["pubg"] and (x["ex"] not in best or rank(x) < rank(best[x["ex"]])): best[x["ex"]] = x
     keep = [x for x in info if x["pubg"] or not x["ex"] or best[x["ex"]] is x]
     dropped = len(info) - len(keep)
-    if len(keep) > 1:
-        first = keep.pop(0); keep.insert(min(len(keep), random.randint(3, 6)), first)   # 4.-7. sıra
+    random.shuffle(keep)   # bütün kodların yeri rastgele
     bag = [c for c in COUNTRIES if c not in {x["ex"] for x in keep if x["ex"]}]; random.shuffle(bag)
     used_names, used_emojis, out, nrand = set(), set(), [], 0
     for x in keep:
@@ -2550,7 +2549,7 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         md_ = src_mode(db)
         rows.append([B("🔀 Mod: Hepsi (yeni) ✅" if md_ == "all" else "🔀 Mod: Filtreli (eski) ✅", "src_mode")])
         rows.append([B("◀️ Admin", "admin")])
-        mtxt = ("<b>Mod: Hepsi</b> — kaynaktaki bütün kodlar alınır (çalışıp çalışmadığına bakılmaz), isimleri değişir, aynı ülkeden en iyi ms'li kalır, 1. sıradaki 4-7. sıraya gider, PUBG sunucusu «🎮 PUBG Gaming Server» olur." if md_ == "all"
+        mtxt = ("<b>Mod: Hepsi</b> — kaynaktaki bütün kodlar alınır (çalışıp çalışmadığına bakılmaz), isimleri değişir, aynı ülkeden en iyi ms'li kalır, sıralar rastgele, PUBG sunucusu «🎮 PUBG Gaming Server» olur." if md_ == "all"
                 else "<b>Mod: Filtreli (eski)</b> — TM'de çalışmayan, yavaş ve kapalı kodlar atılır; gerçek ülkeler üstte, Rusya 2. sırada.")
         await safe_edit(q, f"🔗 <b>Abonelikler</b>  <code>{len(src)}</code>\n<blockquote>Kodlar bu aboneliklerden çekilir.\nDeğiştirmek veya silmek için birine dokun.</blockquote>\n<blockquote expandable>{mtxt}</blockquote>", KB(rows))
 
