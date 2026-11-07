@@ -689,6 +689,7 @@ def src_mode(db=None):
 
 def rename_raw(codes, geo, ms=None, exits=None):
     """Yeni mod: çalışıp çalışmadığına bakılmaz, kaynaktaki bütün kodlar.
+    - Ülke = kaynaktaki bayrak (yoksa ölçülen çıkış ülkesi, o da yoksa IP konumu).
     - Aynı ülkeden birden fazla kod varsa en iyi ms'li kalır (ölçüm yoksa kaynakta önce gelen).
     - Orijinal isminde "pubg" geçen kod PUBG gaming sunucusu olarak adlandırılır, elenmez.
     - Bütün kodların sırası rastgele; Rusya asla 1. sırada değil.
@@ -697,7 +698,7 @@ def rename_raw(codes, geo, ms=None, exits=None):
     info = []
     for i, c in enumerate(codes):
         k = code_key(c)
-        ex = exits.get(k) or exit_country(c, geo)[0]
+        ex = exit_country(c, {})[0] or exits.get(k) or geo.get(code_host(c))   # önce kaynaktaki bayrak, yoksa ölçülen ülke, o da yoksa IP konumu
         info.append({"c": c, "ex": ex if ex in COUNTRIES else None, "ms": ms.get(k), "i": i, "pubg": bool(PUBG_RE.search(orig_name(c)))})
     rank = lambda y: (y["ms"] is None, y["ms"] or 0, y["i"])
     best = {}
