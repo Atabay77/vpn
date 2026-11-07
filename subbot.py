@@ -691,7 +691,7 @@ def rename_raw(codes, geo, ms=None, exits=None):
     """Yeni mod: çalışıp çalışmadığına bakılmaz, kaynaktaki bütün kodlar.
     - Aynı ülkeden birden fazla kod varsa en iyi ms'li kalır (ölçüm yoksa kaynakta önce gelen).
     - Orijinal isminde "pubg" geçen kod PUBG gaming sunucusu olarak adlandırılır, elenmez.
-    - Bütün kodların sırası rastgele.
+    - Bütün kodların sırası rastgele; Rusya asla 1. sırada değil.
     Dönüş: (yeni kodlar, log satırları)."""
     ms, exits = ms or {}, exits or {}
     info = []
@@ -706,7 +706,10 @@ def rename_raw(codes, geo, ms=None, exits=None):
     keep = [x for x in info if x["pubg"] or not x["ex"] or best[x["ex"]] is x]
     dropped = len(info) - len(keep)
     random.shuffle(keep)   # bütün kodların yeri rastgele
-    bag = [c for c in COUNTRIES if c not in {x["ex"] for x in keep if x["ex"]}]; random.shuffle(bag)
+    bag = [c for c in COUNTRIES if c not in {x["ex"] for x in keep if x["ex"]} and c != "ru"]; random.shuffle(bag)   # rastgele bayrak asla Rusya değil
+    if keep and keep[0]["ex"] == "ru":   # Rusya asla en üstte olmaz
+        alt = [i for i, x in enumerate(keep) if x["ex"] != "ru"]
+        if alt: j = random.choice(alt); keep[0], keep[j] = keep[j], keep[0]
     used_names, used_emojis, out, nrand = set(), set(), [], 0
     for x in keep:
         cc, real = x["ex"], bool(x["ex"])
