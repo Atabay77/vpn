@@ -680,6 +680,46 @@ def rename_all(codes, geo, ms=None, fresh=False, exits=None, cap=None, listed=()
     return out, notes
 
 
+PUBG_RE = re.compile(r"pubg", re.I)
+PUBG_NAME = "🎮 PUBG Gaming Server"
+
+def src_mode(db=None):
+    """'all' (yeni: kaynaktaki bütün kodlar) ya da 'filter' (eski: TM'de çalışmayan/yavaş/kapalı atılır)."""
+    return (db if db is not None else load_db()).get("src_mode", "all")
+
+def rename_raw(codes, geo, ms=None, exits=None):
+    """Yeni mod: çalışıp çalışmadığına bakılmaz, kaynaktaki bütün kodlar.
+    - Aynı ülkeden birden fazla kod varsa en iyi ms'li kalır (ölçüm yoksa kaynakta önce gelen).
+    - Orijinal isminde "pubg" geçen kod PUBG gaming sunucusu olarak adlandırılır, elenmez.
+    - Kaynakta 1. sırada olan kod rastgele 4-7. sıraya konur; diğerlerinin sırası aynı kalır.
+    Dönüş: (yeni kodlar, log satırları)."""
+    ms, exits = ms or {}, exits or {}
+    info = []
+    for i, c in enumerate(codes):
+        k = code_key(c)
+        ex = exits.get(k) or exit_country(c, geo)[0]
+        info.append({"c": c, "ex": ex if ex in COUNTRIES else None, "ms": ms.get(k), "i": i, "pubg": bool(PUBG_RE.search(orig_name(c)))})
+    rank = lambda y: (y["ms"] is None, y["ms"] or 0, y["i"])
+    best = {}
+    for x in info:
+        if x["ex"] and not x["pubg"] and (x["ex"] not in best or rank(x) < rank(best[x["ex"]])): best[x["ex"]] = x
+    keep = [x for x in info if x["pubg"] or not x["ex"] or best[x["ex"]] is x]
+    dropped = len(info) - len(keep)
+    if len(keep) > 1:
+        first = keep.pop(0); keep.insert(min(len(keep), random.randint(3, 6)), first)   # 4.-7. sıra
+    bag = [c for c in COUNTRIES if c not in {x["ex"] for x in keep if x["ex"]}]; random.shuffle(bag)
+    used_names, used_emojis, out, nrand = set(), set(), [], 0
+    for x in keep:
+        cc, real = x["ex"], bool(x["ex"])
+        if not cc: cc = bag.pop() if bag else random.choice(list(COUNTRIES)); nrand += 1
+        flag, cname, _ = COUNTRIES[cc]
+        nm = PUBG_NAME if x["pubg"] else _pick_name(cc, used_names, used_emojis)
+        out.append(set_name(x["c"], f"{flag} {cname}{REAL_SEP if real else RAND_SEP}{nm}"))
+    npubg = sum(1 for x in keep if x["pubg"])
+    notes = [f"🧩 Liste (hepsi): {len(out)} kod · {dropped} aynı ülke elendi" + (f" · {npubg} PUBG" if npubg else "") + (f" · {nrand} ülkesi bilinmeyen" if nrand else "")]
+    return out, notes
+
+
 # ───────── TELEFON TESTİ (Türkmenistan) ─────────
 # Telefon (Termux, VPN dışı) Drive'daki tmtest.txt'den abonelikleri okur, kodları TM internetinden
 # Xray ile test eder ve sonucu aynı dosyaya yazar. Bot burada okuyup TM'de çalışmayan kodları çıkarır.
@@ -863,13 +903,19 @@ def check_cycle(force=False):
     # Liste gidip gelmesin: listedeki kod bozulunca/çok yavaşlayınca hemen yazılır; yeni çalışan kodlar en çok saatte bir eklenir.
     listed = {code_key(c) for c in db.get("template", [])}
     ours = {code_key(c) for c in codes}
-    planned = {code_key(c) for c in rename_all([c for c in codes if code_key(c) not in dead_tm], {}, tm_ms, tm_fresh, tm_exits, cap, listed)[0]}   # yazılsaydı liste bu olurdu
-    bad_listed = [k for k in listed if k not in ours or k in dead_tm or (k not in planned and tm_fresh and k in tm_ms and tm_ms[k] > cap * SLOW_OUT)]
+    raw_mode = src_mode(db) == "all"
+    if raw_mode:   # yeni mod: sadece kaynaktan kalkan kod ya da aynı ülkenin daha iyisi değişirse
+        planned = {code_key(c) for c in rename_raw(codes, {}, tm_ms, tm_exits)[0]}
+        bad_listed = [k for k in listed if k not in ours]
+    else:
+        planned = {code_key(c) for c in rename_all([c for c in codes if code_key(c) not in dead_tm], {}, tm_ms, tm_fresh, tm_exits, cap, listed)[0]}   # yazılsaydı liste bu olurdu
+        bad_listed = [k for k in listed if k not in ours or k in dead_tm or (k not in planned and tm_fresh and k in tm_ms and tm_ms[k] > cap * SLOW_OUT)]
     gained = sorted(planned - listed)
     add_due = time.time() - db.get("tm_add_ts", 0) >= TM_ADD_EVERY
     exch = RUN.pop("exits_changed", False)
     if exch and not add_due: RUN["exits_changed"] = True   # ülke değişikliği de saatlik eklemeyle yazılır
-    was_stale = tm_fresh and not db.get("tm_fresh_w") and planned != listed   # liste test eskiyken yazıldı, şimdi güncel test var → hemen düzelt
+    was_stale = tm_fresh and not db.get("tm_fresh_w") and planned != listed and not raw_mode   # liste test eskiyken yazıldı, şimdi güncel test var → hemen düzelt
+    if raw_mode and db.get("src_mode_w") != "all": was_stale = True   # mod yeni değişti: hemen yaz
     tm_changed = bool(bad_listed) or (bool(gained or exch) and add_due) or was_stale
     need = ip_need(db)
     if not force and old and len(new) < need and not tm_changed:
@@ -880,17 +926,18 @@ def check_cycle(force=False):
     why = "⚡ Elle güncelleme" if force else (f"🚨 {len(new)} yeni IP bulundu" if (not old or len(new) >= need) else
                                             f"📱 Listedeki {len(bad_listed)} kod bozuldu/yavaşladı" if bad_listed else "📱 Telefon testi geldi → liste çalışan kodlarla yazılıyor" if was_stale else f"📱 {len(gained)} yeni çalışan kod eklenecek" if gained else "📱 Ülke bilgisi değişti")
     vlog(f"{why} → {len(codes)} kod yenileniyor...")
-    if dead_tm:
+    if dead_tm and not raw_mode:
         keep = [c for c in codes if code_key(c) not in dead_tm]
         if keep:
             vlog(f"📱 TM'de çalışmayan {len(dead_tm)} kod çıkarıldı")
             codes = keep
         else:
             vlog("⚠️ Telefon testine göre hiçbir kod çalışmıyor; test yok sayıldı")
-    codes = dead_filter(codes)
-    need_ip = [] if tm_exits else [code_host(c) for c in codes if exit_country(c, {})[0] is None]   # ölçüm yoksa: isminde ülke olmayanlar
+    if not raw_mode: codes = dead_filter(codes)
+    if raw_mode: need_ip = [code_host(c) for c in codes if code_key(c) not in tm_exits and exit_country(c, {})[0] is None]   # ölçüm yok, isminde de ülke yok
+    else: need_ip = [] if tm_exits else [code_host(c) for c in codes if exit_country(c, {})[0] is None]   # ölçüm yoksa: isminde ülke olmayanlar
     geo = geo_lookup([h for h in need_ip if h]) if need_ip else {}
-    renamed, notes = rename_all(codes, geo, tm_ms, tm_fresh, tm_exits, cap, listed)
+    renamed, notes = rename_raw(codes, geo, tm_ms, tm_exits) if raw_mode else rename_all(codes, geo, tm_ms, tm_fresh, tm_exits, cap, listed)
     for n in notes: vlog(n)
     targets = [(s["file_id"], name_of(s, k), eff_ann(db, s)) for k, s in db["subs"].items() if s.get("file_id") and not is_exp(s)]
     ok, bad = push_all(targets, renamed)
@@ -898,7 +945,7 @@ def check_cycle(force=False):
 
     def f(d):
         d["template"] = renamed
-        d["last_update"] = time.time(); d["tm_fresh_w"] = tm_fresh
+        d["last_update"] = time.time(); d["tm_fresh_w"] = tm_fresh; d["src_mode_w"] = src_mode(d)
         if not bad:   # hata varsa eskileri kalsın, sonraki turda tekrar dener
             d["seen_ips"] = sorted(ips)
             d["tm_dead_pushed"] = sorted(dead_tm)
@@ -1854,7 +1901,7 @@ async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
         log.exception("msg_handler")
         await send_error(c, uid, f"mesaj:{act}", e)
 
-FOUNDER_ONLY = {"px_adm", "px_now", "ban_menu", "ban_find", "hp", "hp_set", "hp_del", "hp_new", "ref_test", "mk_admin", "mk_price", "mk_oph", "mk_ods", "mk_odr", "bal_find", "usearch", "rep_today", "rep_yday", "tickets_bug", "t_cancel", "tickets", "cp_test", "cp", "cp_set", "cp_del", "ai_adm", "ai_set", "ai_lim", "ai_plim", "ai_del", "ai_use", "ai_tsup", "ai_tmon", "ai_notes", "ai_nadd", "ai_learnv", "ai_lclr", "ul_open", "stats", "chans", "ch_add", "pay_set", "bcast", "bcast_yes", "rollback", "rollback_yes", "auto_ann", "toggle_sys", "mk_rev", "ad_post", "ip_need", "ping_max", "admin", "sources", "s_add", "logs", "upd_now", "get_zip", "sa_menu", "sa_add", "bulk_ann", "bulk_title", "bulk_yes"}
+FOUNDER_ONLY = {"src_mode", "px_adm", "px_now", "ban_menu", "ban_find", "hp", "hp_set", "hp_del", "hp_new", "ref_test", "mk_admin", "mk_price", "mk_oph", "mk_ods", "mk_odr", "bal_find", "usearch", "rep_today", "rep_yday", "tickets_bug", "t_cancel", "tickets", "cp_test", "cp", "cp_set", "cp_del", "ai_adm", "ai_set", "ai_lim", "ai_plim", "ai_del", "ai_use", "ai_tsup", "ai_tmon", "ai_notes", "ai_nadd", "ai_learnv", "ai_lclr", "ul_open", "stats", "chans", "ch_add", "pay_set", "bcast", "bcast_yes", "rollback", "rollback_yes", "auto_ann", "toggle_sys", "mk_rev", "ad_post", "ip_need", "ping_max", "admin", "sources", "s_add", "logs", "upd_now", "get_zip", "sa_menu", "sa_add", "bulk_ann", "bulk_title", "bulk_yes"}
 OWNED = ("kv", "kt", "kn", "ka", "kd", "kdy")   # alt admin sadece kendi kodunda
 def src_find(db, h): return next((s for s in db["sources"] if hashlib.md5(s.encode()).hexdigest()[:8] == h), None)
 
@@ -2500,8 +2547,19 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         src = db["sources"]
         rows = [[B(f"{i}. {src_label(s)} · {RUN['src'].get(s, '…')[:14]}", "sv:" + hashlib.md5(s.encode()).hexdigest()[:8])] for i, s in enumerate(src, 1)]
         rows.append([B("➕ Abonelik Ekle", "s_add", "success")])
+        md_ = src_mode(db)
+        rows.append([B("🔀 Mod: Hepsi (yeni) ✅" if md_ == "all" else "🔀 Mod: Filtreli (eski) ✅", "src_mode")])
         rows.append([B("◀️ Admin", "admin")])
-        await safe_edit(q, f"🔗 <b>Abonelikler</b>  <code>{len(src)}</code>\n<blockquote>Kodlar bu aboneliklerden çekilir.\nDeğiştirmek veya silmek için birine dokun.</blockquote>", KB(rows))
+        mtxt = ("<b>Mod: Hepsi</b> — kaynaktaki bütün kodlar alınır (çalışıp çalışmadığına bakılmaz), isimleri değişir, aynı ülkeden en iyi ms'li kalır, 1. sıradaki 4-7. sıraya gider, PUBG sunucusu «🎮 PUBG Gaming Server» olur." if md_ == "all"
+                else "<b>Mod: Filtreli (eski)</b> — TM'de çalışmayan, yavaş ve kapalı kodlar atılır; gerçek ülkeler üstte, Rusya 2. sırada.")
+        await safe_edit(q, f"🔗 <b>Abonelikler</b>  <code>{len(src)}</code>\n<blockquote>Kodlar bu aboneliklerden çekilir.\nDeğiştirmek veya silmek için birine dokun.</blockquote>\n<blockquote expandable>{mtxt}</blockquote>", KB(rows))
+
+    elif a == "src_mode":   # 🔀 yeni (hepsi) ↔ eski (filtreli); değişince liste hemen yeniden yazılır
+        nm_ = "filter" if src_mode(db) == "all" else "all"
+        mutate(lambda d: d.__setitem__("src_mode", nm_)); audit(uid, f"src_mode {nm_}")
+        vlog(f"🔀 Abonelik modu: {'Hepsi (yeni)' if nm_ == 'all' else 'Filtreli (eski)'}")
+        asyncio.create_task(run_check(c.application, force=True))
+        await safe_edit(q, f"✅ Mod: <b>{'Hepsi (yeni)' if nm_ == 'all' else 'Filtreli (eski)'}</b>\n<i>Kodlar şimdi bu moda göre yeniden yazılıyor.</i>", back("sources"))
 
     elif a.startswith("sv:"):
         h = a.split(":", 1)[1]
@@ -2978,6 +3036,7 @@ def _plain(t):
 
 # Botun yenilikleri: her güncellemede en üste eklenir; AI (yardımcı + destek) bunları bilir.
 CHANGELOG = [
+ ("07.11", "Kodlar: abonelikteki bütün sunucular gelir; her ülkeden en hızlısı kalır; PUBG sunucusu «🎮 PUBG Gaming Server» olarak işaretli."),
  ("30.10", "🤖 Ücretli modeller (Claude Opus, GPT, Gemini, Grok, Kimi, Mistral Large 4, MiMo, Nemotron) artık sadece 💎 Premium ile (5$/ay, 30 gün); deneme hakkı yok. Ücretsiz modeller herkese günde 100 soru."),
  ("30.10", "🤖 Kömekçi: 4 ücretsiz model (Qwen3.8 Max, Qwen3.8 Omni Flash, Mistral Large 3, Command A+), herkese günde 100 soru, Premium gerekmez."),
  ("29.10", "📡 Telegram Proxy: Türkmenistan'dan test edilmiş, çalışan Telegram proxy'leri ücretsiz (menüde). Kapanınca yenileri gelir."),
