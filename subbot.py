@@ -1788,39 +1788,68 @@ def mail_parse(m, me, kw):
     r = mail_match(_mail_text(m), kw)
     return (frm, r[1], r[0], r[2]) if r else None
 
+def _mail_junk(M):
+    """Gmail'in Spam klasörünün adı (dile göre değişir; \\Junk işaretinden bulunur)."""
+    try:
+        _, ls = M.list()
+        for ln in ls or []:
+            t = ln.decode("utf-8", "ignore") if isinstance(ln, bytes) else str(ln)
+            if "\\Junk" in t:
+                m_ = re.search(r'"([^"]+)"\s*$', t) or re.search(r"(\S+)\s*$", t)
+                if m_: return m_.group(1)
+    except Exception: pass
+    return None
+
 def mail_fetch():
-    """Bloklayan iş: kelimeyi içeren YENİ mailleri döner. Okundu/okunmadı durumuna bakmaz ve dokunmaz;
-    işlenen mailleri (UID) kendisi hatırlar. İlk çalışmada sadece başlangıç noktası kaydedilir (eski mailler sayılmaz)."""
+    """Bloklayan iş: Gelen Kutusu + Spam'deki YENİ mailler arasından istekleri döner. Okundu/okunmadı durumuna
+    bakmaz ve dokunmaz (salt okunur); işlenen mailleri (UID) klasör başına hatırlar.
+    Bir klasör ilk kez görülünce sadece başlangıç noktası kaydedilir (o ana kadarki mailler sayılmaz)."""
     import imaplib, email
     me, pw, kw = mail_cfg()
     if not (me and pw and kw): return []
     M = imaplib.IMAP4_SSL("imap.gmail.com", 993, timeout=30)
-    out = []
+    out, seen_n = [], 0
     try:
-        M.login(me, pw); M.select("INBOX", readonly=True)   # salt okunur: hiçbir maili okundu yapmaz
-        st = load_db().get("mail_st", {})
-        if "base" not in st:   # ilk çalışma: o ana kadarki mailler işlenmez
-            _, nx = M.status("INBOX", "(UIDNEXT)")
-            mm = re.search(rb"UIDNEXT (\d+)", nx[0] if nx else b"")
-            mutate(lambda d: d.__setitem__("mail_st", {"base": int(mm.group(1)) if mm else 1, "done": []})); return []
-        _, data = M.uid("SEARCH", None, f"UID {st['base']}:*")   # kelime içi parça Gmail'de aranamıyor: yeni mailler tek tek
-        uids = sorted(int(x) for x in (data[0].split() if data and data[0] else []))
-        done = set(st.get("done", []))
-        new = [u for u in uids if u >= st["base"] and u not in done][-40:]
-        for u in new:
-            _, sz = M.uid("FETCH", str(u), "(RFC822.SIZE)")
-            msz = re.search(rb"RFC822.SIZE (\d+)", (sz[0] if sz and isinstance(sz[0], bytes) else b"") or b"")
-            if msz and int(msz.group(1)) > 300000: continue   # büyük (ekli) mail: istek değildir
-            _, msg = M.uid("FETCH", str(u), "(BODY.PEEK[])")
-            try: r = mail_parse(email.message_from_bytes(msg[0][1]), me, kw)
-            except Exception: r = None
-            if r: out.append(r)
-        if new: mutate(lambda d: d.setdefault("mail_st", {}).__setitem__("done", (d["mail_st"].get("done", []) + new)[-300:]))
-        RUN["mail_last"] = (time.time(), len(new), len(out))   # /gmail durumunda görünür
+        M.login(me, pw)
+        st_all = dict(load_db().get("mail_st", {}))
+        if "base" in st_all: st_all = {"INBOX": {"base": st_all["base"], "done": st_all.get("done", [])}}   # eski biçim
+        boxes = ["INBOX"] + [b for b in [_mail_junk(M)] if b]
+        for box in boxes:
+            if M.select('"' + box + '"', readonly=True)[0] != "OK": continue   # salt okunur: hiçbir maili okundu yapmaz
+            st = st_all.get(box)
+            if not st or "base" not in st:
+                _, nx = M.status('"' + box + '"', "(UIDNEXT)")
+                mm = re.search(rb"UIDNEXT (\d+)", nx[0] if nx else b"")
+                st_all[box] = {"base": int(mm.group(1)) if mm else 1, "done": []}; continue
+            _, data = M.uid("SEARCH", None, f"UID {st['base']}:*")   # kelime içi parça Gmail'de aranamıyor: yeni mailler tek tek
+            uids = sorted(int(x) for x in (data[0].split() if data and data[0] else []))
+            done = set(st.get("done", []))
+            new = [u for u in uids if u >= st["base"] and u not in done][-40:]
+            for u in new:
+                _, sz = M.uid("FETCH", str(u), "(RFC822.SIZE)")
+                msz = re.search(rb"RFC822.SIZE (\d+)", (sz[0] if sz and isinstance(sz[0], bytes) else b"") or b"")
+                if msz and int(msz.group(1)) > 300000: continue   # büyük (ekli) mail: istek değildir
+                _, msg = M.uid("FETCH", str(u), "(BODY.PEEK[])")
+                try: r = mail_parse(email.message_from_bytes(msg[0][1]), me, kw)
+                except Exception: r = None
+                if r: out.append(r)
+            st_all[box] = {"base": st["base"], "done": (st.get("done", []) + new)[-300:]}; seen_n += len(new)
+        mutate(lambda d: d.__setitem__("mail_st", st_all))
+        RUN["mail_last"] = (time.time(), seen_n, len(out), len(boxes))   # /gmail durumunda görünür
     finally:
         try: M.logout()
         except Exception: pass
     return out
+
+def mail_login_test():
+    """Sadece giriş denemesi (maillere bakmaz, istek tüketmez)."""
+    import imaplib
+    me, pw, _ = mail_cfg()
+    M = imaplib.IMAP4_SSL("imap.gmail.com", 993, timeout=30)
+    try: M.login(me, pw)
+    finally:
+        try: M.logout()
+        except Exception: pass
 
 def mail_send(to, subject, text):
     import smtplib
@@ -1891,15 +1920,16 @@ async def cmd_gmail(u: Update, c: ContextTypes.DEFAULT_TYPE):
         me, kw = args[0], args[-1]; pw = "".join(args[1:-1])   # Google uygulama şifresi boşluklu yazılabilir
         if "@" not in me or len(pw) < 8 or len(kw) < 4:
             await c.bot.send_message(uid, "⚠️ Biçim: /gmail adres@gmail.com uygulama_şifresi Kelime"); return
+        if os.environ.get("GMAIL_USER", "").lower() != me.lower(): mutate(lambda d: d.pop("mail_st", None))   # sadece adres değişince baştan
         for k, v in (("GMAIL_USER", me), ("GMAIL_PASS", pw), ("GMAIL_KEY", kw)): await asyncio.to_thread(set_env, k, v)
-        audit(uid, "gmail set"); RUN.pop("mail_err", None); mutate(lambda d: d.pop("mail_st", None))
-        try: await asyncio.to_thread(mail_fetch); st_ = "✅ Gmail'e bağlanıldı."
+        audit(uid, "gmail set"); RUN.pop("mail_err", None)
+        try: await asyncio.to_thread(mail_login_test); st_ = "✅ Gmail'e bağlanıldı."
         except Exception as e: st_ = f"❌ Bağlanılamadı: {esc(str(e)[:150])}"
         await c.bot.send_message(uid, f"{st_}\n<blockquote>📧 {esc(me)}\n🔑 Kelime: <code>{esc(kw)}</code></blockquote>\n<i>Şu andan sonra bu adrese içinde {esc(" ve ".join("«" + x + "»" for x in kw.split("+") if x))} geçen bir kelime + gün yazılı mail gelince (ör. «xx{esc("".join(kw.split("+")))}yy 30») kod gönderenin adresine gider (gün yazılmazsa {MAIL_DEF_DAYS}). Her yazı bir kez çalışır. Saatte en fazla {MAIL_MAX_HOUR} kod. Mesajın silindi.</i>", parse_mode="HTML"); return
     me, pw, kw = mail_cfg()
     ml = RUN.get("mail_last"); st_ = load_db().get("mail_st", {})
-    diag = (f"\n🕒 Son kontrol  {ago(ml[0])} · {ml[1]} yeni mail bakıldı · {ml[2]} istek" if ml else "\n🕒 Son kontrol  henüz yok")
-    diag += (f"\n⚠️ Hata  {esc(RUN['mail_err'])}" if RUN.get("mail_err") else "") + ("" if st_.get("base") else "\nℹ️ Başlangıç noktası henüz kaydedilmedi")
+    diag = (f"\n🕒 Son kontrol  {ago(ml[0])} · {ml[1]} yeni mail bakıldı · {ml[2]} istek · {ml[3] if len(ml) > 3 else 1} klasör (Gelen + Spam)" if ml else "\n🕒 Son kontrol  henüz yok")
+    diag += (f"\n⚠️ Hata  {esc(RUN['mail_err'])}" if RUN.get("mail_err") else "") + ("" if st_ else "\nℹ️ Başlangıç noktası henüz kaydedilmedi")
     await c.bot.send_message(uid, (f"📧 <b>Gmail'den kod: açık</b>\n<blockquote>{esc(me)} · kelime <code>{esc(kw)}</code>\nSon 1 saatte verilen  {len([t for t in MAIL_SENT if time.time() - t < 3600])}{diag}</blockquote>" if all((me, pw, kw)) else "📧 <b>Gmail'den kod: kapalı</b>")
                                + "\n<i>Açmak: /gmail adres@gmail.com uygulama_şifresi parça1+parça2 (kelimede ikisi de geçmeli)\nKapatmak: /gmail kapat\nUygulama şifresi: Google hesabı → Güvenlik → 2 adımlı doğrulama açık → Uygulama şifreleri.</i>", parse_mode="HTML")
 
