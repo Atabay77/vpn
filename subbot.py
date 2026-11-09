@@ -1748,6 +1748,7 @@ async def cmd_unadmin(u: Update, c: ContextTypes.DEFAULT_TYPE):
 
 # ── 📧 Gmail: belirlenen kelime yazılan maile kod gönderir ──
 MAIL_EVERY, MAIL_MAX_HOUR, MAIL_DEF_DAYS = 60, 10, 30
+MAIL_DEVICES = 1   # maille verilen kod en fazla bu kadar cihaza kurulabilir (Happ limitli link)
 MAIL_SENT = []   # son 1 saatte maille verilen kodların zamanı
 
 def mail_cfg(): return os.environ.get("GMAIL_USER", ""), os.environ.get("GMAIL_PASS", ""), os.environ.get("GMAIL_KEY", "")
@@ -1824,13 +1825,19 @@ def mail_tick():
         if not res:
             events.append(f"❌ <b>Mail ile kod oluşturulamadı</b>\n<blockquote>{esc(frm)} · {esc(err)}</blockquote>"); continue
         kid, fid = res; MAIL_SENT.append(now)
-        link = user_link(fid) or sub_link(fid)
+        lim_ok = False
+        if all(happ_creds()):
+            try: link, enc_ = happ_make(kid, MAIL_DEVICES); lim_ok = enc_   # şifresizse limit linkten silinebilir
+            except Exception as e: link = None; log.info("mail happ limit: %s", e)
+        else: link = None
+        link = link or user_link(fid) or sub_link(fid)
         try:
-            mail_send(frm, f"VPN kodunuz · {days} gün", f"Kodyňyz / Kodunuz ({days} gün):\n\n{link}\n\nHapp → + → linki goşuň / linki ekleyin.")
+            mail_send(frm, f"VPN kodunuz · {days} gün", f"Kodyňyz / Kodunuz ({days} gün" + (f", {MAIL_DEVICES} enjam / cihaz" if lim_ok else "") + f"):\n\n{link}\n\nHapp → + → linki goşuň / linki ekleyin.")
             ok = True
         except Exception as e: ok = False; log.warning("mail send: %s", e)
         ulog("order", f"📧 Mail ile kod: {frm} · {days} gün · {kid}" + ("" if ok else " (mail gönderilemedi)"))
-        events.append(f"📧 <b>Mail ile kod oluşturuldu</b>\n<blockquote>{esc(frm)} · {days} gün\n{'✅ maille gönderildi' if ok else '⚠️ mail gönderilemedi'}</blockquote>")
+        events.append(f"📧 <b>Mail ile kod oluşturuldu</b>\n<blockquote>{esc(frm)} · {days} gün\n{'✅ maille gönderildi' if ok else '⚠️ mail gönderilemedi'}\n"
+                      + (f"📱 {MAIL_DEVICES} cihaz sınırlı" if lim_ok else "⚠️ Cihaz sınırı uygulanamadı (Happ API ücretli planda çalışır) → normal link gitti") + "</blockquote>")
     return events
 
 async def mail_loop(app):
