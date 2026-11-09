@@ -1769,14 +1769,15 @@ def _mail_text(m):
 
 def mail_match(text, kw):
     """kw «rex+08» gibi: içinde bütün parçalar geçen bir kelime aranır (büyük/küçük harf fark etmez),
-    hemen arkasındaki sayı gün sayısıdır. Dönüş: (kelime, gün) ya da None."""
+    hemen arkasındaki sayı gün sayısıdır; en sonda «lock» varsa cihaz sınırlı (Happ). Dönüş: (kelime, gün, lock) ya da None."""
     parts = [x.lower() for x in kw.split("+") if x]
     if not parts: return None
     toks = re.findall(r"\S+", text)
     for i, t in enumerate(toks):
         if all(x in t.lower() for x in parts):
-            nxt = toks[i + 1] if i + 1 < len(toks) else ""
-            return t, max(1, min(365, int(nxt))) if re.fullmatch(r"\d{1,3}", nxt) else MAIL_DEF_DAYS
+            rest = [x.lower() for x in toks[i + 1:i + 3]]
+            days = max(1, min(365, int(rest[0]))) if rest and re.fullmatch(r"\d{1,3}", rest[0]) else MAIL_DEF_DAYS
+            return t, days, "lock" in rest
     return None
 
 def mail_parse(m, me, kw):
@@ -1785,7 +1786,7 @@ def mail_parse(m, me, kw):
     frm = parseaddr(m.get("From", ""))[1].strip().lower()
     if not frm or frm == me.lower() or "mailer-daemon" in frm or "noreply" in frm or "no-reply" in frm: return None
     r = mail_match(_mail_text(m), kw)
-    return (frm, r[1], r[0]) if r else None
+    return (frm, r[1], r[0], r[2]) if r else None
 
 def mail_fetch():
     """Bloklayan iş: kelimeyi içeren YENİ mailleri döner. Okundu/okunmadı durumuna bakmaz ve dokunmaz;
@@ -1831,7 +1832,7 @@ def mail_send(to, subject, text):
 def mail_tick():
     """Bloklayan iş: istekleri okur, kod oluşturur, maille gönderir. Dönüş: kurucuya gidecek olaylar."""
     events = []
-    for frm, days, tok in mail_fetch():
+    for frm, days, tok, lock in mail_fetch():
         now = time.time()
         th = hashlib.sha256(tok.encode("utf-8")).hexdigest()
         def use_(d):
@@ -1848,7 +1849,7 @@ def mail_tick():
             events.append(f"❌ <b>Mail ile kod oluşturulamadı</b>\n<blockquote>{esc(frm)} · {esc(err)}</blockquote>"); continue
         kid, fid = res; MAIL_SENT.append(now)
         lim_ok = False
-        if all(happ_creds()):
+        if lock and all(happ_creds()):   # «lock» yazıldıysa: Happ ücretli plan ile cihaz sınırı
             try: link, enc_ = happ_make(kid, MAIL_DEVICES); lim_ok = enc_   # şifresizse limit linkten silinebilir
             except Exception as e: link = None; log.info("mail happ limit: %s", e)
         else: link = None
@@ -1859,7 +1860,7 @@ def mail_tick():
         except Exception as e: ok = False; log.warning("mail send: %s", e)
         ulog("order", f"📧 Mail ile kod: {frm} · {days} gün · {kid}" + ("" if ok else " (mail gönderilemedi)"))
         events.append(f"📧 <b>Mail ile kod oluşturuldu</b>\n<blockquote>{esc(frm)} · {days} gün\n{'✅ maille gönderildi' if ok else '⚠️ mail gönderilemedi'}\n"
-                      + (f"📱 {MAIL_DEVICES} cihaz sınırlı" if lim_ok else "⚠️ Cihaz sınırı uygulanamadı (Happ API ücretli planda çalışır) → normal link gitti") + "</blockquote>")
+                      + (f"📱 {MAIL_DEVICES} cihaz sınırlı" if lim_ok else "⚠️ Cihaz sınırı uygulanamadı (Happ API ücretli planda çalışır) → normal link gitti" if lock else "🔓 Normal link (lock yazılmadı)") + "</blockquote>")
     return events
 
 async def mail_loop(app):
