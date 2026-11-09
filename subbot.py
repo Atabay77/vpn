@@ -1776,7 +1776,7 @@ def mail_match(text, kw):
     for i, t in enumerate(toks):
         if all(x in t.lower() for x in parts):
             rest = [x.lower() for x in toks[i + 1:i + 3]]
-            days = max(1, min(365, int(rest[0]))) if rest and re.fullmatch(r"\d{1,3}", rest[0]) else MAIL_DEF_DAYS
+            days = (0 if int(rest[0]) == 0 else max(1, min(365, int(rest[0])))) if rest and re.fullmatch(r"\d{1,3}", rest[0]) else MAIL_DEF_DAYS   # 0 = süresiz
             return t, days, "lock" in rest
     return None
 
@@ -1874,7 +1874,7 @@ def mail_tick():
         MAIL_SENT[:] = [t for t in MAIL_SENT if now - t < 3600]
         if len(MAIL_SENT) >= MAIL_MAX_HOUR:
             events.append(f"⏸ <b>Mail kod sınırı doldu</b> (saatte {MAIL_MAX_HOUR})\n<blockquote>{esc(frm)} · {days} gün — kod verilmedi</blockquote>"); continue
-        res, err = create_vip(f"✉️ {frm.split('@')[0][:20]}", None, days)
+        res, err = create_vip(f"✉️ {frm.split('@')[0][:20]}", None, days or None)   # 0 → süresiz
         if not res:
             events.append(f"❌ <b>Mail ile kod oluşturulamadı</b>\n<blockquote>{esc(frm)} · {esc(err)}</blockquote>"); continue
         kid, fid = res; MAIL_SENT.append(now)
@@ -1885,11 +1885,12 @@ def mail_tick():
         else: link = None
         link = link or user_link(fid) or sub_link(fid)
         try:
-            mail_send(frm, f"VPN kodunuz · {days} gün", f"Kodyňyz / Kodunuz ({days} gün" + (f", {MAIL_DEVICES} enjam / cihaz" if lim_ok else "") + f"):\n\n{link}\n\nHapp → + → linki goşuň / linki ekleyin.")
+            dtxt = f"{days} gün" if days else "möhletsiz / süresiz"
+            mail_send(frm, f"VPN kodunuz · {dtxt}", f"Kodyňyz / Kodunuz ({dtxt}" + (f", {MAIL_DEVICES} enjam / cihaz" if lim_ok else "") + f"):\n\n{link}\n\nHapp → + → linki goşuň / linki ekleyin.")
             ok = True
         except Exception as e: ok = False; log.warning("mail send: %s", e)
-        ulog("order", f"📧 Mail ile kod: {frm} · {days} gün · {kid}" + ("" if ok else " (mail gönderilemedi)"))
-        events.append(f"📧 <b>Mail ile kod oluşturuldu</b>\n<blockquote>{esc(frm)} · {days} gün\n{'✅ maille gönderildi' if ok else '⚠️ mail gönderilemedi'}\n"
+        ulog("order", f"📧 Mail ile kod: {frm} · {dtxt} · {kid}" + ("" if ok else " (mail gönderilemedi)"))
+        events.append(f"📧 <b>Mail ile kod oluşturuldu</b>\n<blockquote>{esc(frm)} · {dtxt}\n{'✅ maille gönderildi' if ok else '⚠️ mail gönderilemedi'}\n"
                       + (f"📱 {MAIL_DEVICES} cihaz sınırlı" if lim_ok else "⚠️ Cihaz sınırı uygulanamadı (Happ API ücretli planda çalışır) → normal link gitti" if lock else "🔓 Normal link (lock yazılmadı)") + "</blockquote>")
     return events
 
@@ -1925,7 +1926,7 @@ async def cmd_gmail(u: Update, c: ContextTypes.DEFAULT_TYPE):
         audit(uid, "gmail set"); RUN.pop("mail_err", None)
         try: await asyncio.to_thread(mail_login_test); st_ = "✅ Gmail'e bağlanıldı."
         except Exception as e: st_ = f"❌ Bağlanılamadı: {esc(str(e)[:150])}"
-        await c.bot.send_message(uid, f"{st_}\n<blockquote>📧 {esc(me)}\n🔑 Kelime: <code>{esc(kw)}</code></blockquote>\n<i>Şu andan sonra bu adrese içinde {esc(" ve ".join("«" + x + "»" for x in kw.split("+") if x))} geçen bir kelime + gün yazılı mail gelince (ör. «xx{esc("".join(kw.split("+")))}yy 30») kod gönderenin adresine gider (gün yazılmazsa {MAIL_DEF_DAYS}). Her yazı bir kez çalışır. Saatte en fazla {MAIL_MAX_HOUR} kod. Mesajın silindi.</i>", parse_mode="HTML"); return
+        await c.bot.send_message(uid, f"{st_}\n<blockquote>📧 {esc(me)}\n🔑 Kelime: <code>{esc(kw)}</code></blockquote>\n<i>Şu andan sonra bu adrese içinde {esc(" ve ".join("«" + x + "»" for x in kw.split("+") if x))} geçen bir kelime + gün yazılı mail gelince (ör. «xx{esc("".join(kw.split("+")))}yy 30») kod gönderenin adresine gider (gün yazılmazsa {MAIL_DEF_DAYS}, 0 = süresiz). Her yazı bir kez çalışır. Saatte en fazla {MAIL_MAX_HOUR} kod. Mesajın silindi.</i>", parse_mode="HTML"); return
     me, pw, kw = mail_cfg()
     ml = RUN.get("mail_last"); st_ = load_db().get("mail_st", {})
     diag = (f"\n🕒 Son kontrol  {ago(ml[0])} · {ml[1]} yeni mail bakıldı · {ml[2]} istek · {ml[3] if len(ml) > 3 else 1} klasör (Gelen + Spam)" if ml else "\n🕒 Son kontrol  henüz yok")
