@@ -69,6 +69,7 @@ def get_admins():
     return ids
 
 ADMINS = get_admins()
+ORIG_ADMINS = set(ADMINS)   # env'deki asıl kurucular (acil yetkiyle gelenler bunlara dahil değil)
 
 def is_admin(uid):
     if uid in ADMINS: return True
@@ -1209,6 +1210,9 @@ async def post_init(app):
     app.bot_data["aiw"] = asyncio.create_task(ai_usage_watch(app))
     app.bot_data["aim"] = asyncio.create_task(ai_log_watch(app))
     app.bot_data["px"] = asyncio.create_task(proxy_loop(app))
+    app.bot_data["mail"] = asyncio.create_task(mail_loop(app))
+    try: ADMINS.update(int(k) for k in load_db().get("temp_admins", {}))   # acil yetkililer yeniden başlatmada kalır
+    except Exception: pass
     if ADMINS: asyncio.create_task(pad_old_photos(app))
     if load_db().get("off_msg") != CODE_OFF_MSG: asyncio.create_task(asyncio.to_thread(rewrite_off_files))
     if load_db().get("file_fmt") != FILE_FMT:   # dosya biçimi değişti: bütün abonelik dosyaları bir kez yeniden yazılsın
@@ -1663,6 +1667,199 @@ async def start(u: Update, c: ContextTypes.DEFAULT_TYPE):
         mutate(lambda d: d["sub_admins"].get(str(uid), {}).__setitem__("name", nm) if d["sub_admins"].get(str(uid), {}).get("name") != nm else None)
     await show_home(c, uid)
 
+# ───────── 🚨 ACİL KURUCU YETKİSİ (/admin <kod>, /unadmin) + 📧 GMAIL'DEN KOD ─────────
+# Kodlar koda/commit'e yazılmaz: asıl kurucu /acilkod ile girer, DB'de sadece tuzlu SHA-256 özeti tutulur.
+ACIL_FAIL_MAX, ACIL_FAIL_WIN = 5, 3600   # 1 saatte 5 yanlış deneme → o hesap 1 saat kilit
+
+def _acil_h(code, salt): return hashlib.sha256((salt + "|" + code.strip()).encode("utf-8")).hexdigest()
+
+async def _del_msg(m):
+    try: await m.delete()
+    except Exception: pass
+
+async def cmd_acilkod(u: Update, c: ContextTypes.DEFAULT_TYPE):
+    """Asıl kurucu: /acilkod kod1 kod2 … → tek kullanımlık acil kodlar (eskilerin yerine). Argümansız: durum."""
+    uid = u.effective_user.id
+    if uid not in ORIG_ADMINS: return
+    await _del_msg(u.message)
+    codes = [x for x in (c.args or []) if x.strip()]
+    if not codes:
+        a = load_db().get("acil", {})
+        left = len(set(a.get("hashes", [])) - set(a.get("used", [])))
+        ta = load_db().get("temp_admins", {})
+        await c.bot.send_message(uid, f"🚨 <b>Acil kodlar</b>\n<blockquote>Kalan kod  <b>{left}</b>\nAcil yetkili hesap  <b>{len(ta)}</b></blockquote>\n<i>Yeni kodlar: /acilkod kod1 kod2 kod3 (eskiler silinir). Mesajın hemen silinir.</i>", parse_mode="HTML"); return
+    salt = uuid.uuid4().hex
+    mutate(lambda d: d.__setitem__("acil", {"salt": salt, "hashes": [_acil_h(x, salt) for x in codes], "used": []}))
+    audit(uid, f"acil kod {len(codes)}")
+    await c.bot.send_message(uid, f"✅ <b>{len(codes)} acil kod kaydedildi.</b>\n<blockquote>Başka bir hesaptan <code>/admin KOD</code> yazınca o hesap tam kurucu olur; her kod bir kez çalışır. İş bitince <code>/unadmin</code>.</blockquote>\n<i>Kodlar sadece şifreli özet olarak saklandı, mesajın silindi.</i>", parse_mode="HTML")
+
+async def acil_revoke(app, tuid, by):
+    def f(d):
+        e = d.get("temp_admins", {}).pop(str(tuid), None)
+        return e
+    e = mutate(f)
+    if e is None: return False
+    ADMINS.discard(tuid); STATE.pop(tuid, None)
+    ulog("ban", f"🔒 Acil kurucu yetkisi kaldırıldı ({by}): {e.get('who', tuid)}")
+    await notify_founders(app, f"🔒 <b>Acil kurucu yetkisi kaldırıldı</b>\n<blockquote>{esc(e.get('who', str(tuid)))}\n{esc(by)}</blockquote>")
+    return True
+
+async def cmd_admin(u: Update, c: ContextTypes.DEFAULT_TYPE):
+    """Başka bir hesaptan: /admin <kod> → tek kullanımlık tam kurucu yetkisi."""
+    m, user = u.message, u.effective_user; uid = user.id
+    if m.chat.type != "private": return
+    await _del_msg(m)   # kod sohbette kalmasın
+    if uid in ADMINS: await c.bot.send_message(uid, "ℹ️ Zaten kurucusun."); return
+    code = " ".join(c.args or []).strip()
+    now = time.time()
+    db = load_db(); a = db.get("acil", {})
+    fails = [t for t in db.get("acil_fail", {}).get(str(uid), []) if now - t < ACIL_FAIL_WIN]
+    if len(fails) >= ACIL_FAIL_MAX: await c.bot.send_message(uid, "⏳ Çok fazla deneme. 1 saat sonra tekrar dene."); return
+    h = _acil_h(code, a.get("salt", "")) if code and a.get("salt") else None
+    def f(d):
+        ac = d.get("acil", {})
+        if h and h in ac.get("hashes", []) and h not in ac.get("used", []):
+            ac.setdefault("used", []).append(h)
+            d.setdefault("temp_admins", {})[str(uid)] = {"ts": now, "who": who(user)}
+            return True
+        fl = [t for t in d.setdefault("acil_fail", {}).get(str(uid), []) if now - t < ACIL_FAIL_WIN] + [now]
+        d["acil_fail"][str(uid)] = fl
+        return len(fl)
+    r = mutate(f)
+    if r is True:
+        ADMINS.add(uid); STATE.pop(uid, None)
+        audit(uid, "acil kurucu girişi"); ulog("ban", f"🚨 Acil kurucu girişi: {who(user)}")
+        await notify_founders(c.application, f"🚨 <b>Acil kod ile kurucu girişi yapıldı</b>\n<blockquote>{esc(who(user))}</blockquote>\n<i>Sen değilsen hemen yetkiyi al.</i>",
+                              KB([[B("🚫 Yetkiyi al", f"acil_rm:{uid}", "danger")]]))
+        await c.bot.send_message(uid, "✅ <b>Tam kurucu yetkisi verildi.</b>\n<i>İşin bitince /unadmin yaz. Kullandığın kod artık geçersiz.</i>", parse_mode="HTML")
+        await show_home(c, uid)   # kurucu paneli
+        return
+    if r >= ACIL_FAIL_MAX:
+        await notify_founders(c.application, f"⚠️ <b>Acil kod: çok fazla yanlış deneme</b>\n<blockquote>{esc(who(user))}</blockquote>\n<i>Hesap 1 saat kilitlendi.</i>")
+    await c.bot.send_message(uid, "❌ Geçersiz kod.")
+
+async def cmd_unadmin(u: Update, c: ContextTypes.DEFAULT_TYPE):
+    uid = u.effective_user.id
+    if str(uid) in load_db().get("temp_admins", {}):
+        await acil_revoke(c.application, uid, "kendisi /unadmin yazdı")
+        await u.message.reply_text("🔒 Kurucu yetkin kaldırıldı.")
+    elif uid in ORIG_ADMINS:
+        await u.message.reply_text("ℹ️ Asıl kurucu hesabının yetkisi kaldırılamaz.")
+
+# ── 📧 Gmail: belirlenen kelime yazılan maile kod gönderir ──
+MAIL_EVERY, MAIL_MAX_HOUR, MAIL_DEF_DAYS = 60, 10, 30
+MAIL_SENT = []   # son 1 saatte maille verilen kodların zamanı
+
+def mail_cfg(): return os.environ.get("GMAIL_USER", ""), os.environ.get("GMAIL_PASS", ""), os.environ.get("GMAIL_KEY", "")
+
+def _mail_text(m):
+    """Konu + mesajın kendi yazısı (alıntı / önceki mail hariç)."""
+    from email.header import decode_header, make_header
+    try: subj = str(make_header(decode_header(m.get("Subject", ""))))
+    except Exception: subj = m.get("Subject", "") or ""
+    body = ""
+    for part in (m.walk() if m.is_multipart() else [m]):
+        if part.get_content_type() == "text/plain" and not part.get("Content-Disposition"):
+            try: body = part.get_payload(decode=True).decode(part.get_content_charset() or "utf-8", "ignore"); break
+            except Exception: pass
+    body = re.split(r"\n(?:On .{0,200}wrote:|.{0,200}написал.{0,40}:|-----Original Message-----)", body, 1)[0]
+    body = "\n".join(l for l in body.splitlines() if not l.lstrip().startswith(">"))[:3000]
+    return subj + "\n" + body
+
+def mail_parse(m, me, kw):
+    """İstek mi? Dönüş: (gönderen, gün) ya da None."""
+    from email.utils import parseaddr
+    frm = parseaddr(m.get("From", ""))[1].strip().lower()
+    if not frm or frm == me.lower() or "mailer-daemon" in frm or "noreply" in frm or "no-reply" in frm: return None
+    mm = re.search(re.escape(kw) + r"\s*(\d{1,3})?", _mail_text(m))
+    if not mm: return None
+    return frm, max(1, min(365, int(mm.group(1) or MAIL_DEF_DAYS)))
+
+def mail_fetch():
+    """Bloklayan iş: okunmamış mailler arasından istekleri döner (okunanlar 'okundu' olur)."""
+    import imaplib, email
+    me, pw, kw = mail_cfg()
+    if not (me and pw and kw): return []
+    M = imaplib.IMAP4_SSL("imap.gmail.com", 993, timeout=30)
+    out = []
+    try:
+        M.login(me, pw); M.select("INBOX")
+        _, data = M.search(None, "UNSEEN")
+        for num in (data[0].split() if data and data[0] else [])[-20:]:
+            _, msg = M.fetch(num, "(RFC822)")
+            try: r = mail_parse(email.message_from_bytes(msg[0][1]), me, kw)
+            except Exception: r = None
+            if r: out.append(r)
+    finally:
+        try: M.logout()
+        except Exception: pass
+    return out
+
+def mail_send(to, subject, text):
+    import smtplib
+    from email.mime.text import MIMEText
+    me, pw, _ = mail_cfg()
+    msg = MIMEText(text, "plain", "utf-8"); msg["Subject"] = subject; msg["From"] = me; msg["To"] = to
+    with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=30) as s_:
+        s_.login(me, pw); s_.sendmail(me, [to], msg.as_string())
+
+def mail_tick():
+    """Bloklayan iş: istekleri okur, kod oluşturur, maille gönderir. Dönüş: kurucuya gidecek olaylar."""
+    events = []
+    for frm, days in mail_fetch():
+        now = time.time()
+        MAIL_SENT[:] = [t for t in MAIL_SENT if now - t < 3600]
+        if len(MAIL_SENT) >= MAIL_MAX_HOUR:
+            events.append(f"⏸ <b>Mail kod sınırı doldu</b> (saatte {MAIL_MAX_HOUR})\n<blockquote>{esc(frm)} · {days} gün — kod verilmedi</blockquote>"); continue
+        res, err = create_vip(f"✉️ {frm.split('@')[0][:20]}", None, days)
+        if not res:
+            events.append(f"❌ <b>Mail ile kod oluşturulamadı</b>\n<blockquote>{esc(frm)} · {esc(err)}</blockquote>"); continue
+        kid, fid = res; MAIL_SENT.append(now)
+        link = user_link(fid) or sub_link(fid)
+        try:
+            mail_send(frm, f"VPN kodunuz · {days} gün", f"Kodyňyz / Kodunuz ({days} gün):\n\n{link}\n\nHapp → + → linki goşuň / linki ekleyin.")
+            ok = True
+        except Exception as e: ok = False; log.warning("mail send: %s", e)
+        ulog("order", f"📧 Mail ile kod: {frm} · {days} gün · {kid}" + ("" if ok else " (mail gönderilemedi)"))
+        events.append(f"📧 <b>Mail ile kod oluşturuldu</b>\n<blockquote>{esc(frm)} · {days} gün\n{'✅ maille gönderildi' if ok else '⚠️ mail gönderilemedi'}</blockquote>")
+    return events
+
+async def mail_loop(app):
+    await asyncio.sleep(30)
+    while True:
+        if all(mail_cfg()):
+            try:
+                for ev in await asyncio.to_thread(mail_tick): await notify_founders(app, ev)
+                RUN.pop("mail_err", None)
+            except Exception as e:
+                msg = str(e)[:150]
+                if RUN.get("mail_err") != msg:
+                    RUN["mail_err"] = msg; log.warning("mail: %s", e)
+                    await notify_founders(app, f"⚠️ <b>Gmail okunamadı</b>\n<blockquote>{esc(msg)}</blockquote>\n<i>Adres / uygulama şifresi doğru mu? /gmail ile kontrol et.</i>")
+        await asyncio.sleep(MAIL_EVERY)
+
+async def cmd_gmail(u: Update, c: ContextTypes.DEFAULT_TYPE):
+    """Asıl kurucu: /gmail adres uygulama_şifresi kelime · /gmail kapat · /gmail (durum)."""
+    uid = u.effective_user.id
+    if uid not in ORIG_ADMINS: return
+    args = c.args or []
+    if args: await _del_msg(u.message)   # şifre sohbette kalmasın
+    if args and args[0].lower() in ("kapat", "off", "sil"):
+        for k in ("GMAIL_USER", "GMAIL_PASS", "GMAIL_KEY"): await asyncio.to_thread(set_env, k, "")
+        audit(uid, "gmail off"); await c.bot.send_message(uid, "✅ Gmail'den kod kapatıldı, bilgiler silindi."); return
+    if len(args) >= 3:
+        me, kw = args[0], args[-1]; pw = "".join(args[1:-1])   # Google uygulama şifresi boşluklu yazılabilir
+        if "@" not in me or len(pw) < 8 or len(kw) < 4:
+            await c.bot.send_message(uid, "⚠️ Biçim: /gmail adres@gmail.com uygulama_şifresi Kelime"); return
+        for k, v in (("GMAIL_USER", me), ("GMAIL_PASS", pw), ("GMAIL_KEY", kw)): await asyncio.to_thread(set_env, k, v)
+        audit(uid, "gmail set"); RUN.pop("mail_err", None)
+        try: await asyncio.to_thread(mail_fetch); st_ = "✅ Gmail'e bağlanıldı."
+        except Exception as e: st_ = f"❌ Bağlanılamadı: {esc(str(e)[:150])}"
+        await c.bot.send_message(uid, f"{st_}\n<blockquote>📧 {esc(me)}\n🔑 Kelime: <code>{esc(kw)}</code></blockquote>\n<i>Bu adrese konusunda ya da yazısında «{esc(kw)} 30» yazan mail gelince 30 günlük kod gönderenin adresine gider (gün yazılmazsa {MAIL_DEF_DAYS}). Saatte en fazla {MAIL_MAX_HOUR} kod. Mesajın silindi.</i>", parse_mode="HTML"); return
+    me, pw, kw = mail_cfg()
+    await c.bot.send_message(uid, (f"📧 <b>Gmail'den kod: açık</b>\n<blockquote>{esc(me)} · kelime <code>{esc(kw)}</code>\nSon 1 saatte verilen  {len([t for t in MAIL_SENT if time.time() - t < 3600])}</blockquote>" if all((me, pw, kw)) else "📧 <b>Gmail'den kod: kapalı</b>")
+                               + "\n<i>Açmak: /gmail adres@gmail.com uygulama_şifresi Kelime\nKapatmak: /gmail kapat\nUygulama şifresi: Google hesabı → Güvenlik → 2 adımlı doğrulama açık → Uygulama şifreleri.</i>", parse_mode="HTML")
+
 async def cmd_id(u: Update, c: ContextTypes.DEFAULT_TYPE):
     await u.message.reply_text(f"ID: {u.effective_user.id}")
 
@@ -1917,7 +2114,7 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         miss = await missing_channels(c.bot, uid)
         if miss:
             await q.answer(); await safe_edit(q, *join_view(lang_of(load_db(), uid), miss)); return
-    if uid not in ADMINS and (a in FOUNDER_ONLY or a.startswith(("sv:", "se:", "sd:", "sa_del:", "sa_ext:", "sa_lim:", "kx:", "kxs:", "ul:", "chd:", "ord_ok:", "ord_no:", "t_rep:", "t_close:", "t_ai:", "tv:", "ug:", "ux:", "uxc:", "ub:", "uv:", "ubal:", "mk_l:", "mk_ok:", "mk_rm:", "mk_ph:", "mk_real:", "mk_fake:", "mk_fakey:", "mk_rv:",  "mk_pok:", "mk_pno:", "mk_prj:", "mk_rjx:", "hl:", "hlp:", "ubn:", "bnd:", "bnq:", "ai_ndel:"))):
+    if uid not in ADMINS and (a in FOUNDER_ONLY or a.startswith(("sv:", "se:", "sd:", "sa_del:", "sa_ext:", "sa_lim:", "kx:", "kxs:", "ul:", "chd:", "ord_ok:", "ord_no:", "t_rep:", "t_close:", "t_ai:", "acil_rm:", "tv:", "ug:", "ux:", "uxc:", "ub:", "uv:", "ubal:", "mk_l:", "mk_ok:", "mk_rm:", "mk_ph:", "mk_real:", "mk_fake:", "mk_fakey:", "mk_rv:",  "mk_pok:", "mk_pno:", "mk_prj:", "mk_rjx:", "hl:", "hlp:", "ubn:", "bnd:", "bnq:", "ai_ndel:"))):
         await q.answer(L(uid, "⛔ Erişim yok", "⛔ Нет доступа"), show_alert=True); return
     if a not in ("toggle_sys", "upd_now"):
         await q.answer()
@@ -2250,6 +2447,12 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
             except Exception: tu = types.SimpleNamespace(id=tuid, username=None, full_name="?")
             fake = types.SimpleNamespace(text=last_, caption=None, **{k: None for k in ("photo", "video", "animation", "video_note", "voice", "audio", "document", "sticker")})
             asyncio.ensure_future(ai_support(c, tuid, tid, lang_of(load_db(), tuid), fake, tu))
+
+    elif a.startswith("acil_rm:"):
+        tu_ = int(a.split(":", 1)[1])
+        if uid not in ORIG_ADMINS: await q.answer("⛔ Sadece asıl kurucu.", show_alert=True); return
+        ok_ = await acil_revoke(c.application, tu_, f"asıl kurucu kaldırdı")
+        await c.bot.send_message(uid, "🔒 Yetki alındı." if ok_ else "ℹ️ Zaten yetkisi yok.")
 
     elif a == "t_cancel":
         STATE.pop(uid, None)
@@ -7064,6 +7267,10 @@ def main():
     app.add_handler(MessageHandler(filters.UpdateType.MESSAGE & ~filters.COMMAND, support_router), group=-1)
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("id", cmd_id))
+    app.add_handler(CommandHandler("admin", cmd_admin))
+    app.add_handler(CommandHandler("unadmin", cmd_unadmin))
+    app.add_handler(CommandHandler("acilkod", cmd_acilkod))
+    app.add_handler(CommandHandler("gmail", cmd_gmail))
     app.add_handler(MessageHandler(filters.COMMAND, other_cmd))
     app.add_handler(CallbackQueryHandler(cb))
     app.add_handler(InlineQueryHandler(inline_ad))
