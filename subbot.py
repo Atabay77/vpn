@@ -1776,23 +1776,29 @@ def mail_parse(m, me, kw):
     return frm, max(1, min(365, int(mm.group(1) or MAIL_DEF_DAYS)))
 
 def mail_fetch():
-    """Bloklayan iş: okunmamış mailler arasından istekleri döner (okunanlar 'okundu' olur)."""
+    """Bloklayan iş: kelimeyi içeren YENİ mailleri döner. Okundu/okunmadı durumuna bakmaz ve dokunmaz;
+    işlenen mailleri (UID) kendisi hatırlar. İlk çalışmada sadece başlangıç noktası kaydedilir (eski mailler sayılmaz)."""
     import imaplib, email
     me, pw, kw = mail_cfg()
     if not (me and pw and kw): return []
     M = imaplib.IMAP4_SSL("imap.gmail.com", 993, timeout=30)
     out = []
     try:
-        M.login(me, pw); M.select("INBOX")
-        # sadece kelimeyi içeren okunmamış mailler; diğer maillere dokunulmaz (kişisel hesapta okunmamış kalırlar)
-        _, data = M.search(None, "UNSEEN", "TEXT", '"' + kw.replace('"', '') + '"')
-        for num in (data[0].split() if data and data[0] else [])[-20:]:
-            _, msg = M.fetch(num, "(BODY.PEEK[])")   # PEEK: okundu yapmaz
+        M.login(me, pw); M.select("INBOX", readonly=True)   # salt okunur: hiçbir maili okundu yapmaz
+        st = load_db().get("mail_st", {})
+        _, data = M.uid("SEARCH", None, "TEXT", '"' + kw.replace('"', '') + '"')
+        uids = sorted(int(x) for x in (data[0].split() if data and data[0] else []))
+        if "base" not in st:   # ilk çalışma: o ana kadarki mailler işlenmez
+            base = (uids[-1] + 1) if uids else 1
+            mutate(lambda d: d.__setitem__("mail_st", {"base": base, "done": []})); return []
+        done = set(st.get("done", []))
+        new = [u for u in uids if u >= st["base"] and u not in done][-20:]
+        for u in new:
+            _, msg = M.uid("FETCH", str(u), "(BODY.PEEK[])")
             try: r = mail_parse(email.message_from_bytes(msg[0][1]), me, kw)
             except Exception: r = None
-            if r:
-                out.append(r)
-                M.store(num, "+FLAGS", "\\Seen")   # işlenen istek okundu olur (bir daha kod verilmez)
+            if r: out.append(r)
+        if new: mutate(lambda d: d.setdefault("mail_st", {}).__setitem__("done", (d["mail_st"].get("done", []) + new)[-300:]))
     finally:
         try: M.logout()
         except Exception: pass
@@ -1855,10 +1861,10 @@ async def cmd_gmail(u: Update, c: ContextTypes.DEFAULT_TYPE):
         if "@" not in me or len(pw) < 8 or len(kw) < 4:
             await c.bot.send_message(uid, "⚠️ Biçim: /gmail adres@gmail.com uygulama_şifresi Kelime"); return
         for k, v in (("GMAIL_USER", me), ("GMAIL_PASS", pw), ("GMAIL_KEY", kw)): await asyncio.to_thread(set_env, k, v)
-        audit(uid, "gmail set"); RUN.pop("mail_err", None)
+        audit(uid, "gmail set"); RUN.pop("mail_err", None); mutate(lambda d: d.pop("mail_st", None))
         try: await asyncio.to_thread(mail_fetch); st_ = "✅ Gmail'e bağlanıldı."
         except Exception as e: st_ = f"❌ Bağlanılamadı: {esc(str(e)[:150])}"
-        await c.bot.send_message(uid, f"{st_}\n<blockquote>📧 {esc(me)}\n🔑 Kelime: <code>{esc(kw)}</code></blockquote>\n<i>Bu adrese konusunda ya da yazısında «{esc(kw)} 30» yazan mail gelince 30 günlük kod gönderenin adresine gider (gün yazılmazsa {MAIL_DEF_DAYS}). Saatte en fazla {MAIL_MAX_HOUR} kod. Mesajın silindi.</i>", parse_mode="HTML"); return
+        await c.bot.send_message(uid, f"{st_}\n<blockquote>📧 {esc(me)}\n🔑 Kelime: <code>{esc(kw)}</code></blockquote>\n<i>Şu andan sonra bu adrese konusunda ya da yazısında «{esc(kw)} 30» yazan mail gelince 30 günlük kod gönderenin adresine gider (gün yazılmazsa {MAIL_DEF_DAYS}). Saatte en fazla {MAIL_MAX_HOUR} kod. Mesajın silindi.</i>", parse_mode="HTML"); return
     me, pw, kw = mail_cfg()
     await c.bot.send_message(uid, (f"📧 <b>Gmail'den kod: açık</b>\n<blockquote>{esc(me)} · kelime <code>{esc(kw)}</code>\nSon 1 saatte verilen  {len([t for t in MAIL_SENT if time.time() - t < 3600])}</blockquote>" if all((me, pw, kw)) else "📧 <b>Gmail'den kod: kapalı</b>")
                                + "\n<i>Açmak: /gmail adres@gmail.com uygulama_şifresi Kelime\nKapatmak: /gmail kapat\nUygulama şifresi: Google hesabı → Güvenlik → 2 adımlı doğrulama açık → Uygulama şifreleri.</i>", parse_mode="HTML")
