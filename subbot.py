@@ -1784,12 +1784,15 @@ def mail_fetch():
     out = []
     try:
         M.login(me, pw); M.select("INBOX")
-        _, data = M.search(None, "UNSEEN")
+        # sadece kelimeyi içeren okunmamış mailler; diğer maillere dokunulmaz (kişisel hesapta okunmamış kalırlar)
+        _, data = M.search(None, "UNSEEN", "TEXT", '"' + kw.replace('"', '') + '"')
         for num in (data[0].split() if data and data[0] else [])[-20:]:
-            _, msg = M.fetch(num, "(RFC822)")
+            _, msg = M.fetch(num, "(BODY.PEEK[])")   # PEEK: okundu yapmaz
             try: r = mail_parse(email.message_from_bytes(msg[0][1]), me, kw)
             except Exception: r = None
-            if r: out.append(r)
+            if r:
+                out.append(r)
+                M.store(num, "+FLAGS", "\\Seen")   # işlenen istek okundu olur (bir daha kod verilmez)
     finally:
         try: M.logout()
         except Exception: pass
