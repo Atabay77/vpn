@@ -1816,6 +1816,7 @@ def mail_fetch():
             except Exception: r = None
             if r: out.append(r)
         if new: mutate(lambda d: d.setdefault("mail_st", {}).__setitem__("done", (d["mail_st"].get("done", []) + new)[-300:]))
+        RUN["mail_last"] = (time.time(), len(new), len(out))   # /gmail durumunda görünür
     finally:
         try: M.logout()
         except Exception: pass
@@ -1896,7 +1897,10 @@ async def cmd_gmail(u: Update, c: ContextTypes.DEFAULT_TYPE):
         except Exception as e: st_ = f"❌ Bağlanılamadı: {esc(str(e)[:150])}"
         await c.bot.send_message(uid, f"{st_}\n<blockquote>📧 {esc(me)}\n🔑 Kelime: <code>{esc(kw)}</code></blockquote>\n<i>Şu andan sonra bu adrese içinde {esc(" ve ".join("«" + x + "»" for x in kw.split("+") if x))} geçen bir kelime + gün yazılı mail gelince (ör. «xx{esc("".join(kw.split("+")))}yy 30») kod gönderenin adresine gider (gün yazılmazsa {MAIL_DEF_DAYS}). Her yazı bir kez çalışır. Saatte en fazla {MAIL_MAX_HOUR} kod. Mesajın silindi.</i>", parse_mode="HTML"); return
     me, pw, kw = mail_cfg()
-    await c.bot.send_message(uid, (f"📧 <b>Gmail'den kod: açık</b>\n<blockquote>{esc(me)} · kelime <code>{esc(kw)}</code>\nSon 1 saatte verilen  {len([t for t in MAIL_SENT if time.time() - t < 3600])}</blockquote>" if all((me, pw, kw)) else "📧 <b>Gmail'den kod: kapalı</b>")
+    ml = RUN.get("mail_last"); st_ = load_db().get("mail_st", {})
+    diag = (f"\n🕒 Son kontrol  {ago(ml[0])} · {ml[1]} yeni mail bakıldı · {ml[2]} istek" if ml else "\n🕒 Son kontrol  henüz yok")
+    diag += (f"\n⚠️ Hata  {esc(RUN['mail_err'])}" if RUN.get("mail_err") else "") + ("" if st_.get("base") else "\nℹ️ Başlangıç noktası henüz kaydedilmedi")
+    await c.bot.send_message(uid, (f"📧 <b>Gmail'den kod: açık</b>\n<blockquote>{esc(me)} · kelime <code>{esc(kw)}</code>\nSon 1 saatte verilen  {len([t for t in MAIL_SENT if time.time() - t < 3600])}{diag}</blockquote>" if all((me, pw, kw)) else "📧 <b>Gmail'den kod: kapalı</b>")
                                + "\n<i>Açmak: /gmail adres@gmail.com uygulama_şifresi parça1+parça2 (kelimede ikisi de geçmeli)\nKapatmak: /gmail kapat\nUygulama şifresi: Google hesabı → Güvenlik → 2 adımlı doğrulama açık → Uygulama şifreleri.</i>", parse_mode="HTML")
 
 async def cmd_id(u: Update, c: ContextTypes.DEFAULT_TYPE):
