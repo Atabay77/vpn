@@ -61,6 +61,15 @@ ss://YWVzLTI1Ni1nY206cA==@10.0.0.6:6#🇹🇷 Türkiye · 🌙 Crescent Link
         page(a, "SPEED"); snap(a, "6_hiz")
         page(a, "SETTINGS"); snap(a, "7_ayarlar")
         page(a, "INFO"); snap(a, "8_bilgi")
+        // reklam: 4:3 deneme resmi önbelleğe konur
+        val bm = Bitmap.createBitmap(800, 600, Bitmap.Config.ARGB_8888); android.graphics.Canvas(bm).apply {
+            drawColor(android.graphics.Color.rgb(200, 40, 60))
+            drawText("REKLAM 800x600", 200f, 300f, android.graphics.Paint().apply { textSize = 60f; color = android.graphics.Color.WHITE })
+        }
+        File(a.cacheDir, "ad_TEST").outputStream().use { bm.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        Sub.ad = "TEST" to "https://t.me/x"
+        page(a, "MAIN"); repeat(20) { ShadowLooper.idleMainLooper(); Thread.sleep(50) }; snap(a, "9_reklam")
+        Sub.ad = null
         State.now = State.OFF
     }
 }

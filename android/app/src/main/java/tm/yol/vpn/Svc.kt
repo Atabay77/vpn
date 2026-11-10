@@ -59,26 +59,35 @@ object State {
         pingAt = System.currentTimeMillis()
     }
 
-    /** Otomatik: Rusya ve oyun sunucuları hariç en hızlı. Taze ölçüm varsa hemen, yoksa en çok ~3.5 sn. */
+    @Volatile var noPing = false   // son otomatik denemede hiçbir kod yanıt vermedi
+
+    /**
+     * Otomatik: her bağlanmada Rusya ve oyun dışındaki bütün kodlara gerçekten ping atılır,
+     * yanıt verenlerden biri seçilir (ilk yanıttan sonra kısa süre beklenir, iyi olanlar arasından rastgele).
+     * Hiçbiri yanıt vermezse null: ms vermeyen koda asla bağlanılmaz.
+     */
     fun best(): Server? {
+        noPing = false
         val c = cands()
-        if (c.size <= 1) return c.firstOrNull()
-        if (System.currentTimeMillis() - pingAt < 10 * 60_000) {
-            c.filter { (pings[it.key] ?: -1) > 0 }.minByOrNull { pings[it.key]!! }?.let { return it }
-        }
+        if (c.isEmpty()) return null
         val got = ConcurrentHashMap<Server, Long>()
         val pool = java.util.concurrent.Executors.newFixedThreadPool(minOf(c.size, 8))
         c.forEach { s -> pool.execute { ping(s).takeIf { it > 0 }?.let { got[s] = it } } }
         pool.shutdown()
-        val end = System.currentTimeMillis() + 3500
+        val end = System.currentTimeMillis() + 9000
         var first = 0L
         while (System.currentTimeMillis() < end && !pool.isTerminated) {
             if (got.isNotEmpty() && first == 0L) first = System.currentTimeMillis()
-            if (first > 0 && System.currentTimeMillis() - first > 600) break   // ilk sonuçtan sonra kısa bekleme
+            if (first > 0 && System.currentTimeMillis() - first > 1200) break   // ilk yanıttan sonra 1.2 sn daha
             Thread.sleep(80)
         }
         pool.shutdownNow()
-        return got.minByOrNull { it.value }?.key ?: c.first()
+        pingAt = System.currentTimeMillis()
+        if (got.isEmpty()) { noPing = true; return null }
+        val min = got.values.min()
+        val good = got.filter { it.value <= min * 2 + 150 }.keys.toList()   // en iyiye yakın olanlar
+        val last = active?.key
+        return (good.filter { it.key != last }.ifEmpty { good }).random()     // her seferinde aynısına takılmasın
     }
     const val PING = "https://www.gstatic.com/generate_204"
 }
@@ -122,7 +131,8 @@ class Svc : VpnService() {
             stopCore()
             // liste 10 dk'dan eskiyse kısa bekleyerek yenile; yoksa hemen bağlan (yenileme sonra)
             if (Sub.list.isEmpty() || System.currentTimeMillis() - Sub.okAt > 10 * 60_000) Sub.refresh(this, 3500)
-            val s = State.selected(this) ?: State.best() ?: throw IllegalStateException("liste boş")
+            State.noPing = false
+            val s = State.selected(this) ?: State.best() ?: throw IllegalStateException("ping yok")
             State.active = s
             val cfg = Cfg.full(s.uri, true)
             Libv2ray.initCoreEnv(filesDir.absolutePath, "")

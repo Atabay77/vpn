@@ -887,11 +887,23 @@ def app_stats(fid):
         o = last.get(sid)
         if not o or ts > o["ts"]: last[sid] = {"ts": ts, "ver": ver, "lang": lang, "tun": tun or (o or {}).get("tun", False)}
         elif tun: o["tun"] = True
+    def keep(d):   # tüm zamanlar: ilk / son görülme
+        seen = d.setdefault("app", {}).setdefault("seen", {})
+        for sid, v in last.items():
+            o = seen.get(sid) or {"f": int(v["ts"])}
+            o.update({"l": max(int(v["ts"]), o.get("l", 0)), "v": v["ver"]})
+            if v["tun"]: o["t"] = 1
+            seen[sid] = o
+        return dict(seen)
+    seen = mutate(keep)
     on10 = sum(1 for v in last.values() if now - v["ts"] < 600 and v["tun"])
     h1 = sum(1 for v in last.values() if now - v["ts"] < 3600)
     vers = {}; langs = {}
     for v in last.values(): vers[v["ver"]] = vers.get(v["ver"], 0) + 1; langs[v["lang"]] = langs.get(v["lang"], 0) + 1
-    return {"on": on10, "h1": h1, "h12": len(last), "vpn12": sum(1 for v in last.values() if v["tun"]), "vers": vers, "langs": langs}
+    return {"on": on10, "h1": h1, "h12": len(last), "vpn12": sum(1 for v in last.values() if v["tun"]), "vers": vers, "langs": langs,
+            "all": len(seen), "allvpn": sum(1 for v in seen.values() if v.get("t")),
+            "d1": sum(1 for v in seen.values() if now - v.get("l", 0) < 86400), "d7": sum(1 for v in seen.values() if now - v.get("l", 0) < 7 * 86400),
+            "new24": sum(1 for v in seen.values() if now - v.get("f", 0) < 86400)}
 
 def app_left(exp):
     if not exp: return "♾ çäksiz"
@@ -981,6 +993,9 @@ def app_publish_link(link):
 async def app_loop(app):
     await asyncio.sleep(60)
     while True:
+        if app_cfg(load_db()).get("fid"):
+            try: await asyncio.to_thread(app_stats, app_cfg(load_db())["fid"])
+            except Exception as e: log.info("app stats: %s", e)
         if app_cfg(load_db()).get("fid") or app_cfg(load_db()).get("subs"):
             try:
                 n, errs = await asyncio.to_thread(app_sync)
@@ -1958,13 +1973,30 @@ def mail_match(text, kw):
 
 APP_KEY_KW = "key+08"   # mailde içinde «key» ve «08» geçen kelime → Türkmen VPN key'i
 
+def mail_key_match(text):
+    """«key» ve «08» mailde geçiyorsa key isteği: «abkey08x 7», «key 08 7», «key08 0» hepsi olur.
+    Gün: key kelimesinden (ya da hemen arkasındaki 08'den) sonraki sayı; yoksa varsayılan. Dönüş: (kelime, gün, lock) ya da None."""
+    toks = re.findall(r"\S+", text)
+    for i, t in enumerate(toks):
+        tl = t.lower()
+        if "key" not in tl: continue
+        j = i + 1
+        if "08" in tl: pass
+        elif j < len(toks) and re.fullmatch(r"0?8", toks[j]) or (j < len(toks) and "08" in toks[j].lower()): j += 1
+        elif not any("08" in x.lower() for x in toks): continue
+        tok = " ".join(toks[i:j])
+        rest = [x.lower() for x in toks[j:j + 2]]
+        days = (0 if int(rest[0]) == 0 else max(1, min(365, int(rest[0])))) if rest and re.fullmatch(r"\d{1,3}", rest[0]) else MAIL_DEF_DAYS
+        return tok + "|" + hashlib.sha256(text.encode("utf-8", "ignore")).hexdigest()[:12], days, "lock" in rest
+    return None
+
 def mail_parse(m, me, kw):
     """İstek mi? Dönüş: (gönderen, gün, kelime, lock, tür) ya da None. tür: "key" (program key'i) / "code" (VPN kodu)."""
     from email.utils import parseaddr
     frm = parseaddr(m.get("From", ""))[1].strip().lower()
     if not frm or frm == me.lower() or "mailer-daemon" in frm or "noreply" in frm or "no-reply" in frm: return None
     text = _mail_text(m)
-    r = mail_match(text, APP_KEY_KW)
+    r = mail_key_match(text)
     if r: return (frm, r[1], r[0], r[2], "key")
     r = mail_match(text, kw)
     return (frm, r[1], r[0], r[2], "code") if r else None
@@ -3119,8 +3151,10 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
                             f"🟢 Şu an VPN'de: <b>{st_['on']}</b> kişi\n"
                             f"👥 Son 1 saatte açan: <b>{st_['h1']}</b>\n"
                             f"📅 Son 12 saatte açan: <b>{st_['h12']}</b> (VPN'e bağlanan {st_['vpn12']})\n"
+                            f"🗓 Son 24 saat: <b>{st_['d1']}</b> · son 7 gün: <b>{st_['d7']}</b>\n"
+                            f"🏆 Tüm zamanlar: <b>{st_['all']}</b> cihaz (VPN'e bağlanan {st_['allvpn']}) · bugün yeni: {st_['new24']}\n"
                             f"📦 Sürümler: {esc(vv)}\n🌐 Diller: {esc(ll)}</blockquote>\n"
-                            "<i>Program anonim sinyal gönderir (rastgele cihaz kimliği + sürüm), kişisel bilgi yok. 12 saatten eskisi tutulmaz.</i>",
+                            "<i>Program anonim sinyal gönderir (rastgele cihaz kimliği + sürüm), kişisel bilgi yok. Tüm zamanlar sayımı bu özellik eklendiğinden beri.</i>",
                             KB([[B("🔄 Yenile", "app_st"), B("◀️ Geri", "app_v")]])); return
         if a in ("app_ad", "app_ad_rm", "app_ad_tg"):
             if a == "app_ad_rm": mutate(lambda d: d.setdefault("app", {}).pop("ad", None)); audit(uid, "app ad rm")
@@ -3155,7 +3189,7 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         if a == "app_up":
             STATE[uid] = {"action": "app_up"}
             t, kb = prompt("📦 <b>Yeni sürüm</b>", "1) APK'yı Google Drive'ına yükle (adında sürüm olsun, ör. TurkmenVPN-1.3.apk; adında arm64 varsa sadece 64 bit telefonlara gider, yarı boyut)\n"
-                           "2) Paylaş → «Bağlantıya sahip olan herkes»\n3) Linki buraya gönder.", "app_v")
+                           "2) Paylaş → «Bağlantıya sahip olan herkes»\n3) Linki buraya gönder (drive.google.com ya da googleapis.com linki olur).", "app_v")
             await safe_edit(q, t, kb); return
         if a == "app_kn":
             await safe_edit(q, "🔑 <b>Yeni key</b>\n<blockquote>Key kaç gün geçerli olsun? Süre şimdiden başlar.</blockquote>",

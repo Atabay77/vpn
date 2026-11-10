@@ -131,7 +131,6 @@ class Main : Activity() {
                 v.animate().alpha(0f).setDuration(260).withEndAction { show(Page.MAIN) }.start()
             }
             Stats.beat(this, false)
-            State.warm()   // otomatik bağlanma beklemesin diye sunucular arka planda ölçülür
         }
     }
 
@@ -289,17 +288,24 @@ class Main : Activity() {
         updBar = nb
         col.addView(nb, LinearLayout.LayoutParams(-1, dpi(46)).apply { topMargin = dpi(10) })
 
+        col.addView(View(this), LinearLayout.LayoutParams(-1, 0, 0.42f))
         val mid = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER }
         power = Power(this).apply { isClickable = true; setOnClickListener { Snd.play(this@Main, R.raw.tap, 0.5f); toggle() }; pressFx() }
         mid.addView(power)
         status = text("", 18f, C.TEXT, true).apply { gravity = Gravity.CENTER; setPadding(0, dpi(4), 0, dpi(1)); setShadowLayer(dp(6f), 0f, dp(1f), Color.BLACK) }
         hint = text("", 12f, C.MUTED).apply { gravity = Gravity.CENTER; setShadowLayer(dp(5f), 0f, dp(1f), Color.BLACK) }
         mid.addView(status, LinearLayout.LayoutParams(-1, -2)); mid.addView(hint, LinearLayout.LayoutParams(-1, -2))
-        col.addView(mid, LinearLayout.LayoutParams(-1, 0, 1f))
+        col.addView(mid, LinearLayout.LayoutParams(-1, -2))
 
-        // reklam (bot üzerinden eklenir)
-        adBox = FrameLayout(this).apply { visibility = View.GONE; background = glass(16f); clipToOutline = true }
-        col.addView(adBox, LinearLayout.LayoutParams(-1, dpi(70)).apply { bottomMargin = dpi(10) })
+        // reklam: düğmeyle kutular arasındaki alanın ortasında, resim kesilmeden (bot üzerinden eklenir)
+        val area = FrameLayout(this)
+        adBox = FrameLayout(this).apply {
+            visibility = View.GONE; setPadding(dpi(3), dpi(3), dpi(3), dpi(3))
+            background = box(Color.argb(200, 8, 22, 16), C.GOLD, 16f); clipToOutline = true
+            elevation = dp(8f)
+        }
+        area.addView(adBox, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
+        col.addView(area, LinearLayout.LayoutParams(-1, 0, 1f).apply { topMargin = dpi(10); bottomMargin = dpi(10) })
         loadAd()
 
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
@@ -539,6 +545,7 @@ class Main : Activity() {
     private fun renderState() {
         val st = State.now
         if (lastState == State.WAIT && st == State.ON) Snd.play(this, R.raw.on)
+        if (lastState == State.WAIT && st == State.FAIL && State.noPing) { State.noPing = false; info(noCodes()) }
         if (lastState == State.ON && st == State.OFF) Snd.play(this, R.raw.off)
         lastState = st
         power?.let { it.on = st == State.ON; it.busy = st == State.WAIT; it.contentDescription = if (st == State.ON) t("VPN-i öçür", "Выключить VPN", "VPN'i kapat") else t("VPN-e birik", "Подключить VPN", "VPN'e bağlan") }
@@ -707,11 +714,22 @@ class Main : Activity() {
             val bmp = runCatching { BitmapFactory.decodeFile(f.path) }.getOrNull() ?: return@bg
             ui {
                 if (adBox !== box) return@ui
-                box.removeAllViews()
-                box.addView(ImageView(this).apply { setImageBitmap(bmp); scaleType = ImageView.ScaleType.CENTER_CROP }, FrameLayout.LayoutParams(-1, -1))
-                box.visibility = View.VISIBLE
+                val area = box.parent as? View ?: return@ui
+                area.post {
+                    // alanın %80 genişliği / tamamı yüksekliği içinde, oranı bozmadan
+                    val maxW = area.width * 0.8f - dp(6f); val maxH = area.height - dp(6f)
+                    if (maxW <= 0 || maxH <= 0) return@post
+                    val k = minOf(maxW / bmp.width, maxH / bmp.height)
+                    box.removeAllViews()
+                    box.addView(ImageView(this).apply {
+                        setImageBitmap(bmp); scaleType = ImageView.ScaleType.FIT_XY; clipToOutline = true
+                        background = this@Main.box(Color.TRANSPARENT, Color.TRANSPARENT, 13f)
+                    }, FrameLayout.LayoutParams((bmp.width * k).toInt(), (bmp.height * k).toInt()))
+                    box.visibility = View.VISIBLE
+                    box.alpha = 0f; box.scaleX = 0.94f; box.scaleY = 0.94f
+                    box.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(350).start()
+                }
                 box.setOnClickListener { if (ad.second.isNotBlank()) runCatching { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(ad.second))) } }
-                box.alpha = 0f; box.animate().alpha(1f).setDuration(300).start()
             }
         }
     }
@@ -869,14 +887,16 @@ class Main : Activity() {
                 if (left == 0) {
                     testing = false; pool.shutdown(); State.pingAt = System.currentTimeMillis(); paintTest()
                     // hiçbiri yanıt vermediyse: kodlar yenileniyor
-                    if (ms.values.all { it < 0 }) info(t("Kodlar täzelenýär, takmynan 3-5 minut aralygynda işlär. VPN-den çykyň we 3-5 minutdan giriň.",
-                        "Коды обновляются, заработают примерно через 3-5 минут. Выйдите из VPN и зайдите через 3-5 минут.",
-                        "Kodlar yenileniyor, yaklaşık 3-5 dakika içinde çalışır. VPN'den çıkın ve 3-5 dakika sonra girin."))
+                    if (ms.size >= list.size && ms.values.none { it > 0 }) info(noCodes())
                 }
                 paintMs()   // liste yeniden kurulmaz: kaydırma yerinde kalır
             }
         }
     }
+
+    private fun noCodes() = t("Kodlar täzelenýär, takmynan 3-5 minut aralygynda işlär. VPN-den çykyň we 3-5 minutdan giriň.",
+        "Коды обновляются, заработают примерно через 3-5 минут. Выйдите из VPN и зайдите через 3-5 минут.",
+        "Kodlar yenileniyor, yaklaşık 3-5 dakika içinde çalışır. VPN'den çıkın ve 3-5 dakika sonra girin.")
 
     // ---------- yardımcılar ----------
     private fun sub(s: Server) = if (s.title.isEmpty()) s.proto else "${s.title} · ${s.proto}"
