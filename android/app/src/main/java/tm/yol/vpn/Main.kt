@@ -50,6 +50,8 @@ class Main : Activity() {
     private var cur = Page.MAIN
     private var ready = false                       // açılış güncellemesi bitti mi
     private var lastState = -1
+    private var adDone = false                      // reklam bu açılışta gösterildi / kapatıldı
+    private val adHide = Runnable { hideAd() }
 
     // ana sayfa
     private var power: Power? = null
@@ -299,11 +301,7 @@ class Main : Activity() {
 
         // reklam: düğmeyle kutular arasındaki alanın ortasında, resim kesilmeden (bot üzerinden eklenir)
         val area = FrameLayout(this)
-        adBox = FrameLayout(this).apply {
-            visibility = View.GONE; setPadding(dpi(3), dpi(3), dpi(3), dpi(3))
-            background = box(Color.argb(200, 8, 22, 16), C.GOLD, 16f); clipToOutline = true
-            elevation = dp(8f)
-        }
+        adBox = FrameLayout(this).apply { visibility = View.GONE; clipChildren = false }
         area.addView(adBox, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
         col.addView(area, LinearLayout.LayoutParams(-1, 0, 1f).apply { topMargin = dpi(10); bottomMargin = dpi(10) })
         loadAd()
@@ -703,6 +701,7 @@ class Main : Activity() {
     private fun loadAd() {
         val box = adBox ?: return
         val ad = Sub.ad ?: return
+        if (adDone) return
         bg {
             val f = File(cacheDir, "ad_${ad.first}")
             if (!f.exists()) runCatching {
@@ -716,22 +715,40 @@ class Main : Activity() {
                 if (adBox !== box) return@ui
                 val area = box.parent as? View ?: return@ui
                 area.post {
-                    // alanın %80 genişliği / tamamı yüksekliği içinde, oranı bozmadan
-                    val maxW = area.width * 0.8f - dp(6f); val maxH = area.height - dp(6f)
+                    if (adDone || adBox !== box) return@post
+                    // alanın %62 genişliği / %72 yüksekliği içinde, oranı bozmadan
+                    val maxW = area.width * 0.62f; val maxH = area.height * 0.72f
                     if (maxW <= 0 || maxH <= 0) return@post
                     val k = minOf(maxW / bmp.width, maxH / bmp.height)
+                    val w = (bmp.width * k).toInt(); val hh = (bmp.height * k).toInt()
                     box.removeAllViews()
-                    box.addView(ImageView(this).apply {
-                        setImageBitmap(bmp); scaleType = ImageView.ScaleType.FIT_XY; clipToOutline = true
-                        background = this@Main.box(Color.TRANSPARENT, Color.TRANSPARENT, 13f)
-                    }, FrameLayout.LayoutParams((bmp.width * k).toInt(), (bmp.height * k).toInt()))
+                    val card = FrameLayout(this).apply {
+                        setPadding(dpi(2), dpi(2), dpi(2), dpi(2)); background = this@Main.box(Color.argb(200, 8, 22, 16), C.GOLD, 14f)
+                        clipToOutline = true; elevation = dp(8f)
+                        addView(ImageView(this@Main).apply { setImageBitmap(bmp); scaleType = ImageView.ScaleType.FIT_XY }, FrameLayout.LayoutParams(w, hh))
+                        setOnClickListener { if (ad.second.isNotBlank()) runCatching { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(ad.second))) } }
+                    }
+                    box.addView(card, FrameLayout.LayoutParams(-2, -2).apply { topMargin = dpi(9); rightMargin = dpi(9); leftMargin = dpi(9) })
+                    // sağ üstte küçük ✕
+                    box.addView(TextView(this).apply {
+                        text = "✕"; textSize = 10f; setTextColor(Color.WHITE); gravity = Gravity.CENTER
+                        background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.argb(230, 10, 28, 20)); setStroke(dpi(1), C.GOLD) }
+                        elevation = dp(10f); contentDescription = t("Ýap", "Закрыть", "Kapat")
+                        setOnClickListener { hideAd() }
+                    }, FrameLayout.LayoutParams(dpi(20), dpi(20), Gravity.TOP or Gravity.END))
                     box.visibility = View.VISIBLE
                     box.alpha = 0f; box.scaleX = 0.94f; box.scaleY = 0.94f
                     box.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(350).start()
+                    h.removeCallbacks(adHide); h.postDelayed(adHide, 7000)   // 7 saniye sonra kendiliğinden kapanır
                 }
-                box.setOnClickListener { if (ad.second.isNotBlank()) runCatching { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(ad.second))) } }
             }
         }
+    }
+
+    private fun hideAd() {
+        adDone = true; h.removeCallbacks(adHide)
+        val b = adBox ?: return
+        b.animate().alpha(0f).scaleX(0.94f).scaleY(0.94f).setDuration(280).withEndAction { b.visibility = View.GONE }.start()
     }
 
     // ---------- key ----------
