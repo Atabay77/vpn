@@ -36,6 +36,8 @@ class Main : Activity() {
     private lateinit var root: FrameLayout
     private lateinit var page: FrameLayout          // değişen sayfa (arka plan ve sol menü sabit)
     private lateinit var rail: LinearLayout
+    private lateinit var sky: ImageView
+    private var skyRes = R.drawable.skyline
     private var cur = Page.MAIN
 
     // ana sayfa
@@ -78,10 +80,11 @@ class Main : Activity() {
         // sabit katmanlar: canlı video, koyulaştırma, Aşgabat silueti
         root.addView(VideoBg(this, R.raw.bg), FrameLayout.LayoutParams(-1, -1))
         root.addView(View(this).apply { setBackgroundColor(0x660A1C14) }, FrameLayout.LayoutParams(-1, -1))
-        root.addView(ImageView(this).apply {
+        sky = ImageView(this).apply {
             setImageResource(R.drawable.skyline); scaleType = ImageView.ScaleType.CENTER_CROP; alpha = 0.95f
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-        }, FrameLayout.LayoutParams(-1, dpi(170), Gravity.BOTTOM))
+        }
+        root.addView(sky, FrameLayout.LayoutParams(-1, dpi(175), Gravity.BOTTOM))
         page = FrameLayout(this)
         root.addView(page, FrameLayout.LayoutParams(-1, -1))
         rail = buildRail()
@@ -388,7 +391,26 @@ class Main : Activity() {
             s.text = a; s.setTextColor(col); hint?.text = b
         }
         if (st != State.ON) { spark?.clear(); bigSpark?.clear(); lastRx = -1; rx0 = -1 }
-        fillCard(); renderUpd(); tick.run()
+        fillCard(); renderUpd(); paintSky(); tick.run()
+    }
+
+    // alttaki manzara: bağlı (ya da seçili) sunucunun ülkesi; yoksa Aşgabat
+    private val skies = mapOf("FR" to R.drawable.sky_fr, "GB" to R.drawable.sky_gb, "DE" to R.drawable.sky_de, "NL" to R.drawable.sky_nl,
+        "FI" to R.drawable.sky_fi, "RU" to R.drawable.sky_ru, "CH" to R.drawable.sky_ch, "PL" to R.drawable.sky_pl,
+        "TR" to R.drawable.sky_tr, "SE" to R.drawable.sky_se, "US" to R.drawable.sky_us)
+
+    private fun cc(flag: String): String = flag.codePoints().toArray().filter { it in 0x1F1E6..0x1F1FF }
+        .joinToString("") { (it - 0x1F1E6 + 'A'.code).toChar().toString() }
+
+    private fun paintSky() {
+        if (!::sky.isInitialized) return
+        val s = State.active.takeIf { State.now == State.ON } ?: State.selected(this)
+        val res = s?.let { skies[cc(it.flag)] } ?: R.drawable.skyline
+        if (res == skyRes) return
+        skyRes = res
+        sky.animate().alpha(0f).setDuration(220).withEndAction {
+            sky.setImageResource(res); sky.animate().alpha(0.95f).setDuration(380).start()
+        }.start()
     }
 
     private val tick = object : Runnable {
