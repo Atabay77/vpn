@@ -972,7 +972,9 @@ def app_publish_link(link):
     if not name.lower().endswith(".apk"): raise RuntimeError(f"Bu bir APK değil: {name}")
     mv = re.search(r"(\d+(?:\.\d+)+)", name)
     if not mv: raise RuntimeError(f"Dosya adında sürüm yok: {name} (ör. TurkmenVPN-1.3.apk)")
-    mutate(lambda d: d.setdefault("app", {}).setdefault("upd", {}).__setitem__("all", {"ver": mv.group(1), "fid": fid, "ts": int(time.time()), "ext": True}))
+    # adında arm64 / arm32 varsa sadece o telefonlara gider (yarı boyut); yoksa herkese
+    abi = "64" if re.search(r"arm64|v8a", name, re.I) else "32" if re.search(r"arm32|v7a|armeabi", name, re.I) else "all"
+    mutate(lambda d: d.setdefault("app", {}).setdefault("upd", {}).__setitem__(abi, {"ver": mv.group(1), "fid": fid, "ts": int(time.time()), "ext": True}))
     app_sync(True)
     return mv.group(1)
 
@@ -3152,7 +3154,7 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
             t, kb = app_view(load_db()); await safe_edit(q, t, kb); return
         if a == "app_up":
             STATE[uid] = {"action": "app_up"}
-            t, kb = prompt("📦 <b>Yeni sürüm</b>", "1) APK'yı Google Drive'ına yükle (adında sürüm olsun, ör. TurkmenVPN-1.3.apk)\n"
+            t, kb = prompt("📦 <b>Yeni sürüm</b>", "1) APK'yı Google Drive'ına yükle (adında sürüm olsun, ör. TurkmenVPN-1.3.apk; adında arm64 varsa sadece 64 bit telefonlara gider, yarı boyut)\n"
                            "2) Paylaş → «Bağlantıya sahip olan herkes»\n3) Linki buraya gönder.", "app_v")
             await safe_edit(q, t, kb); return
         if a == "app_kn":
