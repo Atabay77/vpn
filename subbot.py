@@ -1939,6 +1939,8 @@ async def cmd_unadmin(u: Update, c: ContextTypes.DEFAULT_TYPE):
 
 # ── 📧 Gmail: belirlenen kelime yazılan maile kod gönderir ──
 MAIL_EVERY, MAIL_MAX_HOUR, MAIL_DEF_DAYS = 60, 10, 30
+MAIL_DL_MAX_HOUR = 30   # mailde «vpn» yazana indirme linki: saatte en fazla
+MAIL_DL_SENT = []
 MAIL_DEVICES = 1   # maille verilen kod en fazla bu kadar cihaza kurulabilir (Happ limitli link)
 MAIL_SENT = []   # son 1 saatte maille verilen kodların zamanı
 
@@ -1999,7 +2001,10 @@ def mail_parse(m, me, kw):
     r = mail_key_match(text)
     if r: return (frm, r[1], r[0], r[2], "key")
     r = mail_match(text, kw)
-    return (frm, r[1], r[0], r[2], "code") if r else None
+    if r: return (frm, r[1], r[0], r[2], "code")
+    if re.search(r"(?<![a-z0-9])vpn(?![a-z0-9])", text, re.I):   # «vpn» yazan herkese indirme linki (günde bir kez)
+        return (frm, 0, f"dl|{frm}|{time.strftime('%Y%m%d')}", False, "dl")
+    return None
 
 def _mail_junk(M):
     """Gmail'in Spam klasörünün adı (dile göre değişir; \\Junk işaretinden bulunur)."""
@@ -2084,7 +2089,25 @@ def mail_tick():
             if th in u_: return False
             d["mail_used"] = (u_ + [th])[-1000:]; return True
         if not mutate(use_):
-            events.append(f"⚠️ <b>Aynı şifreli yazı tekrar denendi</b> — kod verilmedi\n<blockquote>{esc(frm)}</blockquote>"); continue
+            if kind != "dl": events.append(f"⚠️ <b>Aynı şifreli yazı tekrar denendi</b> — kod verilmedi\n<blockquote>{esc(frm)}</blockquote>")
+            continue
+        if kind == "dl":   # Türkmen VPN indirme linki
+            MAIL_DL_SENT[:] = [t_ for t_ in MAIL_DL_SENT if now - t_ < 3600]
+            if len(MAIL_DL_SENT) >= MAIL_DL_MAX_HOUR: continue
+            cfg_ = app_cfg(load_db())
+            u_ = max((cfg_.get("upd") or {}).values(), key=lambda x: [int(p_) if p_.isdigit() else 0 for p_ in str(x.get("ver", "0")).split(".")], default=None)
+            if not u_ or not u_.get("fid"):
+                events.append(f"⚠️ <b>Mailde indirme linki istendi ama yayında sürüm yok</b>\n<blockquote>{esc(frm)}</blockquote>"); continue
+            link = sub_link(u_["fid"]); MAIL_DL_SENT.append(now)
+            try:
+                mail_send(frm, f"Türkmen VPN {u_.get('ver', '')} · ýükläp almak / indirme linki",
+                          f"Türkmen VPN ({u_.get('ver', '')}) ýükläp almak üçin / indirmek için:\n\n{link}\n\n"
+                          "VPN-siz açylýar. Ýüklenen faýly açyp gurnaň / İndirilen dosyayı açıp kurun.")
+                ok = True
+            except Exception as e: ok = False; log.warning("mail send: %s", e)
+            ulog("order", f"📧 Mail ile indirme linki: {frm}" + ("" if ok else " (gönderilemedi)"))
+            events.append(f"⬇️ <b>Mail ile Türkmen VPN linki</b>\n<blockquote>{esc(frm)} · {esc(u_.get('ver', ''))}\n{'✅ gönderildi' if ok else '⚠️ gönderilemedi'}</blockquote>")
+            continue
         MAIL_SENT[:] = [t for t in MAIL_SENT if now - t < 3600]
         if len(MAIL_SENT) >= MAIL_MAX_HOUR:
             events.append(f"⏸ <b>Mail kod sınırı doldu</b> (saatte {MAIL_MAX_HOUR})\n<blockquote>{esc(frm)} · {days} gün — kod verilmedi</blockquote>"); continue
