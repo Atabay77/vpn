@@ -106,6 +106,11 @@ class Ico(ctx: Context, private val kind: String, var color: Int, private val si
                 path.addArc(RectF(4f, 4f, 20f, 20f), 20f, 130f)
                 path.moveTo(20f, 20f); path.lineTo(20f, 16f); path.lineTo(16f, 16f)
             }
+            "menu" -> {
+                path.moveTo(5f, 7f); path.lineTo(19f, 7f)
+                path.moveTo(5f, 12f); path.lineTo(19f, 12f)
+                path.moveTo(5f, 17f); path.lineTo(19f, 17f)
+            }
             "home" -> {
                 path.moveTo(4f, 11f); path.lineTo(12f, 4f); path.lineTo(20f, 11f)
                 path.moveTo(6f, 9.5f); path.lineTo(6f, 20f); path.lineTo(18f, 20f); path.lineTo(18f, 9.5f)
@@ -150,7 +155,7 @@ class Power(ctx: Context) : View(ctx) {
     private val t0 = System.currentTimeMillis()
 
     override fun onMeasure(w: Int, h: Int) {
-        val s = context.dp(176f).toInt(); setMeasuredDimension(s, s)
+        val s = context.dp(140f).toInt(); setMeasuredDimension(s, s)
     }
 
     override fun onDraw(c: Canvas) {
@@ -183,7 +188,7 @@ class Power(ctx: Context) : View(ctx) {
             p.color = Color.argb(120, 224, 176, 74); c.drawArc(arc, a0 + 180f, 40f, false, p)
         }
         // güç simgesi
-        val s = context.dp(56f) / 24f
+        val s = context.dp(44f) / 24f
         c.save(); c.translate(cx - 12 * s, cy - 12 * s); c.scale(s, s)
         p.strokeCap = Paint.Cap.ROUND; p.strokeWidth = 1.8f
         p.color = if (on) Color.WHITE else if (busy) C.GOLD else C.CREAM
@@ -263,9 +268,9 @@ class AnimBg(ctx: Context, res: Int) : View(ctx) {
     }
 
     private fun drawBmp(c: Canvas, b: android.graphics.Bitmap, t: Float, alpha: Int) {
-        val s = maxOf(width.toFloat() / b.width, height.toFloat() / b.height) * 1.06f
+        val s = maxOf(width.toFloat() / b.width, height.toFloat() * 1.18f / b.height) * 1.04f
         val dx = (width - b.width * s) / 2 + kotlin.math.sin(t / 9f) * context.dp(8f)
-        val dy = (height - b.height * s) / 2 + kotlin.math.cos(t / 11f) * context.dp(6f)
+        val dy = (height - b.height * s) / 2 - height * 0.085f + kotlin.math.cos(t / 11f) * context.dp(6f)   // manzara kutuların üstünde kalsın
         m.setScale(s, s); m.postTranslate(dx, dy); bp.alpha = alpha
         c.drawBitmap(b, m, bp)
     }
@@ -304,7 +309,7 @@ class GulSep(ctx: Context) : View(ctx) {
             path.moveTo(cx, cy - hw); path.lineTo(cx + hw, cy); path.lineTo(cx, cy + hw); path.lineTo(cx - hw, cy); path.close()
             c.drawPath(path, p)
         }
-        d(4.5f * s, C.GOLD); d(3f * s, C.RED); d(1.4f * s, C.CREAM)
+        d(3.5f * s, C.GOLD); d(2.3f * s, C.RED); d(1.1f * s, C.CREAM)
     }
 }
 
@@ -317,6 +322,52 @@ class Spinner(ctx: Context) : View(ctx) {
         r.set(w, w, width - w, height - w)
         p.color = Color.argb(50, 224, 176, 74); c.drawArc(r, 0f, 360f, false, p)
         p.color = C.GOLD; c.drawArc(r, (System.currentTimeMillis() % 1000) * 0.36f, 90f, false, p)
+        postInvalidateOnAnimation()
+    }
+}
+
+/** Kenarında neon ışık dönen hap şeklinde düğme zemini (yeni sürüm bildirimi). */
+class NeonBar(ctx: Context) : android.widget.FrameLayout(ctx) {
+    private val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND }
+    private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val path = Path(); private val seg = Path()
+    private val pm = android.graphics.PathMeasure()
+    private val rf = RectF()
+    private val t0 = System.currentTimeMillis()
+    init { setWillNotDraw(false) }
+
+    override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) {
+        val i = context.dp(3f)
+        rf.set(i, i, w - i, h - i)
+        path.reset(); path.addRoundRect(rf, (h - 2 * i) / 2f, (h - 2 * i) / 2f, Path.Direction.CW)
+        pm.setPath(path, true)
+    }
+
+    override fun onDraw(c: Canvas) {
+        val r = (height - context.dp(6f)) / 2f
+        fill.color = Color.argb(235, 12, 30, 22); c.drawRoundRect(rf, r, r, fill)
+        p.strokeWidth = context.dp(1f); p.color = Color.argb(70, 224, 176, 74); c.drawRoundRect(rf, r, r, p)
+        val len = pm.length; if (len <= 0f) return
+        val head = ((System.currentTimeMillis() - t0) % 2600) / 2600f * len
+        val tail = len * 0.45f
+        // iz: arkaya doğru solan parçalar, önde parlak baş
+        val steps = 18
+        for (k in 0 until steps) {
+            val a = 1f - k / steps.toFloat()
+            var e = head - tail * k / steps
+            if (e < 0) e += len
+            val s = e - tail / steps
+            seg.reset()
+            if (s >= 0) pm.getSegment(s, e, seg, true)
+            else { pm.getSegment(len + s, len, seg, true); pm.getSegment(0f, e, seg, true) }
+            val col = if (k < steps / 2) C.GOLD else C.GREEN
+            p.color = Color.argb((220 * a * a).toInt(), Color.red(col), Color.green(col), Color.blue(col))
+            p.strokeWidth = context.dp(1.2f + 2.4f * a)
+            c.drawPath(seg, p)
+            p.color = Color.argb((60 * a).toInt(), Color.red(col), Color.green(col), Color.blue(col))
+            p.strokeWidth = context.dp(6f * a + 2f)
+            c.drawPath(seg, p)
+        }
         postInvalidateOnAnimation()
     }
 }

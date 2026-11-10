@@ -15,6 +15,7 @@ import android.os.ParcelFileDescriptor
 import libv2ray.CoreCallbackHandler
 import libv2ray.CoreController
 import libv2ray.Libv2ray
+import java.util.concurrent.ConcurrentHashMap
 
 /** Ekran ile servis arasında durum paylaşımı (aynı süreç). */
 object State {
@@ -29,11 +30,10 @@ object State {
         app?.let { Tile.refresh(it) }
     }
 
-    @Volatile var active: Server? = null
-    @Volatile var core: CoreController? = null   // bağlıyken: tünel içinden ping ölçmek için      // şu an bağlı olunan sunucu (otomatikte seçilen)
+    @Volatile var active: Server? = null          // şu an bağlı olunan sunucu (otomatikte seçilen)
+    @Volatile var core: CoreController? = null    // bağlıyken: tünel içinden ping ölçmek için
 
     /** Varsayılan otomatik. Elle seçilen sunucu listeden kalkarsa yine otomatiğe döner. */
-    fun auto(ctx: Context) = selected(ctx) == null
     fun selected(ctx: Context): Server? {
         val k = ctx.getSharedPreferences("p", 0).getString("sel", AUTO)
         return if (k == AUTO) null else Sub.list.firstOrNull { it.key == k }
@@ -42,26 +42,43 @@ object State {
         ctx.getSharedPreferences("p", 0).edit().putString("sel", s?.key ?: AUTO).apply()
     private const val AUTO = "auto"
 
-    /** Otomatik: Rusya ve oyun sunucuları hariç, en düşük ms veren. En çok ~7 sn beklenir. */
-    fun best(): Server? {
-        val c = Sub.list.filter { !it.ru && !it.game }.ifEmpty { Sub.list.filter { !it.ru } }
-        if (c.size <= 1) return c.firstOrNull()
-        val ms = java.util.concurrent.ConcurrentHashMap<Server, Long>()
+    // ---- ping önbelleği: açılışta ve «Barla»da ölçülür, bağlanırken bekletmez ----
+    val pings = ConcurrentHashMap<String, Long>()   // server.key → ms (-1 = yok)
+    @Volatile var pingAt = 0L
+    private fun cands() = Sub.list.filter { !it.ru && !it.game }.ifEmpty { Sub.list.filter { !it.ru } }
+
+    fun ping(s: Server): Long = runCatching { Libv2ray.measureOutboundDelay(Cfg.full(s.uri, false), PING) }
+        .getOrDefault(-1L).let { if (it > 0) it else -1L }.also { pings[s.key] = it }
+
+    /** Arka planda bütün adayları ölçer (açılışta). */
+    fun warm() {
+        val c = cands(); if (c.isEmpty()) return
         val pool = java.util.concurrent.Executors.newFixedThreadPool(minOf(c.size, 8))
-        for (s in c) pool.execute {
-            runCatching { Libv2ray.measureOutboundDelay(Cfg.full(s.uri, false), PING) }
-                .getOrNull()?.takeIf { it > 0 }?.let { ms[s] = it }
+        c.forEach { s -> pool.execute { ping(s) } }
+        pool.shutdown(); pool.awaitTermination(15, java.util.concurrent.TimeUnit.SECONDS)
+        pingAt = System.currentTimeMillis()
+    }
+
+    /** Otomatik: Rusya ve oyun sunucuları hariç en hızlı. Taze ölçüm varsa hemen, yoksa en çok ~3.5 sn. */
+    fun best(): Server? {
+        val c = cands()
+        if (c.size <= 1) return c.firstOrNull()
+        if (System.currentTimeMillis() - pingAt < 10 * 60_000) {
+            c.filter { (pings[it.key] ?: -1) > 0 }.minByOrNull { pings[it.key]!! }?.let { return it }
         }
+        val got = ConcurrentHashMap<Server, Long>()
+        val pool = java.util.concurrent.Executors.newFixedThreadPool(minOf(c.size, 8))
+        c.forEach { s -> pool.execute { ping(s).takeIf { it > 0 }?.let { got[s] = it } } }
         pool.shutdown()
-        val end = System.currentTimeMillis() + 7000
+        val end = System.currentTimeMillis() + 3500
+        var first = 0L
         while (System.currentTimeMillis() < end && !pool.isTerminated) {
-            if (ms.size == c.size) break
-            Thread.sleep(150)
-            // ilk sonuçtan sonra kısa süre daha bekle, daha iyisi gelebilir
-            if (ms.isNotEmpty() && System.currentTimeMillis() > end - 4000) break
+            if (got.isNotEmpty() && first == 0L) first = System.currentTimeMillis()
+            if (first > 0 && System.currentTimeMillis() - first > 600) break   // ilk sonuçtan sonra kısa bekleme
+            Thread.sleep(80)
         }
         pool.shutdownNow()
-        return ms.minByOrNull { it.value }?.key ?: c.first()
+        return got.minByOrNull { it.value }?.key ?: c.first()
     }
     const val PING = "https://www.gstatic.com/generate_204"
 }
@@ -72,10 +89,14 @@ class Svc : VpnService() {
     private val lock = Any()
     @Volatile private var want = false
     private val h = Handler(Looper.getMainLooper())
+    private var beatAt = 0L
     private val tick = object : Runnable {
         override fun run() {
             // 2 saat dolunca (key yoksa) VPN durur; kullanıcı elle yeniden başlatır
             if (want && State.now == State.ON && Lic.left(this@Svc) == 0L) { stop(); return }
+            if (want && State.now == State.ON && System.currentTimeMillis() - beatAt > 5 * 60_000) {
+                beatAt = System.currentTimeMillis(); Thread { Stats.beat(this@Svc, true) }.start()
+            }
             if (want) h.postDelayed(this, 10_000)
         }
     }
@@ -85,6 +106,7 @@ class Svc : VpnService() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == STOP) { stop(); return START_NOT_STICKY }
         foreground()
+        if (Upd.busy(this)) { stopForeground(STOP_FOREGROUND_REMOVE); stopSelf(); return START_NOT_STICKY }   // güncelleme bitene kadar VPN açılmaz
         val reconnect = State.now == State.ON && Lic.start(this) > 0   // sunucu değiştirmek süreyi sıfırlamaz
         if (!reconnect) Lic.setStart(this, 0)
         want = true
@@ -98,7 +120,8 @@ class Svc : VpnService() {
         if (!want) return
         try {
             stopCore()
-            Sub.refresh(this, 6000)            // her bağlanmada sessiz güncelleme (olmazsa önbellek)
+            // liste 10 dk'dan eskiyse kısa bekleyerek yenile; yoksa hemen bağlan (yenileme sonra)
+            if (Sub.list.isEmpty() || System.currentTimeMillis() - Sub.okAt > 10 * 60_000) Sub.refresh(this, 3500)
             val s = State.selected(this) ?: State.best() ?: throw IllegalStateException("liste boş")
             State.active = s
             val cfg = Cfg.full(s.uri, true)
@@ -122,6 +145,8 @@ class Svc : VpnService() {
             if (!want) { stopCore(); return }
             if (Lic.start(this) == 0L) Lic.setStart(this, System.currentTimeMillis())   // 2 saat bağlanınca başlar
             State.set(State.ON)
+            val app = applicationContext
+            Thread { if (System.currentTimeMillis() - Sub.okAt > 60_000) Sub.refresh(app) }.start()
         } catch (e: Throwable) {
             stopCore()
             State.set(State.FAIL)
@@ -162,7 +187,7 @@ class Svc : VpnService() {
         val open = PendingIntent.getActivity(this, 0, Intent(this, Main::class.java), PendingIntent.FLAG_IMMUTABLE)
         val off = PendingIntent.getService(this, 1, Intent(this, Svc::class.java).setAction(STOP), PendingIntent.FLAG_IMMUTABLE)
         val nb = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(this, "v") else Notification.Builder(this)
-        val n = nb.setSmallIcon(R.drawable.ic_gol).setContentTitle(getString(R.string.app_name))
+        val n = nb.setSmallIcon(R.drawable.ic_notif).setContentTitle(getString(R.string.app_name))
             .setContentText(t("Birikdirildi", "Подключено", "Bağlandı")).setContentIntent(open).setOngoing(true)
             .addAction(Notification.Action.Builder(null, t("Öçür", "Отключить", "Kapat"), off).build()).build()
         if (Build.VERSION.SDK_INT >= 34) startForeground(1, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)

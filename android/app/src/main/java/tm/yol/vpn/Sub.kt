@@ -27,7 +27,9 @@ data class Server(val flag: String, val country: String, val title: String, val 
 object Sub {
     @Volatile var list: List<Server> = emptyList()
     @Volatile var keys: Map<String, Long> = emptyMap()                 // key özeti → bitiş (sn, 0 = süresiz)
-    @Volatile var upd: Map<String, Pair<String, String>> = emptyMap()  // "64"/"32" → (sürüm, Drive dosyası)
+    @Volatile var upd: Map<String, Pair<String, String>> = emptyMap()  // "64"/"32"/"all" → (sürüm, Drive dosyası)
+    @Volatile var ad: Pair<String, String>? = null                     // reklam: (resim Drive dosyası, link)
+    @Volatile var okAt = 0L                                            // son başarılı güncelleme
 
     private fun body(text: String) = text.trim().let { t ->
         if (t.contains("://") || t.startsWith("#")) t else runCatching {
@@ -37,13 +39,14 @@ object Sub {
 
     /** Botun yazdığı gizli satırlar: «#tvk: özet bitiş» ve «#tvu64: sürüm dosya». */
     fun meta(text: String) {
-        val k = HashMap<String, Long>(); val u = HashMap<String, Pair<String, String>>()
+        val k = HashMap<String, Long>(); val u = HashMap<String, Pair<String, String>>(); var a: Pair<String, String>? = null
         for (l in body(text).lineSequence()) {
             val p = l.trim().split(Regex("\\s+"))
             if (p.size >= 3 && p[0] == "#tvk:") p[2].toLongOrNull()?.let { k[p[1]] = it }
             if (p.size >= 3 && p[0].startsWith("#tvu") && p[0].endsWith(":")) u[p[0].removePrefix("#tvu").removeSuffix(":")] = p[1] to p[2]
+            if (p.size >= 2 && p[0] == "#tvad:") a = p[1] to Cfg.dec(p.getOrElse(2) { "" })
         }
-        keys = k; upd = u
+        keys = k; upd = u; ad = a
     }
 
     /** Abonelik metnini sunucu listesine çevirir (desteklenmeyen satırlar atlanır). */
@@ -116,8 +119,9 @@ object Sub {
                 if (c.responseCode != 200) return@runCatching false
                 val t = c.inputStream.use { it.readBytes() }.toString(Charsets.UTF_8)
                 val l = parse(t)
+                meta(t)   // key / sürüm / reklam satırları sunucu olmasa da okunur
                 if (l.isEmpty()) return@runCatching false
-                list = l; meta(t)
+                list = l; okAt = System.currentTimeMillis()
                 Box.write(ctx, t)
                 true
             } finally { c.disconnect() }

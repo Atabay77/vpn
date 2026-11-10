@@ -31,8 +31,8 @@ android {
         applicationId = "tm.yol.vpn"
         minSdk = 24
         targetSdk = 35
-        versionCode = 8
-        versionName = "1.7"
+        versionCode = 9
+        versionName = "1.8"
         externalNativeBuild { cmake { arguments += "-DSEC_DIR=${secDir.absolutePath}" } }
     }
 
@@ -65,6 +65,12 @@ android {
     kotlinOptions { jvmTarget = "17" }
     packaging { jniLibs { useLegacyPackaging = true } }
     lint { checkReleaseBuilds = false }
+    testOptions { unitTests { isIncludeAndroidResources = true; all {
+        it.systemProperty("shots", System.getProperty("shots") ?: "")
+        it.systemProperty("robolectric.offline", "true")
+        it.systemProperty("robolectric.dependency.dir", layout.buildDirectory.dir("robo").get().asFile.absolutePath)
+        it.dependsOn("roboJars")
+    } } }
     // tek APK (paylaşmak için) + mimariye göre küçük APK'lar (bottan güncelleme için, 20 MB altı)
     splits { abi { isEnable = true; reset(); include("arm64-v8a", "armeabi-v7a"); isUniversalApk = true } }
 }
@@ -73,9 +79,17 @@ dependencies {
     implementation(fileTree("libs") { include("*.aar", "*.jar") })
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
+    testImplementation("org.robolectric:robolectric:4.14.1")
 }
 
 tasks.register("checkSub") {
     doFirst { if (subUrl.isBlank()) throw GradleException("SUB_URL verilmedi") }
 }
 tasks.matching { it.name == "preReleaseBuild" }.configureEach { dependsOn("checkSub") }
+
+// Robolectric'in Android dosyası Gradle ile indirilir (ekran görüntüsü testi için)
+val robo: Configuration by configurations.creating
+dependencies { robo("org.robolectric:android-all-instrumented:14-robolectric-10818077-i7"); robo("org.robolectric:android-all-instrumented:15-robolectric-12650502-i7") }
+tasks.register<Copy>("roboJars") {
+    from(robo); into(layout.buildDirectory.dir("robo"))
+}

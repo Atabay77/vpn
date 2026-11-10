@@ -863,7 +863,35 @@ def app_meta(cfg):
     out = [f"#tvk: {app_key_hash(k)} {int(v.get('exp') or 0)}" for k, v in sorted(app_keys_live(cfg).items())]
     for abi, u in sorted((cfg.get("upd") or {}).items()):
         if u.get("fid") and u.get("ver"): out.append(f"#tvu{abi}: {u['ver']} {u['fid']}")
+    ad = cfg.get("ad") or {}
+    if ad.get("fid") and ad.get("on", True): out.append(f"#tvad: {ad['fid']} {urllib.parse.quote(ad.get('link', ''), safe='')}")
     return out
+
+def app_topic(fid):
+    """Programın anonim kullanım sayacı konusu (program da aynı şekilde hesaplar)."""
+    return "tvpn" + hashlib.sha256(fid.encode()).hexdigest()[:16]
+
+def app_stats(fid):
+    """ntfy.sh'tan son 12 saatin sinyalleri: kaç kişi kullanıyor."""
+    url = f"https://ntfy.sh/{app_topic(fid)}/json?poll=1&since=12h"
+    with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "subbot"}), timeout=15) as r:
+        lines = r.read().decode("utf-8", "ignore").splitlines()
+    now = time.time(); last = {}
+    for l in lines:
+        try: j = json.loads(l)
+        except Exception: continue
+        p_ = str(j.get("message", "")).split()
+        if len(p_) < 3 or p_[0] != "hb": continue
+        sid, ver = p_[1][:16], p_[2][:10]; lang = p_[3] if len(p_) > 3 else "?"; tun = p_[4] == "1" if len(p_) > 4 else False
+        ts = float(j.get("time") or 0)
+        o = last.get(sid)
+        if not o or ts > o["ts"]: last[sid] = {"ts": ts, "ver": ver, "lang": lang, "tun": tun or (o or {}).get("tun", False)}
+        elif tun: o["tun"] = True
+    on10 = sum(1 for v in last.values() if now - v["ts"] < 600 and v["tun"])
+    h1 = sum(1 for v in last.values() if now - v["ts"] < 3600)
+    vers = {}; langs = {}
+    for v in last.values(): vers[v["ver"]] = vers.get(v["ver"], 0) + 1; langs[v["lang"]] = langs.get(v["lang"], 0) + 1
+    return {"on": on10, "h1": h1, "h12": len(last), "vpn12": sum(1 for v in last.values() if v["tun"]), "vers": vers, "langs": langs}
 
 def app_left(exp):
     if not exp: return "♾ çäksiz"
@@ -981,6 +1009,8 @@ def app_view(db):
     if subs: rows.append([B("🔄 Şimdi güncelle", "app_now")])
     rows.append([B("🔑 Key oluştur", "app_kn"), B(f"🗝 Keyler ({len(app_keys_live(cfg))})", "app_kl")])
     rows.append([B("📦 Yeni sürüm yayınla (Drive linki)", "app_up")])
+    rows.append([B("📊 İzleme", "app_st"), B("📢 Reklam", "app_ad")])
+    if (cfg.get("upd") or {}): rows.append([B("⬇️ VPN'siz indirme linki", "app_dl")])
     if cfg.get("fid"): rows.append([B("🔗 Programın dosya linki", "app_link")])
     rows.append([B("◀️ Admin", "admin")])
     return t, KB(rows)
@@ -1924,13 +1954,18 @@ def mail_match(text, kw):
             return t, days, "lock" in rest
     return None
 
+APP_KEY_KW = "key+08"   # mailde içinde «key» ve «08» geçen kelime → Türkmen VPN key'i
+
 def mail_parse(m, me, kw):
-    """İstek mi? Dönüş: (gönderen, gün, kelime) ya da None."""
+    """İstek mi? Dönüş: (gönderen, gün, kelime, lock, tür) ya da None. tür: "key" (program key'i) / "code" (VPN kodu)."""
     from email.utils import parseaddr
     frm = parseaddr(m.get("From", ""))[1].strip().lower()
     if not frm or frm == me.lower() or "mailer-daemon" in frm or "noreply" in frm or "no-reply" in frm: return None
-    r = mail_match(_mail_text(m), kw)
-    return (frm, r[1], r[0], r[2]) if r else None
+    text = _mail_text(m)
+    r = mail_match(text, APP_KEY_KW)
+    if r: return (frm, r[1], r[0], r[2], "key")
+    r = mail_match(text, kw)
+    return (frm, r[1], r[0], r[2], "code") if r else None
 
 def _mail_junk(M):
     """Gmail'in Spam klasörünün adı (dile göre değişir; \\Junk işaretinden bulunur)."""
@@ -2006,7 +2041,8 @@ def mail_send(to, subject, text):
 def mail_tick():
     """Bloklayan iş: istekleri okur, kod oluşturur, maille gönderir. Dönüş: kurucuya gidecek olaylar."""
     events = []
-    for frm, days, tok, lock in mail_fetch():
+    for it_ in mail_fetch():
+        frm, days, tok, lock = it_[:4]; kind = it_[4] if len(it_) > 4 else "code"
         now = time.time()
         th = hashlib.sha256(tok.encode("utf-8")).hexdigest()
         def use_(d):
@@ -2018,6 +2054,20 @@ def mail_tick():
         MAIL_SENT[:] = [t for t in MAIL_SENT if now - t < 3600]
         if len(MAIL_SENT) >= MAIL_MAX_HOUR:
             events.append(f"⏸ <b>Mail kod sınırı doldu</b> (saatte {MAIL_MAX_HOUR})\n<blockquote>{esc(frm)} · {days} gün — kod verilmedi</blockquote>"); continue
+        if kind == "key":   # Türkmen VPN key'i (2 saat sınırını kaldırır)
+            k_ = app_key_new(); exp_ = int(now + days * 86400) if days else 0
+            mutate(lambda d: d.setdefault("app", {}).setdefault("keys", {}).__setitem__(k_, {"exp": exp_, "ts": int(now), "by": "mail:" + frm}))
+            MAIL_SENT.append(now)
+            try: app_sync(True)
+            except Exception as e: log.warning("mail key sync: %s", e)
+            dtxt = f"{days} gün" if days else "möhletsiz / süresiz"
+            try:
+                mail_send(frm, f"Türkmen VPN açar · {dtxt}", f"Açaryňyz / Anahtarınız ({dtxt}):\n\n{k_}\n\nTürkmen VPN → gizli bölüm → açary ýazyň / anahtarı yazın.")
+                ok = True
+            except Exception as e: ok = False; log.warning("mail send: %s", e)
+            ulog("order", f"📧 Mail ile key: {frm} · {dtxt}" + ("" if ok else " (mail gönderilemedi)"))
+            events.append(f"🔑 <b>Mail ile Türkmen VPN key'i</b>\n<blockquote>{esc(frm)} · {dtxt}\n<code>{k_}</code>\n{'✅ maille gönderildi' if ok else '⚠️ mail gönderilemedi'}</blockquote>")
+            continue
         res, err = create_vip(f"✉️ {frm.split('@')[0][:20]}", None, days or None)   # 0 → süresiz
         if not res:
             events.append(f"❌ <b>Mail ile kod oluşturulamadı</b>\n<blockquote>{esc(frm)} · {esc(err)}</blockquote>"); continue
@@ -2129,6 +2179,18 @@ async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
             audit(uid, f"src_add n={n}")
             if n: start_refresh(c.application, "abonelik eklendi")
             await u.message.reply_text(f"✅ {n} abonelik eklendi." + (" Bütün aboneliklerin kodları şimdi yeniden yazılıyor, bitince bildirim gelecek." if n else ""), reply_markup=back("sources"))
+
+        elif act == "app_ad_link":
+            if uid not in ORIG_ADMINS: return
+            link = "" if txt.strip() == "-" else txt.strip()
+            if link and not re.match(r"^(https?://|tg://)", link):
+                STATE[uid] = st
+                await u.message.reply_text("⚠️ Link https:// ile başlamalı.", reply_markup=back("app_ad")); return
+            mutate(lambda d: d.setdefault("app", {}).setdefault("ad", {}).__setitem__("link", link[:300]))
+            audit(uid, "app ad link")
+            try: await asyncio.to_thread(app_sync, True)
+            except Exception as e: RUN["app_err"] = str(e)[:150]
+            await u.message.reply_text("✅ Reklam linki kaydedildi.", reply_markup=back("app_ad"))
 
         elif act == "app_up":
             if uid not in ORIG_ADMINS: return
@@ -3039,9 +3101,55 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
             start_refresh(c.application, "abonelik silindi")
         await safe_edit(q, "✅ Abonelik silindi. Kalan aboneliklerin kodları şimdi yeniden yazılıyor." if ok else "⚠️ Bulunamadı.", back("sources"))
 
-    elif a in ("app_v", "app_add", "app_now", "app_link", "app_kn", "app_kl", "app_up") or a.startswith(("app_rm:", "app_k:", "app_kd:")):
+    elif a in ("app_v", "app_add", "app_now", "app_link", "app_kn", "app_kl", "app_up", "app_st", "app_ad", "app_ad_img", "app_ad_link", "app_ad_rm", "app_ad_tg", "app_dl") or a.startswith(("app_rm:", "app_k:", "app_kd:")):
         if uid not in ORIG_ADMINS:
             await safe_edit(q, "⛔ Erişim yok", back("admin")); return
+        if a == "app_st":
+            fid = app_cfg(load_db()).get("fid")
+            if not fid: await safe_edit(q, "ℹ️ Programın dosyası henüz yok.", back("app_v")); return
+            await safe_edit(q, "⏳ Sayılıyor…", None)
+            try: st_ = await asyncio.to_thread(app_stats, fid)
+            except Exception as e:
+                await safe_edit(q, f"❌ Sayaç okunamadı: {esc(str(e)[:150])}", KB([[B("🔄 Tekrar", "app_st"), B("◀️ Geri", "app_v")]])); return
+            vv = " · ".join(f"{k}: {v}" for k, v in sorted(st_["vers"].items(), reverse=True)) or "—"
+            ll = " · ".join(f"{ {'tk': '🇹🇲', 'ru': '🇷🇺', 'tr': '🇹🇷'}.get(k, k) } {v}" for k, v in sorted(st_["langs"].items())) or "—"
+            await safe_edit(q, "📊 <b>Türkmen VPN · izleme</b>\n<blockquote>"
+                            f"🟢 Şu an VPN'de: <b>{st_['on']}</b> kişi\n"
+                            f"👥 Son 1 saatte açan: <b>{st_['h1']}</b>\n"
+                            f"📅 Son 12 saatte açan: <b>{st_['h12']}</b> (VPN'e bağlanan {st_['vpn12']})\n"
+                            f"📦 Sürümler: {esc(vv)}\n🌐 Diller: {esc(ll)}</blockquote>\n"
+                            "<i>Program anonim sinyal gönderir (rastgele cihaz kimliği + sürüm), kişisel bilgi yok. 12 saatten eskisi tutulmaz.</i>",
+                            KB([[B("🔄 Yenile", "app_st"), B("◀️ Geri", "app_v")]])); return
+        if a in ("app_ad", "app_ad_rm", "app_ad_tg"):
+            if a == "app_ad_rm": mutate(lambda d: d.setdefault("app", {}).pop("ad", None)); audit(uid, "app ad rm")
+            if a == "app_ad_tg": mutate(lambda d: d.setdefault("app", {}).setdefault("ad", {}).__setitem__("on", not d["app"]["ad"].get("on", True)))
+            if a != "app_ad":
+                try: await asyncio.to_thread(app_sync, True)
+                except Exception as e: RUN["app_err"] = str(e)[:150]
+            ad = app_cfg(load_db()).get("ad") or {}
+            t_ = ("📢 <b>Programdaki reklam</b>\n<blockquote>"
+                  + (f"🖼 Resim: {'var' if ad.get('fid') else 'yok'}\n🔗 Link: {esc(ad.get('link') or '—')}\n"
+                     f"Durum: {'🟢 gösteriliyor' if ad.get('fid') and ad.get('on', True) else '⚪ kapalı'}" if ad else "Reklam yok.")
+                  + "</blockquote>\n<i>Resim ana ekranda bağlan düğmesinin altında geniş bir şerit olarak görünür (en iyi oran 5:1, ör. 1000×200). Basınca link açılır.</i>")
+            rows_ = [[B("🖼 Resim yükle", "app_ad_img"), B("🔗 Link", "app_ad_link")]]
+            if ad: rows_.append([B("⏸ Kapat" if ad.get("on", True) else "▶️ Aç", "app_ad_tg"), B("🗑 Sil", "app_ad_rm")])
+            rows_.append([B("◀️ Geri", "app_v")])
+            await safe_edit(q, t_, KB(rows_)); return
+        if a == "app_ad_img":
+            STATE[uid] = {"action": "app_ad_img"}
+            t, kb = prompt("🖼 <b>Reklam resmi</b>", "Resmi fotoğraf olarak gönder (en iyi oran 5:1).", "app_ad")
+            await safe_edit(q, t, kb); return
+        if a == "app_ad_link":
+            STATE[uid] = {"action": "app_ad_link"}
+            t, kb = prompt("🔗 <b>Reklam linki</b>", "Basınca açılacak linki gönder (ör. https://t.me/kanal). Silmek için <code>-</code>", "app_ad")
+            await safe_edit(q, t, kb); return
+        if a == "app_dl":
+            cfg_ = app_cfg(load_db()); u_ = max((cfg_.get("upd") or {}).values(), key=lambda x: [int(p) if p.isdigit() else 0 for p in str(x.get("ver", "0")).split(".")], default=None)
+            if not u_: await safe_edit(q, "ℹ️ Yayında sürüm yok.", back("app_v")); return
+            await c.bot.send_message(uid, f"⬇️ <b>Türkmen VPN {esc(u_.get('ver', ''))} · VPN'siz indirme linki</b>\n<code>{esc(sub_link(u_['fid']))}</code>\n"
+                                     "<i>drive.google.com sayfası Türkmenistan'da açılmıyor; bu link Google'ın başka adresinden (googleapis.com) doğrudan indirir, VPN gerekmez. "
+                                     "İndirilen dosyanın adı «content» gibi çıkabilir; telefonda açınca kurulur.</i>", parse_mode="HTML")
+            t, kb = app_view(load_db()); await safe_edit(q, t, kb); return
         if a == "app_up":
             STATE[uid] = {"action": "app_up"}
             t, kb = prompt("📦 <b>Yeni sürüm</b>", "1) APK'yı Google Drive'ına yükle (adında sürüm olsun, ör. TurkmenVPN-1.3.apk)\n"
@@ -7482,6 +7590,46 @@ def send_tmtest_to_phone(code_text):
     _tm_write(svc, db["tm_fid"], ch)
     return ch["tmtest_sha"]
 
+def app_ad_upload(data):
+    """Reklam resmini Drive'a koyar (aynı dosya yeniden kullanılır)."""
+    svc = new_service()
+    if not svc: raise RuntimeError("drive-sa.json bulunamadı")
+    with db_lock():
+        db = load_db(); ad = db.setdefault("app", {}).setdefault("ad", {})
+        fid = ad.get("fid")
+        if not fid:
+            fid, from_free = alloc_file(svc, db)
+            if not fid: raise RuntimeError("Boş Drive dosyası yok")
+            if from_free: db["free_files"].remove(fid)
+            ad["fid"] = fid; save_db(db)
+    if not make_public(svc, fid): raise RuntimeError("Drive dosyası herkese açık yapılamadı")
+    media = MediaIoBaseUpload(io.BytesIO(data), mimetype="image/jpeg", resumable=False)
+    svc.files().update(fileId=fid, body={"name": "tvpn_ad.jpg"}, media_body=media).execute(num_retries=2)
+    # dosya kimliği aynı kaldığı için program eski resmi önbellekten göstermesin: kimliğe sürüm eklenmez,
+    # bunun yerine her yüklemede yeni dosya kullanılır
+    return fid
+
+async def app_photo(u: Update, c: ContextTypes.DEFAULT_TYPE):
+    uid = u.effective_user.id if u.effective_user else 0
+    if uid not in ORIG_ADMINS or STATE.get(uid, {}).get("action") != "app_ad_img" or not u.message or not u.message.photo: return
+    STATE.pop(uid, None)
+    m = await u.message.reply_text("⏳ Reklam resmi yükleniyor…")
+    try:
+        f = await c.bot.get_file(u.message.photo[-1].file_id)
+        data = bytes(await f.download_as_bytearray())
+        def go():
+            # her yeni resim için yeni dosya: programdaki önbellek eski resmi göstermesin
+            mutate(lambda d: d.setdefault("app", {}).setdefault("ad", {}).pop("fid", None))
+            fid = app_ad_upload(data)
+            mutate(lambda d: d["app"]["ad"].update({"on": True, "ts": int(time.time())}))
+            app_sync(True); return fid
+        await asyncio.to_thread(go)
+        audit(uid, "app ad img")
+        await m.edit_text("✅ Reklam resmi yüklendi, programda görünecek.", reply_markup=back("app_ad"))
+    except Exception as e:
+        await m.edit_text(f"❌ Yüklenemedi: {esc(str(e)[:200])}", parse_mode="HTML", reply_markup=back("app_ad"))
+    raise ApplicationHandlerStop
+
 async def doc_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
     uid = u.effective_user.id
     d = u.message.document
@@ -7582,6 +7730,7 @@ def main():
     if not token: raise SystemExit("BOT_TOKEN bulunamadı (/root/env.txt)")
     if not ADMINS: log.warning("ADMIN_IDS yok: kimse giriş yapamaz.")
     app = ApplicationBuilder().token(token).concurrent_updates(True).post_init(post_init).build()
+    app.add_handler(MessageHandler(filters.PHOTO, app_photo), group=-2)   # kurucunun reklam resmi
     app.add_handler(MessageHandler(filters.UpdateType.MESSAGE & ~filters.COMMAND, support_router), group=-1)
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("id", cmd_id))

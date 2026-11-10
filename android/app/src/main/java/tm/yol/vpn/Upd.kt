@@ -1,20 +1,31 @@
 package tm.yol.vpn
 
-import android.app.Activity
+import android.app.DownloadManager
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.app.PendingIntent
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageInstaller
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import android.net.Uri
 import android.os.Build
-import java.net.HttpURLConnection
-import java.net.URL
+import android.os.Environment
+import java.io.File
 
-/** Bot yeni sürüm yayınlayınca: üstte bildirim, isteğe bağlı indirip kurma. VPN gerekmez. */
+/**
+ * Yeni sürüm: Android'in indirme yöneticisiyle arka planda iner (uygulama kapansa da sürer),
+ * inen dosya saklanır (tekrar indirilmez), sistemin kendi yükleyicisiyle kurulur.
+ * İndirme sürerken VPN açılamaz.
+ */
 object Upd {
     private fun abi() = if (Build.SUPPORTED_ABIS.any { it == "arm64-v8a" }) "64" else "32"
+    private fun p(ctx: Context) = ctx.getSharedPreferences("p", 0)
 
-    /** Bu telefona uygun, kuruluden yeni sürüm: (sürüm, Drive dosyası) ya da null. */
+    /** Bu telefona uygun, kuruludan yeni sürüm: (sürüm, Drive dosyası) ya da null. */
     fun available(cur: String): Pair<String, String>? {
-        // tek APK ("all") ya da bu mimariye özel olan: hangisi daha yeniyse
         val u = listOfNotNull(Sub.upd[abi()], Sub.upd["all"]).reduceOrNull { x, y -> if (newer(y.first, x.first)) y else x } ?: return null
         return if (newer(u.first, cur)) u else null
     }
@@ -28,45 +39,128 @@ object Upd {
         return false
     }
 
-    /** İndirir ve Android'in kurulum onayını açar. progress: 0..100 (iş parçacığında çağrılır). */
-    fun install(act: Activity, fid: String, progress: (Int) -> Unit) {
-        val c = URL(Sub.fileUrl(fid)).openConnection() as HttpURLConnection
-        c.connectTimeout = 15000; c.readTimeout = 30000
-        try {
-            if (c.responseCode != 200) throw IllegalStateException("HTTP ${c.responseCode}")
-            val total = c.contentLengthLong
-            val pi = act.packageManager.packageInstaller
-            val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
-            val id = pi.createSession(params)
-            pi.openSession(id).use { s ->
-                s.openWrite("app.apk", 0, if (total > 0) total else -1).use { out ->
-                    c.inputStream.use { inp ->
-                        val buf = ByteArray(64 * 1024); var n: Int; var done = 0L; var last = -1
-                        while (inp.read(buf).also { n = it } > 0) {
-                            out.write(buf, 0, n); done += n
-                            if (total > 0) { val p = (done * 100 / total).toInt(); if (p != last) { last = p; progress(p) } }
-                        }
-                    }
-                    s.fsync(out)
-                }
-                val i = Intent(act, Main::class.java).setAction(Main.INSTALLED)
-                val flags = PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_MUTABLE else 0)
-                s.commit(PendingIntent.getActivity(act, 7, i, flags).intentSender)
-            }
-        } finally { c.disconnect() }
-    }
+    private fun file(ctx: Context, ver: String) = File(ctx.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), "TurkmenVPN-$ver.apk")
 
-    /** Kurulum sonucu Main'e gelir; kullanıcı onayı gerekiyorsa sistem ekranı açılır. */
-    fun onResult(act: Activity, i: Intent): Boolean {
-        if (i.action != Main.INSTALLED) return false
-        when (i.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)) {
-            PackageInstaller.STATUS_PENDING_USER_ACTION -> {
-                @Suppress("DEPRECATION") val confirm = i.getParcelableExtra<Intent>(Intent.EXTRA_INTENT)
-                confirm?.let { act.startActivity(it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
-            }
-            PackageInstaller.STATUS_SUCCESS -> {}
-            else -> android.widget.Toast.makeText(act, t("Täzelenmedi", "Не обновилось", "Güncellenemedi"), android.widget.Toast.LENGTH_LONG).show()
+    /** İndirme sürüyor mu (VPN bu sırada açılmaz). */
+    fun busy(ctx: Context): Boolean {
+        val id = p(ctx).getLong("dl", -1); if (id < 0) return false
+        val st = query(ctx, id)
+        if (st == null || st.status == DownloadManager.STATUS_FAILED || st.status == DownloadManager.STATUS_SUCCESSFUL) {
+            if (st?.status != DownloadManager.STATUS_SUCCESSFUL) p(ctx).edit().remove("dl").apply()
+            return false
         }
         return true
     }
+
+    class Info(val status: Int, val reason: Int, val done: Long, val total: Long) {
+        val pct get() = if (total > 0) (done * 100 / total).toInt() else 0
+    }
+
+    fun query(ctx: Context, id: Long = p(ctx).getLong("dl", -1)): Info? {
+        if (id < 0) return null
+        val dm = ctx.getSystemService(DownloadManager::class.java)
+        return runCatching {
+            dm.query(DownloadManager.Query().setFilterById(id)).use { c ->
+                if (!c.moveToFirst()) return null
+                Info(c.getInt(c.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS)),
+                    c.getInt(c.getColumnIndexOrThrow(DownloadManager.COLUMN_REASON)),
+                    c.getLong(c.getColumnIndexOrThrow(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR)),
+                    c.getLong(c.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES)))
+            }
+        }.getOrNull()
+    }
+
+    /** Dosya zaten indiyse doğrudan kurar; yoksa indirmeyi başlatır. Dönüş: kurulum ekranı açıldı mı. */
+    fun start(ctx: Context, ver: String, fid: String): Boolean {
+        val f = file(ctx, ver)
+        if (f.exists() && f.length() > 1_000_000 && p(ctx).getString("dlv", null) == ver && !busy(ctx)) { install(ctx, ver); return true }
+        if (busy(ctx)) return false
+        f.delete()
+        val dm = ctx.getSystemService(DownloadManager::class.java)
+        val r = DownloadManager.Request(Uri.parse(Sub.fileUrl(fid)))
+            .setTitle(ctx.getString(R.string.app_name) + " $ver")
+            .setDescription(t("Täze wersiýa ýüklenýär", "Загрузка новой версии", "Yeni sürüm indiriliyor"))
+            .setMimeType("application/vnd.android.package-archive")
+            .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE)
+            .setDestinationUri(Uri.fromFile(f))
+            .setAllowedOverMetered(true).setAllowedOverRoaming(true)
+        val id = dm.enqueue(r)
+        p(ctx).edit().putLong("dl", id).putString("dlv", ver).putLong("dlAt", System.currentTimeMillis()).apply()
+        return false
+    }
+
+    /** Sistemin yükleyicisini açar (bilinmeyen kaynak izni orada istenir, dosya tekrar inmez). */
+    fun install(ctx: Context, ver: String = p(ctx).getString("dlv", "") ?: "") {
+        val f = file(ctx, ver)
+        if (!f.exists()) return
+        val uri = Uri.parse("content://${ctx.packageName}.apk/${f.name}")
+        val i = Intent(Intent.ACTION_VIEW).setDataAndType(uri, "application/vnd.android.package-archive")
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        runCatching { ctx.startActivity(i) }
+    }
+
+    fun onWifi(ctx: Context): Boolean = runCatching {
+        val cm = ctx.getSystemService(ConnectivityManager::class.java)
+        cm.getNetworkCapabilities(cm.activeNetwork)?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
+    }.getOrDefault(false)
+
+    /** Hata durumuna göre kullanıcıya gösterilecek yazı. */
+    fun errText(ctx: Context, reason: Int): String = when {
+        reason == 403 -> t("2-3 minutdan soň täzeden barlaň ýa-da başga VPN işledip täzeden barlaň",
+            "Повторите через 2-3 минуты или включите другой VPN и попробуйте снова",
+            "2-3 dakika sonra tekrar deneyin ya da başka bir VPN açıp tekrar deneyin")
+        onWifi(ctx) -> t("Internetiňiz ýuwaş işleýär. Mobil internetiňizi açyp täzelemäge synanyşyň",
+            "Интернет работает медленно. Включите мобильный интернет и попробуйте обновить",
+            "İnternetiniz yavaş. Mobil veriyi açıp güncellemeyi deneyin")
+        else -> t("Internetiňiz pes işleýär. Wi-Fi açyp ýa-da soňrak barlaň",
+            "Интернет слабый. Включите Wi-Fi или попробуйте позже",
+            "İnternetiniz zayıf. Wi-Fi açın ya da daha sonra deneyin")
+    }
+
+    fun notify(ctx: Context, text: String, tapInstall: Boolean) {
+        val nm = ctx.getSystemService(NotificationManager::class.java)
+        if (Build.VERSION.SDK_INT >= 26) nm.createNotificationChannel(NotificationChannel("u", "Täzelenme", NotificationManager.IMPORTANCE_DEFAULT))
+        val open = Intent(ctx, Main::class.java).setAction(if (tapInstall) Main.INSTALL else Intent.ACTION_MAIN)
+        val pi = PendingIntent.getActivity(ctx, 9, open, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        val b = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(ctx, "u") else Notification.Builder(ctx)
+        nm.notify(2, b.setSmallIcon(R.drawable.ic_notif).setContentTitle(ctx.getString(R.string.app_name))
+            .setContentText(text).setStyle(Notification.BigTextStyle().bigText(text)).setContentIntent(pi).setAutoCancel(true).build())
+    }
+
+    /** İndirme bitince (uygulama kapalı olsa bile) çağrılır. */
+    class Done : BroadcastReceiver() {
+        override fun onReceive(ctx: Context, i: Intent) {
+            Lang.init(ctx)
+            val id = i.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1)
+            if (id != ctx.getSharedPreferences("p", 0).getLong("dl", -2)) return
+            val st = query(ctx, id) ?: return
+            if (st.status == DownloadManager.STATUS_SUCCESSFUL) {
+                notify(ctx, t("Täze wersiýa ýüklendi. Gurnamak üçin basyň", "Новая версия загружена. Нажмите, чтобы установить", "Yeni sürüm indirildi. Kurmak için dokunun"), true)
+            } else if (st.status == DownloadManager.STATUS_FAILED) {
+                ctx.getSharedPreferences("p", 0).edit().remove("dl").apply()
+                notify(ctx, errText(ctx, st.reason), false)
+            }
+        }
+    }
+}
+
+/** İnen APK'yı sistem yükleyicisine verir (kendi dosyalarımız, sadece okuma). */
+class ApkProvider : android.content.ContentProvider() {
+    override fun onCreate() = true
+    override fun openFile(uri: Uri, mode: String): android.os.ParcelFileDescriptor? {
+        val ctx = context ?: return null
+        val name = uri.lastPathSegment ?: return null
+        if (name.contains("/") || !name.endsWith(".apk")) return null
+        val f = File(ctx.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), name)
+        return android.os.ParcelFileDescriptor.open(f, android.os.ParcelFileDescriptor.MODE_READ_ONLY)
+    }
+    override fun getType(uri: Uri) = "application/vnd.android.package-archive"
+    override fun query(u: Uri, p: Array<String>?, s: String?, a: Array<String>?, o: String?): android.database.Cursor? {
+        val ctx = context ?: return null
+        val f = File(ctx.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), u.lastPathSegment ?: return null)
+        return android.database.MatrixCursor(arrayOf(android.provider.OpenableColumns.DISPLAY_NAME, android.provider.OpenableColumns.SIZE)).apply { addRow(arrayOf(f.name, f.length())) }
+    }
+    override fun insert(u: Uri, v: android.content.ContentValues?) = null
+    override fun delete(u: Uri, s: String?, a: Array<String>?) = 0
+    override fun update(u: Uri, v: android.content.ContentValues?, s: String?, a: Array<String>?) = 0
 }
