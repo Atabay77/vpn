@@ -844,6 +844,86 @@ def _tm_sync(db, sources, codes=None):
             {k: v for k, v in res.items() if isinstance(v, (int, float)) and v > 0}, True, load_exits())
 
 
+# ───────── TÜRKMEN VPN PROGRAMI ─────────
+APP_MAX_SUBS = 5
+APP_EVERY = 600            # 10 dakikada bir abonelikler toplanıp programın dosyasına yazılır
+APP_LOCK = threading.Lock()
+
+def app_cfg(db): return db.get("app") or {}
+
+def app_sync(force=False):
+    """Admin bölümünde eklenen aboneliklerin kodlarını toplar, programın Drive dosyasına yazar.
+    Bir abonelik o an açılmazsa son başarılı kodları kullanılır. Dönüş: (kod sayısı, hatalar)."""
+    with APP_LOCK:
+        db = load_db(); cfg = app_cfg(db)
+        subs = list(cfg.get("subs", []))
+        last = dict(cfg.get("last", {}))
+        errs, codes, keys = [], [], set()
+        for u in subs:
+            h = hashlib.md5(u.encode()).hexdigest()[:8]
+            try:
+                got = fetch_codes(u)
+                if got: last[h] = got
+                else: errs.append(f"{src_label(u)}: boş")
+            except Exception as e:
+                errs.append(f"{src_label(u)}: {str(e)[:60]}")
+            for c in last.get(h, []):
+                k = code_key(c)
+                if k not in keys: keys.add(k); codes.append(c)
+        last = {hashlib.md5(u.encode()).hexdigest()[:8]: last[hashlib.md5(u.encode()).hexdigest()[:8]]
+                for u in subs if hashlib.md5(u.encode()).hexdigest()[:8] in last}
+        dig = hashlib.sha256("\n".join(codes).encode()).hexdigest()[:16]
+        svc = new_service()
+        if not svc: raise RuntimeError("drive-sa.json bulunamadı")
+        fid = cfg.get("fid")
+        if not fid:
+            with db_lock():
+                d0 = load_db(); fid, from_free = alloc_file(svc, d0)
+                if not fid: raise RuntimeError("Boş Drive dosyası yok")
+                if from_free: d0["free_files"].remove(fid)
+                d0.setdefault("app", {})["fid"] = fid; save_db(d0)
+            if not make_public(svc, fid): raise RuntimeError("Drive dosyası herkese açık yapılamadı")
+            force = True
+        if force or dig != cfg.get("dig"):
+            if not sync_file(svc, fid, "vpn", "", codes, exp=False): raise RuntimeError("Drive'a yazılamadı")
+        def f(d):
+            a = d.setdefault("app", {})
+            a.update({"fid": fid, "dig": dig, "last": last, "n": len(codes), "ts": int(time.time()), "errs": errs})
+        mutate(f)
+        return len(codes), errs
+
+async def app_loop(app):
+    await asyncio.sleep(60)
+    while True:
+        if app_cfg(load_db()).get("subs"):
+            try:
+                n, errs = await asyncio.to_thread(app_sync)
+                RUN.pop("app_err", None)
+            except Exception as e:
+                msg = str(e)[:150]
+                if RUN.get("app_err") != msg:
+                    RUN["app_err"] = msg; log.warning("app sync: %s", e)
+                    await notify_founders(app, f"⚠️ <b>Türkmen VPN programı güncellenemedi</b>\n<blockquote>{esc(msg)}</blockquote>")
+        await asyncio.sleep(APP_EVERY)
+
+def app_view(db):
+    cfg = app_cfg(db); subs = cfg.get("subs", [])
+    lines = [f"{i + 1}. {esc(src_label(u))}" for i, u in enumerate(subs)] or ["Henüz abonelik yok."]
+    st = (f"\n🕒 Son yazma {ago(cfg.get('ts'))} · toplam {cfg.get('n', 0)} kod" if cfg.get("ts") else "")
+    st += "".join(f"\n⚠️ {esc(e)}" for e in cfg.get("errs", []))
+    st += (f"\n❌ {esc(RUN['app_err'])}" if RUN.get("app_err") else "")
+    t = ("📱 <b>Türkmen VPN programy</b>\n"
+         f"<blockquote>{chr(10).join(lines)}{st}</blockquote>\n"
+         "<i>Buradaki aboneliklerin bütün kodları birleştirilip programa gider (10 dakikada bir, aynı kodlar bir kez). "
+         "Program her bağlanma ve çıkışta yeni listeyi alır.</i>")
+    rows = [[B(f"❌ {i + 1}. {short(src_label(u), 24)}", f"app_rm:{hashlib.md5(u.encode()).hexdigest()[:8]}")] for i, u in enumerate(subs)]
+    if len(subs) < APP_MAX_SUBS: rows.append([B("➕ Abonelik ekle", "app_add", "primary")])
+    if subs: rows.append([B("🔄 Şimdi güncelle", "app_now")])
+    if cfg.get("fid"): rows.append([B("🔗 Programın dosya linki", "app_link")])
+    rows.append([B("◀️ Admin", "admin")])
+    return t, KB(rows)
+
+
 # ───────── KONTROL DÖNGÜSÜ ─────────
 def check_cycle(force=False):
     """Bloklayan iş (thread'de çalışır). Güncelleme olursa sonuç dict döner, olmazsa None."""
@@ -1211,6 +1291,7 @@ async def post_init(app):
     app.bot_data["aim"] = asyncio.create_task(ai_log_watch(app))
     app.bot_data["px"] = asyncio.create_task(proxy_loop(app))
     app.bot_data["mail"] = asyncio.create_task(mail_loop(app))
+    app.bot_data["appsync"] = asyncio.create_task(app_loop(app))
     try: ADMINS.update(int(k) for k in load_db().get("temp_admins", {}))   # acil yetkililer yeniden başlatmada kalır
     except Exception: pass
     if ADMINS: asyncio.create_task(pad_old_photos(app))
@@ -1407,6 +1488,7 @@ def admin_kb(uid=None):
         [B(a_("ping", n=ping_max()), "ping_max")],
         [B(a_("rollback"), "rollback")],
         [B(a_("start"), "toggle_sys", "success") if stop else B(a_("stop"), "toggle_sys", "danger")],
+        *([[B("📱 Türkmen VPN programy", "app_v")]] if uid in ORIG_ADMINS else []),
         [B(a_("menu"), "menu")]])
 
 def log_text():
@@ -1985,6 +2067,24 @@ async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
             audit(uid, f"src_add n={n}")
             if n: start_refresh(c.application, "abonelik eklendi")
             await u.message.reply_text(f"✅ {n} abonelik eklendi." + (" Bütün aboneliklerin kodları şimdi yeniden yazılıyor, bitince bildirim gelecek." if n else ""), reply_markup=back("sources"))
+
+        elif act == "app_add":
+            if uid not in ORIG_ADMINS: return
+            lines = [x.strip() for x in txt.split() if x.strip().startswith("http")]
+            if not lines:
+                await u.message.reply_text("⚠️ Geçerli link yok.", reply_markup=back("app_v")); return
+            def f(d):
+                ap = d.setdefault("app", {}); cur = ap.setdefault("subs", []); n = 0
+                for l in lines:
+                    if l not in cur and len(cur) < APP_MAX_SUBS: cur.append(l); n += 1
+                return n
+            n = mutate(f); audit(uid, f"app_add n={n}")
+            await _del_msg(u.message)   # link sohbette kalmasın
+            try:
+                k, errs = await asyncio.to_thread(app_sync, True); RUN.pop("app_err", None)
+            except Exception as e: RUN["app_err"] = str(e)[:150]
+            t, kb = app_view(load_db())
+            await u.message.reply_text(f"✅ {n} abonelik eklendi.\n\n" + t, parse_mode="HTML", reply_markup=kb)
 
         elif act == "src_edit":
             new = next((x for x in txt.split() if x.startswith("http")), None)
@@ -2865,6 +2965,29 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
             audit(uid, "src_del")
             start_refresh(c.application, "abonelik silindi")
         await safe_edit(q, "✅ Abonelik silindi. Kalan aboneliklerin kodları şimdi yeniden yazılıyor." if ok else "⚠️ Bulunamadı.", back("sources"))
+
+    elif a in ("app_v", "app_add", "app_now", "app_link") or a.startswith("app_rm:"):
+        if uid not in ORIG_ADMINS:
+            await safe_edit(q, "⛔ Erişim yok", back("admin")); return
+        if a == "app_add":
+            STATE[uid] = {"action": "app_add"}
+            t, kb = prompt("➕ <b>Programa abonelik ekle</b>", f"Abonelik linklerini gönder (her satıra bir tane, en çok {APP_MAX_SUBS}).", "app_v")
+            await safe_edit(q, t, kb); return
+        if a.startswith("app_rm:"):
+            h = a.split(":", 1)[1]
+            def f(d):
+                ap = d.setdefault("app", {}); ap["subs"] = [x for x in ap.get("subs", []) if hashlib.md5(x.encode()).hexdigest()[:8] != h]
+            mutate(f); audit(uid, "app_rm")
+        if a in ("app_now",) or a.startswith("app_rm:"):
+            await safe_edit(q, "⏳ Programın listesi yazılıyor…", None)
+            try:
+                n, errs = await asyncio.to_thread(app_sync, True); RUN.pop("app_err", None)
+            except Exception as e: RUN["app_err"] = str(e)[:150]
+        if a == "app_link":
+            fid = app_cfg(load_db()).get("fid")
+            await c.bot.send_message(uid, f"🔗 <b>Programın okuduğu dosya</b>\n<code>{esc(sub_link(fid))}</code>\n<i>Bu linki kimseyle paylaşma; sadece programı yeniden derletirken lazım.</i>", parse_mode="HTML")
+        t, kb = app_view(load_db())
+        await safe_edit(q, t, kb)
 
     elif a == "s_add":
         STATE[uid] = {"action": "src_add"}
@@ -5271,7 +5394,7 @@ def proto_of(c):
 
 def used_fids(db):
     """Şu an bir koda/oturuma bağlı Drive dosyaları (boş dosya seçerken bunlar alınmaz)."""
-    u = {v.get("file_id") for v in db["subs"].values() if v.get("file_id")} | {db.get("tm_fid"), db.get("px_fid")} | source_fids(db)
+    u = {v.get("file_id") for v in db["subs"].values() if v.get("file_id")} | {db.get("tm_fid"), db.get("px_fid"), (db.get("app") or {}).get("fid")} | source_fids(db)
     u |= {s.get("fid") for s in db.get("msess", {}).values() if s.get("status") == "on"}
     return u
 
