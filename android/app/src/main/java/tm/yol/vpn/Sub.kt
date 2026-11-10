@@ -18,8 +18,10 @@ object N {
 }
 
 /** Abonelikteki bir sunucu. uri yalnız bellekte ve şifreli önbellekte durur, ekranda gösterilmez. */
-data class Server(val flag: String, val country: String, val title: String, val proto: String, val uri: String) {
-    val key get() = "$flag|$country|$title"
+data class Server(val flag: String, val country: String, val title: String, val proto: String, val uri: String,
+                  val game: Boolean = false, val ru: Boolean = false) {
+    /** Seçimi hatırlamak için: abonelik karışsa da aynı sunucu aynı kalır. */
+    val key get() = flag + "|" + runCatching { Cfg.link(uri).let { "${it.host}:${it.port}" } }.getOrDefault(title)
 }
 
 object Sub {
@@ -44,8 +46,21 @@ object Sub {
                 }
                 val name = Cfg.dec(line.substringAfter('#', ""))
                 val (flag, country, title) = splitName(name)
-                Server(flag, country, title, proto, line)
-            }.toList()
+                val game = name.contains("🎮") || Regex("pubg|gaming|oýun|game", RegexOption.IGNORE_CASE).containsMatchIn(name)
+                val ru = flag == "🇷🇺" || country.equals("Russia", true) || country.equals("Rossiýa", true)
+                Server(flag, country, title, proto, line, game, ru)
+            }.toList().numbered()
+    }
+
+    /** Aynı adlı sunucular ayırt edilsin: ikincisine «2», üçüncüsüne «3»… */
+    private fun List<Server>.numbered(): List<Server> {
+        val seen = HashMap<String, Int>()
+        return map { s ->
+            val k = s.flag + s.country + s.title
+            val n = (seen[k] ?: 0) + 1
+            seen[k] = n
+            if (n == 1) s else s.copy(title = (s.title.ifEmpty { s.country }) + " $n")
+        }
     }
 
     /** "🇳🇱 Netherlands · 🧡 Orange Express" → (🇳🇱, Netherlands, Orange Express) */

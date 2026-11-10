@@ -24,11 +24,40 @@ object State {
     val subs = mutableListOf<() -> Unit>()
     fun set(s: Int) { now = s; main.post { subs.toList().forEach { it() } } }
 
+    @Volatile var active: Server? = null      // şu an bağlı olunan sunucu (otomatikte seçilen)
+
+    /** Varsayılan otomatik. Elle seçilen sunucu listeden kalkarsa yine otomatiğe döner. */
+    fun auto(ctx: Context) = selected(ctx) == null
     fun selected(ctx: Context): Server? {
-        val k = ctx.getSharedPreferences("p", 0).getString("sel", null)
-        return Sub.list.firstOrNull { it.key == k } ?: Sub.list.firstOrNull()
+        val k = ctx.getSharedPreferences("p", 0).getString("sel", AUTO)
+        return if (k == AUTO) null else Sub.list.firstOrNull { it.key == k }
     }
-    fun select(ctx: Context, s: Server) = ctx.getSharedPreferences("p", 0).edit().putString("sel", s.key).apply()
+    fun select(ctx: Context, s: Server?) =
+        ctx.getSharedPreferences("p", 0).edit().putString("sel", s?.key ?: AUTO).apply()
+    private const val AUTO = "auto"
+
+    /** Otomatik: Rusya ve oyun sunucuları hariç, en düşük ms veren. En çok ~7 sn beklenir. */
+    fun best(): Server? {
+        val c = Sub.list.filter { !it.ru && !it.game }.ifEmpty { Sub.list.filter { !it.ru } }
+        if (c.size <= 1) return c.firstOrNull()
+        val ms = java.util.concurrent.ConcurrentHashMap<Server, Long>()
+        val pool = java.util.concurrent.Executors.newFixedThreadPool(minOf(c.size, 8))
+        for (s in c) pool.execute {
+            runCatching { Libv2ray.measureOutboundDelay(Cfg.full(s.uri, false), PING) }
+                .getOrNull()?.takeIf { it > 0 }?.let { ms[s] = it }
+        }
+        pool.shutdown()
+        val end = System.currentTimeMillis() + 7000
+        while (System.currentTimeMillis() < end && !pool.isTerminated) {
+            if (ms.size == c.size) break
+            Thread.sleep(150)
+            // ilk sonuçtan sonra kısa süre daha bekle, daha iyisi gelebilir
+            if (ms.isNotEmpty() && System.currentTimeMillis() > end - 4000) break
+        }
+        pool.shutdownNow()
+        return ms.minByOrNull { it.value }?.key ?: c.first()
+    }
+    const val PING = "https://www.gstatic.com/generate_204"
 }
 
 class Svc : VpnService() {
@@ -51,7 +80,8 @@ class Svc : VpnService() {
         try {
             stopCore()
             Sub.refresh(this, 6000)            // her bağlanmada sessiz güncelleme (olmazsa önbellek)
-            val s = State.selected(this) ?: throw IllegalStateException("liste boş")
+            val s = State.selected(this) ?: State.best() ?: throw IllegalStateException("liste boş")
+            State.active = s
             val cfg = Cfg.full(s.uri, true)
             Libv2ray.initCoreEnv(filesDir.absolutePath, "")
             val b = Builder().setSession(getString(R.string.app_name)).setMtu(1500)

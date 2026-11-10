@@ -24,6 +24,12 @@ trojan://x@1.1.1.1:1#skip
         val ss = Cfg.outbound("ss://aes-256-gcm:p%40ss@1.2.3.4:8388#x")
         println("SS $ss")
         assertEquals("p@ss", ss.getJSONObject("settings").getJSONArray("servers").getJSONObject(0).getString("password"))
+        val g = Sub.parse("ss://YWVzLTI1Ni1nY206cA==@1.2.3.4:1080#🇷🇺 Russia · 🎮 PUBG Gaming Server\nss://YWVzLTI1Ni1nY206cA==@1.2.3.4:1088#🇷🇺 Russia · 🎮 PUBG Gaming Server\nss://YWVzLTI1Ni1nY206cA==@1.2.3.5:1#🇷🇺 Russia · Moscow")
+        assertEquals(listOf(true, true, false), g.map { it.game })
+        assertTrue(g.all { it.ru })
+        assertEquals("PUBG Gaming Server 2", g[1].title)
+        assertNotEquals(g[0].key, g[1].key)
+        assertFalse(l.any { it.ru || it.game })
         println("NAME " + Sub.splitName("🇷🇺 Russia · 🎮 PUBG Gaming Server") + " " + Sub.splitName("Plain"))
         println("VLESS " + Cfg.outbound("vless://uuid-1@[2001:db8::1]:443?type=tcp&security=reality&pbk=K&sid=ab&sni=x.com&fp=chrome&flow=xtls-rprx-vision#n"))
     }

@@ -146,3 +146,37 @@ class Power(ctx: Context) : View(ctx) {
         c.restore()
     }
 }
+
+/** Ana ekranın canlı arka planı: sessiz, döngülü video, ekranı kaplayacak şekilde kırpılır. */
+class VideoBg(ctx: Context, private val res: Int) : android.view.TextureView(ctx), android.view.TextureView.SurfaceTextureListener {
+    private var mp: android.media.MediaPlayer? = null
+    private var vw = 0; private var vh = 0
+
+    init { surfaceTextureListener = this; isOpaque = false }
+
+    override fun onSurfaceTextureAvailable(st: android.graphics.SurfaceTexture, w: Int, h: Int) {
+        runCatching {
+            val m = android.media.MediaPlayer.create(context, res) ?: return
+            m.setSurface(android.view.Surface(st))
+            m.isLooping = true
+            m.setVolume(0f, 0f)
+            m.setOnVideoSizeChangedListener { _, a, b -> vw = a; vh = b; crop() }
+            m.start()
+            mp = m
+        }
+    }
+
+    private fun crop() {
+        if (vw == 0 || vh == 0 || width == 0 || height == 0) return
+        val s = maxOf(width.toFloat() / vw, height.toFloat() / vh)
+        val m = android.graphics.Matrix()
+        m.setScale(vw * s / width, vh * s / height, width / 2f, height / 2f)
+        setTransform(m)
+    }
+
+    override fun onSurfaceTextureSizeChanged(st: android.graphics.SurfaceTexture, w: Int, h: Int) = crop()
+    override fun onSurfaceTextureDestroyed(st: android.graphics.SurfaceTexture): Boolean {
+        runCatching { mp?.release() }; mp = null; return true
+    }
+    override fun onSurfaceTextureUpdated(st: android.graphics.SurfaceTexture) {}
+}

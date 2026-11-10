@@ -49,6 +49,8 @@ class Main : Activity() {
     private fun showMain() {
         onServers = false
         root.removeAllViews()
+        root.addView(VideoBg(this, R.raw.bg), FrameLayout.LayoutParams(-1, -1))
+        root.addView(View(this).apply { setBackgroundColor(0x660A1C14) }, FrameLayout.LayoutParams(-1, -1))   // yazılar okunsun
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         row.addView(Carpet(this, true, 5), LinearLayout.LayoutParams(dpi(46), -1))
 
@@ -56,8 +58,18 @@ class Main : Activity() {
             orientation = LinearLayout.VERTICAL
             setPadding(dpi(22), dpi(28), dpi(22), dpi(24))
         }
-        col.addView(text(getString(R.string.app_name), 22f, C.TEXT, true))
-        col.addView(text("Türkmenistan üçin", 13f, C.MUTED))
+        val head = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        head.addView(android.widget.ImageView(this).apply {
+            setImageResource(R.drawable.logo)
+            clipToOutline = true
+            background = box(C.BG, C.LINE, 12f)
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }, LinearLayout.LayoutParams(dpi(48), dpi(48)))
+        val ht = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dpi(12), 0, 0, 0) }
+        ht.addView(text(getString(R.string.app_name), 22f, C.TEXT, true))
+        ht.addView(text("Türkmenistan üçin", 13f, C.MUTED))
+        head.addView(ht)
+        col.addView(head)
 
         val mid = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER }
         power = Power(this).apply {
@@ -74,7 +86,7 @@ class Main : Activity() {
         card = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
             setPadding(dpi(16), dpi(14), dpi(16), dpi(14))
-            background = box(C.CARD, C.LINE, 18f)
+            background = box(0xE612281D.toInt(), C.LINE, 18f)
             setOnClickListener { showServers() }
         }
         col.addView(card, LinearLayout.LayoutParams(-1, -2))
@@ -88,10 +100,21 @@ class Main : Activity() {
     private fun fillCard() {
         card.removeAllViews()
         val s = State.selected(this)
-        card.addView(flag(s?.flag ?: "🌐", C.GOLD))
+        val a = State.active.takeIf { State.now == State.ON }
         val t = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dpi(12), 0, dpi(8), 0) }
-        t.addView(text(s?.country ?: "Serwer ýok", 16f, C.TEXT, true))
-        t.addView(text(if (s == null) "Täzelemek üçin basyň" else sub(s), 13f, C.MUTED).apply { oneLine() })
+        if (Sub.list.isEmpty()) {
+            card.addView(flag("🌐", C.GOLD))
+            t.addView(text("Serwer ýok", 16f, C.TEXT, true))
+            t.addView(text("Täzelemek üçin basyň", 13f, C.MUTED))
+        } else if (s == null) {
+            card.addView(flag(a?.flag ?: "⚡", C.GOLD))
+            t.addView(text("Awtomatik", 16f, C.TEXT, true))
+            t.addView(text(if (a != null) "${a.country} · ${sub(a)}" else "Iň çalt serwer (Russiýasyz)", 13f, C.MUTED).apply { oneLine() })
+        } else {
+            card.addView(flag(s.flag, C.GOLD))
+            t.addView(text(s.country, 16f, C.TEXT, true))
+            t.addView(text(sub(s), 13f, C.MUTED).apply { oneLine() })
+        }
         card.addView(t, LinearLayout.LayoutParams(0, -2, 1f))
         card.addView(Ico(this, "next", C.MUTED, 18f))
     }
@@ -169,7 +192,13 @@ class Main : Activity() {
             setPadding(dpi(20), dpi(8), dpi(20), dpi(20))
         }
         val sel = State.selected(this)
-        for (s in Sub.list) list.addView(row(s, s === sel))
+        if (Sub.list.isNotEmpty()) list.addView(autoRow(sel == null))
+        for (s in Sub.list.filter { !it.game }) list.addView(row(s, s === sel))
+        val games = Sub.list.filter { it.game }
+        if (games.isNotEmpty()) {
+            list.addView(text("Oýunlar üçin", 15f, C.GOLD, true).apply { setPadding(dpi(4), dpi(14), 0, dpi(10)) })
+            for (s in games) list.addView(row(s, s === sel))
+        }
         if (Sub.list.isEmpty()) list.addView(text("Serwer ýok. Täzelemek üçin ýokardaky düwmä basyň.", 14f, C.MUTED))
         val sv = ScrollView(this).apply { addView(list) }
         col.addView(sv, LinearLayout.LayoutParams(-1, 0, 1f))
@@ -206,7 +235,25 @@ class Main : Activity() {
         }
     }
 
-    private fun pick(s: Server) {
+    private fun autoRow(sel: Boolean): View {
+        val r = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            setPadding(dpi(14), dpi(12), dpi(14), dpi(12))
+            minimumHeight = dpi(64)
+            background = box(if (sel) C.CARD_SEL else C.CARD, if (sel) C.GREEN else C.LINE, 18f, 1.5f)
+            setOnClickListener { pick(null) }
+        }
+        r.addView(flag("⚡", if (sel) C.GREEN else C.GOLD))
+        val t = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dpi(12), 0, dpi(8), 0) }
+        t.addView(text("Awtomatik", 16f, C.TEXT, true))
+        t.addView(text("Iň çalt serwere özi birigýär · Russiýasyz", 13f, C.MUTED).apply { oneLine() })
+        r.addView(t, LinearLayout.LayoutParams(0, -2, 1f))
+        if (sel) r.addView(Ico(this, "check", C.GREEN, 20f, 2.4f).apply { contentDescription = "Saýlanan" })
+        r.layoutParams = LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dpi(10) }
+        return r
+    }
+
+    private fun pick(s: Server?) {
         State.select(this, s)
         if (State.now == State.ON) startVpn()   // bağlıyken yeni serverle yeniden bağlan
         showMain()
@@ -233,7 +280,7 @@ class Main : Activity() {
         if (left == 0) { testing = false; return }
         for (s in items) pool.execute {
             val v = runCatching {
-                Libv2ray.measureOutboundDelay(Cfg.full(s.uri, false), "https://www.gstatic.com/generate_204")
+                Libv2ray.measureOutboundDelay(Cfg.full(s.uri, false), State.PING)
             }.getOrDefault(-1L)
             ui {
                 ms[s.uri] = if (v <= 0) -1 else v
