@@ -29,7 +29,8 @@ object State {
         app?.let { Tile.refresh(it) }
     }
 
-    @Volatile var active: Server? = null      // şu an bağlı olunan sunucu (otomatikte seçilen)
+    @Volatile var active: Server? = null
+    @Volatile var core: CoreController? = null   // bağlıyken: tünel içinden ping ölçmek için      // şu an bağlı olunan sunucu (otomatikte seçilen)
 
     /** Varsayılan otomatik. Elle seçilen sunucu listeden kalkarsa yine otomatiğe döner. */
     fun auto(ctx: Context) = selected(ctx) == null
@@ -117,6 +118,7 @@ class Svc : VpnService() {
             })
             core = c
             c.startLoop(cfg, fd.fd)
+            State.core = c
             if (!want) { stopCore(); return }
             if (Lic.start(this) == 0L) Lic.setStart(this, System.currentTimeMillis())   // 2 saat bağlanınca başlar
             State.set(State.ON)
@@ -129,6 +131,7 @@ class Svc : VpnService() {
     }
 
     private fun stopCore() {
+        State.core = null
         runCatching { core?.stopLoop() }
         core = null
         runCatching { tun?.close() }

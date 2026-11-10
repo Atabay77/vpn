@@ -106,6 +106,30 @@ class Ico(ctx: Context, private val kind: String, var color: Int, private val si
                 path.addArc(RectF(4f, 4f, 20f, 20f), 20f, 130f)
                 path.moveTo(20f, 20f); path.lineTo(20f, 16f); path.lineTo(16f, 16f)
             }
+            "home" -> {
+                path.moveTo(4f, 11f); path.lineTo(12f, 4f); path.lineTo(20f, 11f)
+                path.moveTo(6f, 9.5f); path.lineTo(6f, 20f); path.lineTo(18f, 20f); path.lineTo(18f, 9.5f)
+                path.moveTo(10f, 20f); path.lineTo(10f, 14f); path.lineTo(14f, 14f); path.lineTo(14f, 20f)
+            }
+            "globe" -> {
+                path.addCircle(12f, 12f, 8.5f, Path.Direction.CW)
+                path.addOval(RectF(8f, 3.5f, 16f, 20.5f), Path.Direction.CW)
+                path.moveTo(3.5f, 12f); path.lineTo(20.5f, 12f)
+                path.moveTo(5f, 7.5f); path.lineTo(19f, 7.5f); path.moveTo(5f, 16.5f); path.lineTo(19f, 16.5f)
+            }
+            "gear" -> {
+                path.addCircle(12f, 12f, 3f, Path.Direction.CW)
+                for (i in 0 until 8) {
+                    val an = Math.toRadians(i * 45.0)
+                    path.moveTo(12f + 5.5f * Math.cos(an).toFloat(), 12f + 5.5f * Math.sin(an).toFloat())
+                    path.lineTo(12f + 8.5f * Math.cos(an).toFloat(), 12f + 8.5f * Math.sin(an).toFloat())
+                }
+                path.addCircle(12f, 12f, 5.5f, Path.Direction.CW)
+            }
+            "info" -> {
+                path.addCircle(12f, 12f, 8.5f, Path.Direction.CW)
+                path.moveTo(12f, 11f); path.lineTo(12f, 16.5f); path.moveTo(12f, 7.6f); path.lineTo(12f, 7.7f)
+            }
             "gauge" -> {
                 path.addArc(RectF(4f, 10f, 20f, 26f), 180f, 180f)
                 path.moveTo(12f, 18f); path.lineTo(16f, 12f)
@@ -232,4 +256,21 @@ class VideoBg(ctx: Context, private val res: Int) : android.view.TextureView(ctx
         runCatching { mp?.release() }; mp = null; return true
     }
     override fun onSurfaceTextureUpdated(st: android.graphics.SurfaceTexture) {}
+}
+
+/** Sol menüdeki iki buton arasındaki küçük halı motifi (göl) ve ince kırmızı çizgi. */
+class GulSep(ctx: Context) : View(ctx) {
+    private val p = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val path = Path()
+    override fun onDraw(c: Canvas) {
+        val cx = width / 2f; val cy = height / 2f; val s = context.dp(1f)
+        p.color = Color.argb(160, 166, 30, 43); p.strokeWidth = s
+        c.drawLine(cx, 0f, cx, height.toFloat(), p)
+        fun d(hw: Float, col: Int) {
+            p.color = col; path.reset()
+            path.moveTo(cx, cy - hw); path.lineTo(cx + hw, cy); path.lineTo(cx, cy + hw); path.lineTo(cx - hw, cy); path.close()
+            c.drawPath(path, p)
+        }
+        d(4.5f * s, C.GOLD); d(3f * s, C.RED); d(1.4f * s, C.CREAM)
+    }
 }
