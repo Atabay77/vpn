@@ -1,0 +1,274 @@
+package tm.yol.vpn
+
+import android.app.Activity
+import android.content.Intent
+import android.graphics.Typeface
+import android.net.VpnService
+import android.os.Build
+import android.os.Bundle
+import android.text.TextUtils
+import android.view.Gravity
+import android.view.View
+import android.widget.FrameLayout
+import android.widget.LinearLayout
+import android.widget.ScrollView
+import android.widget.TextView
+import android.widget.Toast
+import libv2ray.Libv2ray
+import java.util.concurrent.Executors
+
+class Main : Activity() {
+    private lateinit var root: FrameLayout
+    private lateinit var power: Power
+    private lateinit var status: TextView
+    private lateinit var hint: TextView
+    private lateinit var card: LinearLayout
+    private var onServers = false
+    private val ms = HashMap<String, Long>()     // uri → ms (-1 = ulaşılamadı)
+    private var testing = false
+    private val listener: () -> Unit = { renderState() }
+
+    override fun onCreate(b: Bundle?) {
+        super.onCreate(b)
+        Libv2ray.initCoreEnv(filesDir.absolutePath, "")
+        root = FrameLayout(this).apply { setBackgroundColor(C.BG) }
+        setContentView(root)
+        showMain()
+        if (Build.VERSION.SDK_INT >= 33) requestPermissions(arrayOf("android.permission.POST_NOTIFICATIONS"), 2)
+        Sub.load(this)
+        if (Sub.list.isEmpty()) bg { Sub.refresh(this); ui { if (onServers) showServers() else showMain() } }
+    }
+
+    override fun onStart() { super.onStart(); State.subs += listener; renderState() }
+    override fun onStop() { State.subs -= listener; super.onStop() }
+
+    @Deprecated("Activity API")
+    override fun onBackPressed() { if (onServers) showMain() else super.onBackPressed() }
+
+    // ---------- ana ekran ----------
+    private fun showMain() {
+        onServers = false
+        root.removeAllViews()
+        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        row.addView(Carpet(this, true, 5), LinearLayout.LayoutParams(dpi(46), -1))
+
+        val col = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dpi(22), dpi(28), dpi(22), dpi(24))
+        }
+        col.addView(text(getString(R.string.app_name), 22f, C.TEXT, true))
+        col.addView(text("Türkmenistan üçin", 13f, C.MUTED))
+
+        val mid = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER }
+        power = Power(this).apply {
+            isClickable = true
+            setOnClickListener { toggle() }
+        }
+        mid.addView(power)
+        status = text("", 22f, C.TEXT, true).apply { gravity = Gravity.CENTER; setPadding(0, dpi(22), 0, dpi(4)) }
+        hint = text("", 14f, C.MUTED).apply { gravity = Gravity.CENTER }
+        mid.addView(status, LinearLayout.LayoutParams(-1, -2))
+        mid.addView(hint, LinearLayout.LayoutParams(-1, -2))
+        col.addView(mid, LinearLayout.LayoutParams(-1, 0, 1f))
+
+        card = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            setPadding(dpi(16), dpi(14), dpi(16), dpi(14))
+            background = box(C.CARD, C.LINE, 18f)
+            setOnClickListener { showServers() }
+        }
+        col.addView(card, LinearLayout.LayoutParams(-1, -2))
+        fillCard()
+
+        row.addView(col, LinearLayout.LayoutParams(0, -1, 1f))
+        root.addView(row)
+        renderState()
+    }
+
+    private fun fillCard() {
+        card.removeAllViews()
+        val s = State.selected(this)
+        card.addView(flag(s?.flag ?: "🌐", C.GOLD))
+        val t = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dpi(12), 0, dpi(8), 0) }
+        t.addView(text(s?.country ?: "Serwer ýok", 16f, C.TEXT, true))
+        t.addView(text(if (s == null) "Täzelemek üçin basyň" else sub(s), 13f, C.MUTED).apply { oneLine() })
+        card.addView(t, LinearLayout.LayoutParams(0, -2, 1f))
+        card.addView(Ico(this, "next", C.MUTED, 18f))
+    }
+
+    private fun renderState() {
+        if (onServers || !::power.isInitialized) return
+        val st = State.now
+        power.on = st == State.ON
+        power.busy = st == State.WAIT
+        power.contentDescription = if (st == State.ON) "VPN-i öçür" else "VPN-e birik"
+        when (st) {
+            State.ON -> { status.text = "Birikdirildi"; status.setTextColor(C.GREEN); hint.text = "Öçürmek üçin düwmä basyň" }
+            State.WAIT -> { status.text = "Birikdirilýär…"; status.setTextColor(C.GOLD); hint.text = "Garaşyň" }
+            State.FAIL -> { status.text = "Birikmedi"; status.setTextColor(C.BAD); hint.text = "Başga serwer saýlaň ýa-da gaýtadan synanyşyň" }
+            else -> { status.text = "Birikdirilmedik"; status.setTextColor(C.TEXT); hint.text = "Birikmek üçin düwmä basyň" }
+        }
+        fillCard()
+    }
+
+    private fun toggle() {
+        when (State.now) {
+            State.ON, State.WAIT -> startService(Intent(this, Svc::class.java).setAction(Svc.STOP))
+            else -> connect()
+        }
+    }
+
+    private fun connect() {
+        val i = VpnService.prepare(this)
+        if (i != null) startActivityForResult(i, 1) else startVpn()
+    }
+
+    @Deprecated("Activity API")
+    override fun onActivityResult(req: Int, res: Int, data: Intent?) {
+        super.onActivityResult(req, res, data)
+        if (req == 1 && res == RESULT_OK) startVpn()
+    }
+
+    private fun startVpn() {
+        val i = Intent(this, Svc::class.java)
+        if (Build.VERSION.SDK_INT >= 26) startForegroundService(i) else startService(i)
+    }
+
+    // ---------- serverler ----------
+    private fun showServers() {
+        onServers = true
+        root.removeAllViews()
+        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        col.addView(Carpet(this, false, 9), LinearLayout.LayoutParams(-1, dpi(30)))
+
+        val head = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            setPadding(dpi(20), dpi(18), dpi(20), dpi(10))
+        }
+        head.addView(iconBtn("back", C.TEXT, "Yza") { showMain() })
+        val tt = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dpi(10), 0, dpi(10), 0) }
+        tt.addView(text("Serwerler", 20f, C.TEXT, true))
+        tt.addView(text("${Sub.list.size} serwer", 13f, C.MUTED))
+        head.addView(tt, LinearLayout.LayoutParams(0, -2, 1f))
+        head.addView(iconBtn("refresh", C.GOLD, "Serwerleri täzele") { refresh() })
+        head.addView(View(this), LinearLayout.LayoutParams(dpi(10), 1))
+        val test = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER
+            setPadding(dpi(14), 0, dpi(14), 0)
+            background = box(C.CARD, C.GOLD, 14f)
+            contentDescription = "Tizligi barla"
+            addView(Ico(this@Main, "gauge", C.GOLD, 18f))
+            addView(text("Barla", 14f, C.GOLD, true).apply { setPadding(dpi(8), 0, 0, 0) })
+            setOnClickListener { measure() }
+        }
+        head.addView(test, LinearLayout.LayoutParams(-2, dpi(44)))
+        col.addView(head)
+
+        val list = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dpi(20), dpi(8), dpi(20), dpi(20))
+        }
+        val sel = State.selected(this)
+        for (s in Sub.list) list.addView(row(s, s === sel))
+        if (Sub.list.isEmpty()) list.addView(text("Serwer ýok. Täzelemek üçin ýokardaky düwmä basyň.", 14f, C.MUTED))
+        val sv = ScrollView(this).apply { addView(list) }
+        col.addView(sv, LinearLayout.LayoutParams(-1, 0, 1f))
+        root.addView(col)
+    }
+
+    private fun row(s: Server, sel: Boolean): View {
+        val r = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            setPadding(dpi(14), dpi(12), dpi(14), dpi(12))
+            minimumHeight = dpi(64)
+            background = box(if (sel) C.CARD_SEL else C.CARD, if (sel) C.GREEN else C.LINE, 18f, 1.5f)
+            setOnClickListener { pick(s) }
+        }
+        r.addView(flag(s.flag, if (sel) C.GREEN else C.GOLD))
+        val t = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dpi(12), 0, dpi(8), 0) }
+        t.addView(text(s.country, 16f, C.TEXT, true))
+        t.addView(text(sub(s), 13f, C.MUTED).apply { oneLine() })
+        r.addView(t, LinearLayout.LayoutParams(0, -2, 1f))
+        val m = ms[s.uri]
+        val (mt, mc) = when {
+            m == null -> (if (testing) "… ms" else "—") to C.MUTED
+            m < 0 -> "×" to C.BAD
+            m < 300 -> "$m ms" to C.GREEN
+            m < 800 -> "$m ms" to C.GOLD
+            else -> "$m ms" to C.BAD
+        }
+        r.addView(text(mt, 14f, mc, true))
+        if (sel) r.addView(Ico(this, "check", C.GREEN, 20f, 2.4f).apply {
+            contentDescription = "Saýlanan"
+        }, LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dpi(10) })
+        return r.also {
+            it.layoutParams = LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dpi(10) }
+        }
+    }
+
+    private fun pick(s: Server) {
+        State.select(this, s)
+        if (State.now == State.ON) startVpn()   // bağlıyken yeni serverle yeniden bağlan
+        showMain()
+    }
+
+    private fun refresh() {
+        Toast.makeText(this, "Täzelenýär…", Toast.LENGTH_SHORT).show()
+        bg {
+            val ok = Sub.refresh(this)
+            ui {
+                Toast.makeText(this, if (ok) "Täzelendi" else "Täzelenmedi", Toast.LENGTH_SHORT).show()
+                ms.clear()
+                if (onServers) showServers()
+            }
+        }
+    }
+
+    private fun measure() {
+        if (testing) return
+        testing = true; ms.clear(); showServers()
+        val items = Sub.list.toList()
+        val pool = Executors.newFixedThreadPool(4)
+        var left = items.size
+        if (left == 0) { testing = false; return }
+        for (s in items) pool.execute {
+            val v = runCatching {
+                Libv2ray.measureOutboundDelay(Cfg.full(s.uri, false), "https://www.gstatic.com/generate_204")
+            }.getOrDefault(-1L)
+            ui {
+                ms[s.uri] = if (v <= 0) -1 else v
+                left--
+                if (left == 0) { testing = false; pool.shutdown() }
+                if (onServers) showServers()
+            }
+        }
+    }
+
+    // ---------- yardımcılar ----------
+    private fun sub(s: Server) = if (s.title.isEmpty()) s.proto else "${s.title} · ${s.proto}"
+
+    private fun text(t: String, sp: Float, color: Int, bold: Boolean = false) = TextView(this).apply {
+        text = t; textSize = sp; setTextColor(color)
+        if (bold) typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+    }
+
+    private fun TextView.oneLine() { maxLines = 1; ellipsize = TextUtils.TruncateAt.END }
+
+    private fun flag(f: String, border: Int) = TextView(this).apply {
+        text = f; textSize = 22f; gravity = Gravity.CENTER
+        background = box(C.BG, border, 22f, 2f)
+        layoutParams = LinearLayout.LayoutParams(dpi(44), dpi(44))
+        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+    }
+
+    private fun iconBtn(kind: String, color: Int, desc: String, on: () -> Unit) = FrameLayout(this).apply {
+        background = box(C.CARD, C.LINE, 14f)
+        contentDescription = desc
+        layoutParams = LinearLayout.LayoutParams(dpi(44), dpi(44))
+        addView(Ico(this@Main, kind, color, 20f), FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
+        setOnClickListener { on() }
+    }
+
+    private fun bg(f: () -> Unit) = Thread(f).start()
+    private fun ui(f: () -> Unit) = runOnUiThread { if (!isDestroyed) f() }
+}

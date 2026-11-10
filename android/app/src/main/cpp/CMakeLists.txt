@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.22.1)
+project(yolsec C)
+add_library(yolsec SHARED sec.c)
+target_include_directories(yolsec PRIVATE ${SEC_DIR})
+target_compile_options(yolsec PRIVATE -O2 -fvisibility=hidden)
+target_link_options(yolsec PRIVATE -s)

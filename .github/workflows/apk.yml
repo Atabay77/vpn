@@ -1,0 +1,81 @@
+name: APK
+
+# Elle başlatılır (Actions → APK → Run workflow).
+# Gerekli secret: SUB_URL (abonelik adresi). İsteğe bağlı: SIGN_KEYSTORE_B64 + SIGN_PASS (kalıcı imza).
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      XRAYLITE_COMMIT: 2ffe5f794a32ba15b122e177b5acffc6f11c4959
+      NDK_VER: 27.2.12479018
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Xray kütüphanesini indir (sabit sürüm)
+        run: |
+          git clone https://github.com/2dust/AndroidLibXrayLite.git xl
+          git -C xl checkout "$XRAYLITE_COMMIT"
+          rm -f xl/assets/*.dat   # geoip/geosite kullanılmıyor; APK küçük kalsın
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: xl/go.mod
+          cache-dependency-path: xl/go.sum
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: NDK
+        run: |
+          echo "y" | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$NDK_VER" "platforms;android-35" "build-tools;35.0.0" > /dev/null
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$NDK_VER" >> "$GITHUB_ENV"
+
+      - name: libv2ray.aar derle
+        working-directory: xl
+        run: |
+          MV=$(grep 'golang.org/x/mobile ' go.mod | awk '{print $2}')
+          go install golang.org/x/mobile/cmd/gomobile@$MV
+          go install golang.org/x/mobile/cmd/gobind@$MV
+          export PATH=$PATH:$(go env GOPATH)/bin
+          gomobile init
+          mkdir -p ../android/app/libs
+          gomobile bind -v -androidapi 24 -target=android/arm64,android/arm -trimpath \
+            -ldflags='-s -w -buildid= -checklinkname=0' -o ../android/app/libs/libv2ray.aar ./
+
+      - name: İmza anahtarı
+        env:
+          SIGN_KEYSTORE_B64: ${{ secrets.SIGN_KEYSTORE_B64 }}
+          SIGN_PASS: ${{ secrets.SIGN_PASS }}
+        run: |
+          KS="$RUNNER_TEMP/sign.jks"
+          if [ -n "$SIGN_KEYSTORE_B64" ] && [ -n "$SIGN_PASS" ]; then
+            echo "$SIGN_KEYSTORE_B64" | base64 -d > "$KS"
+          else
+            echo "::warning::SIGN_KEYSTORE_B64 yok: geçici imza kullanıldı (güncellemede eski uygulamayı silmek gerekebilir)"
+            SIGN_PASS=$(openssl rand -hex 16)
+            keytool -genkeypair -keystore "$KS" -alias yol -keyalg RSA -keysize 2048 -validity 10000 \
+              -storepass "$SIGN_PASS" -keypass "$SIGN_PASS" -dname "CN=Yol" > /dev/null
+            echo "::add-mask::$SIGN_PASS"
+          fi
+          echo "SIGN_KEYSTORE=$KS" >> "$GITHUB_ENV"
+          echo "SIGN_PASS=$SIGN_PASS" >> "$GITHUB_ENV"
+
+      - name: APK derle
+        working-directory: android
+        env:
+          SUB_URL: ${{ secrets.SUB_URL }}
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon :app:testReleaseUnitTest :app:assembleRelease
+          mv app/build/outputs/apk/release/app-release.apk "../vpn-${GITHUB_RUN_NUMBER}.apk"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vpn-apk
+          path: vpn-*.apk
+          retention-days: 7

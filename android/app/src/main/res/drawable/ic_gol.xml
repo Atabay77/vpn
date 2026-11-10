@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Türkmen göli: 108dp adaptif ikonun ortasında -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <path android:fillColor="#F3E7D0" android:pathData="M54,26 L82,54 L54,82 L26,54 Z" />
+    <path android:fillColor="#A61E2B" android:pathData="M54,33 L75,54 L54,75 L33,54 Z" />
+    <path android:fillColor="#0A1C14" android:pathData="M54,33 L75,54 L54,54 Z M54,75 L33,54 L54,54 Z" />
+    <path android:fillColor="#E0B04A" android:pathData="M54,45 L63,54 L54,63 L45,54 Z" />
+</vector>

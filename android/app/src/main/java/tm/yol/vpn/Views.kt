@@ -1,0 +1,148 @@
+package tm.yol.vpn
+
+import android.content.Context
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.RectF
+import android.graphics.drawable.GradientDrawable
+import android.view.View
+
+object C {
+    val BG = Color.parseColor("#0A1C14")
+    val CARD = Color.parseColor("#12281D")
+    val CARD_SEL = Color.parseColor("#143524")
+    val LINE = Color.parseColor("#24483A")
+    val TEXT = Color.parseColor("#F2EFE6")
+    val MUTED = Color.parseColor("#9DB3A6")
+    val GOLD = Color.parseColor("#E0B04A")
+    val RED = Color.parseColor("#A61E2B")
+    val CREAM = Color.parseColor("#F3E7D0")
+    val GREEN = Color.parseColor("#6FDB9C")
+    val GREEN_BG = Color.parseColor("#12784A")
+    val BAD = Color.parseColor("#E06A5A")
+}
+
+fun Context.dp(v: Float) = v * resources.displayMetrics.density
+fun Context.dpi(v: Int) = (v * resources.displayMetrics.density).toInt()
+
+fun Context.box(fill: Int, stroke: Int, radiusDp: Float, strokeDp: Float = 1f) = GradientDrawable().apply {
+    setColor(fill); cornerRadius = dp(radiusDp); setStroke(dp(strokeDp).toInt().coerceAtLeast(1), stroke)
+}
+
+/** Kırmızı halı şeridi, göl motifleriyle. vertical=true: ana ekrandaki sol şerit. */
+class Carpet(ctx: Context, private val vertical: Boolean, private val count: Int) : View(ctx) {
+    private val p = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val path = Path()
+
+    private fun diamond(c: Canvas, cx: Float, cy: Float, hw: Float, hh: Float, color: Int) {
+        p.color = color
+        path.reset()
+        path.moveTo(cx, cy - hh); path.lineTo(cx + hw, cy); path.lineTo(cx, cy + hh); path.lineTo(cx - hw, cy); path.close()
+        c.drawPath(path, p)
+    }
+
+    override fun onDraw(c: Canvas) {
+        c.drawColor(C.RED)
+        p.color = C.GOLD
+        val line = context.dp(2f)
+        if (vertical) c.drawRect(width - line, 0f, width.toFloat(), height.toFloat(), p)
+        else c.drawRect(0f, height - line, width.toFloat(), height.toFloat(), p)
+
+        val len = if (vertical) height.toFloat() else width.toFloat()
+        val pad = if (vertical) context.dp(28f) else context.dp(12f)
+        val step = (len - 2 * pad) / count
+        for (i in 0 until count) {
+            val along = pad + step * (i + 0.5f)
+            if (vertical) {
+                val cx = (width - line) / 2f; val cy = along
+                val s = context.dp(1f)
+                diamond(c, cx, cy, 16 * s, 22 * s, C.CREAM)
+                diamond(c, cx, cy, 11 * s, 16 * s, C.RED)
+                // iki koyu üçgen
+                p.color = C.BG
+                path.reset(); path.moveTo(cx, cy - 16 * s); path.lineTo(cx + 11 * s, cy); path.lineTo(cx, cy); path.close(); c.drawPath(path, p)
+                path.reset(); path.moveTo(cx, cy + 16 * s); path.lineTo(cx - 11 * s, cy); path.lineTo(cx, cy); path.close(); c.drawPath(path, p)
+                diamond(c, cx, cy, 5 * s, 7 * s, C.GOLD)
+                p.color = C.RED; c.drawCircle(cx, cy, 2 * s, p)
+            } else {
+                val cx = along; val cy = (height - line) / 2f
+                val s = context.dp(1f)
+                diamond(c, cx, cy, 12 * s, 9 * s, C.CREAM)
+                diamond(c, cx, cy, 8 * s, 6 * s, C.BG)
+                diamond(c, cx, cy, 4 * s, 3 * s, C.GOLD)
+            }
+        }
+    }
+}
+
+/** 24 birimlik kutuda çizgi ikonlar. */
+class Ico(ctx: Context, private val kind: String, var color: Int, private val sizeDp: Float, private val strokeW: Float = 2f) : View(ctx) {
+    private val p = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND
+    }
+
+    override fun onMeasure(w: Int, h: Int) {
+        val s = context.dp(sizeDp).toInt(); setMeasuredDimension(s, s)
+    }
+
+    override fun onDraw(c: Canvas) {
+        val k = width / 24f
+        p.color = color; p.strokeWidth = strokeW
+        c.save(); c.scale(k, k)
+        val path = Path()
+        when (kind) {
+            "back" -> { path.moveTo(15f, 6f); path.lineTo(9f, 12f); path.lineTo(15f, 18f) }
+            "next" -> { path.moveTo(9f, 6f); path.lineTo(15f, 12f); path.lineTo(9f, 18f) }
+            "check" -> { path.moveTo(5f, 12.5f); path.lineTo(9.5f, 17f); path.lineTo(19f, 7.5f) }
+            "refresh" -> {
+                path.addArc(RectF(4f, 4f, 20f, 20f), 200f, 130f)
+                path.moveTo(4f, 4f); path.lineTo(4f, 8f); path.lineTo(8f, 8f)
+                path.addArc(RectF(4f, 4f, 20f, 20f), 20f, 130f)
+                path.moveTo(20f, 20f); path.lineTo(20f, 16f); path.lineTo(16f, 16f)
+            }
+            "gauge" -> {
+                path.addArc(RectF(4f, 10f, 20f, 26f), 180f, 180f)
+                path.moveTo(12f, 18f); path.lineTo(16f, 12f)
+            }
+        }
+        c.drawPath(path, p)
+        c.restore()
+    }
+}
+
+/** Büyük yuvarlak bağlan düğmesi. */
+class Power(ctx: Context) : View(ctx) {
+    private val p = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val icon = Path()
+    var on = false; set(v) { field = v; invalidate() }
+    var busy = false; set(v) { field = v; invalidate() }
+
+    override fun onMeasure(w: Int, h: Int) {
+        val s = context.dp(216f).toInt(); setMeasuredDimension(s, s)
+    }
+
+    override fun onDraw(c: Canvas) {
+        val cx = width / 2f; val cy = height / 2f
+        val halo = context.dp(10f); val ring = context.dp(6f)
+        val r = width / 2f
+        p.style = Paint.Style.FILL
+        p.color = if (on) Color.argb(41, 111, 219, 156) else Color.argb(26, 224, 176, 74)
+        c.drawCircle(cx, cy, r, p)
+        p.color = if (on) C.GREEN else C.GOLD
+        c.drawCircle(cx, cy, r - halo, p)
+        p.color = if (on) C.GREEN_BG else C.CARD
+        c.drawCircle(cx, cy, r - halo - ring, p)
+
+        val s = context.dp(76f) / 24f
+        c.save(); c.translate(cx - 12 * s, cy - 12 * s); c.scale(s, s)
+        p.style = Paint.Style.STROKE; p.strokeCap = Paint.Cap.ROUND; p.strokeWidth = 1.8f
+        p.color = if (on) Color.WHITE else if (busy) C.GOLD else C.CREAM
+        icon.reset()
+        icon.moveTo(12f, 3f); icon.lineTo(12f, 12f)
+        icon.addArc(RectF(4f, 5f, 20f, 21f), -47.4f, 274.8f)
+        c.drawPath(icon, p)
+        c.restore()
+    }
+}
