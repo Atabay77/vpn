@@ -14,7 +14,8 @@ object Upd {
 
     /** Bu telefona uygun, kuruluden yeni sürüm: (sürüm, Drive dosyası) ya da null. */
     fun available(cur: String): Pair<String, String>? {
-        val u = Sub.upd[abi()] ?: return null
+        // tek APK ("all") ya da bu mimariye özel olan: hangisi daha yeniyse
+        val u = listOfNotNull(Sub.upd[abi()], Sub.upd["all"]).reduceOrNull { x, y -> if (newer(y.first, x.first)) y else x } ?: return null
         return if (newer(u.first, cur)) u else null
     }
 

@@ -931,6 +931,23 @@ def app_publish(abi, ver, data):
     app_sync(True)
     return fid
 
+def app_publish_link(link):
+    """Tek APK: kurucu kendi Drive'ına yükleyip linkini verir (boyut sınırı yok, 32/64 ayrımı yok)."""
+    m = DRIVE_ID_RE.search(link) or re.search(r"/d/([\w-]{20,})", link) or re.search(r"[?&]id=([\w-]{20,})", link)
+    if not m: raise RuntimeError("Drive linki tanınmadı")
+    fid = m.group(1)
+    svc = new_service()
+    if not svc: raise RuntimeError("drive-sa.json bulunamadı")
+    try: meta = svc.files().get(fileId=fid, fields="name,size").execute(num_retries=2)
+    except Exception as e: raise RuntimeError("Dosya açılamadı — Drive'da «Bağlantıya sahip olan herkes» olarak paylaş")
+    name = meta.get("name", "")
+    if not name.lower().endswith(".apk"): raise RuntimeError(f"Bu bir APK değil: {name}")
+    mv = re.search(r"(\d+(?:\.\d+)+)", name)
+    if not mv: raise RuntimeError(f"Dosya adında sürüm yok: {name} (ör. TurkmenVPN-1.3.apk)")
+    mutate(lambda d: d.setdefault("app", {}).setdefault("upd", {}).__setitem__("all", {"ver": mv.group(1), "fid": fid, "ts": int(time.time()), "ext": True}))
+    app_sync(True)
+    return mv.group(1)
+
 async def app_loop(app):
     await asyncio.sleep(60)
     while True:
@@ -952,7 +969,7 @@ def app_view(db):
     st += "".join(f"\n⚠️ {esc(e)}" for e in cfg.get("errs", []))
     st += (f"\n❌ {esc(RUN['app_err'])}" if RUN.get("app_err") else "")
     st += f"\n🔑 Geçerli key: {len(app_keys_live(cfg))}"
-    st += "".join(f"\n📦 Yayında ({'64' if abi == '64' else '32'} bit): {esc(u.get('ver', '?'))}" for abi, u in sorted((cfg.get("upd") or {}).items()))
+    st += "".join(f"\n📦 Yayında ({ {'64': '64 bit', '32': '32 bit'}.get(abi, 'tek APK') }): {esc(u.get('ver', '?'))}" for abi, u in sorted((cfg.get("upd") or {}).items()))
     t = ("📱 <b>Türkmen VPN programy</b>\n"
          f"<blockquote>{chr(10).join(lines)}{st}</blockquote>\n"
          "<i>Buradaki aboneliklerin bütün kodları birleştirilip programa gider (10 dakikada bir, aynı kodlar bir kez). "
@@ -963,6 +980,7 @@ def app_view(db):
     if len(subs) < APP_MAX_SUBS: rows.append([B("➕ Abonelik ekle", "app_add", "primary")])
     if subs: rows.append([B("🔄 Şimdi güncelle", "app_now")])
     rows.append([B("🔑 Key oluştur", "app_kn"), B(f"🗝 Keyler ({len(app_keys_live(cfg))})", "app_kl")])
+    rows.append([B("📦 Yeni sürüm yayınla (Drive linki)", "app_up")])
     if cfg.get("fid"): rows.append([B("🔗 Programın dosya linki", "app_link")])
     rows.append([B("◀️ Admin", "admin")])
     return t, KB(rows)
@@ -2112,6 +2130,17 @@ async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
             if n: start_refresh(c.application, "abonelik eklendi")
             await u.message.reply_text(f"✅ {n} abonelik eklendi." + (" Bütün aboneliklerin kodları şimdi yeniden yazılıyor, bitince bildirim gelecek." if n else ""), reply_markup=back("sources"))
 
+        elif act == "app_up":
+            if uid not in ORIG_ADMINS: return
+            try:
+                ver = await asyncio.to_thread(app_publish_link, txt)
+            except Exception as e:
+                STATE[uid] = st
+                await u.message.reply_text(f"⚠️ {esc(str(e)[:200])}", parse_mode="HTML", reply_markup=back("app_v")); return
+            audit(uid, f"app publish link {ver}")
+            await u.message.reply_text(f"✅ <b>Türkmen VPN {esc(ver)}</b> yayında.\n<i>Programı açan herkes üstte «Täze wersiýa» bildirimini görür; güncellemek isteğe bağlı.</i>",
+                                       parse_mode="HTML", reply_markup=back("app_v"))
+
         elif act == "app_add":
             if uid not in ORIG_ADMINS: return
             lines = [x.strip() for x in txt.split() if x.strip().startswith("http")]
@@ -3010,9 +3039,14 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
             start_refresh(c.application, "abonelik silindi")
         await safe_edit(q, "✅ Abonelik silindi. Kalan aboneliklerin kodları şimdi yeniden yazılıyor." if ok else "⚠️ Bulunamadı.", back("sources"))
 
-    elif a in ("app_v", "app_add", "app_now", "app_link", "app_kn", "app_kl") or a.startswith(("app_rm:", "app_k:", "app_kd:")):
+    elif a in ("app_v", "app_add", "app_now", "app_link", "app_kn", "app_kl", "app_up") or a.startswith(("app_rm:", "app_k:", "app_kd:")):
         if uid not in ORIG_ADMINS:
             await safe_edit(q, "⛔ Erişim yok", back("admin")); return
+        if a == "app_up":
+            STATE[uid] = {"action": "app_up"}
+            t, kb = prompt("📦 <b>Yeni sürüm</b>", "1) APK'yı Google Drive'ına yükle (adında sürüm olsun, ör. TurkmenVPN-1.3.apk)\n"
+                           "2) Paylaş → «Bağlantıya sahip olan herkes»\n3) Linki buraya gönder.", "app_v")
+            await safe_edit(q, t, kb); return
         if a == "app_kn":
             await safe_edit(q, "🔑 <b>Yeni key</b>\n<blockquote>Key kaç gün geçerli olsun? Süre şimdiden başlar.</blockquote>",
                             KB([[B("1 gün", "app_k:1"), B("7 gün", "app_k:7"), B("30 gün", "app_k:30")],
