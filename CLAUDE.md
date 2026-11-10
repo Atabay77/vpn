@@ -7,3 +7,4 @@
   Türkmenistan'da drive.google.com açılmıyor / yavaş; googleapis.com VPN'siz ve daha hızlı iniyor.
 - API anahtarı: programın abonelik linkindeki anahtar (botta «🔗 Programın dosya linki»). Koda / depoya yazma.
 - APK: bütün telefonlar için tek dosya (universal) ver, arm64'e ayırma.
+- Drive bağlayıcısı buradan en fazla 10 MB yükleyebiliyor: APK (~25 MB) sohbete dosya olarak gönderilir, küçük dosyalar (subbot.py) googleapis linkiyle.
