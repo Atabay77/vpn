@@ -80,7 +80,7 @@ class Svc : VpnService() {
         }
     }
 
-    override fun onCreate() { super.onCreate(); State.app = applicationContext }
+    override fun onCreate() { super.onCreate(); State.app = applicationContext; Lang.init(this) }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == STOP) { stop(); return START_NOT_STICKY }
@@ -163,8 +163,8 @@ class Svc : VpnService() {
         val off = PendingIntent.getService(this, 1, Intent(this, Svc::class.java).setAction(STOP), PendingIntent.FLAG_IMMUTABLE)
         val nb = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(this, "v") else Notification.Builder(this)
         val n = nb.setSmallIcon(R.drawable.ic_gol).setContentTitle(getString(R.string.app_name))
-            .setContentText("Birikdirildi").setContentIntent(open).setOngoing(true)
-            .addAction(Notification.Action.Builder(null, "Öçür", off).build()).build()
+            .setContentText(t("Birikdirildi", "Подключено", "Bağlandı")).setContentIntent(open).setOngoing(true)
+            .addAction(Notification.Action.Builder(null, t("Öçür", "Отключить", "Kapat"), off).build()).build()
         if (Build.VERSION.SDK_INT >= 34) startForeground(1, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
         else startForeground(1, n)
     }

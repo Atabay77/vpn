@@ -65,7 +65,7 @@ object Upd {
                 confirm?.let { act.startActivity(it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
             }
             PackageInstaller.STATUS_SUCCESS -> {}
-            else -> android.widget.Toast.makeText(act, "Täzelenmedi", android.widget.Toast.LENGTH_LONG).show()
+            else -> android.widget.Toast.makeText(act, t("Täzelenmedi", "Не обновилось", "Güncellenemedi"), android.widget.Toast.LENGTH_LONG).show()
         }
         return true
     }

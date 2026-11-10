@@ -11,7 +11,7 @@ import android.service.quicksettings.TileService
 
 /** Bildirim panelindeki Aç/Kapat kısayolu. Açmak programı açar (bağlanırken ekranda beklenir). */
 class Tile : TileService() {
-    override fun onStartListening() { State.app = applicationContext; draw() }
+    override fun onStartListening() { State.app = applicationContext; Lang.init(this); draw() }
 
     override fun onClick() {
         if (State.now == State.ON || State.now == State.WAIT) {
@@ -29,7 +29,7 @@ class Tile : TileService() {
         t.state = when (State.now) { State.ON -> QsTile.STATE_ACTIVE; else -> QsTile.STATE_INACTIVE }
         t.label = getString(R.string.app_name)
         if (Build.VERSION.SDK_INT >= 29) t.subtitle = when (State.now) {
-            State.ON -> "Birikdirildi"; State.WAIT -> "Birikdirilýär…"; else -> "Öçük"
+            State.ON -> t("Birikdirildi", "Подключено", "Bağlandı"); State.WAIT -> t("Birikdirilýär…", "Подключение…", "Bağlanıyor…"); else -> t("Öçük", "Выключено", "Kapalı")
         }
         t.icon = Icon.createWithResource(this, R.drawable.ic_tile)
         t.updateTile()

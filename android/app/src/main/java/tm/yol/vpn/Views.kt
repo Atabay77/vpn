@@ -222,13 +222,53 @@ class Spark(ctx: Context) : View(ctx) {
     }
 }
 
-/** Yarı saydam «cam» kutu (cyber görünüm). */
-fun Context.glass(radiusDp: Float = 18f, stroke: Int = Color.argb(110, 224, 176, 74)) =
-    box(Color.argb(120, 10, 28, 20), stroke, radiusDp)
+/** Dolgun cam kutu: koyu degrade gövde, üstte hafif parlama, ince renkli kenar. */
+fun Context.glass(radiusDp: Float = 18f, stroke: Int = Color.argb(130, 224, 176, 74)): android.graphics.drawable.Drawable {
+    val r = dp(radiusDp)
+    val body = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
+        intArrayOf(Color.argb(215, 20, 48, 35), Color.argb(225, 8, 22, 16))).apply {
+        cornerRadius = r; setStroke(dp(1.3f).toInt().coerceAtLeast(2), stroke)
+    }
+    val sheen = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
+        intArrayOf(Color.argb(34, 255, 255, 255), Color.argb(0, 255, 255, 255))).apply {
+        cornerRadii = floatArrayOf(r, r, r, r, 0f, 0f, 0f, 0f)
+    }
+    return android.graphics.drawable.LayerDrawable(arrayOf(body, sheen)).apply {
+        val i = dp(1.5f).toInt()
+        setLayerInset(1, i, i, i, 0)
+        setLayerGravity(1, android.view.Gravity.TOP or android.view.Gravity.FILL_HORIZONTAL)
+        setLayerHeight(1, dp(26f).toInt())
+    }
+}
 
 /** Arka plan: Higgsfield görseli çok yavaş kayar + parıldayan altın noktalar (saniyede ~30 kare, hafif). */
 class AnimBg(ctx: Context, res: Int) : View(ctx) {
-    private val bmp = android.graphics.BitmapFactory.decodeResource(ctx.resources, res)
+    private var bmp: android.graphics.Bitmap? = load(res)
+    private var old: android.graphics.Bitmap? = null
+    private var fadeAt = 0L
+    var res = res; private set
+
+    private fun load(r: Int): android.graphics.Bitmap? = runCatching {
+        val o = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        android.graphics.BitmapFactory.decodeResource(context.resources, r, o)
+        val sw = context.resources.displayMetrics.widthPixels.coerceAtLeast(720)
+        var ss = 1; while (o.outWidth / (ss * 2) >= sw) ss *= 2
+        android.graphics.BitmapFactory.decodeResource(context.resources, r, android.graphics.BitmapFactory.Options().apply { inSampleSize = ss })
+    }.getOrNull()
+
+    /** Bütün ekran yeni ülkeye yumuşakça geçer. */
+    fun change(r: Int) {
+        if (r == res) return
+        res = r; old = bmp; bmp = load(r); fadeAt = System.currentTimeMillis()
+    }
+
+    private fun drawBmp(c: Canvas, b: android.graphics.Bitmap, t: Float, alpha: Int) {
+        val s = maxOf(width.toFloat() / b.width, height.toFloat() / b.height) * 1.06f
+        val dx = (width - b.width * s) / 2 + kotlin.math.sin(t / 9f) * context.dp(8f)
+        val dy = (height - b.height * s) / 2 + kotlin.math.cos(t / 11f) * context.dp(6f)
+        m.setScale(s, s); m.postTranslate(dx, dy); bp.alpha = alpha
+        c.drawBitmap(b, m, bp)
+    }
     private val m = android.graphics.Matrix()
     private val bp = Paint(Paint.FILTER_BITMAP_FLAG)
     private val dot = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -238,13 +278,9 @@ class AnimBg(ctx: Context, res: Int) : View(ctx) {
 
     override fun onDraw(c: Canvas) {
         val t = (System.currentTimeMillis() - t0) / 1000f
-        if (bmp != null) {
-            val s = maxOf(width.toFloat() / bmp.width, height.toFloat() / bmp.height) * 1.08f
-            val dx = (width - bmp.width * s) / 2 + kotlin.math.sin(t / 9f) * context.dp(10f)
-            val dy = (height - bmp.height * s) / 2 + kotlin.math.cos(t / 11f) * context.dp(8f)
-            m.setScale(s, s); m.postTranslate(dx, dy)
-            c.drawBitmap(bmp, m, bp)
-        }
+        val f = ((System.currentTimeMillis() - fadeAt) / 700f).coerceIn(0f, 1f)
+        old?.let { if (f < 1f) drawBmp(c, it, t, 255) else old = null }
+        bmp?.let { drawBmp(c, it, t, (255 * f).toInt().coerceAtLeast(if (old == null) 255 else 0)) }
         for (st in stars) {
             val a = (0.5f + 0.5f * kotlin.math.sin(t * st[4] * 1.6f + st[3]))
             dot.color = Color.argb((40 + 180 * a).toInt(), 224, 176, 74)
@@ -269,5 +305,18 @@ class GulSep(ctx: Context) : View(ctx) {
             c.drawPath(path, p)
         }
         d(4.5f * s, C.GOLD); d(3f * s, C.RED); d(1.4f * s, C.CREAM)
+    }
+}
+
+/** Açılıştaki dönen altın halka. */
+class Spinner(ctx: Context) : View(ctx) {
+    private val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND }
+    private val r = RectF()
+    override fun onDraw(c: Canvas) {
+        val w = context.dp(3f); p.strokeWidth = w
+        r.set(w, w, width - w, height - w)
+        p.color = Color.argb(50, 224, 176, 74); c.drawArc(r, 0f, 360f, false, p)
+        p.color = C.GOLD; c.drawArc(r, (System.currentTimeMillis() % 1000) * 0.36f, 90f, false, p)
+        postInvalidateOnAnimation()
     }
 }
