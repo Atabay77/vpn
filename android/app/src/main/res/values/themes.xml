@@ -7,7 +7,7 @@
         <item name="android:colorAccent">@color/gold</item>
     </style>
     <color name="bg">#0A1C14</color>
-    <color name="icon_bg">#072F3B</color>
+    <color name="icon_bg">#F3E7D0</color>
     <color name="gold">#E0B04A</color>
     <color name="red">#A61E2B</color>
     <color name="cream">#F3E7D0</color>

@@ -57,6 +57,7 @@ class Main : Activity() {
     private var bigSpark: Spark? = null
     private var totals: TextView? = null
     private var pingTv: TextView? = null
+    private var offHint: TextView? = null
 
     private val ms = HashMap<String, Long>()          // uri → ms (-1 = ulaşılamadı)
     private val msViews = HashMap<String, TextView>() // ölçüm yerinde güncellenir (kaydırma kaymasın)
@@ -78,13 +79,13 @@ class Main : Activity() {
         root = FrameLayout(this).apply { setBackgroundColor(C.BG) }
         setContentView(root)
         // sabit katmanlar: canlı video, koyulaştırma, Aşgabat silueti
-        root.addView(VideoBg(this, R.raw.bg), FrameLayout.LayoutParams(-1, -1))
-        root.addView(View(this).apply { setBackgroundColor(0x660A1C14) }, FrameLayout.LayoutParams(-1, -1))
+        root.addView(AnimBg(this, R.drawable.bg_main), FrameLayout.LayoutParams(-1, -1))
+        root.addView(View(this).apply { setBackgroundColor(0x330A1C14) }, FrameLayout.LayoutParams(-1, -1))
         sky = ImageView(this).apply {
             setImageResource(R.drawable.skyline); scaleType = ImageView.ScaleType.CENTER_CROP; alpha = 0.95f
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         }
-        root.addView(sky, FrameLayout.LayoutParams(-1, dpi(175), Gravity.BOTTOM))
+        root.addView(sky, FrameLayout.LayoutParams(-1, dpi(150), Gravity.BOTTOM))
         page = FrameLayout(this)
         root.addView(page, FrameLayout.LayoutParams(-1, -1))
         rail = buildRail()
@@ -136,7 +137,8 @@ class Main : Activity() {
                 background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.argb(90, 10, 28, 20)); setStroke(dpi(1), C.GOLD) }
                 contentDescription = when (pg) { Page.MAIN -> "Baş sahypa"; Page.SERVERS -> "Serwerler"; Page.SPEED -> "Tizlik"; Page.SETTINGS -> "Sazlamalar"; Page.INFO -> "Maglumat" }
                 addView(ic, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
-                setOnClickListener { secret(i); show(pg) }
+                setOnClickListener { secret(i); if (pg != cur) show(pg) }
+                pressFx()
             }
             railBtns += b to ic
             r.addView(b, LinearLayout.LayoutParams(dpi(36), dpi(36)))
@@ -168,13 +170,37 @@ class Main : Activity() {
         cur = p
         page.removeAllViews(); msViews.clear()
         power = null; status = null; hint = null; card = null; timer = null; down = null; up = null; spark = null; updBar = null
-        bigDown = null; bigUp = null; bigSpark = null; totals = null; pingTv = null
+        bigDown = null; bigUp = null; bigSpark = null; totals = null; pingTv = null; offHint = null
         val v = when (p) {
             Page.MAIN -> mainPage(); Page.SERVERS -> serversPage(); Page.SPEED -> speedPage()
             Page.SETTINGS -> settingsPage(); Page.INFO -> infoPage()
         }
         page.addView(v, FrameLayout.LayoutParams(-1, -1))
+        enter(v)
         paintRail(); renderState()
+    }
+
+    /** Sayfa açılınca öğeler sırayla, hafifçe yukarı kayarak belirir. */
+    private fun enter(v: View) {
+        val items = if (v is LinearLayout) (0 until v.childCount).map { v.getChildAt(it) } else listOf(v)
+        items.forEachIndexed { i, c ->
+            c.alpha = 0f; c.translationY = dp(18f)
+            c.animate().alpha(1f).translationY(0f).setStartDelay(40L * i).setDuration(320)
+                .setInterpolator(android.view.animation.DecelerateInterpolator(1.6f)).start()
+        }
+    }
+
+    /** Basınca hafif küçülüp geri gelen dokunma efekti. */
+    private fun View.pressFx(): View {
+        setOnTouchListener { vw, e ->
+            when (e.actionMasked) {
+                android.view.MotionEvent.ACTION_DOWN -> vw.animate().scaleX(0.95f).scaleY(0.95f).setDuration(90).start()
+                android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL ->
+                    vw.animate().scaleX(1f).scaleY(1f).setDuration(220).setInterpolator(android.view.animation.OvershootInterpolator(3f)).start()
+            }
+            false
+        }
+        return this
     }
 
     /** Sağ taraf: sol menü kadar boşluk bırakılır. */
@@ -194,7 +220,7 @@ class Main : Activity() {
         col.addView(header(), LinearLayout.LayoutParams(-1, dpi(72)))
 
         val mid = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER }
-        power = Power(this).apply { isClickable = true; setOnClickListener { toggle() } }
+        power = Power(this).apply { isClickable = true; setOnClickListener { toggle() }; pressFx() }
         mid.addView(power)
         status = text("", 21f, C.TEXT, true).apply { gravity = Gravity.CENTER; setPadding(0, dpi(10), 0, dpi(2)) }
         hint = text("", 13f, C.MUTED).apply { gravity = Gravity.CENTER }
@@ -208,7 +234,8 @@ class Main : Activity() {
         }
         timerLbl = text("GALAN WAGT", 10f, C.MUTED, true).apply { letterSpacing = 0.2f }
         timer = text("--:--:--", 26f, C.GOLD, true).apply { typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD) }
-        tbox.addView(timerLbl); tbox.addView(timer)
+        timerLbl!!.gravity = Gravity.CENTER; timer!!.gravity = Gravity.CENTER
+        tbox.addView(timerLbl, LinearLayout.LayoutParams(-1, -2)); tbox.addView(timer, LinearLayout.LayoutParams(-1, -2))
         row.addView(tbox, LinearLayout.LayoutParams(0, dpi(92), 1f).apply { rightMargin = dpi(10) })
         val sbox = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; setPadding(dpi(12), dpi(10), dpi(12), dpi(10))
@@ -228,8 +255,9 @@ class Main : Activity() {
             setPadding(dpi(14), dpi(12), dpi(14), dpi(12))
             background = glass(18f)
             setOnClickListener { show(Page.SERVERS) }
+            pressFx()
         }
-        col.addView(card, LinearLayout.LayoutParams(-1, dpi(76)).apply { bottomMargin = dpi(120) })   // altında Aşgabat silueti
+        col.addView(card, LinearLayout.LayoutParams(-1, dpi(76)).apply { bottomMargin = dpi(150) })   // altında Aşgabat silueti
         return col
     }
 
@@ -298,16 +326,20 @@ class Main : Activity() {
         r.addView(cell("↑ IBERME", bigUp!!), LinearLayout.LayoutParams(0, -2, 1f))
         b.addView(r)
         bigSpark = Spark(this)
-        b.addView(bigSpark, LinearLayout.LayoutParams(-1, dpi(140)).apply { topMargin = dpi(12) })
+        val sf = FrameLayout(this)
+        sf.addView(bigSpark, FrameLayout.LayoutParams(-1, -1))
+        offHint = text("VPN-e birikiň", 13f, C.MUTED).apply { gravity = Gravity.CENTER }
+        sf.addView(offHint, FrameLayout.LayoutParams(-1, -1))
+        b.addView(sf, LinearLayout.LayoutParams(-1, dpi(120)).apply { topMargin = dpi(12) })
         col.addView(b)
         val g = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         val pb = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; background = glass(16f) }
-        pb.addView(text("PING", 10f, C.MUTED, true).apply { letterSpacing = 0.2f })
-        pingTv = mono("—", 22f, C.GOLD); pb.addView(pingTv)
+        pb.addView(text("PING", 10f, C.MUTED, true).apply { letterSpacing = 0.2f; gravity = Gravity.CENTER }, LinearLayout.LayoutParams(-1, -2))
+        pingTv = mono("—", 22f, C.GOLD).apply { gravity = Gravity.CENTER }; pb.addView(pingTv, LinearLayout.LayoutParams(-1, -2))
         g.addView(pb, LinearLayout.LayoutParams(0, dpi(84), 1f).apply { rightMargin = dpi(10) })
         val tb = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; background = glass(16f) }
-        tb.addView(text("JEMI", 10f, C.MUTED, true).apply { letterSpacing = 0.2f })
-        totals = mono("—", 15f, C.TEXT); tb.addView(totals)
+        tb.addView(text("JEMI", 10f, C.MUTED, true).apply { letterSpacing = 0.2f; gravity = Gravity.CENTER }, LinearLayout.LayoutParams(-1, -2))
+        totals = mono("—", 14f, C.TEXT).apply { gravity = Gravity.CENTER }; tb.addView(totals, LinearLayout.LayoutParams(-1, -2))
         g.addView(tb, LinearLayout.LayoutParams(0, dpi(84), 1.3f))
         col.addView(g, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dpi(12) })
         return col
@@ -337,10 +369,9 @@ class Main : Activity() {
             orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL
             setPadding(dpi(20), dpi(24), dpi(20), dpi(24)); background = glass(20f)
         }
-        b.addView(ImageView(this).apply { setImageResource(R.drawable.logo); clipToOutline = true; background = box(C.BG, C.GOLD, 22f) },
-            LinearLayout.LayoutParams(dpi(110), dpi(110)))
-        b.addView(text(getString(R.string.app_name).uppercase(), 20f, C.TEXT, true).apply { letterSpacing = 0.16f; setPadding(0, dpi(14), 0, dpi(2)) })
-        b.addView(text("Wersiýa ${ver()}", 13f, C.MUTED))
+        b.addView(ImageView(this).apply { setImageResource(R.drawable.logo_full); adjustViewBounds = true; clipToOutline = true; background = box(C.CREAM, C.GOLD, 18f) },
+            LinearLayout.LayoutParams(-1, -2))
+        b.addView(text("Wersiýa ${ver()}", 13f, C.MUTED).apply { setPadding(0, dpi(14), 0, 0) })
         b.addView(text("Türkmenistan üçin çalt we howpsuz VPN.\nHysteria2 · Shadowsocks · VLESS", 13f, C.MUTED).apply { gravity = Gravity.CENTER; setPadding(0, dpi(14), 0, 0) })
         col.addView(b, LinearLayout.LayoutParams(-1, -2))
         return col
@@ -388,9 +419,11 @@ class Main : Activity() {
                 State.FAIL -> Triple("Birikmedi", C.BAD, "Başga serwer saýlaň ýa-da gaýtadan synanyşyň")
                 else -> Triple("Birikdirilmedik", C.TEXT, "Birikmek üçin düwmä basyň")
             }
+            if (s.text != a) { s.alpha = 0f; s.animate().alpha(1f).setDuration(260).start() }
             s.text = a; s.setTextColor(col); hint?.text = b
         }
         if (st != State.ON) { spark?.clear(); bigSpark?.clear(); lastRx = -1; rx0 = -1 }
+        offHint?.visibility = if (st == State.ON) View.GONE else View.VISIBLE
         fillCard(); renderUpd(); paintSky(); tick.run()
     }
 
@@ -584,6 +617,7 @@ class Main : Activity() {
         setPadding(dpi(12), dpi(10), dpi(12), dpi(10)); minimumHeight = dpi(64)
         background = if (sel) box(Color.argb(170, 18, 70, 44), C.GREEN, 16f, 1.5f) else glass(16f, Color.argb(90, 224, 176, 74))
         setOnClickListener { on() }
+        pressFx()
         layoutParams = LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dpi(9) }
     }
 

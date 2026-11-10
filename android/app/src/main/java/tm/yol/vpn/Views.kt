@@ -204,6 +204,8 @@ class Spark(ctx: Context) : View(ctx) {
     fun add(x: Float) { v.addLast(x); while (v.size > 60) v.removeFirst(); invalidate() }
     fun clear() { v.clear(); invalidate() }
     override fun onDraw(c: Canvas) {
+        p.style = Paint.Style.STROKE; p.strokeWidth = context.dp(1f); p.color = Color.argb(60, 111, 219, 156)
+        c.drawLine(0f, height - context.dp(1f), width.toFloat(), height - context.dp(1f), p)   // taban çizgisi
         if (v.size < 2) return
         val mx = maxOf(v.max(), 1f)
         val dx = width / 59f
@@ -224,38 +226,33 @@ class Spark(ctx: Context) : View(ctx) {
 fun Context.glass(radiusDp: Float = 18f, stroke: Int = Color.argb(110, 224, 176, 74)) =
     box(Color.argb(120, 10, 28, 20), stroke, radiusDp)
 
-/** Ana ekranın canlı arka planı: sessiz, döngülü video, ekranı kaplayacak şekilde kırpılır. */
-class VideoBg(ctx: Context, private val res: Int) : android.view.TextureView(ctx), android.view.TextureView.SurfaceTextureListener {
-    private var mp: android.media.MediaPlayer? = null
-    private var vw = 0; private var vh = 0
+/** Arka plan: Higgsfield görseli çok yavaş kayar + parıldayan altın noktalar (saniyede ~30 kare, hafif). */
+class AnimBg(ctx: Context, res: Int) : View(ctx) {
+    private val bmp = android.graphics.BitmapFactory.decodeResource(ctx.resources, res)
+    private val m = android.graphics.Matrix()
+    private val bp = Paint(Paint.FILTER_BITMAP_FLAG)
+    private val dot = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val t0 = System.currentTimeMillis()
+    private val rnd = java.util.Random(7)
+    private val stars = Array(34) { floatArrayOf(rnd.nextFloat(), rnd.nextFloat(), 0.6f + rnd.nextFloat() * 1.6f, rnd.nextFloat() * 6.28f, 0.4f + rnd.nextFloat()) }
 
-    init { surfaceTextureListener = this; isOpaque = false }
-
-    override fun onSurfaceTextureAvailable(st: android.graphics.SurfaceTexture, w: Int, h: Int) {
-        runCatching {
-            val m = android.media.MediaPlayer.create(context, res) ?: return
-            m.setSurface(android.view.Surface(st))
-            m.isLooping = true
-            m.setVolume(0f, 0f)
-            m.setOnVideoSizeChangedListener { _, a, b -> vw = a; vh = b; crop() }
-            m.start()
-            mp = m
+    override fun onDraw(c: Canvas) {
+        val t = (System.currentTimeMillis() - t0) / 1000f
+        if (bmp != null) {
+            val s = maxOf(width.toFloat() / bmp.width, height.toFloat() / bmp.height) * 1.08f
+            val dx = (width - bmp.width * s) / 2 + kotlin.math.sin(t / 9f) * context.dp(10f)
+            val dy = (height - bmp.height * s) / 2 + kotlin.math.cos(t / 11f) * context.dp(8f)
+            m.setScale(s, s); m.postTranslate(dx, dy)
+            c.drawBitmap(bmp, m, bp)
         }
+        for (st in stars) {
+            val a = (0.5f + 0.5f * kotlin.math.sin(t * st[4] * 1.6f + st[3]))
+            dot.color = Color.argb((40 + 180 * a).toInt(), 224, 176, 74)
+            val y = (st[1] * height - t * context.dp(3f) * st[4]) % height
+            c.drawCircle(st[0] * width, if (y < 0) y + height else y, context.dp(st[2]) * (0.7f + 0.3f * a), dot)
+        }
+        postInvalidateDelayed(33)
     }
-
-    private fun crop() {
-        if (vw == 0 || vh == 0 || width == 0 || height == 0) return
-        val s = maxOf(width.toFloat() / vw, height.toFloat() / vh)
-        val m = android.graphics.Matrix()
-        m.setScale(vw * s / width, vh * s / height, width / 2f, height / 2f)
-        setTransform(m)
-    }
-
-    override fun onSurfaceTextureSizeChanged(st: android.graphics.SurfaceTexture, w: Int, h: Int) = crop()
-    override fun onSurfaceTextureDestroyed(st: android.graphics.SurfaceTexture): Boolean {
-        runCatching { mp?.release() }; mp = null; return true
-    }
-    override fun onSurfaceTextureUpdated(st: android.graphics.SurfaceTexture) {}
 }
 
 /** Sol menüdeki iki buton arasındaki küçük halı motifi (göl) ve ince kırmızı çizgi. */
