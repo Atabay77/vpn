@@ -650,7 +650,7 @@ class Main : Activity() {
     private fun askUpdate(vpn: Boolean) {
         val u = Upd.available(ver()) ?: return
         val q = Upd.query(this)
-        if (q?.status == DownloadManager.STATUS_SUCCESSFUL) { Upd.install(this); return }
+        if (q?.status == DownloadManager.STATUS_SUCCESSFUL) { installHint(); Upd.install(this); return }
         if (Upd.busy(this)) { toast(t("Täze wersiýa ýüklenýär, garaşyň", "Новая версия загружается, подождите", "Yeni sürüm iniyor, bekleyin")); return }
         val msg = if (vpn) t("VPN-i işletmek üçin VPN-iň täze wersiýasyny ýüklemeli! Size täze wersiýany ýükläýinmi?",
             "Чтобы пользоваться VPN, нужно загрузить новую версию! Загрузить новую версию?",
@@ -672,7 +672,7 @@ class Main : Activity() {
         val q = Upd.query(this) ?: return
         if (q.status != lastDl) {
             val was = lastDl; lastDl = q.status
-            if (was != -1 && q.status == DownloadManager.STATUS_SUCCESSFUL) Upd.install(this)
+            if (was != -1 && q.status == DownloadManager.STATUS_SUCCESSFUL) { installHint(); Upd.install(this) }
             if (q.status == DownloadManager.STATUS_FAILED) {
                 getSharedPreferences("p", 0).edit().remove("dl").apply()
                 info(Upd.errText(this, q.reason))
@@ -683,6 +683,13 @@ class Main : Activity() {
             slowShown = true; info(Upd.errText(this, 0))
         }
         renderUpd()
+    }
+
+    /** Kurulum olmazsa: dosya «Download» klasöründe, dosya yöneticisinden açılabilir. */
+    private fun installHint() {
+        if (Build.VERSION.SDK_INT >= 29) toast(t("Gurnalmasa: faýl dolandyryjyda «Download» bukjasyndaky TurkmenVPN faýlyny açyň",
+            "Если не установится: откройте файл TurkmenVPN в папке «Download» через файловый менеджер",
+            "Kurulmazsa: dosya yöneticisinde «Download» klasöründeki TurkmenVPN dosyasını açın"))
     }
 
     // ---------- reklam ----------

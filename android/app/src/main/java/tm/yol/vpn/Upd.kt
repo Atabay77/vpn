@@ -70,30 +70,45 @@ object Upd {
         }.getOrNull()
     }
 
+    /** Bu sürüm daha önce eksiksiz indi mi (dosya hâlâ yerinde mi). */
+    private fun ready(ctx: Context, ver: String): Boolean {
+        if (p(ctx).getString("dlv", null) != ver) return false
+        if (query(ctx)?.status != DownloadManager.STATUS_SUCCESSFUL) return false
+        val dm = ctx.getSystemService(DownloadManager::class.java)
+        return runCatching { dm.getUriForDownloadedFile(p(ctx).getLong("dl", -1)) != null }.getOrDefault(false)
+    }
+
     /** Dosya zaten indiyse doğrudan kurar; yoksa indirmeyi başlatır. Dönüş: kurulum ekranı açıldı mı. */
     fun start(ctx: Context, ver: String, fid: String): Boolean {
-        val f = file(ctx, ver)
-        if (f.exists() && f.length() > 1_000_000 && p(ctx).getString("dlv", null) == ver && !busy(ctx)) { install(ctx, ver); return true }
+        if (ready(ctx, ver)) { install(ctx, ver); return true }
         if (busy(ctx)) return false
-        f.delete()
+        val f = file(ctx, ver); f.delete()
         val dm = ctx.getSystemService(DownloadManager::class.java)
         val r = DownloadManager.Request(Uri.parse(Sub.fileUrl(fid)))
             .setTitle(ctx.getString(R.string.app_name) + " $ver")
             .setDescription(t("Täze wersiýa ýüklenýär", "Загрузка новой версии", "Yeni sürüm indiriliyor"))
             .setMimeType("application/vnd.android.package-archive")
             .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE)
-            .setDestinationUri(Uri.fromFile(f))
+            .apply {
+                // Android 10+: herkese açık «Download» klasörüne (kurulmazsa dosya yöneticisinden de açılabilir)
+                if (Build.VERSION.SDK_INT >= 29) setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, "TurkmenVPN-$ver.apk")
+                else setDestinationUri(Uri.fromFile(f))
+            }
             .setAllowedOverMetered(true).setAllowedOverRoaming(true)
         val id = dm.enqueue(r)
         p(ctx).edit().putLong("dl", id).putString("dlv", ver).putLong("dlAt", System.currentTimeMillis()).apply()
         return false
     }
 
-    /** Sistemin yükleyicisini açar (bilinmeyen kaynak izni orada istenir, dosya tekrar inmez). */
+    /**
+     * Sistemin yükleyicisini açar (bilinmeyen kaynak izni orada istenir, dosya tekrar inmez).
+     * Dosyayı sistemin indirme servisi verir: güncelleme sırasında bizim süreç kapansa da okuma yarıda kalmaz.
+     */
     fun install(ctx: Context, ver: String = p(ctx).getString("dlv", "") ?: "") {
+        val dm = ctx.getSystemService(DownloadManager::class.java)
+        val sys = runCatching { dm.getUriForDownloadedFile(p(ctx).getLong("dl", -1)) }.getOrNull()
         val f = file(ctx, ver)
-        if (!f.exists()) return
-        val uri = Uri.parse("content://${ctx.packageName}.apk/${f.name}")
+        val uri = sys ?: if (f.exists()) Uri.parse("content://${ctx.packageName}.apk/${f.name}") else return
         val i = Intent(Intent.ACTION_VIEW).setDataAndType(uri, "application/vnd.android.package-archive")
             .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
         runCatching { ctx.startActivity(i) }
