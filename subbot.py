@@ -851,6 +851,25 @@ APP_LOCK = threading.Lock()
 
 def app_cfg(db): return db.get("app") or {}
 
+KEY_ABC = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"   # karışan harfler (I, O, 0, 1) yok
+def app_key_new(): return "-".join("".join(random.SystemRandom().choice(KEY_ABC) for _ in range(4)) for _ in range(3))
+def app_key_hash(k): return hashlib.sha256(("tvk|" + k.strip().upper()).encode()).hexdigest()[:20]
+def app_keys_live(cfg):
+    now = time.time()
+    return {k: v for k, v in (cfg.get("keys") or {}).items() if not v.get("exp") or v["exp"] > now}
+
+def app_meta(cfg):
+    """Programın dosyasına konan gizli satırlar: geçerli keylerin özeti + yayınlanan sürümler."""
+    out = [f"#tvk: {app_key_hash(k)} {int(v.get('exp') or 0)}" for k, v in sorted(app_keys_live(cfg).items())]
+    for abi, u in sorted((cfg.get("upd") or {}).items()):
+        if u.get("fid") and u.get("ver"): out.append(f"#tvu{abi}: {u['ver']} {u['fid']}")
+    return out
+
+def app_left(exp):
+    if not exp: return "♾ çäksiz"
+    d = exp - time.time()
+    return f"{int(d // 86400)} gün {int(d % 86400 // 3600)} sagat"
+
 def app_sync(force=False):
     """Admin bölümünde eklenen aboneliklerin kodlarını toplar, programın Drive dosyasına yazar.
     Bir abonelik o an açılmazsa son başarılı kodları kullanılır. Dönüş: (kod sayısı, hatalar)."""
@@ -872,7 +891,8 @@ def app_sync(force=False):
                 if k not in keys: keys.add(k); codes.append(c)
         last = {hashlib.md5(u.encode()).hexdigest()[:8]: last[hashlib.md5(u.encode()).hexdigest()[:8]]
                 for u in subs if hashlib.md5(u.encode()).hexdigest()[:8] in last}
-        dig = hashlib.sha256("\n".join(codes).encode()).hexdigest()[:16]
+        meta = app_meta(cfg)
+        dig = hashlib.sha256("\n".join(meta + codes).encode()).hexdigest()[:16]
         svc = new_service()
         if not svc: raise RuntimeError("drive-sa.json bulunamadı")
         fid = cfg.get("fid")
@@ -885,17 +905,36 @@ def app_sync(force=False):
             if not make_public(svc, fid): raise RuntimeError("Drive dosyası herkese açık yapılamadı")
             force = True
         if force or dig != cfg.get("dig"):
-            if not sync_file(svc, fid, "vpn", "", codes, exp=False): raise RuntimeError("Drive'a yazılamadı")
+            if not sync_file(svc, fid, "vpn", "", meta + codes, exp=False): raise RuntimeError("Drive'a yazılamadı")
         def f(d):
             a = d.setdefault("app", {})
             a.update({"fid": fid, "dig": dig, "last": last, "n": len(codes), "ts": int(time.time()), "errs": errs})
         mutate(f)
         return len(codes), errs
 
+def app_publish(abi, ver, data):
+    """APK'yı Drive'a koyar (her mimari için aynı dosya yeniden kullanılır), sürümü programın dosyasına yazar."""
+    svc = new_service()
+    if not svc: raise RuntimeError("drive-sa.json bulunamadı")
+    with db_lock():
+        db = load_db(); a = db.setdefault("app", {}); u = a.setdefault("upd", {}).setdefault(abi, {})
+        fid = u.get("fid")
+        if not fid:
+            fid, from_free = alloc_file(svc, db)
+            if not fid: raise RuntimeError("Boş Drive dosyası yok")
+            if from_free: db["free_files"].remove(fid)
+            u["fid"] = fid; save_db(db)
+    if not make_public(svc, fid): raise RuntimeError("Drive dosyası herkese açık yapılamadı")
+    media = MediaIoBaseUpload(io.BytesIO(data), mimetype="application/vnd.android.package-archive", resumable=True, chunksize=4 * 1024 * 1024)
+    svc.files().update(fileId=fid, body={"name": f"TurkmenVPN-{ver}-{abi}.apk"}, media_body=media).execute(num_retries=3)
+    mutate(lambda d: d["app"]["upd"][abi].update({"ver": ver, "ts": int(time.time()), "size": len(data)}))
+    app_sync(True)
+    return fid
+
 async def app_loop(app):
     await asyncio.sleep(60)
     while True:
-        if app_cfg(load_db()).get("subs"):
+        if app_cfg(load_db()).get("fid") or app_cfg(load_db()).get("subs"):
             try:
                 n, errs = await asyncio.to_thread(app_sync)
                 RUN.pop("app_err", None)
@@ -912,13 +951,18 @@ def app_view(db):
     st = (f"\n🕒 Son yazma {ago(cfg.get('ts'))} · toplam {cfg.get('n', 0)} kod" if cfg.get("ts") else "")
     st += "".join(f"\n⚠️ {esc(e)}" for e in cfg.get("errs", []))
     st += (f"\n❌ {esc(RUN['app_err'])}" if RUN.get("app_err") else "")
+    st += f"\n🔑 Geçerli key: {len(app_keys_live(cfg))}"
+    st += "".join(f"\n📦 Yayında ({'64' if abi == '64' else '32'} bit): {esc(u.get('ver', '?'))}" for abi, u in sorted((cfg.get("upd") or {}).items()))
     t = ("📱 <b>Türkmen VPN programy</b>\n"
          f"<blockquote>{chr(10).join(lines)}{st}</blockquote>\n"
          "<i>Buradaki aboneliklerin bütün kodları birleştirilip programa gider (10 dakikada bir, aynı kodlar bir kez). "
-         "Program her bağlanma ve çıkışta yeni listeyi alır.</i>")
+         "Program her bağlanma ve çıkışta yeni listeyi alır.\n"
+         "Key: programda 2 saat sınırını kaldırır.\n"
+         "Yeni sürüm: APK dosyalarını bana gönder (adında sürüm ve arm64 / arm32 olsun, ör. TurkmenVPN-1.3-arm64.apk).</i>")
     rows = [[B(f"❌ {i + 1}. {short(src_label(u), 24)}", f"app_rm:{hashlib.md5(u.encode()).hexdigest()[:8]}")] for i, u in enumerate(subs)]
     if len(subs) < APP_MAX_SUBS: rows.append([B("➕ Abonelik ekle", "app_add", "primary")])
     if subs: rows.append([B("🔄 Şimdi güncelle", "app_now")])
+    rows.append([B("🔑 Key oluştur", "app_kn"), B(f"🗝 Keyler ({len(app_keys_live(cfg))})", "app_kl")])
     if cfg.get("fid"): rows.append([B("🔗 Programın dosya linki", "app_link")])
     rows.append([B("◀️ Admin", "admin")])
     return t, KB(rows)
@@ -2966,9 +3010,34 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
             start_refresh(c.application, "abonelik silindi")
         await safe_edit(q, "✅ Abonelik silindi. Kalan aboneliklerin kodları şimdi yeniden yazılıyor." if ok else "⚠️ Bulunamadı.", back("sources"))
 
-    elif a in ("app_v", "app_add", "app_now", "app_link") or a.startswith("app_rm:"):
+    elif a in ("app_v", "app_add", "app_now", "app_link", "app_kn", "app_kl") or a.startswith(("app_rm:", "app_k:", "app_kd:")):
         if uid not in ORIG_ADMINS:
             await safe_edit(q, "⛔ Erişim yok", back("admin")); return
+        if a == "app_kn":
+            await safe_edit(q, "🔑 <b>Yeni key</b>\n<blockquote>Key kaç gün geçerli olsun? Süre şimdiden başlar.</blockquote>",
+                            KB([[B("1 gün", "app_k:1"), B("7 gün", "app_k:7"), B("30 gün", "app_k:30")],
+                                [B("90 gün", "app_k:90"), B("♾ Süresiz", "app_k:0")], [B("◀️ Geri", "app_v")]])); return
+        if a.startswith("app_k:"):
+            days = int(a.split(":", 1)[1]); k = app_key_new()
+            exp = int(time.time() + days * 86400) if days else 0
+            mutate(lambda d: d.setdefault("app", {}).setdefault("keys", {}).__setitem__(k, {"exp": exp, "ts": int(time.time()), "by": uid}))
+            audit(uid, f"app key {days}g")
+            try: await asyncio.to_thread(app_sync, True); RUN.pop("app_err", None)
+            except Exception as e: RUN["app_err"] = str(e)[:150]
+            await safe_edit(q, f"✅ <b>Key hazır</b>\n<blockquote><code>{k}</code>\n⏳ {app_left(exp)}</blockquote>\n<i>Programda gizli bölüme yazılınca 2 saat sınırı kalkar. Program listeyi alınca (en geç bir sonraki bağlanmada) çalışır.</i>",
+                            KB([[B("🔑 Bir tane daha", "app_kn"), B("◀️ Geri", "app_v")]])); return
+        if a.startswith("app_kd:"):
+            k = a.split(":", 1)[1]
+            mutate(lambda d: (d.setdefault("app", {}).setdefault("keys", {}).pop(k, None), None)[1])
+            audit(uid, "app key del")
+            try: await asyncio.to_thread(app_sync, True); RUN.pop("app_err", None)
+            except Exception as e: RUN["app_err"] = str(e)[:150]
+            a = "app_kl"
+        if a == "app_kl":
+            ks = sorted(app_keys_live(app_cfg(load_db())).items(), key=lambda kv: kv[1].get("ts", 0), reverse=True)
+            body = "\n".join(f"<code>{k}</code> · {app_left(v.get('exp'))}" for k, v in ks[:30]) or "Henüz key yok."
+            await safe_edit(q, f"🗝 <b>Keyler</b>\n<blockquote>{body}</blockquote>\n<i>❌ basınca key iptal olur (program listeyi alınca 2 saat sınırı geri gelir).</i>",
+                            KB([[B(f"❌ {k}", f"app_kd:{k}")] for k, _ in ks[:30]] + [[B("◀️ Geri", "app_v")]])); return
         if a == "app_add":
             STATE[uid] = {"action": "app_add"}
             t, kb = prompt("➕ <b>Programa abonelik ekle</b>", f"Abonelik linklerini gönder (her satıra bir tane, en çok {APP_MAX_SUBS}).", "app_v")
@@ -5394,7 +5463,7 @@ def proto_of(c):
 
 def used_fids(db):
     """Şu an bir koda/oturuma bağlı Drive dosyaları (boş dosya seçerken bunlar alınmaz)."""
-    u = {v.get("file_id") for v in db["subs"].values() if v.get("file_id")} | {db.get("tm_fid"), db.get("px_fid"), (db.get("app") or {}).get("fid")} | source_fids(db)
+    u = {v.get("file_id") for v in db["subs"].values() if v.get("file_id")} | {db.get("tm_fid"), db.get("px_fid"), (db.get("app") or {}).get("fid")} | {u_.get("fid") for u_ in ((db.get("app") or {}).get("upd") or {}).values()} | source_fids(db)
     u |= {s.get("fid") for s in db.get("msess", {}).values() if s.get("status") == "on"}
     return u
 
@@ -7406,6 +7475,24 @@ async def doc_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
         with open(UPDATE_NOTE, "w") as nf: nf.write(sha)
         await m.edit_text(f"✅ <b>Yeni sürüm kuruldu</b> <code>{sha}</code>\n<i>Bot birkaç saniye içinde yeniden açılıyor...</i>", parse_mode="HTML")
         asyncio.get_running_loop().call_later(2, restart_self)
+
+    elif fn.endswith(".apk"):
+        if uid not in ORIG_ADMINS: return
+        mv = re.search(r"(\d+(?:\.\d+)+)", fn)
+        abi = "64" if re.search(r"arm64|v8a", fn) else "32" if re.search(r"arm32|v7a|armeabi", fn) else None
+        if not mv or not abi:
+            await u.message.reply_text("⚠️ Dosya adında sürüm ve mimari olmalı, ör. TurkmenVPN-1.3-arm64.apk"); return
+        if (d.file_size or 0) > 20 * 1024 * 1024:
+            await u.message.reply_text("⚠️ Telegram botları 20 MB'tan büyük dosyayı indiremiyor."); return
+        m = await u.message.reply_text("⏳ Yeni sürüm Drive'a yükleniyor…")
+        f = await c.bot.get_file(d.file_id)
+        data = bytes(await f.download_as_bytearray())
+        try:
+            fid_ = await asyncio.to_thread(app_publish, abi, mv.group(1), data)
+        except Exception as e:
+            await m.edit_text(f"❌ Yayınlanamadı: {esc(str(e)[:200])}", parse_mode="HTML"); return
+        audit(uid, f"app publish {mv.group(1)} {abi}")
+        await m.edit_text(f"✅ <b>Türkmen VPN {esc(mv.group(1))}</b> ({abi} bit) yayında.\n<i>Programı açan herkes üstte «Täze wersiýa» bildirimini görür; güncellemek isteğe bağlı.</i>", parse_mode="HTML")
 
     elif fn.startswith("banners") and fn.endswith(".json"):   # görsel paketi (ana menü/ekran banner'ları)
         f = await c.bot.get_file(d.file_id)

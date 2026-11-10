@@ -26,14 +26,29 @@ data class Server(val flag: String, val country: String, val title: String, val 
 
 object Sub {
     @Volatile var list: List<Server> = emptyList()
+    @Volatile var keys: Map<String, Long> = emptyMap()                 // key özeti → bitiş (sn, 0 = süresiz)
+    @Volatile var upd: Map<String, Pair<String, String>> = emptyMap()  // "64"/"32" → (sürüm, Drive dosyası)
+
+    private fun body(text: String) = text.trim().let { t ->
+        if (t.contains("://") || t.startsWith("#")) t else runCatching {
+            String(android.util.Base64.decode(t, android.util.Base64.DEFAULT), Charsets.UTF_8)
+        }.getOrDefault(t)
+    }
+
+    /** Botun yazdığı gizli satırlar: «#tvk: özet bitiş» ve «#tvu64: sürüm dosya». */
+    fun meta(text: String) {
+        val k = HashMap<String, Long>(); val u = HashMap<String, Pair<String, String>>()
+        for (l in body(text).lineSequence()) {
+            val p = l.trim().split(Regex("\\s+"))
+            if (p.size >= 3 && p[0] == "#tvk:") p[2].toLongOrNull()?.let { k[p[1]] = it }
+            if (p.size >= 3 && p[0].startsWith("#tvu") && p[0].endsWith(":")) u[p[0].removePrefix("#tvu").removeSuffix(":")] = p[1] to p[2]
+        }
+        keys = k; upd = u
+    }
 
     /** Abonelik metnini sunucu listesine çevirir (desteklenmeyen satırlar atlanır). */
     fun parse(text: String): List<Server> {
-        val body = text.trim().let { t ->
-            if (t.contains("://")) t else runCatching {
-                String(android.util.Base64.decode(t, android.util.Base64.DEFAULT), Charsets.UTF_8)
-            }.getOrDefault(t)
-        }
+        val body = body(text)
         return body.lineSequence().map { it.trim() }
             .filter { it.isNotEmpty() && !it.startsWith("#") }
             .mapNotNull { line ->
@@ -47,8 +62,10 @@ object Sub {
                 val name = Cfg.dec(line.substringAfter('#', ""))
                 val (flag, country, title) = splitName(name)
                 val game = name.contains("🎮") || Regex("pubg|gaming|oýun|game", RegexOption.IGNORE_CASE).containsMatchIn(name)
-                val ru = flag == "🇷🇺" || country.equals("Russia", true) || country.equals("Rossiýa", true)
-                Server(flag, country, title, proto, line, game, ru)
+                val ru = game || flag == "🇷🇺" || country.equals("Russia", true) || country.equals("Rossiýa", true)
+                // oyun sunucuları gerçek yeri ne olursa olsun Rusya görünür
+                if (game) Server("🇷🇺", "Russia", title, proto, line, true, true)
+                else Server(flag, country, title, proto, line, false, ru)
             }.toList().numbered()
     }
 
@@ -100,7 +117,7 @@ object Sub {
                 val t = c.inputStream.use { it.readBytes() }.toString(Charsets.UTF_8)
                 val l = parse(t)
                 if (l.isEmpty()) return@runCatching false
-                list = l
+                list = l; meta(t)
                 Box.write(ctx, t)
                 true
             } finally { c.disconnect() }
@@ -109,9 +126,12 @@ object Sub {
         return ok
     }
 
+    /** Aynı Drive anahtarıyla başka bir dosyanın linki (güncelleme APK'sı için). */
+    fun fileUrl(fid: String) = N.u().replace(Regex("/files/[\\w-]+"), "/files/$fid")
+
     fun load(ctx: Context) {
         if (list.isNotEmpty()) return
-        Box.read(ctx)?.let { list = parse(it) }
+        Box.read(ctx)?.let { list = parse(it); meta(it) }
     }
 }
 

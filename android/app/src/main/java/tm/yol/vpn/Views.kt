@@ -33,6 +33,9 @@ fun Context.box(fill: Int, stroke: Int, radiusDp: Float, strokeDp: Float = 1f) =
 
 /** Kırmızı halı şeridi, göl motifleriyle. vertical=true: ana ekrandaki sol şerit. */
 class Carpet(ctx: Context, private val vertical: Boolean, private val count: Int) : View(ctx) {
+    fun count() = count
+    fun len() = if (vertical) height.toFloat() else width.toFloat()
+    fun pad() = if (vertical) context.dp(28f) else context.dp(12f)
     private val p = Paint(Paint.ANTI_ALIAS_FLAG)
     private val path = Path()
 
@@ -50,14 +53,12 @@ class Carpet(ctx: Context, private val vertical: Boolean, private val count: Int
         if (vertical) c.drawRect(width - line, 0f, width.toFloat(), height.toFloat(), p)
         else c.drawRect(0f, height - line, width.toFloat(), height.toFloat(), p)
 
-        val len = if (vertical) height.toFloat() else width.toFloat()
-        val pad = if (vertical) context.dp(28f) else context.dp(12f)
-        val step = (len - 2 * pad) / count
+        val step = (len() - 2 * pad()) / count
         for (i in 0 until count) {
-            val along = pad + step * (i + 0.5f)
+            val along = pad() + step * (i + 0.5f)
             if (vertical) {
                 val cx = (width - line) / 2f; val cy = along
-                val s = context.dp(1f)
+                val s = (width - line) / 44f   // şerit daraldıkça motif de küçülür
                 diamond(c, cx, cy, 16 * s, 22 * s, C.CREAM)
                 diamond(c, cx, cy, 11 * s, 16 * s, C.RED)
                 // iki koyu üçgen
@@ -76,6 +77,9 @@ class Carpet(ctx: Context, private val vertical: Boolean, private val count: Int
         }
     }
 }
+
+/** Dokunulan göl motifinin sırası (0 = ilk). */
+fun Carpet.indexAt(pos: Float): Int = ((pos - pad()) / ((len() - 2 * pad()) / count())).toInt().coerceIn(0, count() - 1)
 
 /** 24 birimlik kutuda çizgi ikonlar. */
 class Ico(ctx: Context, private val kind: String, var color: Int, private val sizeDp: Float, private val strokeW: Float = 2f) : View(ctx) {
@@ -112,40 +116,89 @@ class Ico(ctx: Context, private val kind: String, var color: Int, private val si
     }
 }
 
-/** Büyük yuvarlak bağlan düğmesi. */
+/** Yuvarlak bağlan düğmesi: bağlanırken dönen ışık, bağlıyken nabız gibi parlama. */
 class Power(ctx: Context) : View(ctx) {
     private val p = Paint(Paint.ANTI_ALIAS_FLAG)
     private val icon = Path()
+    private val arc = RectF()
     var on = false; set(v) { field = v; invalidate() }
     var busy = false; set(v) { field = v; invalidate() }
+    private val t0 = System.currentTimeMillis()
 
     override fun onMeasure(w: Int, h: Int) {
-        val s = context.dp(216f).toInt(); setMeasuredDimension(s, s)
+        val s = context.dp(176f).toInt(); setMeasuredDimension(s, s)
     }
 
     override fun onDraw(c: Canvas) {
         val cx = width / 2f; val cy = height / 2f
-        val halo = context.dp(10f); val ring = context.dp(6f)
         val r = width / 2f
+        val t = (System.currentTimeMillis() - t0) / 1000f
+        val accent = if (on) C.GREEN else C.GOLD
+        // dış parlama halkaları
+        val pulse = if (on) (0.5f + 0.5f * kotlin.math.sin(t * 2.4f)) else 0.35f
+        p.style = Paint.Style.STROKE
+        for (i in 0..2) {
+            p.strokeWidth = context.dp(1f)
+            p.color = Color.argb((60 * pulse / (i + 1)).toInt() + 10, Color.red(accent), Color.green(accent), Color.blue(accent))
+            c.drawCircle(cx, cy, r - context.dp(2f + i * 5f), p)
+        }
+        // cam gövde
         p.style = Paint.Style.FILL
-        p.color = if (on) Color.argb(41, 111, 219, 156) else Color.argb(26, 224, 176, 74)
-        c.drawCircle(cx, cy, r, p)
-        p.color = if (on) C.GREEN else C.GOLD
-        c.drawCircle(cx, cy, r - halo, p)
-        p.color = if (on) C.GREEN_BG else C.CARD
-        c.drawCircle(cx, cy, r - halo - ring, p)
-
-        val s = context.dp(76f) / 24f
+        p.color = if (on) Color.argb(200, 18, 120, 74) else Color.argb(170, 10, 28, 20)
+        val body = r - context.dp(18f)
+        c.drawCircle(cx, cy, body, p)
+        // kenar çizgisi
+        p.style = Paint.Style.STROKE; p.strokeWidth = context.dp(3f); p.color = accent
+        c.drawCircle(cx, cy, body, p)
+        // bağlanırken dönen yay
+        if (busy) {
+            arc.set(cx - body - context.dp(8f), cy - body - context.dp(8f), cx + body + context.dp(8f), cy + body + context.dp(8f))
+            p.strokeWidth = context.dp(3f); p.strokeCap = Paint.Cap.ROUND; p.color = C.GOLD
+            val a0 = (t * 300f) % 360f
+            c.drawArc(arc, a0, 70f, false, p)
+            p.color = Color.argb(120, 224, 176, 74); c.drawArc(arc, a0 + 180f, 40f, false, p)
+        }
+        // güç simgesi
+        val s = context.dp(56f) / 24f
         c.save(); c.translate(cx - 12 * s, cy - 12 * s); c.scale(s, s)
-        p.style = Paint.Style.STROKE; p.strokeCap = Paint.Cap.ROUND; p.strokeWidth = 1.8f
+        p.strokeCap = Paint.Cap.ROUND; p.strokeWidth = 1.8f
         p.color = if (on) Color.WHITE else if (busy) C.GOLD else C.CREAM
         icon.reset()
         icon.moveTo(12f, 3f); icon.lineTo(12f, 12f)
         icon.addArc(RectF(4f, 5f, 20f, 21f), -47.4f, 274.8f)
         c.drawPath(icon, p)
         c.restore()
+        if (on || busy) postInvalidateOnAnimation()
     }
 }
+
+/** Son 60 saniyenin hız çizgisi (indirme). */
+class Spark(ctx: Context) : View(ctx) {
+    private val v = ArrayDeque<Float>()
+    private val p = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val path = Path()
+    fun add(x: Float) { v.addLast(x); while (v.size > 60) v.removeFirst(); invalidate() }
+    fun clear() { v.clear(); invalidate() }
+    override fun onDraw(c: Canvas) {
+        if (v.size < 2) return
+        val mx = maxOf(v.max(), 1f)
+        val dx = width / 59f
+        path.reset()
+        v.forEachIndexed { i, y ->
+            val px = width - (v.size - 1 - i) * dx; val py = height - (y / mx) * (height - context.dp(4f)) - context.dp(2f)
+            if (i == 0) path.moveTo(px, py) else path.lineTo(px, py)
+        }
+        p.style = Paint.Style.STROKE; p.strokeWidth = context.dp(1.6f); p.color = C.GREEN
+        c.drawPath(path, p)
+        path.lineTo(width.toFloat(), height.toFloat()); path.lineTo(width - (v.size - 1) * dx, height.toFloat()); path.close()
+        p.style = Paint.Style.FILL; p.color = Color.argb(40, 111, 219, 156)
+        c.drawPath(path, p)
+    }
+}
+
+/** Yarı saydam «cam» kutu (cyber görünüm). */
+fun Context.glass(radiusDp: Float = 18f, stroke: Int = Color.argb(110, 224, 176, 74)) =
+    box(Color.argb(120, 10, 28, 20), stroke, radiusDp)
 
 /** Ana ekranın canlı arka planı: sessiz, döngülü video, ekranı kaplayacak şekilde kırpılır. */
 class VideoBg(ctx: Context, private val res: Int) : android.view.TextureView(ctx), android.view.TextureView.SurfaceTextureListener {

@@ -22,7 +22,12 @@ object State {
     @Volatile var now = OFF
     private val main = Handler(Looper.getMainLooper())
     val subs = mutableListOf<() -> Unit>()
-    fun set(s: Int) { now = s; main.post { subs.toList().forEach { it() } } }
+    @Volatile var app: Context? = null
+    fun set(s: Int) {
+        now = s
+        main.post { subs.toList().forEach { it() } }
+        app?.let { Tile.refresh(it) }
+    }
 
     @Volatile var active: Server? = null      // şu an bağlı olunan sunucu (otomatikte seçilen)
 
@@ -65,12 +70,25 @@ class Svc : VpnService() {
     private var core: CoreController? = null
     private val lock = Any()
     @Volatile private var want = false
+    private val h = Handler(Looper.getMainLooper())
+    private val tick = object : Runnable {
+        override fun run() {
+            // 2 saat dolunca (key yoksa) VPN durur; kullanıcı elle yeniden başlatır
+            if (want && State.now == State.ON && Lic.left(this@Svc) == 0L) { stop(); return }
+            if (want) h.postDelayed(this, 10_000)
+        }
+    }
+
+    override fun onCreate() { super.onCreate(); State.app = applicationContext }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == STOP) { stop(); return START_NOT_STICKY }
         foreground()
+        val reconnect = State.now == State.ON && Lic.start(this) > 0   // sunucu değiştirmek süreyi sıfırlamaz
+        if (!reconnect) Lic.setStart(this, 0)
         want = true
         State.set(State.WAIT)
+        h.removeCallbacks(tick); h.post(tick)
         Thread { start() }.start()
         return START_NOT_STICKY
     }
@@ -100,6 +118,7 @@ class Svc : VpnService() {
             core = c
             c.startLoop(cfg, fd.fd)
             if (!want) { stopCore(); return }
+            if (Lic.start(this) == 0L) Lic.setStart(this, System.currentTimeMillis())   // 2 saat bağlanınca başlar
             State.set(State.ON)
         } catch (e: Throwable) {
             stopCore()
@@ -118,6 +137,8 @@ class Svc : VpnService() {
 
     private fun stop() {
         want = false
+        h.removeCallbacks(tick)
+        Lic.setStart(this, 0)
         State.set(State.OFF)
         val app = applicationContext
         Thread {
@@ -129,7 +150,7 @@ class Svc : VpnService() {
     }
 
     override fun onRevoke() { stop() }
-    override fun onDestroy() { want = false; Thread { synchronized(lock) { stopCore() } }.start(); if (State.now != State.FAIL) State.set(State.OFF); super.onDestroy() }
+    override fun onDestroy() { want = false; h.removeCallbacks(tick); Thread { synchronized(lock) { stopCore() } }.start(); if (State.now != State.FAIL) State.set(State.OFF); super.onDestroy() }
 
     private fun foreground() {
         val nm = getSystemService(NotificationManager::class.java)
