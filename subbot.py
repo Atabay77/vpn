@@ -1938,7 +1938,7 @@ async def cmd_unadmin(u: Update, c: ContextTypes.DEFAULT_TYPE):
         await u.message.reply_text("ℹ️ Asıl kurucu hesabının yetkisi kaldırılamaz.")
 
 # ── 📧 Gmail: belirlenen kelime yazılan maile kod gönderir ──
-MAIL_EVERY, MAIL_MAX_HOUR, MAIL_DEF_DAYS = 20, 10, 30   # 20 sn'de bir okunur
+MAIL_EVERY, MAIL_MAX_HOUR, MAIL_DEF_DAYS = 10, 10, 30   # 10 sn'de bir okunur
 MAIL_DL_MAX_HOUR = 30   # mailde «vpn» yazana indirme linki: saatte en fazla
 MAIL_DL_SENT = []
 MAIL_DEVICES = 1   # maille verilen kod en fazla bu kadar cihaza kurulabilir (Happ limitli link)
