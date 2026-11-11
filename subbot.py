@@ -1121,6 +1121,11 @@ def fs_sa_project():
         with open(SA_FILE) as f: return json.load(f).get("project_id", "")
     except Exception: return ""
 
+def fs_sa_email():
+    try:
+        with open(SA_FILE) as f: return json.load(f).get("client_email", "")
+    except Exception: return ""
+
 def fs_token():
     if _FS_TOK["tok"] and time.time() < _FS_TOK["exp"] - 120: return _FS_TOK["tok"]
     import google_auth_httplib2, httplib2
@@ -3796,9 +3801,15 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
                      "2) Firestore → «Rules» → aşakdaky «📋 Düzgünler» tekstini goýup «Publish»\n"
                      "3) IAM → hyzmat hasabyna (drive-sa.json-daky e-poçta) «Cloud Datastore User» roluny goş\n"
                      "4) APIs &amp; Services → Credentials → «Create API key» → «Restrict key» → diňe «Cloud Firestore API» → açary «🔑 API açary» bilen iberiň")
-            await safe_edit(q, txt_, KB([[B("🔑 API açary", "afs_key", "primary"), B("📋 Düzgünler", "afs_rules")], [B("🔄 Barla", "afs_chk")] + ([B("↩️ Öçür", "afs_off", "danger")] if a_.get("fs_ok") else []), [B("◀️ Programma", "app_v")]])); return
+            pq = "?project=" + urllib.parse.quote(proj) if proj else ""
+            links = [[B("1️⃣ Bazany döret", url="https://console.cloud.google.com/firestore/create-database" + pq)],
+                     [B("2️⃣ Düzgünler (Rules)", url="https://console.cloud.google.com/firestore/databases/-default-/security/rules" + pq)],
+                     [B("3️⃣ IAM: rol goş", url="https://console.cloud.google.com/iam-admin/iam" + pq)],
+                     [B("4️⃣ API açary döret", url="https://console.cloud.google.com/apis/credentials" + pq)]]
+            await safe_edit(q, txt_, KB(links + [[B("🔑 API açary", "afs_key", "primary"), B("📋 Düzgünler", "afs_rules")], [B("🔄 Barla", "afs_chk")] + ([B("↩️ Öçür", "afs_off", "danger")] if a_.get("fs_ok") else []), [B("◀️ Programma", "app_v")]])); return
         if a == "afs_rules":
-            await safe_edit(q, "📋 <b>Firestore düzgünleri</b> — Rules bölümine doly göçürip goýuň:\n<pre>" + esc(FS_RULES) + "</pre>", back("afs")); return
+            await safe_edit(q, "📋 <b>Firestore düzgünleri</b> — Rules bölümine doly göçürip goýuň (tekste basyň — göçürilýär):\n<pre>" + esc(FS_RULES) + "</pre>\n"
+                            f"Hyzmat hasabynyň e-poçtasy (IAM-da şoňa «Cloud Datastore User» roly):\n<code>{esc(fs_sa_email())}</code>", back("afs")); return
         if a == "afs_key":
             STATE[uid] = {"action": "afs_key"}
             await safe_edit(q, *prompt("🔑 <b>Firestore API açary</b>", "Google Cloud → Credentials-da döreden açaryňyzy iberiň (AIza… bilen başlaýar). Habaryňyz derrew pozulýar.", "afs")); return
