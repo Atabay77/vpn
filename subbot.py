@@ -2191,7 +2191,18 @@ async def cmd_id(u: Update, c: ContextTypes.DEFAULT_TYPE):
 async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
     uid = u.effective_user.id
     if not is_admin(uid) or is_banned(uid) or (uid not in ADMINS and STATE.get(uid, {}).get("action") == "u_panel"): return await pub_msg(u, c)
-    if uid not in STATE: return
+    if uid not in STATE:   # ana menüde Drive linki → VPN'siz googleapis linki
+        txt0 = (u.message.text or "").strip()
+        m0 = DRIVE_ID_RE.search(txt0) or re.search(r"drive\.google\.com/\S*?[?&]id=([-\w]{20,})", txt0) or re.search(r"/d/([-\w]{20,})", txt0)
+        if m0 and "drive.google.com" in txt0:
+            fid0 = m0.group(1); name0 = ""
+            try:
+                svc0 = new_service()
+                if svc0: name0 = (await asyncio.to_thread(lambda: svc0.files().get(fileId=fid0, fields="name").execute(num_retries=1))).get("name", "")
+            except Exception: pass
+            await u.message.reply_text(("⬇️ <b>" + esc(name0) + "</b>\n" if name0 else "⬇️ <b>VPN'siz indirme linki</b>\n") + f"<code>{esc(sub_link(fid0))}</code>\n"
+                                       "<i>Dosya Drive'da «Bağlantıya sahip olan herkes» olarak paylaşılmış olmalı.</i>", parse_mode="HTML")
+        return
     txt = (u.message.text or "").strip()
     st = STATE.pop(uid)
     act = st.get("action")

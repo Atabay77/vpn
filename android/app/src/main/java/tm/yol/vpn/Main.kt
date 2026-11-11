@@ -543,6 +543,8 @@ class Main : Activity() {
     private fun renderState() {
         val st = State.now
         if (lastState == State.WAIT && st == State.ON) Snd.play(this, R.raw.on)
+        if (lastState == State.WAIT && st == State.FAIL && State.noNet) { State.noNet = false; info(t("Internetiňiz ýok. Telefonyň internetini (Wi-Fi ýa-da mobil internet) barlaň.",
+            "Нет интернета. Проверьте Wi-Fi или мобильный интернет.", "İnternetiniz yok. Wi-Fi'yi ya da mobil veriyi kontrol edin.")) }
         if (lastState == State.WAIT && st == State.FAIL && State.noPing) { State.noPing = false; info(noCodes()) }
         if (lastState == State.ON && st == State.OFF) Snd.play(this, R.raw.off)
         lastState = st
@@ -904,7 +906,11 @@ class Main : Activity() {
                 if (left == 0) {
                     testing = false; pool.shutdown(); State.pingAt = System.currentTimeMillis(); paintTest()
                     // hiçbiri yanıt vermediyse: kodlar yenileniyor
-                    if (ms.size >= list.size && ms.values.none { it > 0 }) info(noCodes())
+                    if (ms.size >= list.size && ms.values.none { it > 0 }) bg {
+                        val on = State.online(this)
+                        ui { info(if (on) noCodes() else t("Internetiňiz ýok. Telefonyň internetini (Wi-Fi ýa-da mobil internet) barlaň.",
+                            "Нет интернета. Проверьте Wi-Fi или мобильный интернет.", "İnternetiniz yok. Wi-Fi'yi ya da mobil veriyi kontrol edin.")) }
+                    }
                 }
                 paintMs()   // liste yeniden kurulmaz: kaydırma yerinde kalır
             }

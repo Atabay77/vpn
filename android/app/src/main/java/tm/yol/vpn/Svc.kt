@@ -60,14 +60,28 @@ object State {
     }
 
     @Volatile var noPing = false   // son otomatik denemede hiçbir kod yanıt vermedi
+    @Volatile var noNet = false    // telefonun interneti yok / çalışmıyor
+
+    /** İnternet var mı: ağ bağlı mı ve Google'a (Türkmenistan'da açık olan googleapis.com) ulaşılıyor mu. */
+    fun online(ctx: Context): Boolean {
+        val cm = ctx.getSystemService(android.net.ConnectivityManager::class.java)
+        val caps = runCatching { cm.getNetworkCapabilities(cm.activeNetwork) }.getOrNull() ?: return false
+        if (!caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)) return false
+        return runCatching {
+            val c = java.net.URL("https://www.googleapis.com/generate_204").openConnection() as java.net.HttpURLConnection
+            c.connectTimeout = 5000; c.readTimeout = 5000
+            try { c.responseCode > 0 } finally { c.disconnect() }
+        }.getOrDefault(false)
+    }
 
     /**
      * Otomatik: her bağlanmada Rusya ve oyun dışındaki bütün kodlara gerçekten ping atılır,
      * yanıt verenlerden biri seçilir (ilk yanıttan sonra kısa süre beklenir, iyi olanlar arasından rastgele).
      * Hiçbiri yanıt vermezse null: ms vermeyen koda asla bağlanılmaz.
      */
-    fun best(): Server? {
-        noPing = false
+    fun best(ctx: Context): Server? {
+        noPing = false; noNet = false
+        if (!online(ctx)) { noNet = true; return null }
         val c = cands()
         if (c.isEmpty()) return null
         val got = ConcurrentHashMap<Server, Long>()
@@ -83,7 +97,7 @@ object State {
         }
         pool.shutdownNow()
         pingAt = System.currentTimeMillis()
-        if (got.isEmpty()) { noPing = true; return null }
+        if (got.isEmpty()) { if (online(ctx)) noPing = true else noNet = true; return null }
         val min = got.values.min()
         val good = got.filter { it.value <= min * 2 + 150 }.keys.toList()   // en iyiye yakın olanlar
         val last = active?.key
@@ -131,8 +145,10 @@ class Svc : VpnService() {
             stopCore()
             // liste 10 dk'dan eskiyse kısa bekleyerek yenile; yoksa hemen bağlan (yenileme sonra)
             if (Sub.list.isEmpty() || System.currentTimeMillis() - Sub.okAt > 10 * 60_000) Sub.refresh(this, 3500)
-            State.noPing = false
-            val s = State.selected(this) ?: State.best() ?: throw IllegalStateException("ping yok")
+            State.noPing = false; State.noNet = false
+            val sel = State.selected(this)
+            if (sel != null && !State.online(this)) { State.noNet = true; throw IllegalStateException("internet yok") }
+            val s = sel ?: State.best(this) ?: throw IllegalStateException("ping yok")
             State.active = s
             val cfg = Cfg.full(s.uri, true)
             Libv2ray.initCoreEnv(filesDir.absolutePath, "")
