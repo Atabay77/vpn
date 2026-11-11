@@ -2760,12 +2760,13 @@ async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
             await u.message.reply_text(("✅ Iberildi.\n\n" if ok else "⚠️ Bilet ýok.\n\n") + t_, parse_mode="HTML", reply_markup=kb_)
 
         elif act == "afs_key":
-            key_ = txt.strip()
+            parts_ = txt.split(); key_ = parts_[-1] if parts_ else ""
             try: await u.message.delete()
             except Exception: pass
             if not re.fullmatch(r"AIza[\w\-]{30,}", key_):
-                STATE[uid] = st; await u.message.reply_text("⚠️ Açar AIza… bilen başlamaly.", reply_markup=back("afs")); return
-            proj = fs_sa_project()
+                STATE[uid] = st; await u.message.reply_text("⚠️ Açar AIza… bilen başlamaly. Başga taslama bolsa: <code>taslama-id AIza…</code>", parse_mode="HTML", reply_markup=back("afs")); return
+            # başga taslama (meselem öz hasabyňyzda täze açylan): «taslama-id AIza…»
+            proj = parts_[0] if len(parts_) >= 2 and re.fullmatch(r"[a-z][a-z0-9\-]{4,38}", parts_[0]) else fs_sa_project()
             app_mut(lambda x: x.update({"fs_key": key_, "fs_proj": proj}))
             res = await asyncio.to_thread(fs_check, proj, key_)
             ok_all = len(res) >= 4 and all(r[1] for r in res)
@@ -3812,7 +3813,8 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
                             f"Hyzmat hasabynyň e-poçtasy (IAM-da şoňa «Cloud Datastore User» roly):\n<code>{esc(fs_sa_email())}</code>", back("afs")); return
         if a == "afs_key":
             STATE[uid] = {"action": "afs_key"}
-            await safe_edit(q, *prompt("🔑 <b>Firestore API açary</b>", "Google Cloud → Credentials-da döreden açaryňyzy iberiň (AIza… bilen başlaýar). Habaryňyz derrew pozulýar.", "afs")); return
+            await safe_edit(q, *prompt("🔑 <b>Firestore API açary</b>", "Google Cloud → Credentials-da döreden açaryňyzy iberiň (AIza… bilen başlaýar). Habaryňyz derrew pozulýar.\n"
+                                       f"Firestore başga taslamada bolsa: <code>taslama-id AIza…</code> (hyzmat hasabyna <code>{esc(fs_sa_email())}</code> şol taslamada «Cloud Datastore User» roly berilmeli).", "afs")); return
         if a == "afs_off":
             app_mut(lambda x: x.update({"fs_ok": False}))
             try: await asyncio.to_thread(app_sync, True)
