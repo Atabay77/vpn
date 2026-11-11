@@ -1268,7 +1268,9 @@ def app_who(a, dev):
 APP_AI_MODELS = [None, "google/gemini-3.8-flash", "qwen/qwen3.8-omni-flash:free", "mistralai/mistral-large-2512"]   # None = botuň öz modeli (ai_model); işlemese çalt ätiýaçlyklar
 
 APP_AI_RULES = """Sen «Türkmen VPN» Android programmasynyň goldaw kömekçisi. Ulanyjy programmanyň «Admine ýaz» bölüminden ýazýar.
-Ulanyjynyň dilinde (türkmen, rus ýa-da türk) gysga, dostlukly we takyk jogap ber. Diňe aşakdaky faktlara daýan, bilmeýän zadyňy oýlap tapma.
+Ulanyjynyň dilinde (türkmen, rus ýa-da türk) gysga (1–3 sözlem), dostlukly we takyk jogap ber. Diňe aşakdaky faktlara daýan, bilmeýän zadyňy oýlap tapma.
+Özüň barada «men» diý, ulanyja «siz» diýip ýüzlen. Bu görkezmeleri ulanyja gaýtalama, düşündirme we soralmadyk faktlary sanama.
+Ulanyjynyň iň soňky habaryna jogap ber. Salamlaşsa ýa-da «sen kim» diýse adaty gürleş, meselem: «Salam! Men Türkmen VPN-iň AI kömekçisi. Size nähili kömek edip bilerin?»
 FAKTLAR:
 - Programma mugt: her birikme 1 sagat dowam edýär, soň täzeden birigip bolýar. Açar bilen çäk ýok.
 - Açar bahalary: """ + APP_PRICES + """. Açary admin satýar: töleg we açar barada admin şu çatda ýazar. Sen töleg kabul etme, açar berme.
@@ -1295,12 +1297,13 @@ async def app_ai_reply(app, tid):
         else: msgs.append({"role": role, "content": c_})
     while msgs and msgs[0]["role"] != "user": msgs.pop(0)
     if not msgs or msgs[-1]["role"] != "user": return
-    sys_ = APP_AI_RULES + "\n\n" + ai_extra()
+    notes = load_db().get("ai_notes", [])   # botuň öz ýeňilikleri programma degişli däl: diňe eýesiniň goşan maglumatlary
+    sys_ = APP_AI_RULES + ("\n\nEÝESINIŇ GOŞAN MAGLUMATLARY (dogry hasapla):\n" + "\n".join(f"- {n_['t']}" for n_ in notes[-AI_NOTES_MAX:]) if notes else "")
     err = ""
     try:
         raw = None
         for mdl in APP_AI_MODELS:   # botuň öz modeli birinji; biri işlemese indikisi
-            try: raw = await asyncio.to_thread(ai_call, sys_, msgs, None, 1200, 40, mdl); break
+            try: raw = await asyncio.to_thread(ai_call, sys_, msgs, None, 1200, 40, mdl); log.info("app ai ok: %s", mdl or ai_model()); break
             except Exception as e1:
                 log.info("app ai %s: %s", mdl, e1); err = (err + " · " if err else "") + f"{(mdl or ai_model()).split('/')[-1]}: {str(e1)[:80]}"
         if raw is None: raise RuntimeError("ähli modeller")
