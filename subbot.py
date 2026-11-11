@@ -1051,7 +1051,7 @@ def app_view(db):
 # ───────── PROGRAM HABARLARY (1.14): bilet + AI, baha, çagyryş, sowgat, 1 açar = 1 telefon, habarlar, Global chat ─────────
 # Program bota ntfy.sh arkaly ýazýar: <konu>m — bota, <konu>d<telefon> — telefona, <konu>g — Global chat.
 # Habarlar şifreli (açar programmanyň Drive faýlynyň kimliginden), program hem şol bir usulda hasaplaýar (Msg.kt).
-APP_MSG_EVERY = 15
+APP_MSG_EVERY = 8   # Firestore-da IP çägi ýok; AI jogaby gijä galmasyn
 APP_PRICES = "3 gün — 15 TMT · 7 gün — 30 TMT · 1 aý — 100 TMT"
 REF_ABC = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
 DEV_RE = re.compile(r"^[0-9a-f]{12}$")
@@ -1264,6 +1264,9 @@ def app_who(a, dev):
     u = (a.get("devs") or {}).get(dev) or {}
     return f"{esc(u.get('nick') or '?')} · {esc(u.get('model') or '?')} · v{esc(u.get('ver') or '?')} · {esc(u.get('lang') or '?')}"
 
+# Programyň AI-sy: çalt we çäklendirilmedik modeller (Claude modelleri xKiro-da diňe Anthropic-iň öz gurallaryna açyk — 403)
+APP_AI_MODELS = ["google/gemini-3.8-flash", "qwen/qwen3.8-omni-flash:free", "mistralai/mistral-large-2512", "anthropic/claude-fable-5"]
+
 APP_AI_RULES = """Sen «Türkmen VPN» Android programmasynyň goldaw kömekçisi. Ulanyjy programmanyň «Admine ýaz» bölüminden ýazýar.
 Ulanyjynyň dilinde (türkmen, rus ýa-da türk) gysga, dostlukly we takyk jogap ber. Diňe aşakdaky faktlara daýan, bilmeýän zadyňy oýlap tapma.
 FAKTLAR:
@@ -1295,17 +1298,19 @@ async def app_ai_reply(app, tid):
     sys_ = APP_AI_RULES + "\n\n" + ai_extra()
     err = ""
     try:
-        try: raw = await asyncio.to_thread(ai_call, sys_, msgs, None, 3000, 120, SUP_MODEL)
-        except Exception as e1:
-            log.info("app ai %s: %s → varsayılan model", SUP_MODEL, e1); err = f"{SUP_MODEL}: {str(e1)[:150]}"
-            raw = await asyncio.to_thread(ai_call, sys_, msgs, None, 3000, 120)
+        raw = None
+        for mdl in APP_AI_MODELS:   # çalt modeller birinji; biri işlemese indikisi
+            try: raw = await asyncio.to_thread(ai_call, sys_, msgs, None, 1200, 40, mdl); break
+            except Exception as e1:
+                log.info("app ai %s: %s", mdl, e1); err = (err + " · " if err else "") + f"{mdl.split('/')[-1]}: {str(e1)[:80]}"
+        if raw is None: raise RuntimeError("ähli modeller")
         mj = re.search(r"\{.*\}", raw, re.S)
         try: j = json.loads(mj.group(0)) if mj else {"answer": raw, "handoff": False}
         except Exception: j = {"answer": raw, "handoff": False}
         ans = (j.get("answer") or "").strip()[:2000]; hand = bool(j.get("handoff"))
         if not ans: err = (err + " · " if err else "") + "boş jogap: " + raw[:150]
     except Exception as e:
-        log.warning("app ai: %s", e); ans, hand = "", True; err = (err + " · " if err else "") + str(e)[:200]
+        log.warning("app ai: %s", e); ans, hand = "", False; err = (err + " · " if err else "") + str(e)[:200]   # ýalňyşlykda bilet AI-dan aýrylmaýar
         RUN["ai_err"] = f"program: {str(e)[:120]}"
     def f(a_):
         t_ = (a_.get("tickets") or {}).get(tid)
@@ -1318,7 +1323,7 @@ async def app_ai_reply(app, tid):
         lang_ = ((a.get("devs") or {}).get(t["dev"]) or {}).get("lang", "tk")
         wait_ = {"ru": "Сообщение получено. Админ скоро ответит здесь.", "tr": "Mesajınız alındı. Yönetici yakında burada yanıtlayacak."}.get(lang_, "Habaryňyz alyndy. Admin ýakyn wagtda şu ýerde jogap berer.")
         await asyncio.to_thread(app_send, t["dev"], {"k": "tk", "who": "ai", "t": wait_, "tid": tid})
-    if hand:
+    if hand or (err and not ans):
         await notify_founders(app, f"🙋 <b>Program bileti #{tid} — admin gerek</b>\n<blockquote>{app_who(app_cfg(load_db()), t['dev'])}\n👤 {esc(t['log'][-1]['t'] if t.get('log') else '')[:600]}"
                               + (f"\n🤖 {esc(ans)[:600]}" if ans else "") + "</blockquote>"
                               + (f"\n⚠️ <b>AI ýalňyşlyk:</b> <code>{esc(err)[:300]}</code>" if err and not ans else ""),
@@ -1421,8 +1426,15 @@ async def app_on_msg(app, fid, o):
         if r == "new": RUN["app_dirty"] = True
 
 async def app_msg_loop(app):
-    """Programdan gelen mesajları okur (15 sn'de bir)."""
+    """Programdan gelen mesajları okur."""
     await asyncio.sleep(20)
+    def unlock(a_):   # 1.14.5-e çenli AI ýalňyşlygy bileti «admin gerek» edip AI-ny öçürýärdi
+        if a_.get("ai_unlock1"): return
+        for t_ in (a_.get("tickets") or {}).values():
+            if t_.get("human") and not any(x["r"] == "ai" and not x["t"].startswith(("Habaryňyz alyndy", "Сообщение получено", "Mesajınız alındı")) for x in t_.get("log", [])): t_["human"] = False
+        a_["ai_unlock1"] = True
+    try: app_mut(unlock)
+    except Exception: pass
     while True:
         try:
             a = app_cfg(load_db()); fid = a.get("fid")

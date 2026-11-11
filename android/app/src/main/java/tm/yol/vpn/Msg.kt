@@ -187,11 +187,13 @@ object Msg {
             // ntfy.sh bir IP-den az soraga rugsat berýär (köp adam bir VPN serweriniň IP-sinden çykýar), şonuň üçin seýrek:
             // jogap garaşylýan bolsa (soňky 40 min) ekranda 20 sn / fonda 3 min, ýogsa ekranda 2 min / fonda 10 min
             val waiting = now - waitAt < 40 * 60_000L
-            val inEvery = if (visible) (if (waiting) 20_000L else 120_000L) else (if (waiting) 180_000L else 600_000L)
+            // Firestore-da IP çägi ýok: jogap garaşylanda ekranda 4 sn-da bir
+            val inEvery = if (Fs.on()) (if (visible) (if (waiting) 4_000L else 60_000L) else (if (waiting) 60_000L else 300_000L))
+                else if (visible) (if (waiting) 20_000L else 120_000L) else (if (waiting) 180_000L else 600_000L)
             if ((visible || on) && now - inAt > inEvery) { inAt = now; runCatching { inbox(c) } }
             val gEvery = if (watchG) 8_000L else 60_000L
             if (visible && now - gAt > gEvery) { gAt = now; runCatching { global() } }
-            synchronized(lock) { runCatching { lock.wait(if (watchG) 2500L else 5000L) } }
+            synchronized(lock) { runCatching { lock.wait(if (watchG || (waiting && visible)) 2000L else 5000L) } }
         }
     }
 
