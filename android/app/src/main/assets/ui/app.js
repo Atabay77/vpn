@@ -176,6 +176,8 @@
         if (o.t === tx.s_key) return Object.assign({}, o, { s: s.hasKey ? r.keyCur : tx.s_keyS });
         return o;
       });
+      r.svRef = () => { if (this.state.refreshing) return; this.setState({ refreshing: true }); NB.refresh(); };
+      r.svRefCls = s.refreshing ? 'spin' : '';
       const ic = this.icons();
       r.opts = r.opts.concat([{ i1: ic.global[0], i2: ic.global[1], t: tx.s_diag, s: s.diag ? tx[s.diag] : tx.s_diagS, isSw: false, isBtn: true, arrow: 'M9 6l6 6-6 6', icCls: '', isSeg: false, segs: [], aria: 'false', swCls: '', d: '0.35',
         on: () => { this.setState({ diag: 'dg_wait' }); NB.diag(); } }]);

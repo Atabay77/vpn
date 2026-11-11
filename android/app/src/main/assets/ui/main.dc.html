@@ -317,6 +317,9 @@ button,input{font:inherit;color:inherit}
         <button onClick="{{test}}" class="tap" style="height:40px;padding:0 12px;border-radius:12px;border:1px solid rgba(224,176,74,.7);background:rgba(224,176,74,.12);color:#FFD27A;font-size:11px;font-weight:800;cursor:pointer;white-space:nowrap;display:flex;align-items:center;gap:6px;flex-shrink:0">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 17a8 8 0 1 1 16 0"></path><path d="M12 17l4-5"></path></svg>{{testLbl}}
         </button>
+        <button onClick="{{svRef}}" aria-label="{{tx.s_ref}}" class="tap" style="width:40px;height:40px;border-radius:12px;border:1px solid rgba(224,176,74,.7);background:rgba(224,176,74,.12);color:#FFD27A;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;padding:0">
+          <svg class="{{svRefCls}}" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7"></path><path d="M20 4v7h-7"></path></svg>
+        </button>
       </div>
       <div class="glass" role="tablist" style="border-radius:14px;padding:4px;display:flex;gap:4px;flex-shrink:0">
         <sc-for list="{{svTabs}}" as="st" hint-placeholder-count="3"><button onClick="{{st.pick}}" role="tab" aria-selected="{{st.p}}" class="tap {{st.cls}}" style="flex:1 1 0;height:36px;border-radius:10px;border:none;font-size:12px;font-weight:800;cursor:pointer">{{st.t}}</button></sc-for>
