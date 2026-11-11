@@ -2152,9 +2152,10 @@ def mail_tick():
                           f"Salam!\n\nTürkmen VPN programmasynyň iň täze wersiýasy ({u_.get('ver', '')}) aşakdaky salgyda. "
                           "VPN-siz açylýar.\n\n"
                           f"{link}\n\n"
+                          "Gmail-iň içinde açylmasa: salgyny göçürip Chrome-da açyň.\n"
                           "Ýüklenen faýly açyň we gurnaň. Telefon «näbelli çeşme» diýse, rugsat beriň.\n\n"
                           "Merhaba! Türkmen VPN'in en yeni sürümü yukarıdaki bağlantıda, VPN'siz açılır. İndirilen dosyayı açıp kurun.\n\n"
-                          "Hormat bilen / Saygılarımızla,\nTürkmen VPN", reply=meta)   # düğme yok: düz link
+                          "Hormat bilen / Saygılarımızla,\nTürkmen VPN", reply=meta, link=link, link_text=f"⬇ Türkmen VPN {u_.get('ver', '')} ýükle / indir")
                 ok = True
             except Exception as e: ok = False; log.warning("mail send: %s", e)
             ulog("order", f"📧 Mail ile indirme linki: {frm}" + ("" if ok else " (gönderilemedi)"))
