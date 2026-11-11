@@ -2064,11 +2064,16 @@ def mail_fetch():
             if to_inbox:   # Spam'e düşen istekler Gelen kutusuna taşınır (Gmail de bunları spam saymamayı öğrenir)
                 try:
                     if M.select('"' + box + '"', readonly=False)[0] == "OK":
-                        typ, _ = M.uid("MOVE", ",".join(to_inbox), "INBOX")
-                        if typ != "OK":
-                            M.uid("COPY", ",".join(to_inbox), "INBOX"); M.uid("STORE", ",".join(to_inbox), "+FLAGS", "(\\Deleted)"); M.expunge()
-                        RUN["mail_moved"] = RUN.get("mail_moved", 0) + len(to_inbox)
-                except Exception as e: log.info("mail move: %s", e)
+                        ids = ",".join(to_inbox); moved = False
+                        imaplib.Commands.setdefault("MOVE", ("SELECTED",))   # eski Python'larda MOVE tanımlı değil
+                        try: moved = M.uid("MOVE", ids, "INBOX")[0] == "OK"
+                        except Exception as e1: log.info("mail MOVE: %s", e1)
+                        if not moved:   # yedek yol: Gelen'e kopyala, Spam'den sil
+                            if M.uid("COPY", ids, "INBOX")[0] == "OK":
+                                M.uid("STORE", ids, "+FLAGS", "(\\Deleted)"); M.expunge(); moved = True
+                        if moved: RUN["mail_moved"] = RUN.get("mail_moved", 0) + len(to_inbox); RUN.pop("mail_move_err", None)
+                        else: RUN["mail_move_err"] = "Gmail taşımaya izin vermedi"
+                except Exception as e: log.info("mail move: %s", e); RUN["mail_move_err"] = str(e)[:120]
         mutate(lambda d: (d.__setitem__("mail_st", st_all), d.__setitem__("mail_mids", mids[-500:])))
         RUN["mail_last"] = (time.time(), seen_n, len(out), len(boxes))   # /gmail durumunda görünür
     finally:
@@ -2220,6 +2225,7 @@ async def cmd_gmail(u: Update, c: ContextTypes.DEFAULT_TYPE):
     ml = RUN.get("mail_last"); st_ = load_db().get("mail_st", {})
     diag = (f"\n🕒 Son kontrol  {ago(ml[0])} · {ml[1]} yeni mail bakıldı · {ml[2]} istek · {ml[3] if len(ml) > 3 else 1} klasör (Gelen + Spam)" if ml else "\n🕒 Son kontrol  henüz yok")
     diag += (f"\n📥 Spam'den Gelen kutusuna taşınan istek  {RUN['mail_moved']}" if RUN.get("mail_moved") else "")
+    diag += (f"\n⚠️ Spam'den taşınamadı  {esc(RUN['mail_move_err'])}" if RUN.get("mail_move_err") else "")
     diag += (f"\n⚠️ Hata  {esc(RUN['mail_err'])}" if RUN.get("mail_err") else "") + ("" if st_ else "\nℹ️ Başlangıç noktası henüz kaydedilmedi")
     await c.bot.send_message(uid, (f"📧 <b>Gmail'den kod: açık</b>\n<blockquote>{esc(me)} · kelime <code>{esc(kw)}</code>\nSon 1 saatte verilen  {len([t for t in MAIL_SENT if time.time() - t < 3600])}{diag}</blockquote>" if all((me, pw, kw)) else "📧 <b>Gmail'den kod: kapalı</b>")
                                + "\n<i>Açmak: /gmail adres@gmail.com uygulama_şifresi parça1+parça2 (kelimede ikisi de geçmeli)\nKapatmak: /gmail kapat\nUygulama şifresi: Google hesabı → Güvenlik → 2 adımlı doğrulama açık → Uygulama şifreleri.</i>", parse_mode="HTML")
