@@ -33,6 +33,8 @@ object State {
     @Volatile var active: Server? = null          // şu an bağlı olunan sunucu (otomatikte seçilen)
     @Volatile var core: CoreController? = null    // bağlıyken: tünel içinden ping ölçmek için
     @Volatile var ms = 0L                         // bağlı sunucunun ms'i (0 = henüz ölçülmedi, -1 = yanıt yok)
+    @Volatile var socks = 0                       // bağlıyken: programmanyň öz habarlary üçin yerli SOCKS porty
+    @Volatile var onAt = 0L                       // soňky birikme wagty (ms)
 
     /** Varsayılan otomatik. Elle seçilen sunucu listeden kalkarsa yine otomatiğe döner. */
     fun selected(ctx: Context): Server? {
@@ -117,7 +119,7 @@ class Svc : VpnService() {
     private var beatAt = 0L
     private val tick = object : Runnable {
         override fun run() {
-            // 2 saat dolunca (key yoksa) VPN durur; kullanıcı elle yeniden başlatır
+            // 1 sagat dolunca (key yoksa) VPN durur; kullanıcı elle yeniden başlatır
             if (want && State.now == State.ON && Lic.left(this@Svc) == 0L) { stop(); expired(); return }
             if (want && State.now == State.ON && System.currentTimeMillis() - beatAt > 5 * 60_000) {
                 beatAt = System.currentTimeMillis(); Thread { Stats.beat(this@Svc, true) }.start()
@@ -154,7 +156,8 @@ class Svc : VpnService() {
             val s = sel ?: State.best(this) ?: throw IllegalStateException("ping yok")
             if (sel != null) State.ms = State.pings[sel.key]?.takeIf { it > 0 && System.currentTimeMillis() - State.pingAt < 5 * 60_000 } ?: 0L
             State.active = s
-            val cfg = Cfg.full(s.uri, true)
+            val port = 20000 + java.security.SecureRandom().nextInt(20000)
+            val cfg = Cfg.full(s.uri, true, port)
             Libv2ray.initCoreEnv(filesDir.absolutePath, "")
             val b = Builder().setSession(getString(R.string.app_name)).setMtu(1500)
                 .addAddress("172.19.0.1", 30).addRoute("0.0.0.0", 0)
@@ -172,9 +175,12 @@ class Svc : VpnService() {
             core = c
             c.startLoop(cfg, fd.fd)
             State.core = c
+            State.socks = port
             if (!want || g != gen) { stopCore(); return }
-            if (Lic.start(this) == 0L) Lic.setStart(this, System.currentTimeMillis())   // 2 saat bağlanınca başlar
+            if (Lic.start(this) == 0L) Lic.setStart(this, System.currentTimeMillis())   // 1 sagat bağlanınca başlar
+            State.onAt = System.currentTimeMillis()
             State.set(State.ON)
+            Msg.start(applicationContext); Msg.kick()
             runCatching { getSystemService(NotificationManager::class.java).notify(1, note(s)) }   // bildirim: «Birikdirildi · ülke»
             val app = applicationContext
             Thread { if (System.currentTimeMillis() - Sub.okAt > 60_000) Sub.refresh(app) }.start()
@@ -188,7 +194,7 @@ class Svc : VpnService() {
     }
 
     private fun stopCore() {
-        State.core = null
+        State.core = null; State.socks = 0
         runCatching { core?.stopLoop() }
         core = null
         runCatching { tun?.close() }
@@ -233,17 +239,30 @@ class Svc : VpnService() {
             .addAction(Notification.Action.Builder(null, t("Öçür", "Отключить", "Kapat"), off).build()).build()
     }
 
-    /** 2 sagat dolunca: VPN neden kapandı, kullanıcı bilsin. */
+    /** 1 sagat dolunca: VPN neden kapandı, kullanıcı bilsin. */
     private fun expired() = runCatching {
         val nm = getSystemService(NotificationManager::class.java)
         if (Build.VERSION.SDK_INT >= 26) nm.createNotificationChannel(NotificationChannel("e", "VPN", NotificationManager.IMPORTANCE_DEFAULT))
         val open = PendingIntent.getActivity(this, 4, Intent(this, Main::class.java), PendingIntent.FLAG_IMMUTABLE)
         val nb = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(this, "e") else Notification.Builder(this)
-        val txt = t("2 sagat doldy, VPN öçdi. Dowam etmek üçin täzeden birikiň.", "2 часа истекли, VPN отключён. Подключитесь снова, чтобы продолжить.",
-            "2 saat doldu, VPN kapandı. Devam etmek için yeniden bağlanın.")
+        val txt = t("1 sagat doldy, VPN öçdi. Dowam etmek üçin täzeden birikiň ýa-da açar alyň.", "1 час истёк, VPN отключён. Подключитесь снова или купите ключ.",
+            "1 saat doldu, VPN kapandı. Yeniden bağlanın ya da anahtar alın.")
         nm.notify(3, nb.setSmallIcon(R.drawable.ic_notif).setContentTitle(getString(R.string.app_name)).setContentText(txt)
             .setStyle(Notification.BigTextStyle().bigText(txt)).setContentIntent(open).setAutoCancel(true).build())
     }
 
-    companion object { const val STOP = "stop" }
+    companion object {
+        const val STOP = "stop"
+
+        /** Programma ýapykka admin jogap berse: bildiriş. */
+        fun notifyReply(ctx: Context, text: String) = runCatching {
+            val nm = ctx.getSystemService(NotificationManager::class.java)
+            if (Build.VERSION.SDK_INT >= 26) nm.createNotificationChannel(NotificationChannel("m", t("Admin jogaby", "Ответ админа", "Yönetici yanıtı"), NotificationManager.IMPORTANCE_DEFAULT))
+            val open = PendingIntent.getActivity(ctx, 5, Intent(ctx, Main::class.java).setAction(Main.CHAT), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+            val nb = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(ctx, "m") else Notification.Builder(ctx)
+            val title = "💬 " + t("Admin jogap berdi", "Ответ админа", "Yönetici yanıtladı")
+            nm.notify(6, nb.setSmallIcon(R.drawable.ic_notif).setContentTitle(title).setContentText(text.take(200))
+                .setStyle(Notification.BigTextStyle().bigText(text.take(500))).setContentIntent(open).setAutoCancel(true).build())
+        }
+    }
 }

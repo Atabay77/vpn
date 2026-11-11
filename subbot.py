@@ -1,4 +1,4 @@
-import os, sys, io, re, json, html, uuid, base64, asyncio, types, zipfile, shutil, fcntl, logging, datetime, time, socket, random, hashlib, warnings, unicodedata, threading
+import os, sys, io, re, json, html, uuid, base64, asyncio, types, zipfile, shutil, fcntl, logging, datetime, time, socket, random, hashlib, hmac, warnings, unicodedata, threading
 import urllib.request, urllib.parse, urllib.error
 from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor
@@ -860,7 +860,14 @@ def app_keys_live(cfg):
 
 def app_meta(cfg):
     """Programın dosyasına konan gizli satırlar: geçerli keylerin özeti + yayınlanan sürümler."""
-    out = [f"#tvk: {app_key_hash(k)} {int(v.get('exp') or 0)}" for k, v in sorted(app_keys_live(cfg).items())]
+    out = [f"#tvk: {app_key_hash(k)} {int(v.get('exp') or 0)}" + (f" {v['dev']}" if v.get("dev") else "") for k, v in sorted(app_keys_live(cfg).items())]
+    for n_ in (cfg.get("news") or [])[:10]:
+        out.append(f"#tvn: {n_['id']} {int(n_['ts'])} " + base64.urlsafe_b64encode(json.dumps({"t": n_["t"], "x": n_["x"]}, ensure_ascii=False).encode()).decode().rstrip("="))
+    if RUN.get("app_on"): out.append(f"#tvon: {int(RUN['app_on'])}")
+    try: ai_on = bool(ai_key()) and load_db().get("ai_sup", True)
+    except Exception: ai_on = False
+    if ai_on: out.append("#tvai: 1")
+    if cfg.get("gbans"): out.append("#tvban: " + ",".join(cfg["gbans"][-200:]))
     for abi, u in sorted((cfg.get("upd") or {}).items()):
         if u.get("fid") and u.get("ver"): out.append(f"#tvu{abi}: {u['ver']} {u['fid']}")
     ad = cfg.get("ad") or {}
@@ -994,7 +1001,7 @@ async def app_loop(app):
     await asyncio.sleep(60)
     while True:
         if app_cfg(load_db()).get("fid"):
-            try: await asyncio.to_thread(app_stats, app_cfg(load_db())["fid"])
+            try: RUN["app_on"] = (await asyncio.to_thread(app_stats, app_cfg(load_db())["fid"])).get("on", 0)
             except Exception as e: log.info("app stats: %s", e)
         if app_cfg(load_db()).get("fid") or app_cfg(load_db()).get("subs"):
             try:
@@ -1019,7 +1026,7 @@ def app_view(db):
          f"<blockquote>{chr(10).join(lines)}{st}</blockquote>\n"
          "<i>Buradaki aboneliklerin bütün kodları birleştirilip programa gider (10 dakikada bir, aynı kodlar bir kez). "
          "Program her bağlanma ve çıkışta yeni listeyi alır.\n"
-         "Key: programda 2 saat sınırını kaldırır.\n"
+         "Key: programda 1 saatlik sınırı kaldırır; her key yalnız 1 telefonda çalışır.\n"
          "Yeni sürüm: APK dosyalarını bana gönder (adında sürüm ve arm64 / arm32 olsun, ör. TurkmenVPN-1.3-arm64.apk).</i>")
     rows = [[B(f"❌ {i + 1}. {short(src_label(u), 24)}", f"app_rm:{hashlib.md5(u.encode()).hexdigest()[:8]}")] for i, u in enumerate(subs)]
     if len(subs) < APP_MAX_SUBS: rows.append([B("➕ Abonelik ekle", "app_add", "primary")])
@@ -1027,10 +1034,324 @@ def app_view(db):
     rows.append([B("🔑 Key oluştur", "app_kn"), B(f"🗝 Keyler ({len(app_keys_live(cfg))})", "app_kl")])
     rows.append([B("📦 Yeni sürüm yayınla (Drive linki)", "app_up")])
     rows.append([B("📊 İzleme", "app_st"), B("📢 Reklam", "app_ad")])
+    n_open = sum(1 for t in (cfg.get("tickets") or {}).values() if t.get("st") != "closed")
+    rows.append([B(f"🎫 Program biletleri ({n_open})", "atk_list"), B("⭐ Bahalar", "arates")])
+    rows.append([B("📰 Programa habar", "anews"), B("🌐 Global chat", "agc")])
     if (cfg.get("upd") or {}): rows.append([B("⬇️ VPN'siz indirme linki", "app_dl")])
     if cfg.get("fid"): rows.append([B("🔗 Programın dosya linki", "app_link")])
     rows.append([B("◀️ Admin", "admin")])
     return t, KB(rows)
+
+
+# ───────── PROGRAM HABARLARY (1.14): bilet + AI, baha, çagyryş, sowgat, 1 açar = 1 telefon, habarlar, Global chat ─────────
+# Program bota ntfy.sh arkaly ýazýar: <konu>m — bota, <konu>d<telefon> — telefona, <konu>g — Global chat.
+# Habarlar şifreli (açar programmanyň Drive faýlynyň kimliginden), program hem şol bir usulda hasaplaýar (Msg.kt).
+APP_MSG_EVERY = 15
+APP_PRICES = "3 gün — 15 TMT · 7 gün — 30 TMT · 1 aý — 100 TMT"
+REF_ABC = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+DEV_RE = re.compile(r"^[0-9a-f]{12}$")
+
+def _sha(s): return hashlib.sha256(s.encode()).digest()
+
+def _xs(k, n, d):
+    out = bytearray(); ctr = 0
+    while len(out) < len(d):
+        ks = hmac.new(k, n + ctr.to_bytes(4, "big"), hashlib.sha256).digest(); ctr += 1
+        for b in ks:
+            if len(out) >= len(d): break
+            out.append(d[len(out)] ^ b)
+    return bytes(out)
+
+def app_enc(fid, pt, n=None):
+    n = n or os.urandom(12)
+    c = _xs(_sha("tvmsg|" + fid), n, pt.encode("utf-8"))
+    tag = hmac.new(_sha("tvmac|" + fid), n + c, hashlib.sha256).digest()[:16]
+    return "v1." + base64.urlsafe_b64encode(n + c + tag).decode().rstrip("=")
+
+def app_dec(fid, s):
+    if not isinstance(s, str) or not s.startswith("v1."): return None
+    try: b = base64.urlsafe_b64decode(s[3:] + "=" * (-len(s[3:]) % 4))
+    except Exception: return None
+    if len(b) < 28: return None
+    n, c, tag = b[:12], b[12:-16], b[-16:]
+    if not hmac.compare_digest(hmac.new(_sha("tvmac|" + fid), n + c, hashlib.sha256).digest()[:16], tag): return None
+    try: return _xs(_sha("tvmsg|" + fid), n, c).decode("utf-8")
+    except Exception: return None
+
+def app_ref_code(dev):
+    h = _sha("tvref|" + dev)
+    return "TM-" + "".join(REF_ABC[h[i] % len(REF_ABC)] for i in range(5))
+
+def ntfy_poll(topic, since):
+    url = f"https://ntfy.sh/{topic}/json?poll=1&since={urllib.parse.quote(str(since))}"
+    with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "subbot"}), timeout=20) as r:
+        out = []
+        for l in r.read().decode("utf-8", "ignore").splitlines():
+            try: j = json.loads(l)
+            except Exception: continue
+            if j.get("event") == "message": out.append(j)
+        return out
+
+def ntfy_pub(topic, body):
+    req = urllib.request.Request(f"https://ntfy.sh/{topic}", data=body.encode("utf-8"), method="POST", headers={"User-Agent": "subbot", "Content-Type": "text/plain; charset=utf-8"})
+    with urllib.request.urlopen(req, timeout=20) as r: return r.status < 300
+
+def app_mut(fn):
+    """db["app"] içinde değişiklik (kilitli)."""
+    return mutate(lambda d: fn(d.setdefault("app", {})))
+
+def app_send(dev, o):
+    """Telefona habar (sıra numarasıyla; program kaçırırsa bir sonraki mesajında yeniden gönderilir)."""
+    def f(a):
+        ob = a.setdefault("out", {}).setdefault(dev, {"seq": 0, "items": []})
+        ob["seq"] += 1; o["seq"] = ob["seq"]
+        ob["items"] = (ob["items"] + [o])[-30:]
+        return a.get("fid")
+    fid = app_mut(f)
+    if fid:
+        try: ntfy_pub(app_topic(fid) + "d" + dev, app_enc(fid, json.dumps(o, ensure_ascii=False)))
+        except Exception as e: log.info("app send %s: %s", dev, e)
+
+def app_resend(fid, dev, ack):
+    """Program son aldığı sıra numarasını bildirir; eksik kalanlar yeniden gider (10 dakikada bir en çok)."""
+    a = app_cfg(load_db()); ob = (a.get("out") or {}).get(dev) or {}
+    if not ob or ob.get("seq", 0) <= ack: return
+    if time.time() - ob.get("rs", 0) < 600: return
+    app_mut(lambda a_: a_.setdefault("out", {}).setdefault(dev, {}).__setitem__("rs", time.time()))
+    for o in ob.get("items", []):
+        if o.get("seq", 0) > ack:
+            try: ntfy_pub(app_topic(fid) + "d" + dev, app_enc(fid, json.dumps(o, ensure_ascii=False)))
+            except Exception: break
+
+def app_key_make(days, dev, by):
+    k = app_key_new(); exp = int(time.time() + days * 86400)
+    app_mut(lambda a: a.setdefault("keys", {}).__setitem__(k, {"exp": exp, "ts": int(time.time()), "by": by, "dev": dev}))
+    return k, exp
+
+def app_who(a, dev):
+    u = (a.get("devs") or {}).get(dev) or {}
+    return f"{esc(u.get('nick') or '?')} · {esc(u.get('model') or '?')} · v{esc(u.get('ver') or '?')} · {esc(u.get('lang') or '?')}"
+
+APP_AI_RULES = """Sen «Türkmen VPN» Android programmasynyň goldaw kömekçisi. Ulanyjy programmanyň «Admine ýaz» bölüminden ýazýar.
+Ulanyjynyň dilinde (türkmen, rus ýa-da türk) gysga, dostlukly we takyk jogap ber. Diňe aşakdaky faktlara daýan, bilmeýän zadyňy oýlap tapma.
+FAKTLAR:
+- Programma mugt: her birikme 1 sagat dowam edýär, soň täzeden birigip bolýar. Açar bilen çäk ýok.
+- Açar bahalary: """ + APP_PRICES + """. Açary admin satýar: töleg we açar barada admin şu çatda ýazar. Sen töleg kabul etme, açar berme.
+- Her açar diňe 1 telefonda işleýär (ilkinji ýazylan telefona baglanýar).
+- Açar ýazmak: Menýu (☰) → iň aşakdaky uly «Açar ýaz» düwmesi.
+- Serwerler: Menýu → Serwerler → «Pingi barla», iň çalt serweri saýla. «Awtomatik» iň çaltyny özi saýlaýar. Russiýa — PUBG oýny üçin.
+- Birikmese: ilki interneti (Wi-Fi / mobil) barla. «Kodlar täzelenýär» diýse 3–5 minut garaş we täzeden synan.
+- «Dostuňy çagyr»: dostuň programmany açyp seniň kodyňy (TM-XXXXX) ýazsa, saňa 1 günlük açar; her täze dost +1 gün.
+- «Günlük sowgat»: 7 gün yzygiderli basylsa 2 günlük açar.
+- Programma pozulsa: tkmvpnn@gmail.com salgysyna «vpn» diýip hat ýaz — ýükläp almak linki geler (VPN-siz açylýar).
+- Täze wersiýa çykanda programma özi soraýar — «Hawa» bas.
+- «Global chat» — ähli ulanyjylaryň umumy çaty.
+Jogaby diňe şu JSON görnüşinde ber: {"answer": "...", "handoff": false}
+handoff=true: ulanyjy açar satyn almak isleýär / töleg barada soraýar / adam bilen gürleşmek isleýär / soragyna faktlarda jogap ýok. Şeýle ýagdaýda hem answer-de gysga jogap ber (meselem bahalary aýt we «admin ýakyn wagtda şu ýere ýazar» diý)."""
+
+async def app_ai_reply(app, tid):
+    a = app_cfg(load_db()); t = (a.get("tickets") or {}).get(tid)
+    if not t: return
+    msgs = []
+    for x in t.get("log", [])[-20:]:
+        role = "user" if x["r"] == "u" else "assistant"
+        c_ = ("[Admin] " if x["r"] == "a" else "") + x["t"]
+        if msgs and msgs[-1]["role"] == role: msgs[-1]["content"] += "\n" + c_
+        else: msgs.append({"role": role, "content": c_})
+    while msgs and msgs[0]["role"] != "user": msgs.pop(0)
+    if not msgs or msgs[-1]["role"] != "user": return
+    sys_ = APP_AI_RULES + "\n\n" + ai_extra()
+    try:
+        try: raw = await asyncio.to_thread(ai_call, sys_, msgs, None, 1500, 90, SUP_MODEL)
+        except Exception: raw = await asyncio.to_thread(ai_call, sys_, msgs, None, 1500, 90)
+        mj = re.search(r"\{.*\}", raw, re.S)
+        try: j = json.loads(mj.group(0)) if mj else {"answer": raw, "handoff": False}
+        except Exception: j = {"answer": raw, "handoff": False}
+        ans = (j.get("answer") or "").strip()[:2000]; hand = bool(j.get("handoff"))
+    except Exception as e:
+        log.info("app ai: %s", e); ans, hand = "", True
+    def f(a_):
+        t_ = (a_.get("tickets") or {}).get(tid)
+        if not t_: return
+        if ans: t_["log"].append({"r": "ai", "t": ans, "ts": int(time.time())})
+        if hand: t_["human"] = True
+    app_mut(f)
+    if ans: await asyncio.to_thread(app_send, t["dev"], {"k": "tk", "who": "ai", "t": ans, "tid": tid})
+    if hand:
+        await notify_founders(app, f"🙋 <b>Program bileti #{tid} — admin gerek</b>\n<blockquote>{app_who(app_cfg(load_db()), t['dev'])}\n👤 {esc(t['log'][-1]['t'] if t.get('log') else '')[:600]}"
+                              + (f"\n🤖 {esc(ans)[:600]}" if ans else "") + "</blockquote>",
+                              KB([[B("✍️ Jogap ber", f"atr:{tid}", "primary"), B("🔒 Ýap", f"atc:{tid}", "danger")], [B("📄 Bilet", f"atk:{tid}")]]))
+
+async def app_on_msg(app, fid, o):
+    """Programdan gelen bir mesaj."""
+    dev = str(o.get("dev") or "")
+    if not DEV_RE.match(dev): return
+    k = o.get("k"); now = int(time.time())
+    def reg(a):
+        u = a.setdefault("devs", {}).setdefault(dev, {"f": now})
+        for f_ in ("nick", "model", "ver", "lang"):
+            if o.get(f_): u[f_] = str(o[f_])[:40]
+        u["l"] = now
+        a.setdefault("codes", {})[app_ref_code(dev)] = dev
+    app_mut(reg)
+    try: await asyncio.to_thread(app_resend, fid, dev, int(o.get("ack") or 0))
+    except Exception: pass
+    a = app_cfg(load_db())
+    if k == "tk":
+        text = str(o.get("t") or "").strip()[:1000]
+        if not text: return
+        tid0 = int(o.get("tid") or 0)
+        def f(a_):
+            tks = a_.setdefault("tickets", {}); t = tks.get(str(tid0))
+            new = False
+            if not t or t.get("dev") != dev:
+                n = a_.get("tk_next", 1001); a_["tk_next"] = n + 1
+                t = {"dev": dev, "st": "open", "log": [], "ts": now, "human": False}; tks[str(n)] = t; tid = str(n); new = True
+            else: tid = str(tid0)
+            if t.get("st") == "closed": t["st"] = "open"; t["human"] = False
+            t["log"].append({"r": "u", "t": text, "ts": now}); t["log"] = t["log"][-80:]; t["lt"] = now
+            if len(tks) > 400:   # köne ýapyk biletler pozulýar
+                for x in sorted((x for x in tks if tks[x].get("st") == "closed"), key=lambda x: tks[x].get("lt", 0))[:len(tks) - 400]: tks.pop(x, None)
+            return tid, new, t.get("human")
+        tid, new, human = app_mut(f)
+        if new: await asyncio.to_thread(app_send, dev, {"k": "tko", "tid": int(tid)})
+        ai_on = bool(ai_key()) and load_db().get("ai_sup", True) and not human
+        await notify_founders(app, f"🎫 <b>Program bileti #{tid}</b>{' (täze)' if new else ''}\n<blockquote>{app_who(app_cfg(load_db()), dev)}\n👤 {esc(text)[:900]}</blockquote>"
+                              + ("\n<i>🤖 AI jogap berýär…</i>" if ai_on else ""),
+                              KB([[B("✍️ Jogap ber", f"atr:{tid}", "primary"), B("🔒 Ýap", f"atc:{tid}", "danger")], [B("📄 Bilet", f"atk:{tid}")]]), silent=ai_on)
+        if ai_on: asyncio.create_task(app_ai_reply(app, tid))
+    elif k == "human":
+        tid = str(int(o.get("tid") or 0))
+        app_mut(lambda a_: (a_.get("tickets") or {}).get(tid, {}).__setitem__("human", True) if tid in (a_.get("tickets") or {}) else None)
+        await notify_founders(app, f"🙋 <b>Program bileti #{tid}: ulanyjy admin bilen gürleşmek isleýär</b>\n<blockquote>{app_who(a, dev)}</blockquote>",
+                              KB([[B("✍️ Jogap ber", f"atr:{tid}", "primary")], [B("📄 Bilet", f"atk:{tid}")]]))
+    elif k == "fb":
+        tid = str(int(o.get("tid") or 0)); v = "👍" if o.get("v") == "up" else "👎"
+        app_mut(lambda a_: (a_.get("tickets") or {}).get(tid, {}).__setitem__("fb", v) if tid in (a_.get("tickets") or {}) else None)
+        await notify_founders(app, f"{v} <b>Bilet #{tid}</b> — ulanyjynyň bahasy", silent=True)
+    elif k == "rate":
+        n = max(1, min(5, int(o.get("n") or 0))); tags = [str(x)[:20] for x in (o.get("tags") or [])][:5]; cm = str(o.get("c") or "")[:500]
+        app_mut(lambda a_: a_.__setitem__("rates", ((a_.get("rates") or []) + [{"dev": dev, "n": n, "tags": tags, "c": cm, "ts": now}])[-300:]))
+        await notify_founders(app, f"⭐ <b>Baha: {'★' * n}{'☆' * (5 - n)}</b>\n<blockquote>{app_who(a, dev)}" + (f"\n🏷 {esc(', '.join(tags))}" if tags else "") + (f"\n💬 {esc(cm)}" if cm else "") + "</blockquote>", silent=True)
+    elif k == "ref":
+        c = str(o.get("c") or "").upper(); inv = (a.get("codes") or {}).get(c)
+        if (a.get("ref_devs") or {}).get(dev): await asyncio.to_thread(app_send, dev, {"k": "refbad", "why": "used"}); return
+        if not inv or inv == dev: await asyncio.to_thread(app_send, dev, {"k": "refbad", "why": "own" if inv == dev else "bad"}); return
+        def f(a_):
+            a_.setdefault("ref_devs", {})[dev] = inv
+            cnt = sum(1 for v in a_["ref_devs"].values() if v == inv)
+            rk = (a_.get("refkey") or {}).get(inv); keys = a_.setdefault("keys", {})
+            if rk and rk in keys and keys[rk].get("exp", 0) > time.time():
+                keys[rk]["exp"] += 86400; return rk, keys[rk]["exp"], cnt
+            k_ = app_key_new(); exp = int(time.time() + 86400)
+            keys[k_] = {"exp": exp, "ts": int(time.time()), "by": "ref", "dev": inv}
+            a_.setdefault("refkey", {})[inv] = k_
+            return k_, exp, cnt
+        rk, exp, cnt = app_mut(f)
+        await asyncio.to_thread(app_send, dev, {"k": "refok", "c": c})
+        await asyncio.to_thread(app_send, inv, {"k": "key", "key": rk, "why": "ref", "days": max(1, round((exp - time.time()) / 86400)), "invites": cnt})
+        RUN["app_dirty"] = True
+    elif k == "gift":
+        last = (a.get("gift") or {}).get(dev, 0)
+        if now - last < 6.5 * 86400: return
+        app_mut(lambda a_: a_.setdefault("gift", {}).__setitem__(dev, now))
+        gk, _ = app_key_make(2, dev, "gift")
+        await asyncio.to_thread(app_send, dev, {"k": "key", "key": gk, "why": "gift", "days": 2})
+        RUN["app_dirty"] = True
+    elif k == "ka":
+        h = str(o.get("h") or "")
+        def f(a_):
+            for kk, v in (a_.get("keys") or {}).items():
+                if app_key_hash(kk) == h:
+                    if v.get("dev") and v["dev"] != dev: return "bad"
+                    if not v.get("dev"): v["dev"] = dev; v["at"] = int(time.time()); return "new"
+                    return "same"
+            return "none"
+        r = app_mut(f)
+        if r == "bad": await asyncio.to_thread(app_send, dev, {"k": "kbad"})
+        if r == "new": RUN["app_dirty"] = True
+
+async def app_msg_loop(app):
+    """Programdan gelen mesajları okur (15 sn'de bir)."""
+    await asyncio.sleep(20)
+    while True:
+        try:
+            a = app_cfg(load_db()); fid = a.get("fid")
+            if fid:
+                got = await asyncio.to_thread(ntfy_poll, app_topic(fid) + "m", a.get("msg_since") or "2h")
+                for j in got:
+                    app_mut(lambda a_: a_.__setitem__("msg_since", j.get("id")))
+                    pt = app_dec(fid, j.get("message", ""))
+                    if not pt: continue
+                    try: o = json.loads(pt)
+                    except Exception: continue
+                    try: await app_on_msg(app, fid, o)
+                    except Exception: log.exception("app msg")
+                if RUN.pop("app_dirty", None):
+                    try: await asyncio.to_thread(app_sync, True)
+                    except Exception as e: log.info("app sync (msg): %s", e)
+        except Exception as e:
+            log.info("app msg loop: %s", e)
+        await asyncio.sleep(APP_MSG_EVERY)
+
+def app_tickets_view(a, closed=False):
+    tks = a.get("tickets") or {}
+    ids = sorted((t for t in tks if (tks[t].get("st") == "closed") == closed), key=lambda t: -tks[t].get("lt", 0))[:20]
+    lines = []
+    for t in ids:
+        x = tks[t]; u = (a.get("devs") or {}).get(x["dev"], {}); last = x["log"][-1] if x.get("log") else {"r": "u", "t": ""}
+        mark = "🙋" if x.get("human") and x.get("st") != "closed" else ("↩" if last["r"] == "a" else "🤖" if last["r"] == "ai" else "👤")
+        lines.append(f"#{t} {mark} <b>{esc(u.get('nick') or '?')}</b>: {esc(short(last['t'], 50))}")
+    rows = [[B(f"#{t}", f"atk:{t}") for t in ids[i:i + 4]] for i in range(0, len(ids), 4)]
+    rows.append([B("📂 Ýapyklar" if not closed else "📬 Açyklar", "atk_closed" if not closed else "atk_list"), B("◀️ Programma", "app_v")])
+    return ("🎫 <b>Program biletleri" + (" (ýapyk)" if closed else "") + "</b>\n<blockquote>" + ("\n".join(lines) or "Bilet ýok.") + "</blockquote>\n<i>🙋 admin gerek · 🤖 AI jogap berdi · ↩ siz jogap berdiňiz · 👤 täze</i>", KB(rows))
+
+def app_ticket_view(a, tid):
+    t = (a.get("tickets") or {}).get(tid)
+    if not t: return "⚠️ Bilet ýok.", back("atk_list")
+    lines = [("👤 " if x["r"] == "u" else "🛠 " if x["r"] == "a" else "🤖 ") + esc(x["t"]) for x in t.get("log", [])[-25:]]
+    body = "\n".join(lines)
+    if len(body) > 3000: body = "…\n" + body[-3000:]
+    st = {"open": "🟢 açyk", "closed": "🔒 ýapyk"}.get(t.get("st"), "?") + (" · 🙋 admin gerek" if t.get("human") and t.get("st") != "closed" else "") + (f" · {t['fb']}" if t.get("fb") else "")
+    rows = [[B("✍️ Jogap ber", f"atr:{tid}", "primary")],
+            [B("💰 Bahalary iber", f"atp:{tid}"), B("🔒 Ýap", f"atc:{tid}", "danger") if t.get("st") != "closed" else B("🔓 Täzeden aç", f"ato:{tid}")],
+            [B("◀️ Biletler", "atk_list")]]
+    return f"🎫 <b>Bilet #{tid}</b> · {st}\n<blockquote>{app_who(a, t['dev'])}</blockquote>\n{body}", KB(rows)
+
+async def app_admin_reply(app, tid, text):
+    a = app_cfg(load_db()); t = (a.get("tickets") or {}).get(tid)
+    if not t: return False
+    def f(a_):
+        t_ = a_["tickets"][tid]; t_["log"].append({"r": "a", "t": text, "ts": int(time.time())}); t_["st"] = "open"; t_["lt"] = int(time.time())
+    app_mut(f)
+    await asyncio.to_thread(app_send, t["dev"], {"k": "tk", "who": "a", "t": text, "tid": int(tid)})
+    return True
+
+def app_news_view(a):
+    nw = a.get("news") or []
+    lines = [f"• <b>{esc(n['t'])}</b> — {esc(short(n['x'], 60))}" for n in nw]
+    rows = [[B(f"🗑 {short(n['t'], 20)}", f"anews_del:{n['id']}")] for n in nw]
+    rows.append([B("➕ Täze habar", "anews_new", "primary")]); rows.append([B("◀️ Programma", "app_v")])
+    return "📰 <b>Programa habarlar</b>\n<blockquote>" + ("\n".join(lines) or "Habar ýok.") + "</blockquote>\n<i>Habar ähli ulanyjylaryň «Habarlar» bölümine düşýär (programma faýly täzelenende, köp wagt 10 minudyň içinde). Linkler basylýar.</i>", KB(rows)
+
+def app_global_list(fid, gb):
+    out = []
+    for j in ntfy_poll(app_topic(fid) + "g", "12h"):
+        pt = app_dec(fid, j.get("message", ""))
+        if not pt: continue
+        try: o = json.loads(pt)
+        except Exception: continue
+        out.append((j.get("id"), j.get("time", 0), o))
+    dels = {o["del"] for _, _, o in out if o.get("del")}
+    return [(i, t, o) for i, t, o in out if not o.get("del") and i not in dels and o.get("i") not in gb][-15:]
+
+def app_rates_view(a):
+    rs = a.get("rates") or []
+    if not rs: return "⭐ <b>Bahalar</b>\n<blockquote>Heniz baha ýok.</blockquote>", back("app_v")
+    avg = sum(r["n"] for r in rs) / len(rs)
+    dist = " · ".join(f"{s}★ {sum(1 for r in rs if r['n'] == s)}" for s in (5, 4, 3, 2, 1))
+    lines = [f"{'★' * r['n']}{'☆' * (5 - r['n'])} <b>{esc(((a.get('devs') or {}).get(r['dev']) or {}).get('nick') or '?')}</b>" + (f": {esc(short(r['c'], 60))}" if r.get("c") else "") for r in rs[-12:][::-1]]
+    return f"⭐ <b>Bahalar</b> · ortaça <b>{avg:.1f}</b> ({len(rs)})\n<blockquote>{dist}\n\n" + "\n".join(lines) + "</blockquote>", back("app_v")
 
 
 # ───────── KONTROL DÖNGÜSÜ ─────────
@@ -1400,6 +1721,7 @@ async def post_init(app):
     app.bot_data["px"] = asyncio.create_task(proxy_loop(app))
     app.bot_data["mail"] = asyncio.create_task(mail_loop(app))
     app.bot_data["appsync"] = asyncio.create_task(app_loop(app))
+    app.bot_data["appmsg"] = asyncio.create_task(app_msg_loop(app))
     try: ADMINS.update(int(k) for k in load_db().get("temp_admins", {}))   # acil yetkililer yeniden başlatmada kalır
     except Exception: pass
     if ADMINS: asyncio.create_task(pad_old_photos(app))
@@ -2269,6 +2591,23 @@ async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
             if not name: return
             t, kb = ask_num(uid, "nk_days", f"🎟 <b>{esc(name)}</b>\n", name=name, **({"happ": True} if st.get("happ") else {}))
             await u.message.reply_text(t, parse_mode="HTML", reply_markup=kb)
+
+        elif act == "atk_rep":
+            tid = st.get("tid")
+            if not txt: STATE[uid] = st; return
+            ok = await app_admin_reply(c.application, tid, txt[:2000])
+            t_, kb_ = app_ticket_view(app_cfg(load_db()), tid)
+            await u.message.reply_text(("✅ Iberildi.\n\n" if ok else "⚠️ Bilet ýok.\n\n") + t_, parse_mode="HTML", reply_markup=kb_)
+
+        elif act == "anews":
+            ls_ = [x for x in txt.splitlines()]
+            if len(ls_) < 2 or not ls_[0].strip(): STATE[uid] = st; await u.message.reply_text("⚠️ Birinji setir ady, ikinji setirden tekst bolmaly.", reply_markup=back("anews")); return
+            nw_ = {"id": "n" + format(int(time.time()), "x"), "ts": int(time.time()), "t": ls_[0].strip()[:80], "x": "\n".join(ls_[1:]).strip()[:600]}
+            app_mut(lambda x: x.__setitem__("news", ([nw_] + (x.get("news") or []))[:10]))
+            try: await asyncio.to_thread(app_sync, True); RUN.pop("app_err", None)
+            except Exception as e: RUN["app_err"] = str(e)[:150]
+            t_, kb_ = app_news_view(app_cfg(load_db()))
+            await u.message.reply_text("✅ Habar goşuldy — programlara gider.\n\n" + t_, parse_mode="HTML", reply_markup=kb_)
 
         elif act == "num":
             m = re.fullmatch(r"\s*(\d{1,4})\s*", txt)
@@ -3226,6 +3565,55 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
             start_refresh(c.application, "abonelik silindi")
         await safe_edit(q, "✅ Abonelik silindi. Kalan aboneliklerin kodları şimdi yeniden yazılıyor." if ok else "⚠️ Bulunamadı.", back("sources"))
 
+    elif a in ("atk_list", "atk_closed", "arates", "anews", "anews_new", "agc") or a.startswith(("atk:", "atr:", "atc:", "ato:", "atp:", "anews_del:", "agd:", "agb:")):
+        if uid not in ORIG_ADMINS:
+            await safe_edit(q, "⛔ Erişim yok", back("admin")); return
+        a_ = app_cfg(load_db())
+        if a in ("atk_list", "atk_closed"): await safe_edit(q, *app_tickets_view(a_, a == "atk_closed")); return
+        if a.startswith("atk:"): await safe_edit(q, *app_ticket_view(a_, a.split(":", 1)[1])); return
+        if a.startswith("atr:"):
+            tid = a.split(":", 1)[1]; STATE[uid] = {"action": "atk_rep", "tid": tid}
+            await safe_edit(q, *prompt(f"✍️ <b>Bilet #{esc(tid)} — jogap</b>", "Jogabyňyzy ýazyň — programda ulanyja gider.", f"atk:{tid}")); return
+        if a.startswith("atp:"):
+            tid = a.split(":", 1)[1]
+            ok = await app_admin_reply(c.application, tid, "Açar bahalary: " + APP_PRICES + ". Haýsysyny isleýärsiňiz? Tölegden soň açaryňyzy şu ýere iberýärin. Her açar diňe 1 telefonda işleýär.")
+            await safe_edit(q, *app_ticket_view(app_cfg(load_db()), tid)) if ok else await safe_edit(q, "⚠️ Bilet ýok.", back("atk_list")); return
+        if a.startswith(("atc:", "ato:")):
+            tid = a.split(":", 1)[1]; st_ = "closed" if a.startswith("atc:") else "open"
+            t_ = (a_.get("tickets") or {}).get(tid)
+            if t_:
+                app_mut(lambda x: x["tickets"][tid].update({"st": st_, "human": False} if st_ == "closed" else {"st": st_}))
+                await asyncio.to_thread(app_send, t_["dev"], {"k": "tkst", "st": st_, "tid": int(tid)})
+            await safe_edit(q, *app_ticket_view(app_cfg(load_db()), tid)); return
+        if a == "arates": await safe_edit(q, *app_rates_view(a_)); return
+        if a == "anews": await safe_edit(q, *app_news_view(a_)); return
+        if a == "anews_new":
+            STATE[uid] = {"action": "anews"}
+            await safe_edit(q, *prompt("📰 <b>Täze habar</b>", "Birinji setir — ady, galany — teksti. Link goýup bilersiňiz (basylýar).\nMeselem:\nTäze serwer\nPolşa serweri goşuldy!", "anews")); return
+        if a.startswith("anews_del:"):
+            nid = a.split(":", 1)[1]
+            app_mut(lambda x: x.__setitem__("news", [n_ for n_ in (x.get("news") or []) if n_["id"] != nid]))
+            try: await asyncio.to_thread(app_sync, True)
+            except Exception as e: RUN["app_err"] = str(e)[:150]
+            await safe_edit(q, *app_news_view(app_cfg(load_db()))); return
+        if a == "agc" or a.startswith(("agd:", "agb:")):
+            fid = a_.get("fid")
+            if not fid: await safe_edit(q, "ℹ️ Programın dosyası henüz yok.", back("app_v")); return
+            if a.startswith("agd:"):
+                await asyncio.to_thread(ntfy_pub, app_topic(fid) + "g", app_enc(fid, json.dumps({"del": a.split(":", 1)[1]})))
+            if a.startswith("agb:"):
+                dv = a.split(":", 1)[1]
+                app_mut(lambda x: x.__setitem__("gbans", list(dict.fromkeys((x.get("gbans") or []) + [dv]))))
+                try: await asyncio.to_thread(app_sync, True)
+                except Exception as e: RUN["app_err"] = str(e)[:150]
+            try: lst = await asyncio.to_thread(app_global_list, fid, set(app_cfg(load_db()).get("gbans") or []))
+            except Exception as e: await safe_edit(q, f"⚠️ Okalmady: {esc(str(e)[:120])}", back("app_v")); return
+            lines = [f"{i + 1}. <b>{esc(o.get('n') or '?')}</b>: {esc(short(o.get('t') or '', 70))}" for i, (_, _, o) in enumerate(lst)]
+            rows = [[B(f"🗑 {i + 1}", f"agd:{mid}"), B(f"🚫 {i + 1}", f"agb:{o.get('i')}")] for i, (mid, _, o) in enumerate(lst) if DEV_RE.match(str(o.get("i") or ""))]
+            rows.append([B("🔄 Täzele", "agc"), B("◀️ Programma", "app_v")])
+            await safe_edit(q, "🌐 <b>Global chat</b> (soňky 12 sagat)\n<blockquote>" + ("\n".join(lines) or "Habar ýok.") + "</blockquote>\n<i>🗑 — habary poz · 🚫 — adamy Global chat-dan gadagan et</i>", KB(rows)); return
+        return
+
     elif a in ("app_v", "app_add", "app_now", "app_link", "app_kn", "app_kl", "app_up", "app_st", "app_ad", "app_ad_img", "app_ad_link", "app_ad_rm", "app_ad_tg", "app_dl") or a.startswith(("app_rm:", "app_k:", "app_kd:")):
         if uid not in ORIG_ADMINS:
             await safe_edit(q, "⛔ Erişim yok", back("admin")); return
@@ -3293,7 +3681,7 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
             audit(uid, f"app key {days}g")
             try: await asyncio.to_thread(app_sync, True); RUN.pop("app_err", None)
             except Exception as e: RUN["app_err"] = str(e)[:150]
-            await safe_edit(q, f"✅ <b>Key hazır</b>\n<blockquote><code>{k}</code>\n⏳ {app_left(exp)}</blockquote>\n<i>Programda gizli bölüme yazılınca 2 saat sınırı kalkar. Program listeyi alınca (en geç bir sonraki bağlanmada) çalışır.</i>",
+            await safe_edit(q, f"✅ <b>Key hazır</b>\n<blockquote><code>{k}</code>\n⏳ {app_left(exp)}</blockquote>\n<i>Programda «Açar ýaz» bölümüne yazılınca 1 saatlik sınır kalkar (yalnız 1 telefonda). Program listeyi alınca (en geç bir sonraki bağlanmada) çalışır.</i>",
                             KB([[B("🔑 Bir tane daha", "app_kn"), B("◀️ Geri", "app_v")]])); return
         if a.startswith("app_kd:"):
             k = a.split(":", 1)[1]

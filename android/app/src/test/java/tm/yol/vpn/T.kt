@@ -40,6 +40,11 @@ trojan://x@1.1.1.1:1#skip
         assertEquals(0L, Sub.keys["00e1d6634e42c0b4c866"]); assertEquals(1700000000L, Sub.keys["abc"])
         assertEquals("1.3" to "FID64", Sub.upd["64"]); assertEquals("FID32", Sub.upd["32"]!!.second)
         assertTrue(Upd.newer("1.10", "1.9")); assertFalse(Upd.newer("1.2", "1.2")); assertTrue(Upd.newer("1.2.1", "1.2"))
+        // programmanyň öz habarlary üçin ýerli SOCKS girişi diňe 127.0.0.1-de
+        val ins = JSONObject(Cfg.full(l[0].uri, true, 23456)).getJSONArray("inbounds")
+        assertEquals(2, ins.length()); assertEquals("127.0.0.1", ins.getJSONObject(1).getString("listen")); assertEquals(23456, ins.getJSONObject(1).getInt("port"))
+        assertEquals(1, JSONObject(Cfg.full(l[0].uri, true)).getJSONArray("inbounds").length())
+        assertEquals(60 * 60 * 1000L, Lic.SESSION_MS)
         println("NAME " + Sub.splitName("🇷🇺 Russia · 🎮 PUBG Gaming Server") + " " + Sub.splitName("Plain"))
         println("VLESS " + Cfg.outbound("vless://uuid-1@[2001:db8::1]:443?type=tcp&security=reality&pbk=K&sid=ab&sni=x.com&fp=chrome&flow=xtls-rprx-vision#n"))
     }

@@ -96,13 +96,17 @@ object Cfg {
     }
 
     /** Tam ayar. tun=true ise VPN arayüzü (TUN) girişi eklenir; false ise yalnız ms ölçümü için. */
-    fun full(uri: String, tun: Boolean): String {
+    fun full(uri: String, tun: Boolean, socks: Int = 0): String {
         val c = JSONObject()
         c.put("log", JSONObject().put("loglevel", "warning"))
         c.put("dns", JSONObject().put("servers", JSONArray().put("https://1.1.1.1/dns-query").put("https://8.8.8.8/dns-query")))
         if (tun) {
-            c.put("inbounds", JSONArray().put(JSONObject().put("tag", "tun").put("protocol", "tun")
-                .put("settings", JSONObject().put("name", "tun0").put("mtu", 1500))))
+            val ins = JSONArray().put(JSONObject().put("tag", "tun").put("protocol", "tun")
+                .put("settings", JSONObject().put("name", "tun0").put("mtu", 1500)))
+            // programmanyň öz habarlary (bot, Global chat) üçin: diňe şu telefonyň içinden ýetip bolýar
+            if (socks > 0) ins.put(JSONObject().put("tag", "loc").put("protocol", "socks").put("listen", "127.0.0.1").put("port", socks)
+                .put("settings", JSONObject().put("auth", "noauth").put("udp", false)))
+            c.put("inbounds", ins)
         }
         c.put("outbounds", JSONArray()
             .put(outbound(uri))
