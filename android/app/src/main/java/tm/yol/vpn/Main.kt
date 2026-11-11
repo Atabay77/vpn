@@ -99,6 +99,7 @@ class Main : Activity() {
             override fun onConsoleMessage(m: ConsoleMessage): Boolean { android.util.Log.d("ui", m.message() + " @" + m.lineNumber()); return true }
         }
         Sub.load(this)
+        runCatching { Upd.clean(this, Msg.ver(this)) }   // gurnalan wersiýanyň (ýa-da könäniň) ýüklemesi galmasyn
         if (b == null && State.now != State.ON && State.now != State.WAIT) State.select(this, null)
         if (Build.VERSION.SDK_INT >= 33) requestPermissions(arrayOf("android.permission.POST_NOTIFICATIONS"), 2)
         web.loadUrl("https://$HOST/index.html" + (if (intent?.action == CHAT) "#chat" else ""))
@@ -337,8 +338,8 @@ class Main : Activity() {
     // ---------- täzelenme ----------
     private fun askUpdate(vpn: Boolean) {
         val u = Upd.available(Msg.ver(this)) ?: return
-        val q = Upd.query(this)
-        if (q?.status == DownloadManager.STATUS_SUCCESSFUL) { installHint(); Upd.install(this); return }
+        Upd.clean(this, Msg.ver(this), u.first)
+        if (Upd.ready(this, u.first)) { installHint(); Upd.install(this, u.first); return }
         if (Upd.busy(this)) { toast(t("Täze wersiýa ýüklenýär, garaşyň", "Новая версия загружается, подождите", "Yeni sürüm iniyor, bekleyin")); return }
         val msg = if (vpn) t("VPN-i işletmek üçin VPN-iň täze wersiýasyny ýüklemeli! Size täze wersiýany ýükläýinmi?",
             "Чтобы пользоваться VPN, нужно загрузить новую версию! Загрузить новую версию?",
@@ -360,6 +361,7 @@ class Main : Activity() {
         if (q.status != lastDl) {
             val was = lastDl; lastDl = q.status
             if (was != -1 && q.status == DownloadManager.STATUS_SUCCESSFUL) { installHint(); Upd.install(this) }
+            push(JSONObject().put("k", "dl").put("st", q.status))
             if (q.status == DownloadManager.STATUS_FAILED) { getSharedPreferences("p", 0).edit().remove("dl").apply(); info(Upd.errText(this, q.reason)) }
         }
         if (q.status == DownloadManager.STATUS_PAUSED && !slowShown && System.currentTimeMillis() - getSharedPreferences("p", 0).getLong("dlAt", 0) > 40_000) {

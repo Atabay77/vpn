@@ -1171,15 +1171,20 @@ async def app_ai_reply(app, tid):
     while msgs and msgs[0]["role"] != "user": msgs.pop(0)
     if not msgs or msgs[-1]["role"] != "user": return
     sys_ = APP_AI_RULES + "\n\n" + ai_extra()
+    err = ""
     try:
-        try: raw = await asyncio.to_thread(ai_call, sys_, msgs, None, 1500, 90, SUP_MODEL)
-        except Exception: raw = await asyncio.to_thread(ai_call, sys_, msgs, None, 1500, 90)
+        try: raw = await asyncio.to_thread(ai_call, sys_, msgs, None, 3000, 120, SUP_MODEL)
+        except Exception as e1:
+            log.info("app ai %s: %s → varsayılan model", SUP_MODEL, e1); err = f"{SUP_MODEL}: {str(e1)[:150]}"
+            raw = await asyncio.to_thread(ai_call, sys_, msgs, None, 3000, 120)
         mj = re.search(r"\{.*\}", raw, re.S)
         try: j = json.loads(mj.group(0)) if mj else {"answer": raw, "handoff": False}
         except Exception: j = {"answer": raw, "handoff": False}
         ans = (j.get("answer") or "").strip()[:2000]; hand = bool(j.get("handoff"))
+        if not ans: err = (err + " · " if err else "") + "boş jogap: " + raw[:150]
     except Exception as e:
-        log.info("app ai: %s", e); ans, hand = "", True
+        log.warning("app ai: %s", e); ans, hand = "", True; err = (err + " · " if err else "") + str(e)[:200]
+        RUN["ai_err"] = f"program: {str(e)[:120]}"
     def f(a_):
         t_ = (a_.get("tickets") or {}).get(tid)
         if not t_: return
@@ -1187,9 +1192,14 @@ async def app_ai_reply(app, tid):
         if hand: t_["human"] = True
     app_mut(f)
     if ans: await asyncio.to_thread(app_send, t["dev"], {"k": "tk", "who": "ai", "t": ans, "tid": tid})
+    else:   # AI jogap berip bilmedi: ulanyjy jogapsyz galmasyn
+        lang_ = ((a.get("devs") or {}).get(t["dev"]) or {}).get("lang", "tk")
+        wait_ = {"ru": "Сообщение получено. Админ скоро ответит здесь.", "tr": "Mesajınız alındı. Yönetici yakında burada yanıtlayacak."}.get(lang_, "Habaryňyz alyndy. Admin ýakyn wagtda şu ýerde jogap berer.")
+        await asyncio.to_thread(app_send, t["dev"], {"k": "tk", "who": "ai", "t": wait_, "tid": tid})
     if hand:
         await notify_founders(app, f"🙋 <b>Program bileti #{tid} — admin gerek</b>\n<blockquote>{app_who(app_cfg(load_db()), t['dev'])}\n👤 {esc(t['log'][-1]['t'] if t.get('log') else '')[:600]}"
-                              + (f"\n🤖 {esc(ans)[:600]}" if ans else "") + "</blockquote>",
+                              + (f"\n🤖 {esc(ans)[:600]}" if ans else "") + "</blockquote>"
+                              + (f"\n⚠️ <b>AI ýalňyşlyk:</b> <code>{esc(err)[:300]}</code>" if err and not ans else ""),
                               KB([[B("✍️ Jogap ber", f"atr:{tid}", "primary"), B("🔒 Ýap", f"atc:{tid}", "danger")], [B("📄 Bilet", f"atk:{tid}")]]))
 
 async def app_on_msg(app, fid, o):
@@ -1212,12 +1222,18 @@ async def app_on_msg(app, fid, o):
         if not text: return
         tid0 = int(o.get("tid") or 0)
         def f(a_):
-            tks = a_.setdefault("tickets", {}); t = tks.get(str(tid0))
+            tid1 = tid0
+            tks = a_.setdefault("tickets", {}); t = tks.get(str(tid1))
             new = False
+            if (not t or t.get("dev") != dev) and not tid1:   # program bilet belgisini heniz almadyk bolsa: şol telefonyň açyk bileti
+                op = [x for x in tks if tks[x].get("dev") == dev and tks[x].get("st") != "closed"]
+                if op: tid1 = int(max(op, key=lambda x: tks[x].get("lt", 0))); t = tks[str(tid1)]
             if not t or t.get("dev") != dev:
                 n = a_.get("tk_next", 1001); a_["tk_next"] = n + 1
                 t = {"dev": dev, "st": "open", "log": [], "ts": now, "human": False}; tks[str(n)] = t; tid = str(n); new = True
-            else: tid = str(tid0)
+            else:
+                tid = str(tid1)
+                if not tid1 or int(o.get("tid") or 0) != tid1: new = "again"   # programa bilet belgisini gaýtadan iber
             if t.get("st") == "closed": t["st"] = "open"; t["human"] = False
             t["log"].append({"r": "u", "t": text, "ts": now}); t["log"] = t["log"][-80:]; t["lt"] = now
             if len(tks) > 400:   # köne ýapyk biletler pozulýar
@@ -1225,6 +1241,7 @@ async def app_on_msg(app, fid, o):
             return tid, new, t.get("human")
         tid, new, human = app_mut(f)
         if new: await asyncio.to_thread(app_send, dev, {"k": "tko", "tid": int(tid)})
+        new = new is True
         ai_on = bool(ai_key()) and load_db().get("ai_sup", True) and not human
         await notify_founders(app, f"🎫 <b>Program bileti #{tid}</b>{' (täze)' if new else ''}\n<blockquote>{app_who(app_cfg(load_db()), dev)}\n👤 {esc(text)[:900]}</blockquote>"
                               + ("\n<i>🤖 AI jogap berýär…</i>" if ai_on else ""),

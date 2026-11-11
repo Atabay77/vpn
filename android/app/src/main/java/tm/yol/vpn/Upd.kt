@@ -44,6 +44,7 @@ object Upd {
     /** İndirme sürüyor mu (VPN bu sırada açılmaz). */
     fun busy(ctx: Context): Boolean {
         val id = p(ctx).getLong("dl", -1); if (id < 0) return false
+        if (Sub.upd.isNotEmpty() && p(ctx).getString("dlv", null)?.let { v -> Sub.upd.values.none { it.first == v } } == true) return false   // köne wersiýanyň ýüklemesi
         val st = query(ctx, id)
         if (st == null || st.status == DownloadManager.STATUS_FAILED || st.status == DownloadManager.STATUS_SUCCESSFUL) {
             if (st?.status != DownloadManager.STATUS_SUCCESSFUL) p(ctx).edit().remove("dl").apply()
@@ -70,17 +71,34 @@ object Upd {
         }.getOrNull()
     }
 
+    /**
+     * Köne ýüklemeleri arassalar: gurnalan wersiýadan täze bolmadyk ýa-da başga wersiýanyň faýly galmasyn
+     * (1.14-e çenli: köne faýl täze wersiýa ýerine gurulmaga synanyşylýardy → «Paket nädogry»).
+     */
+    fun clean(ctx: Context, cur: String, want: String? = null) {
+        val v = p(ctx).getString("dlv", null) ?: return
+        if (newer(v, cur) && (want == null || want == v)) return
+        val id = p(ctx).getLong("dl", -1)
+        if (id >= 0) runCatching { ctx.getSystemService(DownloadManager::class.java).remove(id) }
+        runCatching { file(ctx, v).delete() }
+        p(ctx).edit().remove("dl").remove("dlv").apply()
+    }
+
     /** Bu sürüm daha önce eksiksiz indi mi (dosya hâlâ yerinde mi). */
-    private fun ready(ctx: Context, ver: String): Boolean {
+    fun ready(ctx: Context, ver: String): Boolean {
         if (p(ctx).getString("dlv", null) != ver) return false
-        if (query(ctx)?.status != DownloadManager.STATUS_SUCCESSFUL) return false
+        val q = query(ctx) ?: return false
+        if (q.status != DownloadManager.STATUS_SUCCESSFUL || q.done <= 0 || (q.total > 0 && q.done < q.total)) return false
         val dm = ctx.getSystemService(DownloadManager::class.java)
-        return runCatching { dm.getUriForDownloadedFile(p(ctx).getLong("dl", -1)) != null }.getOrDefault(false)
+        val u = runCatching { dm.getUriForDownloadedFile(p(ctx).getLong("dl", -1)) }.getOrNull() ?: return false
+        // faýl hakykatdan bar we açylýarmy (pozulan bolsa täzeden ýüklenýär)
+        return runCatching { ctx.contentResolver.openFileDescriptor(u, "r")?.use { it.statSize > 100_000 } ?: false }.getOrDefault(false)
     }
 
     /** Dosya zaten indiyse doğrudan kurar; yoksa indirmeyi başlatır. Dönüş: kurulum ekranı açıldı mı. */
     fun start(ctx: Context, ver: String, fid: String): Boolean {
         if (ready(ctx, ver)) { install(ctx, ver); return true }
+        clean(ctx, "999", ver)   // başga wersiýanyň / bozulan faýlyň galyndysy aýrylýar
         if (busy(ctx)) return false
         val f = file(ctx, ver); f.delete()
         val dm = ctx.getSystemService(DownloadManager::class.java)

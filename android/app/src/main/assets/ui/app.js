@@ -86,6 +86,9 @@
       r.timerLbl = s.hasKey ? tx.keyL : tx.left;
       r.timer = s.hasKey ? keyTxt : two(Math.floor(s.left / 3600)) + ':' + two(Math.floor(s.left % 3600 / 60)) + ':' + two(s.left % 60);
       r.showUl = on && !s.hasKey;
+      r.showUpd = !!s.upd && !s.menu;
+      r.updTxt = s.dl >= 0 ? tx.u_dl.replace('{p}', String(s.dl)) : 'Türkmen VPN ' + s.upd;
+      r.updBtn = s.dl >= 0 ? '…' : tx.u_btn; r.doUpd = () => NB.update();
       r.showWarn = s.hasKey && kexp > 0 && keyLeft <= 43200 && !s.warnHidden;
       r.warnText = tx.w_text.replace('{t}', fmtLeft(keyLeft));
       r.keyCur = !s.hasKey ? tx.k_none : kexp === 0 ? tx.k_unl : tx.k_daysL.replace('{n}', String(Math.ceil(keyLeft / 86400)));
@@ -228,7 +231,7 @@
       up.st = st; up.ms = n.ms > 0 ? n.ms : 0; up.testing = n.testing;
       up.si = Math.max(0, idx(n.act) >= 0 ? idx(n.act) : (idx(n.sel) >= 0 ? idx(n.sel) : 0));
       if (lastPick === null || lastPick === s.pick) { up.pick = idx(n.sel); lastPick = up.pick; }
-      up.hasKey = n.left < 0; up.left = n.left >= 0 ? n.left : 0; up.kexp = n.kexp; up.upd = n.upd;
+      up.hasKey = n.left < 0; up.left = n.left >= 0 ? n.left : 0; up.kexp = n.kexp; up.upd = n.upd; up.dl = n.dl;
       up.dn = n.dn / 1024; up.up = n.up / 1024; up.tot = n.rxT / 1024; up.totUp = n.txT / 1024; up.onAt = n.onAt;
       if (st === 'on') {
         up.hist = s.hist.concat([up.dn]).slice(-40);
