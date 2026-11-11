@@ -1940,6 +1940,7 @@ async def cmd_unadmin(u: Update, c: ContextTypes.DEFAULT_TYPE):
 # ── 📧 Gmail: belirlenen kelime yazılan maile kod gönderir ──
 MAIL_EVERY, MAIL_MAX_HOUR, MAIL_DEF_DAYS = 10, 10, 30   # 10 sn'de bir okunur
 MAIL_DL_MAX_HOUR = 30   # mailde «vpn» yazana indirme linki: saatte en fazla
+MAIL_DL_PER_DAY = 3     # aynı adrese günde en fazla
 MAIL_DL_SENT = []
 MAIL_DEVICES = 1   # maille verilen kod en fazla bu kadar cihaza kurulabilir (Happ limitli link)
 MAIL_SENT = []   # son 1 saatte maille verilen kodların zamanı
@@ -2004,7 +2005,8 @@ def mail_parse(m, me, kw):
     r = mail_match(text, kw)
     if r: return (frm, r[1], r[0], r[2], "code", meta)
     if re.search(r"(?<![a-z0-9])vpn(?![a-z0-9])", text, re.I):   # «vpn» yazan herkese indirme linki (günde bir kez)
-        return (frm, 0, f"dl|{frm}|{time.strftime('%Y%m%d')}", False, "dl", meta)
+        uniq = meta["mid"] or hashlib.sha256((text + str(m.get("Date"))).encode("utf-8", "ignore")).hexdigest()[:16]
+        return (frm, 0, f"dl|{frm}|{time.strftime('%Y%m%d')}|{uniq}", False, "dl", meta)
     return None
 
 def _mail_junk(M):
@@ -2134,6 +2136,12 @@ def mail_tick():
         if kind == "dl":   # Türkmen VPN indirme linki
             MAIL_DL_SENT[:] = [t_ for t_ in MAIL_DL_SENT if now - t_ < 3600]
             if len(MAIL_DL_SENT) >= MAIL_DL_MAX_HOUR: continue
+            day_ = f"{frm}|{time.strftime('%Y%m%d')}"
+            def cnt_(d):   # aynı adrese günde en fazla MAIL_DL_PER_DAY link
+                c_ = {k: v for k, v in d.get("mail_dl_cnt", {}).items() if k.endswith(time.strftime('%Y%m%d'))}
+                if c_.get(day_, 0) >= MAIL_DL_PER_DAY: d["mail_dl_cnt"] = c_; return False
+                c_[day_] = c_.get(day_, 0) + 1; d["mail_dl_cnt"] = c_; return True
+            if not mutate(cnt_): continue
             cfg_ = app_cfg(load_db())
             u_ = max((cfg_.get("upd") or {}).values(), key=lambda x: [int(p_) if p_.isdigit() else 0 for p_ in str(x.get("ver", "0")).split(".")], default=None)
             if not u_ or not u_.get("fid"):
