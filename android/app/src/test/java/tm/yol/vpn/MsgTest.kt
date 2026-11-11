@@ -22,6 +22,31 @@ class MsgTest {
         val r = Msg.encK("F", "salam"); assertEquals("salam", Msg.decK("F", r))
     }
 
+    @Test fun admin() {
+        // subbot.py: apw_id(" adm-abcd-efgh-jkmn ") == "8e8669d3d881065d" (boşluk aýrylýar, baş harp)
+        assertEquals("8e8669d3d881065d", Msg.admId(" adm-abcd-efgh-jkmn "))
+        val c = RuntimeEnvironment.getApplication()
+        Msg.adm(c, org.json.JSONObject().put("a", "login").put("pw", " ADM-ABCD-EFGH-JKMN "))
+        assertEquals("ADM-ABCD-EFGH-JKMN", Msg.admPw(c))
+        val q = org.json.JSONArray(c.getSharedPreferences("msg", 0).getString("q", "[]"))
+        val o = org.json.JSONObject(q.getString(q.length() - 1))
+        assertEquals("8e8669d3d881065d", o.getString("aid"))
+        val r = org.json.JSONObject(Msg.decK("adm|ADM-ABCD-EFGH-JKMN", o.getString("x"))!!)
+        assertEquals("login", r.getString("a")); assertEquals(false, r.has("pw"))   // açar söz özi iberilmeýär
+        Msg.adm(c, org.json.JSONObject().put("a", "logout")); assertNull(Msg.admPw(c))
+        // giriş → şifrli jogap; soň şifrsiz «nädogry» (başga biri iberen) admini çykarmaýar; şifrli «busy» çykarýar
+        val pw = "ADM-ABCD-EFGH-JKMN"
+        Msg.adm(c, org.json.JSONObject().put("a", "login").put("pw", pw))
+        fun x(o: String) = org.json.JSONObject().put("k", "adm").put("x", Msg.encK("adm|$pw", o))
+        Msg.admIn(c, x("{\"ok\":true,\"me\":{\"role\":\"f\"}}"))
+        assertEquals("f", Msg.admMe(c)!!.getString("role"))
+        Msg.admIn(c, org.json.JSONObject().put("k", "adm").put("err", "bad"))
+        assertEquals(pw, Msg.admPw(c))
+        Msg.admIn(c, x("{\"err\":\"busy\"}"))
+        assertNull(Msg.admPw(c))
+        Msg.take(c)
+    }
+
     @Test fun codeAndMeta() {
         val c = RuntimeEnvironment.getApplication()
         c.getSharedPreferences("p", 0).edit().putString("dev", "0123456789ab").commit()

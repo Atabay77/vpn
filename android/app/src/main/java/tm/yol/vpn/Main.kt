@@ -233,7 +233,9 @@ class Main : Activity() {
             val nw = JSONArray(); Sub.news.forEach { (id, ts, j) -> nw.put(JSONObject().put("id", id).put("ts", ts).put("j", j)) }
             return JSONObject().put("dev", Msg.dev(c)).put("code", Msg.code(c)).put("ver", Msg.ver(c)).put("lang", Lang.cur)
                 .put("snd", Snd.on(c)).put("news", nw).put("ai", Sub.ai).put("online", Sub.online).put("bans", JSONArray(Sub.bans.toList()))
-                .put("key", Lic.saved(c) ?: "").put("model", Build.MANUFACTURER + " " + Build.MODEL).put("relay", Sub.relay.isNotEmpty() || Fs.on()).put("fs", Fs.on()).toString()
+                .put("key", Lic.saved(c) ?: "").put("model", Build.MANUFACTURER + " " + Build.MODEL).put("relay", Sub.relay.isNotEmpty() || Fs.on()).put("fs", Fs.on())
+                .put("dl", (Sub.upd["all"] ?: Sub.upd["64"] ?: Sub.upd["32"])?.let { runCatching { Sub.fileUrl(it.second) }.getOrNull() } ?: "")
+                .put("adm", Msg.admPw(c) != null).put("admMe", Msg.admMe(c) ?: JSONObject()).toString()
         }
 
         @JavascriptInterface fun servers(): String {
@@ -264,6 +266,7 @@ class Main : Activity() {
         @JavascriptInterface fun tile() = ui { addTile() }
         @JavascriptInterface fun key(raw: String) = Thread { push(JSONObject().put("k", "key").put("r", checkKey(raw))) }.start()
         @JavascriptInterface fun send(json: String) { runCatching { Msg.send(this@Main, JSONObject(json)) } }
+        @JavascriptInterface fun adm(json: String) { runCatching { Msg.adm(this@Main, JSONObject(json)) } }
         @JavascriptInterface fun gsend(nick: String, text: String) = Msg.gsend(this@Main, nick, text)
         @JavascriptInterface fun gwatch(on: Boolean) { Msg.watchG = on; if (on) Msg.kick() }
         @JavascriptInterface fun photo(d: String) = Msg.photo(this@Main, d)

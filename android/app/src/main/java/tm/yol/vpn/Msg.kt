@@ -144,7 +144,7 @@ object Msg {
         o.put("dev", dev(c)).put("ver", ver(c)).put("lang", Lang.cur).put("ts", System.currentTimeMillis() / 1000)
             .put("model", android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL).put("code", code(c))
             .put("ack", prefs(c).getInt("seq", 0))
-        if (o.optString("k") in setOf("tk", "ref", "gift", "human", "ka")) waitAt = System.currentTimeMillis()
+        if (o.optString("k") in setOf("tk", "ref", "gift", "human", "ka", "adm")) waitAt = System.currentTimeMillis()
         synchronized(this) {
             val q = JSONArray(prefs(c).getString("q", "[]"))
             q.put(o.toString())
@@ -225,6 +225,7 @@ object Msg {
         for ((id, body) in list) {
             p.edit().putString(if (Fs.on()) "fsIn" else "inId", id).apply()
             val o = dec(body)?.let { runCatching { JSONObject(it) }.getOrNull() } ?: continue
+            if (o.optString("k") == "adm") { admIn(c, o); continue }
             val s = o.optInt("seq", 0)
             if (s in 1..seq) continue      // öň gelen habar (bot gaýtadan iberdi)
             if (s > 0) seq = s
@@ -233,6 +234,51 @@ object Msg {
             pend(c, JSONObject().put("k", "in").put("m", o))
             if (!visible && o.optString("k") == "tk" && o.optString("who") == "a") Svc.notifyReply(c, o.optString("t"))
         }
+    }
+
+    // ---- admin paneli: haýyş açar söz bilen şifrlenýär (bot hem şeýle açýar), jogap hem şol açar bilen ----
+    fun admNorm(pw: String) = pw.replace(Regex("\\s+"), "").uppercase()
+    fun admId(pw: String) = hex(sha("tvaid|" + admNorm(pw))).take(16)
+    fun admPw(c: Context): String? = prefs(c).getString("apw", null)
+    fun admMe(c: Context): JSONObject? = prefs(c).getString("admMe", null)?.let { runCatching { JSONObject(it) }.getOrNull() }
+
+    /** a: {"a": "login", "pw": …} ýa-da {"a": "get" / "reply" / …}. */
+    fun adm(ctx: Context, a: JSONObject) {
+        val c = ctx.applicationContext; val p = prefs(c)
+        val act = a.optString("a")
+        if (act == "login") {
+            val pw = admNorm(a.optString("pw")); a.remove("pw")
+            if (pw.length < 6) return
+            p.edit().putString("apw", pw).remove("admMe").putBoolean("admLogin", true).apply()
+        }
+        val pw = admPw(c) ?: return
+        val ts = maxOf(System.currentTimeMillis(), p.getLong("admTs", 0) + 1)
+        p.edit().putLong("admTs", ts).apply()
+        a.put("ts", ts)
+        send(c, JSONObject().put("k", "adm").put("aid", admId(pw)).put("x", encK("adm|$pw", a.toString())))
+        if (act == "logout") p.edit().remove("apw").remove("admMe").apply()
+    }
+
+    /** Şifrsiz ýalňyşlyk («açar söz nädogry», «gulp») diňe giriş garaşylýan wagty kabul edilýär — başga biri admini çykaryp bilmesin. */
+    internal fun admIn(c: Context, o: JSONObject) {
+        val p = prefs(c)
+        val j: JSONObject
+        if (o.has("x")) {
+            val pw = admPw(c) ?: return
+            j = decK("adm|$pw", o.optString("x"))?.let { runCatching { JSONObject(it) }.getOrNull() } ?: return
+        } else {
+            if (!p.getBoolean("admLogin", false)) return
+            j = o
+        }
+        p.edit().putBoolean("admLogin", false).apply()
+        val err = j.optString("err")
+        if (err.isNotEmpty()) {
+            p.edit().remove("apw").remove("admMe").apply()
+            events.add(JSONObject().put("k", "adm").put("err", err).put("s", j.optInt("s")))
+            return
+        }
+        j.optJSONObject("me")?.let { p.edit().putString("admMe", it.toString()).apply() }
+        events.add(JSONObject().put("k", "adm").put("d", j))
     }
 
     /** Profil suraty: hemmeler görer (diňe öz serweri bolanda, ntfy.sh uly faýly kabul etmeýär). */

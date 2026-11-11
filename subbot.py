@@ -1040,6 +1040,7 @@ def app_view(db):
     n_open = sum(1 for t in (cfg.get("tickets") or {}).values() if t.get("st") != "closed")
     rows.append([B(f"🎫 Program biletleri ({n_open})", "atk_list"), B("⭐ Bahalar", "arates")])
     rows.append([B("📰 Programa habar", "anews"), B("🌐 Global chat", "agc")])
+    rows.append([B(f"🔐 Programma adminleri ({len(cfg.get('apw') or {})})", "apw")])
     rel_ = (os.environ.get("RELAY_URL") or cfg.get("relay") or "")
     rows.append([B("📡 Habar serweri: " + ("VPS ✅" if rel_ else "ntfy.sh"), "arelay"), B("🔥 Firestore (VPN-siz)" + (" ✅" if cfg.get("fs_ok") else ""), "afs")])
     if (cfg.get("upd") or {}): rows.append([B("⬇️ VPN'siz indirme linki", "app_dl")])
@@ -1347,6 +1348,7 @@ async def app_on_msg(app, fid, o):
     try: await asyncio.to_thread(app_resend, fid, dev, int(o.get("ack") or 0))
     except Exception: pass
     a = app_cfg(load_db())
+    if k == "adm": await app_adm(app, dev, o); return
     if k == "tk":
         text = str(o.get("t") or "").strip()[:1000]
         if not text: return
@@ -1506,6 +1508,229 @@ async def app_admin_reply(app, tid, text):
     app_mut(f)
     await asyncio.to_thread(app_send, t["dev"], {"k": "tk", "who": "a", "t": text, "tid": int(tid)})
     return True
+
+# ───────── Programdaky admin paneli ─────────
+# Açar sözler botda adama bagly döredilýär (esasy admin ýa-da kömekçi admin). Her açar söz diňe 1 telefonda işleýär.
+# Program haýyşy açar söz bilen şifrleýär (app_enc("adm|" + pw)) — diňe açar sözi bilýän ýazyp/okap bilýär.
+# Jogap (doly ýagdaý) Firestore-a d/<telefon>/i/adm resminamasyna ýazylýar (her gezek üstüne).
+APW_ABC = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+def apw_new(): return "ADM-" + "-".join("".join(random.SystemRandom().choice(APW_ABC) for _ in range(4)) for _ in range(3))
+def apw_norm(pw): return re.sub(r"\s+", "", str(pw or "")).upper()
+def apw_id(pw): return hashlib.sha256(("tvaid|" + apw_norm(pw)).encode()).hexdigest()[:16]
+APW_PERM = {"all": "ähli rugsatlar (bilet, ulanyjy, açar)", "tk": "diňe biletler"}
+
+def apw_valid(e):
+    """Kömekçi adminiň möhleti geçse açar sözi hem işlemeýär."""
+    if not e: return False
+    if e.get("role") == "f": return int(e.get("uid") or 0) in ORIG_ADMINS
+    return is_admin(int(e.get("uid") or 0))
+
+def app_hm(ts):
+    if not ts: return ""
+    d = datetime.datetime.fromtimestamp(ts, TM_TZ)
+    return d.strftime("%H:%M") if d.date() == tm_now().date() else d.strftime("%d.%m %H:%M")
+
+def app_adm_snap(a, e, dev):
+    """Admin üçin ýagdaý (rugsadyna görä)."""
+    db = load_db(); f_ = e.get("role") == "f"; full = f_ or e.get("perm") == "all"
+    devs = a.get("devs") or {}; now = time.time()
+    today = tm_now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+    tks = sorted((a.get("tickets") or {}).items(), key=lambda kv: kv[1].get("lt", 0), reverse=True)[:50]
+    tk_out, need = [], set()
+    for tid, t in tks:
+        lg = t.get("log", [])
+        st = "closed" if t.get("st") == "closed" else ("ans" if lg and lg[-1].get("r") == "a" else "open")
+        tk_out.append({"id": int(tid), "u": t.get("dev"), "st": st, "fb": t.get("fb", ""),
+                       "msgs": [[x.get("r"), str(x.get("t", ""))[:600], app_hm(x.get("ts"))] for x in lg[-25:]]})
+        need.add(t.get("dev"))
+    bans = set(a.get("gbans") or [])
+    keys_ = a.get("keys") or {}
+    by_dev = {}
+    for k_, v in keys_.items():
+        if v.get("dev") and (not v.get("exp") or v["exp"] > now): by_dev[v["dev"]] = v
+    inv_n = {}
+    for v in (a.get("ref_devs") or {}).values(): inv_n[v] = inv_n.get(v, 0) + 1
+    users = {}
+    pool = (devs.keys() if full else need)
+    for dv in pool:
+        u = devs.get(dv)
+        if not u: continue
+        kv_ = by_dev.get(dv)
+        users[dv] = {"name": u.get("nick") or "?", "code": app_ref_code(dv), "model": u.get("model") or "?", "ver": u.get("ver") or "?",
+                     "lang": u.get("lang") or "tk", "first": app_hm(u.get("f")), "seen": app_hm(u.get("l")), "l": int(u.get("l") or 0),
+                     "key": (f"{max(0, int((kv_['exp'] - now) // 86400))} gün" if kv_ and kv_.get("exp") else ("çäksiz" if kv_ else "—")),
+                     "inv": inv_n.get(dv, 0), "ban": dv in bans}
+    if full and len(users) > 300:   # köp bolsa: diňe soňky işjeňler + biletdäkiler
+        keep = sorted(users, key=lambda d_: users[d_]["l"], reverse=True)[:300]
+        users = {d_: users[d_] for d_ in set(keep) | (need & set(users))}
+    out = {"me": {"role": e.get("role"), "perm": "all" if f_ else e.get("perm"), "name": e.get("name") or ""}, "tk": tk_out, "us": users}
+    if full:
+        mine = None if f_ else f"app:{e.get('name')}"
+        ks = sorted(((k_, v) for k_, v in keys_.items() if mine is None or v.get("by") == mine), key=lambda kv: kv[1].get("ts", 0), reverse=True)[:40]
+        out["keys"] = [{"k": k_, "d": max(1, round(((v.get("exp") or 0) - (v.get("ts") or 0)) / 86400)) if v.get("exp") else 0,
+                        "by": str(v.get("by") or ""), "used": v.get("dev"), "at": app_hm(v.get("ts"))} for k_, v in ks]
+    if f_:
+        out["codes"] = [{"id": aid, "code": (x["pw"] if aid == apw_id(e["pw"]) else x["pw"][:4] + "-••••-••••-" + x["pw"][-4:]), "role": x.get("role"),
+                         "name": x.get("name") or "", "perm": x.get("perm"), "u": x.get("dev"), "seen": app_hm(x.get("seen")),
+                         "vpn": bool(x.get("dev")) and now - float(x.get("seen") or 0) < 300, "made": int(x.get("made") or 0), "ok": apw_valid(x)}
+                        for aid, x in (a.get("apw") or {}).items()]
+        out["notes"] = [n_["t"] for n_ in db.get("ai_notes", [])]
+        out["aiOn"] = bool(db.get("ai_sup", True)); out["aiKey"] = bool(ai_key())
+        out["aiCount"] = sum(1 for t in (a.get("tickets") or {}).values() for x in t.get("log", []) if x.get("r") == "ai" and x.get("ts", 0) >= today)
+        out["sysOn"] = not os.path.exists(STOP_FLAG)
+        out["next"] = int(RUN["next"] - now) if RUN.get("next") else 0
+        out["logs"] = "\n".join(short(_plain(l), 90) for l in tail(VIP_LOG, 40)[::-1])
+        src = [["🔗", src_label(u), "", True] for u in a.get("subs", [])]
+        src.append(["☁️", "Programa faýl", f"{a.get('n', 0)} kod · {ago(a.get('ts'))}", bool(a.get("ts")) and not a.get("errs")])
+        src += [["⚠️", short(str(x), 60), "", False] for x in (a.get("errs") or [])]
+        out["src"] = src
+        out["stats"] = {"users": len(devs), "today": sum(1 for u in devs.values() if (u.get("l") or 0) >= today),
+                        "vpn": int(RUN.get("app_on") or 0), "new": sum(1 for u in devs.values() if (u.get("f") or 0) >= today),
+                        "keys": len(keys_), "open": sum(1 for t in (a.get("tickets") or {}).values() if t.get("st") != "closed"),
+                        "ai": out["aiCount"], "admins": [sum(1 for x in (a.get("apw") or {}).values() if x.get("dev")), len(a.get("apw") or {})]}
+        out["news"] = [{"t": n_["t"], "x": n_["x"], "time": app_hm(n_.get("ts"))} for n_ in (a.get("news") or [])]
+    return out
+
+def app_adm_out(dev, pw, resp):
+    """Jogaby telefona: Firestore d/<dev>/i/adm (üstüne ýazylýar); Firestore ýok bolsa ntfy (kiçi jogaplar)."""
+    a = app_cfg(load_db()); fid = a.get("fid")
+    if not fid: return
+    o = {"k": "adm"}
+    if pw: o["x"] = app_enc("adm|" + apw_norm(pw), json.dumps(resp, ensure_ascii=False))
+    else: o.update(resp)
+    body = app_enc(fid, json.dumps(o, ensure_ascii=False))
+    if a.get("fs_ok") and a.get("fs_proj"):
+        try: fs_write(a["fs_proj"], f"d/{dev}/i/adm", body, create=False); return
+        except Exception as e: log.info("adm out fs %s: %s", dev, e)
+    try: ntfy_pub(app_topic(fid) + "d" + dev, body)
+    except Exception as e: log.info("adm out %s: %s", dev, e)
+
+APW_FAIL = {}   # dev -> [nädogry synanyşyk sany, gulp wagty]
+
+async def app_adm(app, dev, o):
+    """Programdan admin haýyşy."""
+    now = time.time()
+    fl = APW_FAIL.get(dev, [0, 0])
+    if fl[1] > now and o.get("aid"): await asyncio.to_thread(app_adm_out, dev, None, {"err": "lock", "s": int(fl[1] - now)}); return
+    a = app_cfg(load_db()); aid = str(o.get("aid") or "")
+    e = (a.get("apw") or {}).get(aid)
+    pt = app_dec("adm|" + e["pw"], o.get("x") or "") if e else None
+    if e and pt and not apw_valid(e):   # açar söz dogry, emma möhleti geçdi: jogap şifrli (başga biri admini çykaryp bilmesin)
+        await asyncio.to_thread(app_adm_out, dev, e["pw"], {"err": "bad"}); return
+    if not e or not pt:
+        fl[0] += 1
+        if fl[0] >= 5: fl = [0, now + 600]
+        APW_FAIL[dev] = fl
+        await asyncio.to_thread(app_adm_out, dev, None, {"err": "bad"}); return
+    try: r = json.loads(pt)
+    except Exception: return
+    APW_FAIL.pop(dev, None)
+    act = str(r.get("a") or ""); ts = int(r.get("ts") or 0)
+    if ts <= int(e.get("lts") or 0) or abs(ts / 1000 - now) > 900: return   # gaýtalanan ýa-da köne haýyş
+    if e.get("dev") and e["dev"] != dev: await asyncio.to_thread(app_adm_out, dev, e["pw"], {"err": "busy"}); return
+    pw = e["pw"]; f_ = e.get("role") == "f"; full = f_ or e.get("perm") == "all"
+    def touch(a_):
+        x = (a_.get("apw") or {}).get(aid)
+        if x: x["lts"] = ts; x["seen"] = int(now); x["dev"] = None if act == "logout" else dev
+    app_mut(touch)
+    if act == "logout":
+        await notify_founders(app, f"🔒 <b>Programma admini çykdy</b> — {esc(e.get('name') or '?')}", silent=True); return
+    if act == "login":
+        await notify_founders(app, f"🔓 <b>Programma admin paneline girildi</b>\n<blockquote>{esc(e.get('name') or '?')} · {app_who(app_cfg(load_db()), dev)}</blockquote>", silent=True)
+    msg, err = "", ""
+    tid = str(int(r.get("tid") or 0))
+    t_ = (app_cfg(load_db()).get("tickets") or {}).get(tid)
+    who = e.get("name") or "admin"
+    try:
+        if act == "reply":
+            txt = str(r.get("t") or "").strip()[:2000]
+            if txt and t_: await app_admin_reply(app, tid, txt); msg = "sent"
+        elif act in ("close", "reopen") and t_:
+            st_ = "closed" if act == "close" else "open"
+            app_mut(lambda x: x["tickets"][tid].update({"st": st_, "human": False} if st_ == "closed" else {"st": st_}))
+            await asyncio.to_thread(app_send, t_["dev"], {"k": "tkst", "st": st_, "tid": int(tid)})
+        elif act == "mkkey" and full:
+            d_ = int(r.get("d") or 0)
+            if d_ in (3, 7, 30):
+                k_, _ = app_key_make(d_, None, f"app:{who}")
+                app_mut(lambda x: x["apw"][aid].__setitem__("made", int(x["apw"][aid].get("made") or 0) + 1))
+                try: await asyncio.to_thread(app_sync, True)
+                except Exception as e2: RUN["app_err"] = str(e2)[:150]
+                msg = "key:" + k_
+                if not f_: await notify_founders(app, f"🛠 <b>{esc(who)}</b> programdan açar döretdi: <code>{k_}</code> · {d_} gün", silent=True)
+        elif act == "gdel" and full:
+            gid = re.sub(r"^g/", "", str(r.get("id") or ""))
+            if re.fullmatch(r"[\w\-]{1,60}", gid):
+                if a.get("fs_ok") and a.get("fs_proj"): await asyncio.to_thread(fs_delete, a["fs_proj"], ["g/" + gid])
+                elif a.get("fid"): await asyncio.to_thread(ntfy_pub, app_topic(a["fid"]) + "g", app_enc(a["fid"], json.dumps({"del": gid})))
+        elif act == "ban" and f_:
+            dv = str(r.get("dev") or "")
+            if DEV_RE.match(dv):
+                on_ = bool(r.get("on"))
+                app_mut(lambda x: x.__setitem__("gbans", [b for b in (x.get("gbans") or []) if b != dv] + ([dv] if on_ else [])))
+                try: await asyncio.to_thread(app_sync, True)
+                except Exception as e2: RUN["app_err"] = str(e2)[:150]
+        elif act == "kick" and f_:
+            k_ = str(r.get("id") or "")
+            if k_ != aid: app_mut(lambda x: (x.get("apw") or {}).get(k_, {}).__setitem__("dev", None) if k_ in (x.get("apw") or {}) else None)
+        elif act == "bc" and f_:
+            t1, x1 = str(r.get("t") or "").strip()[:80], str(r.get("x") or "").strip()[:600]
+            if t1 and x1:
+                nw_ = {"id": "n" + format(int(now), "x"), "ts": int(now), "t": t1, "x": x1}
+                app_mut(lambda x: x.__setitem__("news", ([nw_] + (x.get("news") or []))[:10]))
+                try: await asyncio.to_thread(app_sync, True)
+                except Exception as e2: RUN["app_err"] = str(e2)[:150]
+                msg = "bc"
+        elif act == "ai" and f_:
+            mutate(lambda d: d.__setitem__("ai_sup", bool(r.get("on"))))
+            try: await asyncio.to_thread(app_sync, True)
+            except Exception as e2: RUN["app_err"] = str(e2)[:150]
+        elif act == "note" and f_:
+            txt = str(r.get("t") or "").strip()[:800]
+            if txt: mutate(lambda d: d.__setitem__("ai_notes", (d.get("ai_notes", []) + [{"t": txt, "ts": now}])[-AI_NOTES_MAX:]))
+        elif act == "notedel" and f_:
+            i_ = int(r.get("i") if r.get("i") is not None else -1)
+            mutate(lambda d: d.get("ai_notes", []).pop(i_) if 0 <= i_ < len(d.get("ai_notes", [])) else None)
+        elif act == "sys" and f_:
+            if os.path.exists(STOP_FLAG) and r.get("on"):
+                os.remove(STOP_FLAG); vlog(f"▶️ Sistem başlatıldı (program: {who}).")
+                if WAKE: WAKE.set()
+            elif not os.path.exists(STOP_FLAG) and not r.get("on"):
+                with open(STOP_FLAG, "w") as f2: f2.write("stop")
+                vlog(f"🛑 Sistem durduruldu (program: {who}).")
+        elif act == "upd" and f_:
+            if CHECK_LOCK is not None and CHECK_LOCK.locked(): msg = "busy"
+            else: asyncio.create_task(run_check(app, force=True)); vlog(f"⚡ Elle güncelleme (program: {who})"); msg = "upd"
+    except Exception as e2:
+        log.exception("app adm %s", act); err = str(e2)[:120]
+    snap = app_adm_snap(app_cfg(load_db()), (app_cfg(load_db()).get("apw") or {}).get(aid) or e, dev)
+    snap.update({"ok": True, "a": act, "msg": msg, "err": err})
+    await asyncio.to_thread(app_adm_out, dev, pw, snap)
+
+def apw_view(a):
+    ap = a.get("apw") or {}
+    lines = []
+    for aid, x in ap.items():
+        u = (a.get("devs") or {}).get(x.get("dev") or "") or {}
+        dv = (f"📱 {esc(u.get('model') or '?')} · {esc(u.get('nick') or '?')} · {ago(x.get('seen'))}" if x.get("dev") else "📱 boş — ilkinji giren telefona baglanar")
+        lines.append(f"{'👑' if x.get('role') == 'f' else '👮'} <b>{esc(x.get('name') or '?')}</b> · {'esasy admin' if x.get('role') == 'f' else APW_PERM.get(x.get('perm'), '?')}"
+                     + ("" if apw_valid(x) else " · ⛔ möhleti geçdi") + f"\n<code>{esc(x['pw'])}</code>\n{dv} · 🛠 {int(x.get('made') or 0)} açar")
+    rows = [[B(f"🔓 {short(x.get('name') or '?', 14)}: telefony boşat", f"apwk:{aid}"), B("🗑", f"apwd:{aid}", "danger")] for aid, x in ap.items()]
+    rows.append([B("➕ Maňa (esasy admin)", "apwme", "primary"), B("➕ Kömekçi admine", "apwh")])
+    rows.append([B("◀️ Programma", "app_v")])
+    return ("🔐 <b>Programma admin açar sözleri</b>\n<blockquote>" + ("\n\n".join(lines) or "Açar söz ýok.") + "</blockquote>\n"
+            "<i>Programda: «Admine ýaz» sahypasynyň adyna 10 gezek basyň → açar sözi ýazyň. Her açar söz diňe 1 telefonda işleýär. "
+            "Kömekçi adminiň möhleti geçse açar sözi hem işlemeýär.</i>"), KB(rows)
+
+def apw_make(uid, name, role, perm):
+    """Adama täze açar söz (köne bar bolsa çalşylýar)."""
+    pw = apw_new()
+    def f(x):
+        ap = x.setdefault("apw", {})
+        for k_ in [k_ for k_, v in ap.items() if int(v.get("uid") or 0) == int(uid)]: ap.pop(k_)
+        ap[apw_id(pw)] = {"pw": pw, "uid": int(uid), "name": name[:32], "role": role, "perm": perm, "dev": None, "ts": int(time.time()), "made": 0}
+    app_mut(f)
+    return pw
 
 def app_news_view(a):
     nw = a.get("news") or []
@@ -3790,6 +4015,36 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
             audit(uid, "src_del")
             start_refresh(c.application, "abonelik silindi")
         await safe_edit(q, "✅ Abonelik silindi. Kalan aboneliklerin kodları şimdi yeniden yazılıyor." if ok else "⚠️ Bulunamadı.", back("sources"))
+
+    elif a in ("apw", "apwme", "apwh") or a.startswith(("apwk:", "apwd:", "apwp:", "apwc:")):
+        if uid not in ORIG_ADMINS:
+            await safe_edit(q, "⛔ Erişim yok", back("admin")); return
+        if a.startswith("apwk:"):
+            k_ = a.split(":", 1)[1]; app_mut(lambda x: (x.get("apw") or {}).get(k_, {}).__setitem__("dev", None) if k_ in (x.get("apw") or {}) else None)
+            audit(uid, f"apw kick {k_}")
+        if a.startswith("apwd:"):
+            k_ = a.split(":", 1)[1]; app_mut(lambda x: (x.get("apw") or {}).pop(k_, None)); audit(uid, f"apw del {k_}")
+        if a == "apwme":
+            pw_ = apw_make(uid, q.from_user.full_name or str(uid), "f", "all"); audit(uid, "apw new founder")
+            t_, kb_ = apw_view(app_cfg(load_db()))
+            await safe_edit(q, f"✅ <b>Täze açar söz (esasy admin):</b>\n<code>{pw_}</code>\n\n" + t_, kb_); return
+        if a == "apwh":
+            sas = [(sid, e_) for sid, e_ in load_db().get("sub_admins", {}).items() if float(e_.get("expires", 0)) > time.time()]
+            rows_ = [[B(f"👮 {short(e_.get('name') or sid, 24)}", f"apwp:{sid}")] for sid, e_ in sas]
+            await safe_edit(q, "👮 <b>Haýsy kömekçi admine?</b>" + ("" if sas else "\n<i>Işjeň kömekçi admin ýok — ilki «👮 Kömekçi adminler» bölüminde goşuň.</i>"), KB(rows_ + [[B("◀️ Yza", "apw")]])); return
+        if a.startswith("apwp:"):
+            sid = a.split(":", 1)[1]; e_ = load_db().get("sub_admins", {}).get(sid) or {}
+            await safe_edit(q, f"👮 <b>{esc(e_.get('name') or sid)}</b> — näme rugsat berilsin?",
+                            KB([[B("✅ Ähli rugsatlar", f"apwc:{sid}:all", "success")], [B("🎫 Diňe biletler", f"apwc:{sid}:tk", "primary")],
+                                [B("◀️ Yza", "apwh")]]),); return
+        if a.startswith("apwc:"):
+            _, sid, perm_ = a.split(":", 2)
+            e_ = load_db().get("sub_admins", {}).get(sid)
+            if not e_ or perm_ not in APW_PERM: await safe_edit(q, "⚠️ Kömekçi admin tapylmady.", back("apw")); return
+            pw_ = apw_make(int(sid), e_.get("name") or sid, "h", perm_); audit(uid, f"apw new {sid} {perm_}")
+            t_, kb_ = apw_view(app_cfg(load_db()))
+            await safe_edit(q, f"✅ <b>Täze açar söz — {esc(e_.get('name') or sid)}</b> ({APW_PERM[perm_]}):\n<code>{pw_}</code>\n<i>Şuny şol admine iberiň.</i>\n\n" + t_, kb_); return
+        await safe_edit(q, *apw_view(app_cfg(load_db()))); return
 
     elif a in ("atk_list", "atk_closed", "arates", "anews", "anews_new", "agc", "arelay", "arelay_off", "afs", "afs_key", "afs_chk", "afs_off", "afs_rules") or a.startswith(("atk:", "atr:", "atc:", "ato:", "atp:", "anews_del:", "agd:", "agb:")):
         if uid not in ORIG_ADMINS:
