@@ -870,6 +870,7 @@ def app_meta(cfg):
     if cfg.get("gbans"): out.append("#tvban: " + ",".join(cfg["gbans"][-200:]))
     rel = (os.environ.get("RELAY_URL") or cfg.get("relay") or "").strip().rstrip("/")
     if rel: out.append(f"#tvrel: {rel}")
+    if cfg.get("fs_proj") and cfg.get("fs_key") and cfg.get("fs_ok"): out.append(f"#tvfs: {cfg['fs_proj']} {cfg['fs_key']}")
     for abi, u in sorted((cfg.get("upd") or {}).items()):
         if u.get("fid") and u.get("ver"): out.append(f"#tvu{abi}: {u['ver']} {u['fid']}")
     ad = cfg.get("ad") or {}
@@ -1040,7 +1041,7 @@ def app_view(db):
     rows.append([B(f"🎫 Program biletleri ({n_open})", "atk_list"), B("⭐ Bahalar", "arates")])
     rows.append([B("📰 Programa habar", "anews"), B("🌐 Global chat", "agc")])
     rel_ = (os.environ.get("RELAY_URL") or cfg.get("relay") or "")
-    rows.append([B("📡 Habar serweri: " + ("VPS ✅" if rel_ else "ntfy.sh"), "arelay")])
+    rows.append([B("📡 Habar serweri: " + ("VPS ✅" if rel_ else "ntfy.sh"), "arelay"), B("🔥 Firestore (VPN-siz)" + (" ✅" if cfg.get("fs_ok") else ""), "afs")])
     if (cfg.get("upd") or {}): rows.append([B("⬇️ VPN'siz indirme linki", "app_dl")])
     if cfg.get("fid"): rows.append([B("🔗 Programın dosya linki", "app_link")])
     rows.append([B("◀️ Admin", "admin")])
@@ -1106,6 +1107,100 @@ def ntfy_pub(topic, body):
     req = urllib.request.Request(f"{ntfy_base()}/{topic}", data=body.encode("utf-8"), method="POST", headers={"User-Agent": "subbot", "Content-Type": "text/plain; charset=utf-8"})
     with urllib.request.urlopen(req, timeout=20) as r: return r.status < 300
 
+# ───── Firestore (Google): Türkmenistanda VPN-siz açylýar (firestore.googleapis.com) ─────
+# Program: API açary + düzgünler (diňe «m» goýmak, «g» okamak/goýmak, «p» surat, «d/<telefon>/i» okamak).
+# Bot: hyzmat hasaby (drive-sa.json) bilen ähli zat. Habarlar ýene şifreli (app_enc).
+FS_SCOPE = "https://www.googleapis.com/auth/datastore"
+_FS_TOK = {"tok": None, "exp": 0}
+
+def fs_cfg():
+    a = app_cfg(load_db()); return (a.get("fs_proj") or "", a.get("fs_key") or "")
+
+def fs_sa_project():
+    try:
+        with open(SA_FILE) as f: return json.load(f).get("project_id", "")
+    except Exception: return ""
+
+def fs_token():
+    if _FS_TOK["tok"] and time.time() < _FS_TOK["exp"] - 120: return _FS_TOK["tok"]
+    import google_auth_httplib2, httplib2
+    cr = service_account.Credentials.from_service_account_file(SA_FILE, scopes=[FS_SCOPE])
+    cr.refresh(google_auth_httplib2.Request(httplib2.Http(timeout=20)))
+    _FS_TOK.update(tok=cr.token, exp=time.time() + 3000)
+    return cr.token
+
+def fs_base(proj): return f"https://firestore.googleapis.com/v1/projects/{proj}/databases/(default)/documents"
+
+def fs_req(method, url, body=None, key=None):
+    """Firestore REST. key berilse API açary (programyň ýoly), ýogsa hyzmat hasaby."""
+    h = {"Content-Type": "application/json", "User-Agent": "subbot"}
+    if key: url += ("&" if "?" in url else "?") + "key=" + urllib.parse.quote(key)
+    else: h["Authorization"] = "Bearer " + fs_token()
+    req = urllib.request.Request(url, data=json.dumps(body).encode() if body is not None else None, method=method, headers=h)
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r: t = r.read().decode("utf-8", "ignore")
+        return json.loads(t) if t.strip() else {}
+    except urllib.error.HTTPError as e:
+        try: msg = json.loads(e.read().decode("utf-8", "ignore")).get("error", {}).get("message", "")
+        except Exception: msg = ""
+        raise RuntimeError(f"HTTP {e.code} {msg}"[:220])
+
+def fs_write(proj, path, b, key=None, create=True):
+    """Resminama: b (şifrli tekst) + t (serweriň wagty)."""
+    name = f"projects/{proj}/databases/(default)/documents/{path}"
+    w = {"update": {"name": name, "fields": {"b": {"stringValue": b}}}, "updateTransforms": [{"fieldPath": "t", "setToServerValue": "REQUEST_TIME"}]}
+    if create: w["currentDocument"] = {"exists": False}
+    return fs_req("POST", fs_base(proj) + ":commit", {"writes": [w]}, key)
+
+def fs_delete(proj, paths):
+    if not paths: return
+    ws = [{"delete": f"projects/{proj}/databases/(default)/documents/{p}"} for p in paths[:400]]
+    fs_req("POST", fs_base(proj) + ":commit", {"writes": ws})
+
+def fs_query(proj, parent, coll, after=None, limit=100, desc=False, key=None):
+    """[(resminama ady, b, t)] — t > after (RFC3339) we t boýunça tertipli."""
+    q = {"from": [{"collectionId": coll}], "orderBy": [{"field": {"fieldPath": "t"}, "direction": "DESCENDING" if desc else "ASCENDING"}], "limit": limit}
+    if after: q["where"] = {"fieldFilter": {"field": {"fieldPath": "t"}, "op": "GREATER_THAN", "value": {"timestampValue": after}}}
+    par = fs_base(proj) + (("/" + parent) if parent else "")
+    out = []
+    for x in fs_req("POST", par + ":runQuery", {"structuredQuery": q}, key) or []:
+        d = x.get("document")
+        if not d: continue
+        f = d.get("fields", {})
+        out.append((d["name"].split("/documents/", 1)[1], (f.get("b") or {}).get("stringValue", ""), (f.get("t") or {}).get("timestampValue", "")))
+    return out
+
+def fs_check(proj, key):
+    """Gurnalyşy ädim-ädim barlaýar. Dönüş: [(ädim, ok, bellik)]."""
+    res = []
+    try: fs_token(); res.append(("Hyzmat hasaby (drive-sa.json)", True, ""))
+    except Exception as e: res.append(("Hyzmat hasaby (drive-sa.json)", False, str(e)[:120])); return res
+    try:
+        fs_write(proj, "z/bot", "v1.test", create=False); fs_delete(proj, ["z/bot"]); res.append(("Firestore bazasy + bota rugsat", True, ""))
+    except Exception as e:
+        res.append(("Firestore bazasy + bota rugsat", False, str(e)[:160])); return res
+    if not key: res.append(("API açary", False, "heniz berilmedi")); return res
+    try:
+        fs_write(proj, "m/test" + format(int(time.time()), "x"), "v1.test", key=key); res.append(("Programyň ýoly (API açary + düzgünler)", True, ""))
+    except Exception as e: res.append(("Programyň ýoly (API açary + düzgünler)", False, str(e)[:160]))
+    try:
+        fs_write(proj, "m/bad" + format(int(time.time()), "x"), "x" * 20, key=key); res.append(("Düzgünler gorag (ýalňyş habar kabul edilmeli däl)", False, "düzgünler gaty açyk"))
+    except Exception: res.append(("Düzgünler gorag (ýalňyş habar kabul edilmeli däl)", True, ""))
+    return res
+
+FS_RULES = """rules_version = '2';
+service cloud.firestore {
+  match /databases/{db}/documents {
+    function ok(n) { return request.resource.data.keys().hasOnly(['b', 't']) && request.resource.data.b is string
+                     && request.resource.data.b.matches('v1[.].*') && request.resource.data.b.size() < n && request.resource.data.t == request.time; }
+    match /m/{id} { allow create: if ok(9000); }
+    match /g/{id} { allow read; allow create: if ok(5000); }
+    match /p/{dev} { allow read; allow write: if ok(120000); }
+    match /d/{dev}/i/{id} { allow read; }
+  }
+}"""
+
+
 def app_mut(fn):
     """db["app"] içinde değişiklik (kilitli)."""
     return mutate(lambda d: fn(d.setdefault("app", {})))
@@ -1119,8 +1214,15 @@ def app_send(dev, o):
         return a.get("fid")
     fid = app_mut(f)
     if fid:
-        try: ntfy_pub(app_topic(fid) + "d" + dev, app_enc(fid, json.dumps(o, ensure_ascii=False)))
+        body = app_enc(fid, json.dumps(o, ensure_ascii=False))
+        try: ntfy_pub(app_topic(fid) + "d" + dev, body)
         except Exception as e: log.info("app send %s: %s", dev, e)
+        a_ = app_cfg(load_db())
+        if a_.get("fs_ok") and a_.get("fs_proj"):
+            try:
+                fs_write(a_["fs_proj"], f"d/{dev}/i/{o['seq']:010d}", body)
+                if o["seq"] > 30: fs_delete(a_["fs_proj"], [f"d/{dev}/i/{o['seq'] - 30:010d}"])
+            except Exception as e: log.info("fs send %s: %s", dev, e)
 
 def app_resend(fid, dev, ack):
     """Program son aldığı sıra numarasını bildirir; eksik kalanlar yeniden gider (10 dakikada bir en çok)."""
@@ -1314,6 +1416,22 @@ async def app_msg_loop(app):
                     except Exception: continue
                     try: await app_on_msg(app, fid, o)
                     except Exception: log.exception("app msg")
+                if a.get("fs_ok") and a.get("fs_proj"):
+                    try:
+                        got = await asyncio.to_thread(fs_query, a["fs_proj"], "", "m", a.get("fs_since"), 100)
+                        done = []
+                        for name, b, t in got:
+                            app_mut(lambda a_: a_.__setitem__("fs_since", t)); done.append(name)
+                            pt = app_dec(fid, b)
+                            if not pt: continue
+                            try: o = json.loads(pt)
+                            except Exception: continue
+                            try: await app_on_msg(app, fid, o)
+                            except Exception: log.exception("app msg (fs)")
+                        if done: await asyncio.to_thread(fs_delete, a["fs_proj"], done)
+                        RUN.pop("fs_err", None)
+                    except Exception as e:
+                        if RUN.get("fs_err") != str(e)[:100]: RUN["fs_err"] = str(e)[:100]; log.warning("fs poll: %s", e)
                 if RUN.pop("app_dirty", None):
                     try: await asyncio.to_thread(app_sync, True)
                     except Exception as e: log.info("app sync (msg): %s", e)
@@ -1362,6 +1480,16 @@ def app_news_view(a):
     return "📰 <b>Programa habarlar</b>\n<blockquote>" + ("\n".join(lines) or "Habar ýok.") + "</blockquote>\n<i>Habar ähli ulanyjylaryň «Habarlar» bölümine düşýär (programma faýly täzelenende, köp wagt 10 minudyň içinde). Linkler basylýar.</i>", KB(rows)
 
 def app_global_list(fid, gb):
+    a = app_cfg(load_db())
+    if a.get("fs_ok") and a.get("fs_proj"):
+        res = []
+        for name, b, t in fs_query(a["fs_proj"], "", "g", None, 30, desc=True):
+            pt = app_dec(fid, b)
+            if not pt: continue
+            try: o = json.loads(pt)
+            except Exception: continue
+            if o.get("i") not in gb: res.append(("fs:" + name.split("/")[-1], t, o))
+        return res[:15][::-1]
     out = []
     for j in ntfy_poll(app_topic(fid) + "g", "12h"):
         pt = app_dec(fid, j.get("message", ""))
@@ -2626,6 +2754,24 @@ async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
             t_, kb_ = app_ticket_view(app_cfg(load_db()), tid)
             await u.message.reply_text(("✅ Iberildi.\n\n" if ok else "⚠️ Bilet ýok.\n\n") + t_, parse_mode="HTML", reply_markup=kb_)
 
+        elif act == "afs_key":
+            key_ = txt.strip()
+            try: await u.message.delete()
+            except Exception: pass
+            if not re.fullmatch(r"AIza[\w\-]{30,}", key_):
+                STATE[uid] = st; await u.message.reply_text("⚠️ Açar AIza… bilen başlamaly.", reply_markup=back("afs")); return
+            proj = fs_sa_project()
+            app_mut(lambda x: x.update({"fs_key": key_, "fs_proj": proj}))
+            res = await asyncio.to_thread(fs_check, proj, key_)
+            ok_all = len(res) >= 4 and all(r[1] for r in res)
+            app_mut(lambda x: x.update({"fs_ok": ok_all}))
+            if ok_all:
+                try: await asyncio.to_thread(app_sync, True)
+                except Exception as e: RUN["app_err"] = str(e)[:150]
+            await u.message.reply_text("🔥 <b>Firestore barlagy</b>\n" + "\n".join(("✅ " if r[1] else "❌ ") + esc(r[0]) + (f" — <code>{esc(r[2])}</code>" if r[2] else "") for r in res)
+                                       + ("\n\n✅ Taýýar — programlar VPN-siz habarlaşar." if ok_all else "\n\n«🔥 Firestore» bölüminde gurnamak ädimlerine serediň."),
+                                       parse_mode="HTML", reply_markup=back("afs"))
+
         elif act == "arelay":
             url_ = txt.strip().rstrip("/")
             if not re.fullmatch(r"https?://[\w.\-]+(:\d{2,5})?", url_):
@@ -3609,7 +3755,7 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
             start_refresh(c.application, "abonelik silindi")
         await safe_edit(q, "✅ Abonelik silindi. Kalan aboneliklerin kodları şimdi yeniden yazılıyor." if ok else "⚠️ Bulunamadı.", back("sources"))
 
-    elif a in ("atk_list", "atk_closed", "arates", "anews", "anews_new", "agc", "arelay", "arelay_off") or a.startswith(("atk:", "atr:", "atc:", "ato:", "atp:", "anews_del:", "agd:", "agb:")):
+    elif a in ("atk_list", "atk_closed", "arates", "anews", "anews_new", "agc", "arelay", "arelay_off", "afs", "afs_key", "afs_chk", "afs_off", "afs_rules") or a.startswith(("atk:", "atr:", "atc:", "ato:", "atp:", "anews_del:", "agd:", "agb:")):
         if uid not in ORIG_ADMINS:
             await safe_edit(q, "⛔ Erişim yok", back("admin")); return
         a_ = app_cfg(load_db())
@@ -3630,6 +3776,37 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
                 await asyncio.to_thread(app_send, t_["dev"], {"k": "tkst", "st": st_, "tid": int(tid)})
             await safe_edit(q, *app_ticket_view(app_cfg(load_db()), tid)); return
         if a == "arates": await safe_edit(q, *app_rates_view(a_)); return
+        if a in ("afs", "afs_chk"):
+            proj = a_.get("fs_proj") or fs_sa_project()
+            txt_ = ("🔥 <b>Firestore — programa VPN-siz habar</b>\n<blockquote>Türkmenistanda <code>firestore.googleapis.com</code> VPN-siz açylýar. "
+                    "Bilet, AI, Global chat we suratlar şonuň üsti bilen gider.</blockquote>\n"
+                    f"Taslama: <code>{esc(proj or '?')}</code>\n")
+            if a == "afs_chk" or a_.get("fs_key"):
+                await safe_edit(q, txt_ + "⏳ Barlanýar…", None)
+                res = await asyncio.to_thread(fs_check, proj, a_.get("fs_key"))
+                ok_all = len(res) >= 4 and all(r[1] for r in res)
+                app_mut(lambda x: x.update({"fs_proj": proj, "fs_ok": ok_all}))
+                if ok_all:
+                    try: await asyncio.to_thread(app_sync, True)
+                    except Exception as e: RUN["app_err"] = str(e)[:150]
+                txt_ += "\n".join(("✅ " if r[1] else "❌ ") + esc(r[0]) + (f" — <code>{esc(r[2])}</code>" if r[2] else "") for r in res) + "\n"
+                txt_ += ("\n<b>✅ Taýýar.</b> Programlar 10 minudyň içinde Firestore-a geçer." if ok_all else "")
+            txt_ += ("\n<b>Gurnamak</b> (bir gezek, VPN bilen console.cloud.google.com-da, şu taslamada):\n"
+                     "1) Firestore → «Create database» → Native mode → ýer: <code>eur3</code> ýa-da <code>nam5</code>\n"
+                     "2) Firestore → «Rules» → aşakdaky «📋 Düzgünler» tekstini goýup «Publish»\n"
+                     "3) IAM → hyzmat hasabyna (drive-sa.json-daky e-poçta) «Cloud Datastore User» roluny goş\n"
+                     "4) APIs &amp; Services → Credentials → «Create API key» → «Restrict key» → diňe «Cloud Firestore API» → açary «🔑 API açary» bilen iberiň")
+            await safe_edit(q, txt_, KB([[B("🔑 API açary", "afs_key", "primary"), B("📋 Düzgünler", "afs_rules")], [B("🔄 Barla", "afs_chk")] + ([B("↩️ Öçür", "afs_off", "danger")] if a_.get("fs_ok") else []), [B("◀️ Programma", "app_v")]])); return
+        if a == "afs_rules":
+            await safe_edit(q, "📋 <b>Firestore düzgünleri</b> — Rules bölümine doly göçürip goýuň:\n<pre>" + esc(FS_RULES) + "</pre>", back("afs")); return
+        if a == "afs_key":
+            STATE[uid] = {"action": "afs_key"}
+            await safe_edit(q, *prompt("🔑 <b>Firestore API açary</b>", "Google Cloud → Credentials-da döreden açaryňyzy iberiň (AIza… bilen başlaýar). Habaryňyz derrew pozulýar.", "afs")); return
+        if a == "afs_off":
+            app_mut(lambda x: x.update({"fs_ok": False}))
+            try: await asyncio.to_thread(app_sync, True)
+            except Exception as e: RUN["app_err"] = str(e)[:150]
+            await safe_edit(q, *app_view(load_db())); return
         if a == "arelay":
             STATE[uid] = {"action": "arelay"}; cur_ = a_.get("relay") or "ntfy.sh"
             t_, kb_ = prompt("📡 <b>Habar serweri (VPS)</b>", f"Häzir: <code>{esc(cur_)}</code>\n\nVPS-de gurnalan habar serweriniň salgysyny iberiň, meselem:\n<code>http://1.2.3.4:8090</code>\n"
@@ -3655,7 +3832,9 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
             fid = a_.get("fid")
             if not fid: await safe_edit(q, "ℹ️ Programın dosyası henüz yok.", back("app_v")); return
             if a.startswith("agd:"):
-                await asyncio.to_thread(ntfy_pub, app_topic(fid) + "g", app_enc(fid, json.dumps({"del": a.split(":", 1)[1]})))
+                mid_ = a.split(":", 1)[1]
+                if mid_.startswith("fs:"): await asyncio.to_thread(fs_delete, a_["fs_proj"], ["g/" + mid_[3:]])
+                else: await asyncio.to_thread(ntfy_pub, app_topic(fid) + "g", app_enc(fid, json.dumps({"del": mid_})))
             if a.startswith("agb:"):
                 dv = a.split(":", 1)[1]
                 app_mut(lambda x: x.__setitem__("gbans", list(dict.fromkeys((x.get("gbans") or []) + [dv]))))

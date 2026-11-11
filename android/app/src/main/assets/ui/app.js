@@ -319,7 +319,7 @@
       const ks = Object.keys(PH); if (ks.length > 80) ks.sort((a, b) => PH[a].at - PH[b].at).slice(0, ks.length - 80).forEach((k) => delete PH[k]);
       LS.set('ph', PH); up.gTick = (s.gTick || 0) + 1;
     } else if (e.k === 'diag') {
-      const r = e.r || {}; up.diag = r.tun === 200 ? 'dg_tun' : r.direct === 200 ? 'dg_dir' : 'dg_bad';
+      const r = e.r || {}; up.diag = r.fs !== undefined ? (r.fs === 200 || r.fs === 404 ? 'dg_fs' : 'dg_bad') : r.tun === 200 ? 'dg_tun' : r.direct === 200 ? 'dg_dir' : 'dg_bad';
     } else if (e.k === 'g') {
       G = (e.list || []).sort((a, b) => a.time - b.time).slice(-150);
       askPhotos();

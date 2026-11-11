@@ -233,7 +233,7 @@ class Main : Activity() {
             val nw = JSONArray(); Sub.news.forEach { (id, ts, j) -> nw.put(JSONObject().put("id", id).put("ts", ts).put("j", j)) }
             return JSONObject().put("dev", Msg.dev(c)).put("code", Msg.code(c)).put("ver", Msg.ver(c)).put("lang", Lang.cur)
                 .put("snd", Snd.on(c)).put("news", nw).put("ai", Sub.ai).put("online", Sub.online).put("bans", JSONArray(Sub.bans.toList()))
-                .put("key", Lic.saved(c) ?: "").put("model", Build.MANUFACTURER + " " + Build.MODEL).put("relay", Sub.relay.isNotEmpty()).toString()
+                .put("key", Lic.saved(c) ?: "").put("model", Build.MANUFACTURER + " " + Build.MODEL).put("relay", Sub.relay.isNotEmpty() || Fs.on()).put("fs", Fs.on()).toString()
         }
 
         @JavascriptInterface fun servers(): String {

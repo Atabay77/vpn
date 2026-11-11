@@ -158,7 +158,7 @@ object Msg {
     /** Global chat-a ýazmak (göni konuna). */
     fun gsend(ctx: Context, nick: String, text: String) {
         val o = JSONObject().put("i", dev(ctx)).put("n", nick.take(32)).put("t", text.take(600))
-        Thread { val e = enc(o.toString()); val tp = topicG(); val ok = e != null && tp != null && post(tp, e)
+        Thread { val e = enc(o.toString()); val tp = topicG(); val ok = e != null && (if (Fs.on()) Fs.write("g/" + Fs.newId(), e) else tp != null && post(tp, e))
             if (!ok) events.add(JSONObject().put("k", "gfail")) else { gAt = 0L; kick() } }.start()
     }
 
@@ -200,7 +200,7 @@ object Msg {
         while (true) {
             val first = synchronized(this) { JSONArray(prefs(c).getString("q", "[]")).let { if (it.length() == 0) null else it.getString(0) } } ?: return
             val e = enc(first) ?: return
-            if (!post(tp, e)) return
+            if (!(if (Fs.on()) Fs.write("m/" + Fs.newId(), e) else post(tp, e))) return
             synchronized(this) {
                 val q = JSONArray(prefs(c).getString("q", "[]")); val rest = JSONArray()
                 for (i in 1 until q.length()) rest.put(q.get(i))
@@ -210,13 +210,19 @@ object Msg {
     }
 
     private fun inbox(c: Context) {
-        val tp = topicMe(c) ?: return
         val p = prefs(c)
-        val list = poll(tp, p.getString("inId", null) ?: "12h") ?: return
+        // Firestore (VPN-siz): d/<telefon>/i — diňe täzeleri (t > soňky)
+        val list: List<Pair<String, String>> = if (Fs.on()) {
+            val got = Fs.query("d/" + dev(c), "i", p.getString("fsIn", null), 50) ?: return
+            got.map { (_, b, t) -> t to b }
+        } else {
+            val tp = topicMe(c) ?: return
+            (poll(tp, p.getString("inId", null) ?: "12h") ?: return).map { it.optString("id") to it.optString("message") }
+        }
         var seq = p.getInt("seq", 0)
-        for (m in list) {
-            p.edit().putString("inId", m.optString("id")).apply()
-            val o = dec(m.optString("message"))?.let { runCatching { JSONObject(it) }.getOrNull() } ?: continue
+        for ((id, body) in list) {
+            p.edit().putString(if (Fs.on()) "fsIn" else "inId", id).apply()
+            val o = dec(body)?.let { runCatching { JSONObject(it) }.getOrNull() } ?: continue
             val s = o.optInt("seq", 0)
             if (s in 1..seq) continue      // öň gelen habar (bot gaýtadan iberdi)
             if (s > 0) seq = s
@@ -230,18 +236,19 @@ object Msg {
     /** Profil suraty: hemmeler görer (diňe öz serweri bolanda, ntfy.sh uly faýly kabul etmeýär). */
     fun photo(ctx: Context, data: String) {
         val tp = base?.let { it + "p" + dev(ctx) } ?: return
-        if (Sub.relay.isEmpty()) return
+        if (Sub.relay.isEmpty() && !Fs.on()) return
         val o = JSONObject().put("ph", data.take(90_000)).put("v", System.currentTimeMillis() / 1000)
-        Thread { val e = enc(o.toString()); if (e != null && !post(tp, e)) events.add(JSONObject().put("k", "phfail")) }.start()
+        val d = dev(ctx)
+        Thread { val e = enc(o.toString()); if (e == null || !(if (Fs.on()) Fs.write("p/$d", e, create = false) else post(tp, e))) events.add(JSONObject().put("k", "phfail")) }.start()
     }
 
     /** Başga adamyň suraty. */
     fun getPhoto(dev: String) {
-        if (!Regex("^[0-9a-f]{12}$").matches(dev) || Sub.relay.isEmpty()) return
+        if (!Regex("^[0-9a-f]{12}$").matches(dev) || (Sub.relay.isEmpty() && !Fs.on())) return
         val tp = base?.let { it + "p" + dev } ?: return
         Thread {
-            val m = poll(tp, "all")?.lastOrNull() ?: return@Thread
-            val o = dec(m.optString("message"))?.let { runCatching { JSONObject(it) }.getOrNull() } ?: return@Thread
+            val body = if (Fs.on()) Fs.get("p/$dev")?.first else poll(tp, "all")?.lastOrNull()?.optString("message")
+            val o = body?.let { dec(it) }?.let { runCatching { JSONObject(it) }.getOrNull() } ?: return@Thread
             events.add(JSONObject().put("k", "ph").put("dev", dev).put("d", o.optString("ph")).put("v", o.optLong("v")))
         }.start()
     }
@@ -250,6 +257,7 @@ object Msg {
     fun diag(): JSONObject {
         val u = host() + "health"
         fun t(via: Boolean) = runCatching { val c = open(u, via); val code = c.responseCode; c.disconnect(); code }.getOrElse { -1 }
+        if (Fs.on()) return JSONObject().put("fs", Fs.ping())
         return JSONObject().put("relay", Sub.relay.isNotEmpty()).put("tun", if (State.now == State.ON && State.socks > 0) t(true) else 0).put("direct", t(false))
     }
 
@@ -268,7 +276,25 @@ object Msg {
         out
     }
 
+    // Firestore Global chat: ilki soňky 60, soň diňe täzeler (okalyş az bolsun); 3 minutda bir doly täzelenýär (pozulanlar gitsin)
+    private val gfs = ArrayList<JSONObject>(); @Volatile private var gfsT: String? = null; @Volatile private var gfsFull = 0L
+
+    private fun globalFs() {
+        val now = System.currentTimeMillis()
+        val full = gfsT == null || now - gfsFull > 180_000
+        val got = (if (full) Fs.query("", "g", null, 60, desc = true)?.reversed() else Fs.query("", "g", gfsT, 50)) ?: return
+        if (full) { gfs.clear(); gfsFull = now }
+        for ((id, b, t) in got) {
+            gfsT = t
+            val o = dec(b)?.let { runCatching { JSONObject(it) }.getOrNull() } ?: continue
+            gfs.add(JSONObject().put("id", id).put("time", Fs.sec(t)).put("i", o.optString("i")).put("n", o.optString("n")).put("t", o.optString("t")))
+        }
+        while (gfs.size > 150) gfs.removeAt(0)
+        events.add(JSONObject().put("k", "g").put("list", JSONArray(gfs.toList())).put("del", JSONArray()))
+    }
+
     private fun global() {
+        if (Fs.on()) { globalFs(); return }
         val tp = topicG() ?: return
         val list = poll(tp, "12h") ?: return
         val arr = JSONArray(); val del = JSONArray()
