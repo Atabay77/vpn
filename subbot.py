@@ -870,7 +870,7 @@ def app_meta(cfg):
     if cfg.get("gbans"): out.append("#tvban: " + ",".join(cfg["gbans"][-200:]))
     rel = (os.environ.get("RELAY_URL") or cfg.get("relay") or "").strip().rstrip("/")
     if rel: out.append(f"#tvrel: {rel}")
-    if cfg.get("fs_proj") and cfg.get("fs_key") and cfg.get("fs_ok"): out.append(f"#tvfs: {cfg['fs_proj']} {cfg['fs_key']}")
+    if cfg.get("fs_proj") and cfg.get("fs_key") and cfg.get("fs_ok"): out.append(f"#tvfs: {cfg['fs_proj']} {cfg['fs_key']}" + (f" {cfg['fs_db']}" if cfg.get("fs_db") and cfg["fs_db"] != "(default)" else ""))
     for abi, u in sorted((cfg.get("upd") or {}).items()):
         if u.get("fid") and u.get("ver"): out.append(f"#tvu{abi}: {u['ver']} {u['fid']}")
     ad = cfg.get("ad") or {}
@@ -1134,7 +1134,15 @@ def fs_token():
     _FS_TOK.update(tok=cr.token, exp=time.time() + 3000)
     return cr.token
 
-def fs_base(proj): return f"https://firestore.googleapis.com/v1/projects/{proj}/databases/(default)/documents"
+FS_DB = {"id": None}
+def fs_db():
+    """Bazanyň ady: köplenç «(default)», Firebase käwagt «default» diýip döredýär (barlagda tapylýar)."""
+    if FS_DB["id"] is None:
+        try: FS_DB["id"] = app_cfg(load_db()).get("fs_db") or "(default)"
+        except Exception: FS_DB["id"] = "(default)"
+    return FS_DB["id"]
+
+def fs_base(proj): return f"https://firestore.googleapis.com/v1/projects/{proj}/databases/{fs_db()}/documents"
 
 def fs_req(method, url, body=None, key=None):
     """Firestore REST. key berilse API açary (programyň ýoly), ýogsa hyzmat hasaby."""
@@ -1152,14 +1160,14 @@ def fs_req(method, url, body=None, key=None):
 
 def fs_write(proj, path, b, key=None, create=True):
     """Resminama: b (şifrli tekst) + t (serweriň wagty)."""
-    name = f"projects/{proj}/databases/(default)/documents/{path}"
+    name = f"projects/{proj}/databases/{fs_db()}/documents/{path}"
     w = {"update": {"name": name, "fields": {"b": {"stringValue": b}}}, "updateTransforms": [{"fieldPath": "t", "setToServerValue": "REQUEST_TIME"}]}
     if create: w["currentDocument"] = {"exists": False}
     return fs_req("POST", fs_base(proj) + ":commit", {"writes": [w]}, key)
 
 def fs_delete(proj, paths):
     if not paths: return
-    ws = [{"delete": f"projects/{proj}/databases/(default)/documents/{p}"} for p in paths[:400]]
+    ws = [{"delete": f"projects/{proj}/databases/{fs_db()}/documents/{p}"} for p in paths[:400]]
     fs_req("POST", fs_base(proj) + ":commit", {"writes": ws})
 
 def fs_query(proj, parent, coll, after=None, limit=100, desc=False, key=None):
@@ -1180,10 +1188,17 @@ def fs_check(proj, key):
     res = []
     try: fs_token(); res.append(("Hyzmat hasaby (drive-sa.json)", True, ""))
     except Exception as e: res.append(("Hyzmat hasaby (drive-sa.json)", False, str(e)[:120])); return res
-    try:
-        fs_write(proj, "z/bot", "v1.test", create=False); fs_delete(proj, ["z/bot"]); res.append(("Firestore bazasy + bota rugsat", True, ""))
-    except Exception as e:
-        res.append(("Firestore bazasy + bota rugsat", False, str(e)[:160])); return res
+    err = ""
+    for db in dict.fromkeys([app_cfg(load_db()).get("fs_db") or "(default)", "(default)", "default"]):
+        FS_DB["id"] = db
+        try:
+            fs_write(proj, "z/bot", "v1.test", create=False); fs_delete(proj, ["z/bot"]); err = ""
+            app_mut(lambda x: x.__setitem__("fs_db", db)); break
+        except Exception as e:
+            err = str(e)[:160]
+            if "does not exist" not in err and "NOT_FOUND" not in err: break
+    if err: res.append(("Firestore bazasy + bota rugsat", False, err)); return res
+    res.append(("Firestore bazasy + bota rugsat", True, "baza: " + fs_db()))
     if not key: res.append(("API açary", False, "heniz berilmedi")); return res
     try:
         fs_write(proj, "m/test" + format(int(time.time()), "x"), "v1.test", key=key); res.append(("Programyň ýoly (API açary + düzgünler)", True, ""))

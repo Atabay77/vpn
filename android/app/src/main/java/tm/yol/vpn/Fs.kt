@@ -14,7 +14,7 @@ import java.net.URLEncoder
  */
 object Fs {
     fun on() = Sub.fsProj.isNotEmpty() && Sub.fsKey.isNotEmpty()
-    private fun root() = "projects/${Sub.fsProj}/databases/(default)/documents"
+    private fun root() = "projects/${Sub.fsProj}/databases/${Sub.fsDb}/documents"
     @Volatile var api = "https://firestore.googleapis.com"   // synag üçin üýtgedip bolýar
     private fun base() = "$api/v1/" + root()
 

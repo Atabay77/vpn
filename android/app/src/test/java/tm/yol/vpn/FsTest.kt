@@ -56,6 +56,7 @@ class FsTest {
             assertEquals("GREATER_THAN", sq.getJSONObject("where").getJSONObject("fieldFilter").getString("op"))
             assertEquals("v1.ph" to "2026-11-11T10:00:02Z", Fs.get("p/abcdef123456"))
             assertEquals(1794391200L, Fs.sec("2026-11-11T10:00:00.5Z"))
+            Sub.meta("#tvfs: proj1 AIzaKEY000000000000000000000000000000 default\nss://x@1.1.1.1:1#a"); assertEquals("default", Sub.fsDb)
             Sub.meta("#tvfs: proj1 notakey\nss://x@1.1.1.1:1#a"); assertTrue(!Fs.on())   // ýalňyş açar kabul edilmeýär
         } finally { ss.close(); th.join(1000); Fs.api = "https://firestore.googleapis.com" }
     }
