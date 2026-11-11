@@ -2032,7 +2032,9 @@ def mail_fetch():
         M.login(me, pw)
         st_all = dict(load_db().get("mail_st", {}))
         if "base" in st_all: st_all = {"INBOX": {"base": st_all["base"], "done": st_all.get("done", [])}}   # eski biçim
-        boxes = ["INBOX"] + [b for b in [_mail_junk(M)] if b]
+        junk = _mail_junk(M)
+        boxes = ["INBOX"] + [b for b in [junk] if b]
+        mids = list(load_db().get("mail_mids", []))   # işlenen mailler (Message-ID): Spam'den Gelen'e taşınınca tekrar işlenmesin
         for box in boxes:
             if M.select('"' + box + '"', readonly=True)[0] != "OK": continue   # salt okunur: hiçbir maili okundu yapmaz
             st = st_all.get(box)
@@ -2044,16 +2046,30 @@ def mail_fetch():
             uids = sorted(int(x) for x in (data[0].split() if data and data[0] else []))
             done = set(st.get("done", []))
             new = [u for u in uids if u >= st["base"] and u not in done][-40:]
+            to_inbox = []
             for u in new:
                 _, sz = M.uid("FETCH", str(u), "(RFC822.SIZE)")
                 msz = re.search(rb"RFC822.SIZE (\d+)", (sz[0] if sz and isinstance(sz[0], bytes) else b"") or b"")
                 if msz and int(msz.group(1)) > 300000: continue   # büyük (ekli) mail: istek değildir
                 _, msg = M.uid("FETCH", str(u), "(BODY.PEEK[])")
-                try: r = mail_parse(email.message_from_bytes(msg[0][1]), me, kw)
-                except Exception: r = None
-                if r: out.append(r)
+                try:
+                    em_ = email.message_from_bytes(msg[0][1]); mid_ = (em_.get("Message-ID") or "").strip()
+                    r = None if (mid_ and mid_ in mids) else mail_parse(em_, me, kw)
+                except Exception: r = None; mid_ = ""
+                if r:
+                    out.append(r)
+                    if mid_: mids.append(mid_)
+                    if box == junk: to_inbox.append(str(u))
             st_all[box] = {"base": st["base"], "done": (st.get("done", []) + new)[-300:]}; seen_n += len(new)
-        mutate(lambda d: d.__setitem__("mail_st", st_all))
+            if to_inbox:   # Spam'e düşen istekler Gelen kutusuna taşınır (Gmail de bunları spam saymamayı öğrenir)
+                try:
+                    if M.select('"' + box + '"', readonly=False)[0] == "OK":
+                        typ, _ = M.uid("MOVE", ",".join(to_inbox), "INBOX")
+                        if typ != "OK":
+                            M.uid("COPY", ",".join(to_inbox), "INBOX"); M.uid("STORE", ",".join(to_inbox), "+FLAGS", "(\\Deleted)"); M.expunge()
+                        RUN["mail_moved"] = RUN.get("mail_moved", 0) + len(to_inbox)
+                except Exception as e: log.info("mail move: %s", e)
+        mutate(lambda d: (d.__setitem__("mail_st", st_all), d.__setitem__("mail_mids", mids[-500:])))
         RUN["mail_last"] = (time.time(), seen_n, len(out), len(boxes))   # /gmail durumunda görünür
     finally:
         try: M.logout()
@@ -2203,6 +2219,7 @@ async def cmd_gmail(u: Update, c: ContextTypes.DEFAULT_TYPE):
     me, pw, kw = mail_cfg()
     ml = RUN.get("mail_last"); st_ = load_db().get("mail_st", {})
     diag = (f"\n🕒 Son kontrol  {ago(ml[0])} · {ml[1]} yeni mail bakıldı · {ml[2]} istek · {ml[3] if len(ml) > 3 else 1} klasör (Gelen + Spam)" if ml else "\n🕒 Son kontrol  henüz yok")
+    diag += (f"\n📥 Spam'den Gelen kutusuna taşınan istek  {RUN['mail_moved']}" if RUN.get("mail_moved") else "")
     diag += (f"\n⚠️ Hata  {esc(RUN['mail_err'])}" if RUN.get("mail_err") else "") + ("" if st_ else "\nℹ️ Başlangıç noktası henüz kaydedilmedi")
     await c.bot.send_message(uid, (f"📧 <b>Gmail'den kod: açık</b>\n<blockquote>{esc(me)} · kelime <code>{esc(kw)}</code>\nSon 1 saatte verilen  {len([t for t in MAIL_SENT if time.time() - t < 3600])}{diag}</blockquote>" if all((me, pw, kw)) else "📧 <b>Gmail'den kod: kapalı</b>")
                                + "\n<i>Açmak: /gmail adres@gmail.com uygulama_şifresi parça1+parça2 (kelimede ikisi de geçmeli)\nKapatmak: /gmail kapat\nUygulama şifresi: Google hesabı → Güvenlik → 2 adımlı doğrulama açık → Uygulama şifreleri.</i>", parse_mode="HTML")
