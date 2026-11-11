@@ -1161,12 +1161,11 @@ async def run_check(app, force=False):
             FAIL["t"] = time.time()
             await notify_founders(app, f"❌ <b>Abonelik kontrolü başarısız</b>\n{esc(r['error'])}\n<i>Abonelik linklerinden kod okunamadı; Drive'daki kodlara dokunulmadı.</i>")
     elif r:
-        # kodlar sohbete yazılmaz; ayrıntı 📜 Loglar'da
-        head = (f"🔄 Kodlar güncellendi{' (elle)' if r['force'] else ''}: {len(r['codes'])} kod · "
-                f"Drive {r['ok']}/{r['total']} {'✅' if not r['bad'] else '⚠️'}")
-        await notify_founders(app, head, KB([[B("📜 Loglar", callback_data="logs")]]), silent=True)   # sessiz bildirim
+        # «Kodlar güncellendi» artık sohbete gelmez; yalnız 📜 Loglar'a yazılır
+        vlog(f"🔄 Kodlar güncellendi{' (elle)' if r['force'] else ''}: {len(r['codes'])} kod · "
+             f"Drive {r['ok']}/{r['total']} {'✅' if not r['bad'] else '⚠️'}")
     alert = RUN.pop("tm_alert", None)
-    if alert: await notify_founders(app, esc(alert), silent=True)
+    if alert: vlog(alert)   # Termux uyarısı da yalnız loglarda
     return r
 
 def start_refresh(app, why):
