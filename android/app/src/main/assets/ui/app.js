@@ -70,7 +70,7 @@
       this.setState({ chat: s.chat.concat([{ id, who: 'u', t: text, time: this.hm(id), tick: '✓' }]), chatIn: '', fb: '',
         myTkSt: s.myTkSt === 'closed' || !s.myTkSt ? 'open' : s.myTkSt, aiTyping: !!INFO.ai && !s.human });
       NB.send(JSON.stringify({ k: 'tk', t: text, nick: this.meName, tid: s.tkId || 0 }));
-      if (s.st !== 'on') this.say(tx.q_wait);
+      if (s.st !== 'on' && !INFO.fs) this.say(tx.q_wait);
       clearTimeout(this.aiT); this.aiT = setTimeout(() => this.setState({ aiTyping: false }), 90000);
     };
 
@@ -188,7 +188,7 @@
     C.sendG = () => {
       const t = C.state.gIn.trim().slice(0, 600); if (!t) return;
       NB.gsend(C.meName, t); C.setState({ gIn: '' });
-      if (C.state.st !== 'on') C.say(C.T()[C.state.lang].q_wait);
+      if (C.state.st !== 'on' && !INFO.fs) C.say(C.T()[C.state.lang].q_wait);
     };
     const sr0 = C.sendRate;
     C.sendRate = () => {
