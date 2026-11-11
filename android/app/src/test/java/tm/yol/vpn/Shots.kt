@@ -53,7 +53,7 @@ ss://YWVzLTI1Ni1nY206cA==@10.0.0.6:6#🇹🇷 Türkiye · 🌙 Crescent Link
         val a = Robolectric.buildActivity(Main::class.java).setup().get()
         snap(a, "0_acilis")
         page(a, "MAIN"); snap(a, "1_ana_kapali")
-        State.active = Sub.list[0]; State.now = State.ON; page(a, "MAIN"); snap(a, "2_ana_bagli")
+        State.active = Sub.list[0]; State.ms = 84; State.now = State.ON; page(a, "MAIN"); snap(a, "2_ana_bagli")
         Sub.upd = mapOf("all" to ("9.9" to "X")); page(a, "MAIN"); snap(a, "3_guncelleme"); Sub.upd = emptyMap()
         val om = Main::class.java.getDeclaredMethod("openMenu"); om.isAccessible = true; om.invoke(a); snap(a, "4_menu")
         val cm = Main::class.java.getDeclaredMethod("closeMenu"); cm.isAccessible = true; cm.invoke(a)

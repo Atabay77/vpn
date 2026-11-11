@@ -63,6 +63,7 @@ class Main : Activity() {
     private var down: TextView? = null
     private var up: TextView? = null
     private var spark: Spark? = null
+    private var msPill: TextView? = null            // bağlıyken kartta sunucunun ms'i
     private var updBar: NeonBar? = null
     private var updTxt: TextView? = null
     private var adBox: FrameLayout? = null
@@ -84,9 +85,9 @@ class Main : Activity() {
     private val h = Handler(Looper.getMainLooper())
     private val listener: () -> Unit = { renderState() }
     private val taps = ArrayList<Pair<Int, Long>>()
-    private var lastRx = -1L; private var lastTx = -1L
+    private var lastRx = -1L; private var lastTx = -1L; private var lastT = 0L
+    private var msAt = 0L; private var msFails = 0; private var tapAt = 0L
     private var rx0 = -1L; private var tx0 = -1L
-    private var pingAt = 0L
 
     override fun onCreate(b: Bundle?) {
         super.onCreate(b)
@@ -107,7 +108,7 @@ class Main : Activity() {
         if (b == null && State.now != State.ON && State.now != State.WAIT) State.select(this, null)
         if (Build.VERSION.SDK_INT >= 33) requestPermissions(arrayOf("android.permission.POST_NOTIFICATIONS"), 2)
         if (b == null && State.now != State.ON) splash() else { ready = true; show(Page.MAIN) }
-        handle(intent)
+        if (b == null) handle(intent)
     }
 
     /** Açılış: önce sunucular güncellenir, sonra ana menü açılır. */
@@ -237,9 +238,10 @@ class Main : Activity() {
 
     // ---------- sayfalar ----------
     private fun show(p: Page) {
+        if (adBox?.visibility == View.VISIBLE) { adDone = true; h.removeCallbacks(adHide) }   // reklam açılışta bir kez
         cur = p
         page.removeAllViews(); msViews.clear()
-        power = null; status = null; hint = null; card = null; timer = null; timerLbl = null; down = null; up = null; spark = null
+        power = null; status = null; hint = null; card = null; timer = null; timerLbl = null; down = null; up = null; spark = null; msPill = null
         updBar = null; updTxt = null; adBox = null; testBtn = null
         bigDown = null; bigUp = null; bigSpark = null; totals = null; pingTv = null; offHint = null
         val v = when (p) {
@@ -292,7 +294,9 @@ class Main : Activity() {
 
         col.addView(View(this), LinearLayout.LayoutParams(-1, 0, 0.42f))
         val mid = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER }
-        power = Power(this).apply { isClickable = true; setOnClickListener { Snd.play(this@Main, R.raw.tap, 0.5f); toggle() }; pressFx() }
+        power = Power(this).apply { isClickable = true; setOnClickListener {
+            val now = System.currentTimeMillis(); if (now - tapAt < 800) return@setOnClickListener; tapAt = now
+            Snd.play(this@Main, R.raw.tap, 0.5f); toggle() }; pressFx() }
         mid.addView(power)
         status = text("", 18f, C.TEXT, true).apply { gravity = Gravity.CENTER; setPadding(0, dpi(4), 0, dpi(1)); setShadowLayer(dp(6f), 0f, dp(1f), Color.BLACK) }
         hint = text("", 12f, C.MUTED).apply { gravity = Gravity.CENTER; setShadowLayer(dp(5f), 0f, dp(1f), Color.BLACK) }
@@ -537,12 +541,38 @@ class Main : Activity() {
             LinearLayout.LayoutParams(dpi(1), dpi(26)).apply { leftMargin = dpi(10); rightMargin = dpi(10) })
         c.addView(text(c1, 14f, C.TEXT, true).apply { oneLine() }); c.addView(text(c2, 11f, C.MUTED).apply { oneLine() })
         card.addView(c, LinearLayout.LayoutParams(0, -2, 1f))
+        msPill = if (a == null) null else mono("", 12f, C.MUTED).apply {
+            gravity = Gravity.CENTER; setPadding(dpi(9), dpi(4), dpi(9), dpi(4)); contentDescription = "ping"
+            card.addView(this, LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dpi(6); rightMargin = dpi(6) })
+        }
+        paintMsPill()
         card.addView(Ico(this, "next", C.GOLD, 16f))
+    }
+
+    /** Bağlı sunucunun ms'i: yeşil < 300, sarı < 800, kırmızı üstü. */
+    private fun paintMsPill() {
+        val m = State.ms
+        val (tx, col) = if (m == 0L) "… ms" to C.MUTED else msText(m)
+        msPill?.let { it.text = tx; it.setTextColor(col); it.background = box(Color.argb(150, 6, 18, 12), col, 10f) }
+        pingTv?.let { it.text = if (m > 0) "$m ms" else "—" }
+    }
+
+    /** Bağlıyken tünel içinden ölçer (ana sayfada 10 sn, hız sayfasında 5 sn'de bir). */
+    private fun measureLive() {
+        if (msPill == null && pingTv == null) return
+        val now = System.currentTimeMillis()
+        if (now - msAt < (if (pingTv != null) 5000 else 10_000)) return
+        msAt = now
+        bg {
+            val v = runCatching { State.core?.measureDelay(State.PING) ?: -1L }.getOrDefault(-1L)
+            if (v > 0) { State.ms = v; msFails = 0 } else if (++msFails >= 2 || State.ms <= 0) State.ms = -1   // bir kez kaçarsa hemen n/a yazma
+            ui { if (State.now == State.ON) paintMsPill() }
+        }
     }
 
     private fun renderState() {
         val st = State.now
-        if (lastState == State.WAIT && st == State.ON) Snd.play(this, R.raw.on)
+        if (lastState == State.WAIT && st == State.ON) { Snd.play(this, R.raw.on); msAt = System.currentTimeMillis() - 8000; msFails = 0 }   // ilk canlı ölçüm 2 sn sonra
         if (lastState == State.WAIT && st == State.FAIL && State.noNet) { State.noNet = false; info(t("Internetiňiz ýok. Telefonyň internetini (Wi-Fi ýa-da mobil internet) barlaň.",
             "Нет интернета. Проверьте Wi-Fi или мобильный интернет.", "İnternetiniz yok. Wi-Fi'yi ya da mobil veriyi kontrol edin.")) }
         if (lastState == State.WAIT && st == State.FAIL && State.noPing) { State.noPing = false; info(noCodes()) }
@@ -603,18 +633,18 @@ class Main : Activity() {
                 val uid = Process.myUid()
                 val rx = TrafficStats.getUidRxBytes(uid); val tx = TrafficStats.getUidTxBytes(uid)
                 if (rx0 < 0) { rx0 = rx; tx0 = tx }
-                if (lastRx >= 0 && rx >= lastRx) {
-                    val d = rx - lastRx; val u = tx - lastTx
+                val now = android.os.SystemClock.elapsedRealtime()
+                if (lastRx < 0 || rx < lastRx || tx < lastTx) { lastRx = rx; lastTx = tx; lastT = now }
+                else if (now - lastT >= 800) {
+                    val dt = now - lastT
+                    val d = (rx - lastRx) * 1000 / dt; val u = (tx - lastTx) * 1000 / dt
                     down?.text = "↓ " + rate(d); up?.text = "↑ " + rate(u)
                     bigDown?.text = rate(d); bigUp?.text = rate(u)
                     spark?.add(d.toFloat()); bigSpark?.add(d.toFloat())
                     totals?.text = "↓ ${size(rx - rx0)}\n↑ ${size(tx - tx0)}"
+                    lastRx = rx; lastTx = tx; lastT = now
                 }
-                lastRx = rx; lastTx = tx
-                if (pingTv != null && System.currentTimeMillis() - pingAt > 5000) {
-                    pingAt = System.currentTimeMillis()
-                    bg { val v = runCatching { State.core?.measureDelay(State.PING) ?: -1L }.getOrDefault(-1L); ui { pingTv?.text = if (v > 0) "$v ms" else "—" } }
-                }
+                measureLive()
             } else {
                 down?.text = "↓ 0 B/s"; up?.text = "↑ 0 B/s"
                 bigDown?.text = "0 B/s"; bigUp?.text = "0 B/s"; pingTv?.text = "—"
@@ -709,10 +739,11 @@ class Main : Activity() {
             if (!f.exists()) runCatching {
                 val c = URL(Sub.fileUrl(ad.first)).openConnection() as HttpURLConnection
                 c.connectTimeout = 8000; c.readTimeout = 15000
-                if (c.responseCode == 200) c.inputStream.use { i -> f.outputStream().use { i.copyTo(it) } }
+                val tmp = File(cacheDir, "ad_tmp")   // yarım inerse bozuk dosya kalmasın: önce geçici dosyaya
+                if (c.responseCode == 200) { c.inputStream.use { i -> tmp.outputStream().use { i.copyTo(it) } }; tmp.renameTo(f) }
                 c.disconnect()
             }
-            val bmp = runCatching { BitmapFactory.decodeFile(f.path) }.getOrNull() ?: return@bg
+            val bmp = runCatching { BitmapFactory.decodeFile(f.path) }.getOrNull() ?: run { f.delete(); return@bg }
             ui {
                 if (adBox !== box) return@ui
                 val area = box.parent as? View ?: return@ui
@@ -874,7 +905,7 @@ class Main : Activity() {
 
     private fun pick(s: Server?) {
         State.select(this, s)
-        if (State.now == State.ON) startVpn()
+        if (State.now == State.ON || State.now == State.WAIT) startVpn()
         show(Page.MAIN)
     }
 
