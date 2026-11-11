@@ -39,6 +39,8 @@
   let G = [];           // Global chat habarlary
   let gDel = {};
   let lastSt = 'off', lastOn = 0, lastRx = 0, sessKB = 0;
+  let PH = LS.get('ph', {});   // başgalaryň profil suratlary: telefon → {d, at}
+  const phAsked = {};
 
   function loadServers() {
     const r = J(NB.servers(), { list: [], pings: {} });
@@ -75,6 +77,7 @@
     const rv0 = P.renderVals;
     P.renderVals = function () {
       const r = rv0.call(this), s = this.state, tx = r.tx, on = s.st === 'on', now = Date.now();
+      if (INFO.ver) ['s_updS', 'i_ver'].forEach((k) => { tx[k] = String(tx[k]).replace(/1\.\d+(\.\d+)?/, INFO.ver); });
       const kexp = s.kexp; // -1 ýok, 0 çäksiz, >0 möhlet (sn)
       const keyLeft = kexp > 0 ? Math.max(0, kexp - now / 1000) : 0;
       const fmtLeft = (sec) => { const hh = Math.floor(sec / 3600), mm = Math.floor(sec % 3600 / 60); return hh >= 24 ? Math.floor(hh / 24) + ' ' + tx.days + ' ' + (hh % 24) + ' ' + tx.hh : hh + ' ' + tx.hh + ' ' + two(mm) + ' ' + tx.mm; };
@@ -125,7 +128,8 @@
       const gl = G.filter((m) => !gDel[m.id] && bans.indexOf(m.i) < 0);
       r.gMsgs = gl.map((m) => {
         const mine = m.i === me, nm = mine ? this.meName : m.n || '?';
-        return { name: nm + (mine ? ' · ' + tx.g_you : ''), ini: ini(nm), bg: mine ? '#E0B04A' : colorOf(m.i), nc: mine ? '#06100B' : colorOf(m.i), photo: mine ? s.photo : '', hasPh: mine && !!s.photo, noPh: !(mine && s.photo),
+        const ph = mine ? s.photo : ((PH[m.i] || {}).d || '');
+        return { name: nm + (mine ? ' · ' + tx.g_you : ''), ini: ini(nm), bg: mine ? '#E0B04A' : colorOf(m.i), nc: mine ? '#06100B' : colorOf(m.i), photo: ph, hasPh: !!ph, noPh: !ph,
           t: m.t, time: this.hm((m.time || 0) * 1000 || now), gk: m.id, cls: mine ? 'gm-me' : 'gm-o', bcls: mine ? 'gb-me' : 'gb-o', canDel: false, del: null };
       });
       const onl = INFO.online > 0 ? tx.g_online.replace('{n}', String(INFO.online)) : '';
@@ -140,6 +144,9 @@
         if (o.t === tx.s_key) return Object.assign({}, o, { s: s.hasKey ? r.keyCur : tx.s_keyS });
         return o;
       });
+      const ic = this.icons();
+      r.opts = r.opts.concat([{ i1: ic.global[0], i2: ic.global[1], t: tx.s_diag, s: s.diag ? tx[s.diag] : tx.s_diagS, isSw: false, isBtn: true, arrow: 'M9 6l6 6-6 6', icCls: '', isSeg: false, segs: [], aria: 'false', swCls: '', d: '0.35',
+        on: () => { this.setState({ diag: 'dg_wait' }); NB.diag(); } }]);
       // menýu: admin bölümi 1.15-de
       r.menuItems = r.menuItems.filter((m) => m.t !== tx.p_admin).map((m) => (m.t === tx.p_global ? Object.assign({}, m, { badge: INFO.online > 0, bt: '● ' + INFO.online }) : m));
       return r;
@@ -244,12 +251,40 @@
     if (lastPick !== null && s2.pick !== lastPick) { lastPick = s2.pick; const v = SV[s2.pick]; NB.select(v ? v.id : ''); }
     if (lastLang !== s2.lang) { if (lastLang !== null) { NB.lang(s2.lang); INFO = J(NB.info(), INFO); } lastLang = s2.lang; }
     if (lastPage !== s2.page) { NB.gwatch(s2.page === 'global'); lastPage = s2.page; }
+    if (INFO.relay) syncPhoto(C);
     if (now - saveAt > 2000) {
       saveAt = now;
       ['bgMode', 'favs', 'read', 'chat', 'tkId', 'myTkSt', 'fb', 'human', 'photo', 'rateCount', 'rateNext', 'tkNews', 'svTab', 'uMode', 'refSet', 'invites', 'warnHidden', 'usage', 'hist2', 'seenNews']
         .forEach((k) => LS.set(k, s2[k]));
     }
     if (dayKey(now) !== C._day) { C._day = dayKey(now); gift(C, false); }
+  }
+
+  /** Global chat-da görünýän adamlaryň suratlary (6 sagatda bir täzelenýär). */
+  function askPhotos() {
+    const now = Date.now(); let n = 0;
+    for (const m of G) {
+      if (m.i === INFO.dev || phAsked[m.i] || n >= 6) continue;
+      const c = PH[m.i]; if (c && now - c.at < 6 * 3600000) continue;
+      phAsked[m.i] = 1; n++; NB.getPhoto(m.i);
+    }
+  }
+
+  /** Öz suratyň: kiçeldip serwere (hemmeler görsün). */
+  let sentPh = null, phWait = 0;
+  function syncPhoto(C) {
+    const d = C.state.photo || '';
+    if (sentPh === null) { sentPh = LS.get('phSent', ''); }
+    if (d === sentPh || Date.now() < phWait) return;
+    sentPh = d; LS.set('phSent', d);
+    if (!d) { NB.photo(''); return; }
+    const img = new Image();
+    img.onload = () => {
+      const z = 128, k = Math.max(z / img.width, z / img.height), cv = document.createElement('canvas'); cv.width = z; cv.height = z;
+      cv.getContext('2d').drawImage(img, (z - img.width * k) / 2, (z - img.height * k) / 2, img.width * k, img.height * k);
+      NB.photo(cv.toDataURL('image/jpeg', 0.8));
+    };
+    img.src = d;
   }
 
   function news(C, up) {
@@ -274,8 +309,17 @@
       showAd(e.link);
     } else if (e.k === 'gfail') {
       C.say(tx.g_fail);
+    } else if (e.k === 'phfail') {
+      C.say(tx.ph_fail); sentPh = '\u0000'; phWait = Date.now() + 60000;
+    } else if (e.k === 'ph') {
+      PH[e.dev] = { d: /^data:image\/(jpeg|png);base64,/.test(e.d || '') ? e.d : '', at: Date.now() };
+      const ks = Object.keys(PH); if (ks.length > 80) ks.sort((a, b) => PH[a].at - PH[b].at).slice(0, ks.length - 80).forEach((k) => delete PH[k]);
+      LS.set('ph', PH); up.gTick = (s.gTick || 0) + 1;
+    } else if (e.k === 'diag') {
+      const r = e.r || {}; up.diag = r.tun === 200 ? 'dg_tun' : r.direct === 200 ? 'dg_dir' : 'dg_bad';
     } else if (e.k === 'g') {
       G = (e.list || []).sort((a, b) => a.time - b.time).slice(-150);
+      askPhotos();
       (e.del || []).forEach((id) => { gDel[id] = true; });
       INFO = J(NB.info(), INFO);
       up.gTick = (s.gTick || 0) + 1;

@@ -103,9 +103,10 @@ object Cfg {
         if (tun) {
             val ins = JSONArray().put(JSONObject().put("tag", "tun").put("protocol", "tun")
                 .put("settings", JSONObject().put("name", "tun0").put("mtu", 1500)))
-            // programmanyň öz habarlary (bot, Global chat) üçin: diňe şu telefonyň içinden ýetip bolýar
-            if (socks > 0) ins.put(JSONObject().put("tag", "loc").put("protocol", "socks").put("listen", "127.0.0.1").put("port", socks)
-                .put("settings", JSONObject().put("auth", "noauth").put("udp", false)))
+            // programmanyň öz habarlary (bot, Global chat) üçin HTTP proksi: diňe şu telefonyň içinden ýetip bolýar.
+            // (SOCKS däl: Android-yň köne SOCKS müşderisi salgyny telefonda çözýär, Türkmenistanda bu ýapyk bolup biler)
+            if (socks > 0) ins.put(JSONObject().put("tag", "loc").put("protocol", "http").put("listen", "127.0.0.1").put("port", socks)
+                .put("settings", JSONObject().put("allowTransparent", false)))
             c.put("inbounds", ins)
         }
         c.put("outbounds", JSONArray()

@@ -35,6 +35,7 @@ object Sub {
     @Volatile var online = 0                                            // häzir VPN-de näçe adam (bot hasaplaýar)
     @Volatile var ai = false                                            // botda AI kömekçi açyk
     @Volatile var bans: Set<String> = emptySet()                        // Global chat-da gadagan edilen telefonlar
+    @Volatile var relay = ""                                            // öz habar serweri (VPS); boş bolsa ntfy.sh
 
     private fun body(text: String) = text.trim().let { t ->
         if (t.contains("://") || t.startsWith("#")) t else runCatching {
@@ -45,7 +46,7 @@ object Sub {
     /** Botun yazdığı gizli satırlar: «#tvk: özet bitiş» ve «#tvu64: sürüm dosya». */
     fun meta(text: String) {
         val k = HashMap<String, Long>(); val u = HashMap<String, Pair<String, String>>(); var a: Pair<String, String>? = null
-        val kd = HashMap<String, String>(); val nw = ArrayList<Triple<String, Long, String>>(); var on = 0; var aiOn = false; val bn = HashSet<String>()
+        val kd = HashMap<String, String>(); val nw = ArrayList<Triple<String, Long, String>>(); var on = 0; var aiOn = false; val bn = HashSet<String>(); var rel = ""
         for (l in body(text).lineSequence()) {
             val p = l.trim().split(Regex("\\s+"))
             if (p.size >= 3 && p[0] == "#tvk:") p[2].toLongOrNull()?.let { k[p[1]] = it; if (p.size >= 4) kd[p[1]] = p[3] }
@@ -55,10 +56,11 @@ object Sub {
             if (p.size >= 2 && p[0] == "#tvon:") on = p[1].toIntOrNull() ?: 0
             if (p.size >= 2 && p[0] == "#tvai:") aiOn = p[1] == "1"
             if (p.size >= 2 && p[0] == "#tvban:") bn.addAll(p[1].split(',').filter { it.isNotBlank() })
+            if (p.size >= 2 && p[0] == "#tvrel:" && Regex("^https?://[\\w.:\\-]+/?$").matches(p[1])) rel = p[1].trimEnd('/')
             if (p.size >= 3 && p[0].startsWith("#tvu") && p[0].endsWith(":")) u[p[0].removePrefix("#tvu").removeSuffix(":")] = p[1] to p[2]
             if (p.size >= 2 && p[0] == "#tvad:") a = p[1] to Cfg.dec(p.getOrElse(2) { "" })
         }
-        keys = k; upd = u; ad = a; kdev = kd; news = nw; online = on; ai = aiOn; bans = bn
+        keys = k; upd = u; ad = a; kdev = kd; news = nw; online = on; ai = aiOn; bans = bn; relay = rel
     }
 
     /** Abonelik metnini sunucu listesine çevirir (desteklenmeyen satırlar atlanır). */

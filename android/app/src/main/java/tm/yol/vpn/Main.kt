@@ -232,7 +232,7 @@ class Main : Activity() {
             val nw = JSONArray(); Sub.news.forEach { (id, ts, j) -> nw.put(JSONObject().put("id", id).put("ts", ts).put("j", j)) }
             return JSONObject().put("dev", Msg.dev(c)).put("code", Msg.code(c)).put("ver", Msg.ver(c)).put("lang", Lang.cur)
                 .put("snd", Snd.on(c)).put("news", nw).put("ai", Sub.ai).put("online", Sub.online).put("bans", JSONArray(Sub.bans.toList()))
-                .put("key", Lic.saved(c) ?: "").put("model", Build.MANUFACTURER + " " + Build.MODEL).toString()
+                .put("key", Lic.saved(c) ?: "").put("model", Build.MANUFACTURER + " " + Build.MODEL).put("relay", Sub.relay.isNotEmpty()).toString()
         }
 
         @JavascriptInterface fun servers(): String {
@@ -265,6 +265,9 @@ class Main : Activity() {
         @JavascriptInterface fun send(json: String) { runCatching { Msg.send(this@Main, JSONObject(json)) } }
         @JavascriptInterface fun gsend(nick: String, text: String) = Msg.gsend(this@Main, nick, text)
         @JavascriptInterface fun gwatch(on: Boolean) { Msg.watchG = on; if (on) Msg.kick() }
+        @JavascriptInterface fun photo(d: String) = Msg.photo(this@Main, d)
+        @JavascriptInterface fun getPhoto(dev: String) = Msg.getPhoto(dev)
+        @JavascriptInterface fun diag() = Thread { push(JSONObject().put("k", "diag").put("r", Msg.diag())) }.start()
         @JavascriptInterface fun copy(t: String) = ui { runCatching { getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("Türkmen VPN", t)) } }
         @JavascriptInterface fun share(t: String) = ui { runCatching { startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, t), null)) } }
         @JavascriptInterface fun open(url: String) = ui { if (url.startsWith("https://") || url.startsWith("http://")) runCatching { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) } }

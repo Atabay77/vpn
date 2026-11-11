@@ -26,9 +26,9 @@ class MsgTest {
         val c = RuntimeEnvironment.getApplication()
         c.getSharedPreferences("p", 0).edit().putString("dev", "0123456789ab").commit()
         assertEquals("TM-6F7HQ", Msg.code(c))                               // subbot.py app_ref_code("0123456789ab")
-        Sub.meta("#tvk: aaa 0 0123456789ab\n#tvk: bbb 0 ffffffffffff\n#tvk: ccc 0\n#tvn: n1 1700000000 eyJ0IjoiU2FsYW0iLCJ4IjoiSGFiYXIifQ\n#tvon: 42\n#tvai: 1\n#tvban: d1,d2\nss://x@1.1.1.1:1#a")
+        Sub.meta("#tvk: aaa 0 0123456789ab\n#tvk: bbb 0 ffffffffffff\n#tvk: ccc 0\n#tvn: n1 1700000000 eyJ0IjoiU2FsYW0iLCJ4IjoiSGFiYXIifQ\n#tvon: 42\n#tvai: 1\n#tvban: d1,d2\n#tvrel: http://10.1.2.3:8090/\nss://x@1.1.1.1:1#a")
         assertEquals("0123456789ab", Sub.kdev["aaa"]); assertNull(Sub.kdev["ccc"])
         assertEquals(1, Sub.news.size); assertEquals("{\"t\":\"Salam\",\"x\":\"Habar\"}", Sub.news[0].third)
-        assertEquals(42, Sub.online); assertEquals(true, Sub.ai); assertEquals(setOf("d1", "d2"), Sub.bans)
+        assertEquals(42, Sub.online); assertEquals(true, Sub.ai); assertEquals(setOf("d1", "d2"), Sub.bans); assertEquals("http://10.1.2.3:8090", Sub.relay)
     }
 }

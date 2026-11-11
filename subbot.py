@@ -868,6 +868,8 @@ def app_meta(cfg):
     except Exception: ai_on = False
     if ai_on: out.append("#tvai: 1")
     if cfg.get("gbans"): out.append("#tvban: " + ",".join(cfg["gbans"][-200:]))
+    rel = (os.environ.get("RELAY_URL") or cfg.get("relay") or "").strip().rstrip("/")
+    if rel: out.append(f"#tvrel: {rel}")
     for abi, u in sorted((cfg.get("upd") or {}).items()):
         if u.get("fid") and u.get("ver"): out.append(f"#tvu{abi}: {u['ver']} {u['fid']}")
     ad = cfg.get("ad") or {}
@@ -1037,6 +1039,8 @@ def app_view(db):
     n_open = sum(1 for t in (cfg.get("tickets") or {}).values() if t.get("st") != "closed")
     rows.append([B(f"🎫 Program biletleri ({n_open})", "atk_list"), B("⭐ Bahalar", "arates")])
     rows.append([B("📰 Programa habar", "anews"), B("🌐 Global chat", "agc")])
+    rel_ = (os.environ.get("RELAY_URL") or cfg.get("relay") or "")
+    rows.append([B("📡 Habar serweri: " + ("VPS ✅" if rel_ else "ntfy.sh"), "arelay")])
     if (cfg.get("upd") or {}): rows.append([B("⬇️ VPN'siz indirme linki", "app_dl")])
     if cfg.get("fid"): rows.append([B("🔗 Programın dosya linki", "app_link")])
     rows.append([B("◀️ Admin", "admin")])
@@ -1082,8 +1086,14 @@ def app_ref_code(dev):
     h = _sha("tvref|" + dev)
     return "TM-" + "".join(REF_ABC[h[i] % len(REF_ABC)] for i in range(5))
 
+def app_relay():
+    """Öz habar serweri (VPS). Boş bolsa ntfy.sh. Programlara abuna faýlyndaky #tvrel bilen gidýär."""
+    return (os.environ.get("RELAY_URL") or app_cfg(load_db()).get("relay") or "").strip().rstrip("/")
+
+def ntfy_base(): return app_relay() or "https://ntfy.sh"
+
 def ntfy_poll(topic, since):
-    url = f"https://ntfy.sh/{topic}/json?poll=1&since={urllib.parse.quote(str(since))}"
+    url = f"{ntfy_base()}/{topic}/json?poll=1&since={urllib.parse.quote(str(since))}"
     with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "subbot"}), timeout=20) as r:
         out = []
         for l in r.read().decode("utf-8", "ignore").splitlines():
@@ -1093,7 +1103,7 @@ def ntfy_poll(topic, since):
         return out
 
 def ntfy_pub(topic, body):
-    req = urllib.request.Request(f"https://ntfy.sh/{topic}", data=body.encode("utf-8"), method="POST", headers={"User-Agent": "subbot", "Content-Type": "text/plain; charset=utf-8"})
+    req = urllib.request.Request(f"{ntfy_base()}/{topic}", data=body.encode("utf-8"), method="POST", headers={"User-Agent": "subbot", "Content-Type": "text/plain; charset=utf-8"})
     with urllib.request.urlopen(req, timeout=20) as r: return r.status < 300
 
 def app_mut(fn):
@@ -2599,6 +2609,23 @@ async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
             t_, kb_ = app_ticket_view(app_cfg(load_db()), tid)
             await u.message.reply_text(("✅ Iberildi.\n\n" if ok else "⚠️ Bilet ýok.\n\n") + t_, parse_mode="HTML", reply_markup=kb_)
 
+        elif act == "arelay":
+            url_ = txt.strip().rstrip("/")
+            if not re.fullmatch(r"https?://[\w.\-]+(:\d{2,5})?", url_):
+                STATE[uid] = st; await u.message.reply_text("⚠️ Salga şeýle bolmaly: http://1.2.3.4:8090", reply_markup=back("app_v")); return
+            def chk():
+                with urllib.request.urlopen(urllib.request.Request(url_ + "/health", headers={"User-Agent": "subbot"}), timeout=12) as r_: return r_.read(20)
+            try: ok_ = (await asyncio.to_thread(chk)).startswith(b"ok")
+            except Exception as e: ok_ = False; err_ = str(e)[:120]
+            if not ok_:
+                STATE[uid] = st
+                await u.message.reply_text(f"❌ Serwer jogap bermedi: <code>{esc(url_)}/health</code>\n<i>VPS-de habar serweriniň gurnalandygyny we portuň açykdygyny barlaň.</i>", parse_mode="HTML", reply_markup=back("app_v")); return
+            app_mut(lambda x: (x.__setitem__("relay", url_), x.pop("msg_since", None)))
+            try: await asyncio.to_thread(app_sync, True); RUN.pop("app_err", None)
+            except Exception as e: RUN["app_err"] = str(e)[:150]
+            t_, kb_ = app_view(load_db())
+            await u.message.reply_text("✅ Habar serweri işleýär we bellendi. Programlar ony abuna faýlyndan alarlar (10 minudyň içinde).\n\n" + t_, parse_mode="HTML", reply_markup=kb_)
+
         elif act == "anews":
             ls_ = [x for x in txt.splitlines()]
             if len(ls_) < 2 or not ls_[0].strip(): STATE[uid] = st; await u.message.reply_text("⚠️ Birinji setir ady, ikinji setirden tekst bolmaly.", reply_markup=back("anews")); return
@@ -3565,7 +3592,7 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
             start_refresh(c.application, "abonelik silindi")
         await safe_edit(q, "✅ Abonelik silindi. Kalan aboneliklerin kodları şimdi yeniden yazılıyor." if ok else "⚠️ Bulunamadı.", back("sources"))
 
-    elif a in ("atk_list", "atk_closed", "arates", "anews", "anews_new", "agc") or a.startswith(("atk:", "atr:", "atc:", "ato:", "atp:", "anews_del:", "agd:", "agb:")):
+    elif a in ("atk_list", "atk_closed", "arates", "anews", "anews_new", "agc", "arelay", "arelay_off") or a.startswith(("atk:", "atr:", "atc:", "ato:", "atp:", "anews_del:", "agd:", "agb:")):
         if uid not in ORIG_ADMINS:
             await safe_edit(q, "⛔ Erişim yok", back("admin")); return
         a_ = app_cfg(load_db())
@@ -3586,6 +3613,17 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
                 await asyncio.to_thread(app_send, t_["dev"], {"k": "tkst", "st": st_, "tid": int(tid)})
             await safe_edit(q, *app_ticket_view(app_cfg(load_db()), tid)); return
         if a == "arates": await safe_edit(q, *app_rates_view(a_)); return
+        if a == "arelay":
+            STATE[uid] = {"action": "arelay"}; cur_ = a_.get("relay") or "ntfy.sh"
+            t_, kb_ = prompt("📡 <b>Habar serweri (VPS)</b>", f"Häzir: <code>{esc(cur_)}</code>\n\nVPS-de gurnalan habar serweriniň salgysyny iberiň, meselem:\n<code>http://1.2.3.4:8090</code>\n"
+                             "(Gurnamak: VPS-e girip şu buýrugy ýazyň:\n<code>curl -fsSL https://raw.githubusercontent.com/Atabay77/vpn/claude/inceleme-aagn5q/relay/kur.sh | sh</code>)", "app_v")
+            if a_.get("relay"): kb_ = KB(kb_.inline_keyboard + ((B("↩️ ntfy.sh-a gaýt", "arelay_off"),),))
+            await safe_edit(q, t_, kb_); return
+        if a == "arelay_off":
+            app_mut(lambda x: (x.pop("relay", None), x.pop("msg_since", None)))
+            try: await asyncio.to_thread(app_sync, True)
+            except Exception as e: RUN["app_err"] = str(e)[:150]
+            await safe_edit(q, *app_view(load_db())); return
         if a == "anews": await safe_edit(q, *app_news_view(a_)); return
         if a == "anews_new":
             STATE[uid] = {"action": "anews"}

@@ -24,7 +24,8 @@ import javax.crypto.spec.SecretKeySpec
  * Konular: <T>m — bota, <T>d<dev> — şu telefona, <T>g — Global chat.
  */
 object Msg {
-    private const val HOST = "https://ntfy.sh/"
+    /** Habar serweri: VPS (abunadaky #tvrel) ýa-da ntfy.sh. */
+    private fun host() = (Sub.relay.ifEmpty { "https://ntfy.sh" }) + "/"
     @Volatile var app: Context? = null
     @Volatile private var started = false
     @Volatile var watchG = false            // Global chat açyk: ýygy-ýygydan barla
@@ -98,7 +99,7 @@ object Msg {
     // ---- HTTP: birikende tunel içinden, ýogsa göni ----
     private fun open(url: String, viaTunnel: Boolean): HttpURLConnection {
         val port = State.socks
-        val c = if (viaTunnel && port > 0) URL(url).openConnection(Proxy(Proxy.Type.SOCKS, InetSocketAddress("127.0.0.1", port))) as HttpURLConnection
+        val c = if (viaTunnel && port > 0) URL(url).openConnection(Proxy(Proxy.Type.HTTP, InetSocketAddress("127.0.0.1", port))) as HttpURLConnection
         else URL(url).openConnection() as HttpURLConnection
         c.connectTimeout = 8000; c.readTimeout = 12000
         return c
@@ -109,7 +110,7 @@ object Msg {
     private fun post(topic: String, body: String): Boolean {
         for (t in tries()) {
             val ok = runCatching {
-                val c = open(HOST + topic, t)
+                val c = open(host() + topic, t)
                 c.requestMethod = "POST"; c.doOutput = true
                 c.setRequestProperty("Content-Type", "text/plain; charset=utf-8")
                 c.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
@@ -124,7 +125,7 @@ object Msg {
     private fun poll(topic: String, since: String): List<JSONObject>? {
         for (t in tries()) {
             val r = runCatching {
-                val c = open(HOST + topic + "/json?poll=1&since=" + since, t)
+                val c = open(host() + topic + "/json?poll=1&since=" + since, t)
                 val txt = c.inputStream.use { it.readBytes() }.toString(Charsets.UTF_8); c.disconnect()
                 txt.lineSequence().filter { it.isNotBlank() }.mapNotNull { runCatching { JSONObject(it) }.getOrNull() }
                     .filter { it.optString("event") == "message" }.toList()
@@ -224,6 +225,32 @@ object Msg {
             pend(c, JSONObject().put("k", "in").put("m", o))
             if (!visible && o.optString("k") == "tk" && o.optString("who") == "a") Svc.notifyReply(c, o.optString("t"))
         }
+    }
+
+    /** Profil suraty: hemmeler görer (diňe öz serweri bolanda, ntfy.sh uly faýly kabul etmeýär). */
+    fun photo(ctx: Context, data: String) {
+        val tp = base?.let { it + "p" + dev(ctx) } ?: return
+        if (Sub.relay.isEmpty()) return
+        val o = JSONObject().put("ph", data.take(90_000)).put("v", System.currentTimeMillis() / 1000)
+        Thread { val e = enc(o.toString()); if (e != null && !post(tp, e)) events.add(JSONObject().put("k", "phfail")) }.start()
+    }
+
+    /** Başga adamyň suraty. */
+    fun getPhoto(dev: String) {
+        if (!Regex("^[0-9a-f]{12}$").matches(dev) || Sub.relay.isEmpty()) return
+        val tp = base?.let { it + "p" + dev } ?: return
+        Thread {
+            val m = poll(tp, "all")?.lastOrNull() ?: return@Thread
+            val o = dec(m.optString("message"))?.let { runCatching { JSONObject(it) }.getOrNull() } ?: return@Thread
+            events.add(JSONObject().put("k", "ph").put("dev", dev).put("d", o.optString("ph")).put("v", o.optLong("v")))
+        }.start()
+    }
+
+    /** Barlag: habar serweri tunelden we göni açylýarmy. */
+    fun diag(): JSONObject {
+        val u = host() + "health"
+        fun t(via: Boolean) = runCatching { val c = open(u, via); val code = c.responseCode; c.disconnect(); code }.getOrElse { -1 }
+        return JSONObject().put("relay", Sub.relay.isNotEmpty()).put("tun", if (State.now == State.ON && State.socks > 0) t(true) else 0).put("direct", t(false))
     }
 
     /** Gelen habar ekran alýança telefonda saklanýar (programma ýapylsa-da ýitmez). */
