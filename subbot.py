@@ -1998,12 +1998,13 @@ def mail_parse(m, me, kw):
     frm = parseaddr(m.get("From", ""))[1].strip().lower()
     if not frm or frm == me.lower() or "mailer-daemon" in frm or "noreply" in frm or "no-reply" in frm: return None
     text = _mail_text(m)
+    meta = {"mid": (m.get("Message-ID") or "").strip(), "subj": str(m.get("Subject") or "")[:150], "refs": (m.get("References") or "").strip()[-900:]}
     r = mail_key_match(text)
-    if r: return (frm, r[1], r[0], r[2], "key")
+    if r: return (frm, r[1], r[0], r[2], "key", meta)
     r = mail_match(text, kw)
-    if r: return (frm, r[1], r[0], r[2], "code")
+    if r: return (frm, r[1], r[0], r[2], "code", meta)
     if re.search(r"(?<![a-z0-9])vpn(?![a-z0-9])", text, re.I):   # «vpn» yazan herkese indirme linki (günde bir kez)
-        return (frm, 0, f"dl|{frm}|{time.strftime('%Y%m%d')}", False, "dl")
+        return (frm, 0, f"dl|{frm}|{time.strftime('%Y%m%d')}", False, "dl", meta)
     return None
 
 def _mail_junk(M):
@@ -2069,11 +2070,26 @@ def mail_login_test():
         try: M.logout()
         except Exception: pass
 
-def mail_send(to, subject, text):
-    import smtplib
+def mail_send(to, subject, text, reply=None, link=None, link_text=None):
+    """Spam'e düşmesin diye: gelen maile «yanıt» olarak (aynı konuşma), gönderen adı «Türkmen VPN»,
+    düz yazı + düzgün HTML (uzun link yerine düğme gibi bağlantı)."""
+    import smtplib, html as _h
     from email.mime.text import MIMEText
+    from email.mime.multipart import MIMEMultipart
+    from email.utils import formataddr, formatdate, make_msgid
     me, pw, _ = mail_cfg()
-    msg = MIMEText(text, "plain", "utf-8"); msg["Subject"] = subject; msg["From"] = me; msg["To"] = to
+    msg = MIMEMultipart("alternative")
+    if reply and reply.get("mid"):
+        osub = (reply.get("subj") or "").strip()
+        subject = osub if osub.lower().startswith("re:") else (f"Re: {osub}" if osub else subject)
+        msg["In-Reply-To"] = reply["mid"]; msg["References"] = ((reply.get("refs") or "") + " " + reply["mid"]).strip()
+    msg["Subject"] = subject; msg["From"] = formataddr(("Türkmen VPN", me)); msg["To"] = to
+    msg["Date"] = formatdate(localtime=True); msg["Message-ID"] = make_msgid(domain=(me.split("@")[-1] or "gmail.com"))
+    msg.attach(MIMEText(text, "plain", "utf-8"))
+    body = "<br>".join(_h.escape(l) for l in text.splitlines())
+    if link:
+        body = body.replace(_h.escape(link), f'<a href="{_h.escape(link, quote=True)}" style="display:inline-block;padding:10px 18px;background:#12784A;color:#ffffff;border-radius:10px;text-decoration:none;font-weight:bold">{_h.escape(link_text or "Ýükläp almak / İndir")}</a>')
+    msg.attach(MIMEText(f'<div style="font-family:Arial,sans-serif;font-size:15px;line-height:1.5;color:#222">{body}</div>', "html", "utf-8"))
     with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=30) as s_:
         s_.login(me, pw); s_.sendmail(me, [to], msg.as_string())
 
@@ -2081,7 +2097,7 @@ def mail_tick():
     """Bloklayan iş: istekleri okur, kod oluşturur, maille gönderir. Dönüş: kurucuya gidecek olaylar."""
     events = []
     for it_ in mail_fetch():
-        frm, days, tok, lock = it_[:4]; kind = it_[4] if len(it_) > 4 else "code"
+        frm, days, tok, lock = it_[:4]; kind = it_[4] if len(it_) > 4 else "code"; meta = it_[5] if len(it_) > 5 else None
         now = time.time()
         th = hashlib.sha256(tok.encode("utf-8")).hexdigest()
         def use_(d):
@@ -2101,8 +2117,12 @@ def mail_tick():
             link = sub_link(u_["fid"]); MAIL_DL_SENT.append(now)
             try:
                 mail_send(frm, f"Türkmen VPN {u_.get('ver', '')} · ýükläp almak / indirme linki",
-                          f"Türkmen VPN ({u_.get('ver', '')}) ýükläp almak üçin / indirmek için:\n\n{link}\n\n"
-                          "VPN-siz açylýar. Ýüklenen faýly açyp gurnaň / İndirilen dosyayı açıp kurun.")
+                          f"Salam!\n\nTürkmen VPN programmasynyň iň täze wersiýasy ({u_.get('ver', '')}) aşakdaky salgyda. "
+                          "VPN-siz açylýar.\n\n"
+                          f"{link}\n\n"
+                          "Ýüklenen faýly açyň we gurnaň. Telefon «näbelli çeşme» diýse, rugsat beriň.\n\n"
+                          "Merhaba! Türkmen VPN'in en yeni sürümü yukarıdaki bağlantıda, VPN'siz açılır. İndirilen dosyayı açıp kurun.\n\n"
+                          "Hormat bilen / Saygılarımızla,\nTürkmen VPN", reply=meta, link=link, link_text=f"⬇ Türkmen VPN {u_.get('ver', '')} ýükle / indir")
                 ok = True
             except Exception as e: ok = False; log.warning("mail send: %s", e)
             ulog("order", f"📧 Mail ile indirme linki: {frm}" + ("" if ok else " (gönderilemedi)"))
@@ -2119,7 +2139,8 @@ def mail_tick():
             except Exception as e: log.warning("mail key sync: %s", e)
             dtxt = f"{days} gün" if days else "möhletsiz / süresiz"
             try:
-                mail_send(frm, f"Türkmen VPN açar · {dtxt}", f"Açaryňyz / Anahtarınız ({dtxt}):\n\n{k_}\n\nTürkmen VPN → gizli bölüm → açary ýazyň / anahtarı yazın.")
+                mail_send(frm, f"Türkmen VPN açar · {dtxt}", f"Salam!\n\nTürkmen VPN açaryňyz / anahtarınız ({dtxt}):\n\n{k_}\n\n"
+                          "Türkmen VPN → gizli bölüm → açary ýazyň / anahtarı yazın.\n\nHormat bilen / Saygılarımızla,\nTürkmen VPN", reply=meta)
                 ok = True
             except Exception as e: ok = False; log.warning("mail send: %s", e)
             ulog("order", f"📧 Mail ile key: {frm} · {dtxt}" + ("" if ok else " (mail gönderilemedi)"))
@@ -2137,7 +2158,8 @@ def mail_tick():
         link = link or user_link(fid) or sub_link(fid)
         try:
             dtxt = f"{days} gün" if days else "möhletsiz / süresiz"
-            mail_send(frm, f"VPN kodunuz · {dtxt}", f"Kodyňyz / Kodunuz ({dtxt}" + (f", {MAIL_DEVICES} enjam / cihaz" if lim_ok else "") + f"):\n\n{link}\n\nHapp → + → linki goşuň / linki ekleyin.")
+            mail_send(frm, f"VPN kodunuz · {dtxt}", f"Salam!\n\nKodyňyz / Kodunuz ({dtxt}" + (f", {MAIL_DEVICES} enjam / cihaz" if lim_ok else "") + f"):\n\n{link}\n\n"
+                      "Happ → + → linki goşuň / linki ekleyin.\n\nHormat bilen / Saygılarımızla,\nTürkmen VPN", reply=meta)
             ok = True
         except Exception as e: ok = False; log.warning("mail send: %s", e)
         ulog("order", f"📧 Mail ile kod: {frm} · {dtxt} · {kid}" + ("" if ok else " (mail gönderilemedi)"))
