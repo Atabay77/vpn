@@ -2109,7 +2109,10 @@ def mail_send(to, subject, text, reply=None, link=None, link_text=None):
     msg.attach(MIMEText(text, "plain", "utf-8"))
     body = "<br>".join(_h.escape(l) for l in text.splitlines())
     if link:
-        body = body.replace(_h.escape(link), f'<a href="{_h.escape(link, quote=True)}" style="display:inline-block;padding:10px 18px;background:#12784A;color:#ffffff;border-radius:10px;text-decoration:none;font-weight:bold">{_h.escape(link_text or "Ýükläp almak / İndir")}</a>')
+        body = body.replace(_h.escape(link), f'<a href="{_h.escape(link, quote=True)}" style="display:inline-block;padding:10px 18px;background:#12784A;color:#ffffff;border-radius:10px;text-decoration:none;font-weight:bold">{_h.escape(link_text or "Ýükläp almak / İndir")}</a>'
+            '<br><span style="font-size:13px;color:#555">Düwme açylmasa: aşakdaky salgyny göçürip Chrome-da açyň.<br>'
+            'Düğme açılmazsa: aşağıdaki bağlantıyı kopyalayıp Chrome\'da açın.</span><br>'
+            f'<span style="font-family:monospace;font-size:12px;word-break:break-all;color:#12784A">{_h.escape(link)}</span>')
     msg.attach(MIMEText(f'<div style="font-family:Arial,sans-serif;font-size:15px;line-height:1.5;color:#222">{body}</div>', "html", "utf-8"))
     with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=30) as s_:
         s_.login(me, pw); s_.sendmail(me, [to], msg.as_string())
@@ -2141,6 +2144,7 @@ def mail_tick():
                           f"Salam!\n\nTürkmen VPN programmasynyň iň täze wersiýasy ({u_.get('ver', '')}) aşakdaky salgyda. "
                           "VPN-siz açylýar.\n\n"
                           f"{link}\n\n"
+                          "Gmail-iň içinde açylmasa: salgyny göçürip Chrome-da açyň.\n"
                           "Ýüklenen faýly açyň we gurnaň. Telefon «näbelli çeşme» diýse, rugsat beriň.\n\n"
                           "Merhaba! Türkmen VPN'in en yeni sürümü yukarıdaki bağlantıda, VPN'siz açılır. İndirilen dosyayı açıp kurun.\n\n"
                           "Hormat bilen / Saygılarımızla,\nTürkmen VPN", reply=meta, link=link, link_text=f"⬇ Türkmen VPN {u_.get('ver', '')} ýükle / indir")
