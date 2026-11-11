@@ -1265,7 +1265,7 @@ def app_who(a, dev):
     return f"{esc(u.get('nick') or '?')} · {esc(u.get('model') or '?')} · v{esc(u.get('ver') or '?')} · {esc(u.get('lang') or '?')}"
 
 # Programyň AI-sy: çalt we çäklendirilmedik modeller (Claude modelleri xKiro-da diňe Anthropic-iň öz gurallaryna açyk — 403)
-APP_AI_MODELS = ["google/gemini-3.8-flash", "qwen/qwen3.8-omni-flash:free", "mistralai/mistral-large-2512", "anthropic/claude-fable-5"]
+APP_AI_MODELS = [None, "google/gemini-3.8-flash", "qwen/qwen3.8-omni-flash:free", "mistralai/mistral-large-2512"]   # None = botuň öz modeli (ai_model); işlemese çalt ätiýaçlyklar
 
 APP_AI_RULES = """Sen «Türkmen VPN» Android programmasynyň goldaw kömekçisi. Ulanyjy programmanyň «Admine ýaz» bölüminden ýazýar.
 Ulanyjynyň dilinde (türkmen, rus ýa-da türk) gysga, dostlukly we takyk jogap ber. Diňe aşakdaky faktlara daýan, bilmeýän zadyňy oýlap tapma.
@@ -1299,10 +1299,10 @@ async def app_ai_reply(app, tid):
     err = ""
     try:
         raw = None
-        for mdl in APP_AI_MODELS:   # çalt modeller birinji; biri işlemese indikisi
+        for mdl in APP_AI_MODELS:   # botuň öz modeli birinji; biri işlemese indikisi
             try: raw = await asyncio.to_thread(ai_call, sys_, msgs, None, 1200, 40, mdl); break
             except Exception as e1:
-                log.info("app ai %s: %s", mdl, e1); err = (err + " · " if err else "") + f"{mdl.split('/')[-1]}: {str(e1)[:80]}"
+                log.info("app ai %s: %s", mdl, e1); err = (err + " · " if err else "") + f"{(mdl or ai_model()).split('/')[-1]}: {str(e1)[:80]}"
         if raw is None: raise RuntimeError("ähli modeller")
         mj = re.search(r"\{.*\}", raw, re.S)
         try: j = json.loads(mj.group(0)) if mj else {"answer": raw, "handoff": False}
