@@ -938,19 +938,41 @@ def app_left(exp):
 # bir koddan yzly-yzyna 3 gezek jogap gelmese (we soňky 6 sagatda hiç kim işledip bilmese) — kod pozulýar.
 APP_X_PROTOS = ("vless://", "ss://", "hysteria2://", "hy2://")   # programyň goldaýan kodlary
 APP_TG_DEFAULT = ["supervpntm"]
-APP_TG_EVERY, APP_TG_MAX, APP_X_DEAD = 1800, 20, 3
+APP_TG_EVERY, APP_TG_MAX, APP_X_DEAD = 600, 20, 3
 TG_CODE_RE = re.compile(r"(?:vless|ss|hysteria2|hy2)://[^\s<>\"']+", re.I)
 
+APP_TG_BATCH = 90 * 60   # iň soňky kod bilen şu wagtyň içinde goýlan kodlar alynýar (öňküler eýýäm bloklanan)
+
 def tg_channel_codes(ch):
-    """Açyk kanalyň web görnüşinden kodlar (täzeleri soňda)."""
+    """Açyk kanalyň web görnüşinden DIŇE iň soňky kodlar: iň täze kodly ýazgy we ondan 90 minut öňküler."""
     req = urllib.request.Request(f"https://t.me/s/{urllib.parse.quote(ch)}", headers={"User-Agent": "Mozilla/5.0"})
     with urllib.request.urlopen(req, timeout=20) as r: page = r.read().decode("utf-8", "ignore")
-    page = re.sub(r"<br\s*/?>", "\n", page)
+    def codes_of(b):
+        b = re.sub(r"<br\s*/?>", "\n", b); full, cut = [], []
+        for m in TG_CODE_RE.finditer(b):
+            c = html.unescape(re.sub(r"<[^>]+>", "", m.group(0))).strip().rstrip(".,;)")
+            if "…" in c or "..." in c: cut.append(re.split(r"…|\.\.\.", c)[0])   # gysgaldylan nusga (alynty / önizleme)
+            elif c.lower().startswith(APP_X_PROTOS) and code_hostport(c)[0]: full.append(c)
+        return full, cut
+    posts, blocked = [], []
+    for b in re.split(r'(?=<div class="tgme_widget_message_wrap)', page):
+        if not TG_CODE_RE.search(b): continue
+        t_ = re.search(r'datetime="([^"]+)"', b)
+        try: ts_ = datetime.datetime.fromisoformat(t_.group(1)).timestamp() if t_ else 0
+        except Exception: ts_ = 0
+        full, cut = codes_of(b)
+        if re.search(r"блокир|заблок|blok|ýapyld|не работ|işlemeý", re.sub(r"<[^>]+>", " ", b), re.I): blocked += [p_ for p_ in cut + full if len(p_) > 30]
+        if full: posts.append((ts_, full))
+    isblk = lambda c: any(c.startswith(p_) or p_.startswith(c.split("#")[0]) for p_ in blocked)
+    posts = [(t_, [c for c in f if not isblk(c)]) for t_, f in posts]
+    posts = [(t_, f) for t_, f in posts if f]
     out = []
-    for m in TG_CODE_RE.finditer(page):
-        c = html.unescape(re.sub(r"<[^>]+>", "", m.group(0))).strip().rstrip(".,;)")
-        if "…" in c or "..." in c: continue   # Telegram-yň gysgaldan nusgasy (önizleme) — doly kod başga ýerde bar
-        if c.lower().startswith(APP_X_PROTOS) and code_hostport(c)[0] and c not in out: out.append(c)
+    if posts:
+        newest = max(t_ for t_, _ in posts)
+        for t_, f in posts:
+            if not newest or t_ >= newest - APP_TG_BATCH:
+                for c in f:
+                    if c not in out: out.append(c)
     keys_ = {}
     for c in out: keys_.setdefault(code_key(c), c)
     return list(keys_.values())
@@ -971,6 +993,10 @@ def app_tg_refresh(force=False):
     if not found: return
     def f(x):
         xs = x.setdefault("xcodes", {}); now = int(time.time()); added = 0
+        fresh = {}
+        for ch, c in found: fresh.setdefault(ch.lower(), set()).add(code_key(c))
+        for k in [k for k, v in xs.items() if v.get("src") == "tg" and str(v.get("ch", "")).lower() in fresh and k not in fresh[str(v.get("ch", "")).lower()]]:
+            xs.pop(k, None)   # kanalda täze kod çykdy — köne kod aýrylýar
         for ch, c in found:
             k = code_key(c)
             if k in xs: xs[k]["seen"] = now; continue
@@ -997,14 +1023,14 @@ def app_x_report(dev, pr):
                 if ms > 0: v.update({"ok": now, "bad": 0, "ms": ms})
                 else:
                     v["bad"] = int(v.get("bad") or 0) + 1
-                    if v.get("src") == "tg" and v["bad"] >= APP_X_DEAD and now - int(v.get("ok") or 0) > 6 * 3600: gone.append(k)
+                    if v["bad"] >= APP_X_DEAD and k not in gone: gone.append(k)   # yzly-yzyna 3 gezek ms ýok — kanal we admin kody aýrylýar
         for k in gone:
             xs.pop(k, None); x.setdefault("xdead", {})[k] = now
         dd = x.get("xdead") or {}
         for k in [k for k, t in dd.items() if now - t > 14 * 86400]: dd.pop(k, None)
         return len(gone)
     n_ = app_mut(f)
-    if n_: vlog(f"🗑 {n_} kanal kody işlemedi (ms ýok) — aýryldy"); RUN["app_dirty"] = True
+    if n_: vlog(f"🗑 {n_} kod işlemedi (3 gezek ms ýok) — aýryldy"); RUN["app_dirty"] = True
 
 TM_CNAME = {"nl": "Niderlandlar", "fi": "Finlýandiýa", "gb": "Beýik Britaniýa", "de": "Germaniýa", "ch": "Şweýsariýa", "pl": "Polşa", "tr": "Türkiýe", "fr": "Fransiýa",
             "ru": "Russiýa", "se": "Şwesiýa", "us": "ABŞ", "at": "Awstriýa", "it": "Italiýa", "es": "Ispaniýa", "lv": "Latwiýa", "lt": "Litwa", "ee": "Estoniýa",

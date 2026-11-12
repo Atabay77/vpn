@@ -214,6 +214,7 @@ object Msg {
             val gEvery = if (watchG) 8_000L else 60_000L
             if (visible && now - gAt > gEvery) { gAt = now; runCatching { global() } }
             runCatching { Chat.poll(c, visible, dmPage) }
+            if (visible || on) runCatching { State.pingExtra(c) }
             if (visible && Fs.on() && now - newsAt > 120_000) { newsAt = now; runCatching { newsFs() } }
             synchronized(lock) { runCatching { lock.wait(if (watchG || Chat.watch != null || (waiting && visible)) 2000L else 5000L) } }
         }

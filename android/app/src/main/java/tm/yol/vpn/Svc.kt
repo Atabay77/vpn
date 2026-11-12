@@ -73,6 +73,27 @@ object State {
         Msg.send(ctx, org.json.JSONObject().put("k", "pr").put("p", o))
     }
 
+    /** 1.16.7: kanal («tm») we admin («VIP») kodlary 3 minutda bir barlanýar, netije bota (3 gezek ms ýok — bot aýyrýar). */
+    @Volatile private var xAt = 0L
+    fun isExtra(s: Server): Boolean { val t = s.title.lowercase(); return t == "tm" || t == "vip" || t.startsWith("tm ") || t.startsWith("vip ") }
+    fun pingExtra(ctx: Context) {
+        val now = System.currentTimeMillis()
+        if (now - xAt < 180_000L) return
+        xAt = now
+        val xs = Sub.list.filter { isExtra(it) }
+        if (xs.isEmpty()) return
+        Thread {
+            val got = ConcurrentHashMap<String, Long>()
+            val pool = java.util.concurrent.Executors.newFixedThreadPool(minOf(xs.size, 4))
+            xs.forEach { s -> pool.execute { got[s.key] = ping(s) } }
+            pool.shutdown(); pool.awaitTermination(25, java.util.concurrent.TimeUnit.SECONDS)
+            if (got.values.none { it > 0 } && !online(ctx)) return@Thread   // internet ýok — «işlemeýär» diýilmesin
+            val o = org.json.JSONObject(); got.forEach { (k, v) -> o.put(k.substringAfter('|'), v) }
+            Msg.send(ctx, org.json.JSONObject().put("k", "pr").put("p", o))
+            Msg.events.add(org.json.JSONObject().put("k", "srv"))
+        }.start()
+    }
+
     @Volatile var noPing = false   // son otomatik denemede hiçbir kod yanıt vermedi
     @Volatile var noNet = false    // telefonun interneti yok / çalışmıyor
 
