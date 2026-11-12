@@ -1688,7 +1688,8 @@ def app_adm_snap(a, e, dev):
         mine = None if f_ else f"app:{e.get('name')}"
         ks = sorted(((k_, v) for k_, v in keys_.items() if mine is None or v.get("by") == mine), key=lambda kv: kv[1].get("ts", 0), reverse=True)[:40]
         out["keys"] = [{"k": k_, "d": max(1, round(((v.get("exp") or 0) - (v.get("ts") or 0)) / 86400)) if v.get("exp") else 0,
-                        "by": str(v.get("by") or ""), "used": v.get("dev"), "at": app_hm(v.get("ts")), "n": int(v.get("n") or 1), "u": len(app_key_devs(v))} for k_, v in ks]
+                        "by": str(v.get("by") or ""), "used": v.get("dev"), "at": app_hm(v.get("ts")), "n": int(v.get("n") or 1), "u": len(app_key_devs(v)),
+                        "lb": v.get("lb", ""), "exp": int(v.get("exp") or 0), "dvs": app_key_devs(v)[:20]} for k_, v in ks]
     if f_:
         out["codes"] = [{"id": aid, "code": (x["pw"] if aid == apw_id(e["pw"]) else x["pw"][:4] + "-••••-••••-" + x["pw"][-4:]), "role": x.get("role"),
                          "name": x.get("name") or "", "perm": x.get("perm"), "u": x.get("dev"), "seen": app_hm(x.get("seen")),
@@ -1788,6 +1789,27 @@ async def app_adm(app, dev, o):
                 except Exception as e2: RUN["app_err"] = str(e2)[:150]
                 msg = "key:" + k_
                 if not f_: await notify_founders(app, f"🛠 <b>{esc(who)}</b> programdan açar döretdi: <code>{k_}</code> · {d_ or '♾'} gün · {n_} adam", silent=True)
+        elif act in ("kedit", "kdel") and full:   # 1.16.3: açary dolandyrmak (kömekçi — diňe öz döreden açarlary)
+            k_ = str(r.get("k") or "").strip().upper()
+            v_ = (a.get("keys") or {}).get(k_)
+            if v_ and (f_ or v_.get("by") == f"app:{who}"):
+                def ke(x):
+                    kv = (x.get("keys") or {}).get(k_)
+                    if not kv: return
+                    if act == "kdel": x["keys"].pop(k_, None); return
+                    if "lb" in r: kv["lb"] = str(r.get("lb") or "").strip()[:40]
+                    if r.get("days") is not None and str(r.get("days")).strip() != "":
+                        dd = max(0, min(3650, int(r.get("days") or 0))); kv["exp"] = 0 if dd == 0 else int(now + dd * 86400)
+                    if r.get("n") is not None and str(r.get("n")).strip() != "":
+                        nn = max(1, min(1000, int(r.get("n") or 1))); dv_ = app_key_devs(kv)
+                        kv["n"] = max(nn, len(dv_) if nn > 1 else 1)
+                        if kv["n"] > 1: kv["devs"] = dv_
+                app_mut(ke)
+                try: await asyncio.to_thread(app_sync, True)
+                except Exception as e2: RUN["app_err"] = str(e2)[:150]
+                msg = "kdel" if act == "kdel" else "kok"
+                if not f_: await notify_founders(app, f"🛠 <b>{esc(who)}</b> açary {'pozdy' if act == 'kdel' else 'üýtgetdi'}: <code>{k_}</code>", silent=True)
+            else: err = "açar tapylmady"
         elif act == "gdel" and f_:
             gid = re.sub(r"^g/", "", str(r.get("id") or ""))
             if re.fullmatch(r"[\w\-]{1,60}", gid):

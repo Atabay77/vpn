@@ -43,7 +43,7 @@
   const phAsked = {};
   let A = null;         // admin paneli: botdan gelen ýagdaý (biletler, ulanyjylar, açarlar…)
   let admAt = 0, admPend = 0;
-  const ADM_PAGES = ['admin', 'adm_t', 'adm_u', 'adm_b', 'adm_k', 'adm_l', 'adm_s', 'adm_st', 'adm_ai'];
+  const ADM_PAGES = ['admin', 'adm_t', 'adm_u', 'adm_b', 'adm_k', 'adm_kd', 'adm_l', 'adm_s', 'adm_st', 'adm_ai'];
   const act = (a, o) => { NB.adm(JSON.stringify(Object.assign({ a }, o || {}))); if (!admPend) admPend = Date.now(); };
   const admMe = () => (A && A.me) || INFO.admMe || {};
 
@@ -241,7 +241,7 @@
           canKick: isF && !!c.u && !mine, kick: () => { act('kick', { id: c.id }); c.u = null; this.setState({ admTick: (this.state.admTick || 0) + 1 }); this.say('🔓 ' + tx.ad_kicked); } };
       });
       r.keyList = ((A && A.keys) || []).map((k, i) => { const u = k.used ? us[k.used] : null;
-        return { cp: () => { NB.copy(k.k); this.say('✓ ' + tx.copied + ': ' + k.k); }, k: k.k, sub: (k.d === 0 ? '♾' : k.d === 30 ? tx.bk_month : k.d + ' ' + tx.days) + ((k.n || 1) > 1 ? ' · 👥 ' + (k.u || 0) + '/' + k.n : '') + ' · ' + tx.bk_by + ': ' + byName(k.by) + ' · ' + k.at + (u ? ' · ' + u.name : ''), stT: k.used ? tx.bk_used : tx.bk_new, stCls: k.used ? 'tk-closed' : 'tk-ans', d: (i * 0.04).toFixed(2) }; });
+        return { cp: () => this.setState({ page: 'adm_kd', kSel: k.k, kdLb: null, kdDays: '', kdN: '' }), k: k.k, sub: (k.lb ? '🏷 ' + k.lb + ' · ' : '') + (k.d === 0 ? '♾' : k.d === 30 ? tx.bk_month : k.d + ' ' + tx.days) + ((k.n || 1) > 1 ? ' · 👥 ' + (k.u || 0) + '/' + k.n : '') + ' · ' + tx.bk_by + ': ' + byName(k.by) + ' · ' + k.at + (u ? ' · ' + u.name : ''), stT: k.used ? tx.bk_used : tx.bk_new, stCls: k.used ? 'tk-closed' : 'tk-ans', d: (i * 0.04).toFixed(2) }; });
       if (A) {
         r.logText = A.logs || '—';
         if (A.next != null) r.sysLine = s.sysOn ? tx.bt_on.replace(/\d+/, String(Math.max(1, Math.round(A.next / 60)))) : tx.bt_off;
@@ -266,6 +266,19 @@
       r.kCustom = s.kCustom || ''; r.kN = s.kN || ''; r.onKCustom = this.onKCustom; r.onKN = this.onKN; r.kDayPh = '—';
       { const c = parseInt(s.kCustom, 10), dd = c > 0 ? Math.min(3650, c) : s.kDay, nn = Math.max(1, Math.min(1000, parseInt(s.kN, 10) || 1));
         r.kSum = tx.bk_sum.replace('{d}', dd === 0 ? tx.bk_unl : dd === 30 ? tx.bk_month : dd + ' ' + tx.days).replace('{n}', String(nn)); }
+      // açar dolandyrmak
+      r.isAdmKd = s.page === 'adm_kd' && s.admOn && !!s.kSel;
+      { const kk = ((A && A.keys) || []).find((x) => x.k === s.kSel) || { k: s.kSel || '', n: 1, u: 0, exp: 0 };
+        const nowS = Date.now() / 1000, leftD = kk.exp ? Math.ceil((kk.exp - nowS) / 86400) : null;
+        r.kd = { k: kk.k, lb: s.kdLb == null ? (kk.lb || '') : s.kdLb, days: s.kdDays || '', n: s.kdN || '',
+          daysPh: leftD == null ? '♾' : String(Math.max(0, leftD)), nPh: String(kk.n || 1),
+          info: tx.bk_by + ': ' + (/^app:/.test(kk.by || '') ? kk.by.slice(4) : kk.by || '?') + ' · ' + (kk.at || '') + ' · ' + tx.bk_devs.replace('{u}', String(kk.u || 0)).replace('{n}', String(kk.n || 1)),
+          left: leftD == null ? '♾ ' + tx.bk_unl.replace('♾ ', '') : leftD <= 0 ? '⛔ ' + tx.bk_expired : tx.bk_leftT.replace('{d}', leftD + ' ' + tx.days),
+          cp: () => { NB.copy(kk.k); this.say('✓ ' + tx.copied + ': ' + kk.k); },
+          save: () => { const o = { k: kk.k, lb: r.kd.lb }; if (String(s.kdDays).trim() !== '') o.days = parseInt(s.kdDays, 10) || 0; if (String(s.kdN).trim() !== '') o.n = parseInt(s.kdN, 10) || 1; act('kedit', o); this.say(tx.k_wait); },
+          del: () => this.confirm(tx.bk_delQ, '🗑 ' + tx.cf_yes, () => { act('kdel', { k: kk.k }); this.setState({ page: 'adm_k' }); }) };
+        r.onKdLb = this.onKdLb; r.onKdDays = this.onKdDays; r.onKdN = this.onKdN;
+        if (r.isAdmKd) r.pageTitle = tx.bk_edit; }
       r.updLbl = s.bUpd ? tx.s_refing : '⚡ ' + tx.bt_upd;
       r.botTiles = r.botTiles.map((b, i) => (i === 5 ? Object.assign({}, b, { t: s.bUpd ? tx.s_refing : tx.bt_upd }) : b));
       r.aiNotes = this.notes().map((t, i) => ({ t, del: () => { act('notedel', { i }); A.notes = A.notes.filter((_, j) => j !== i); this.setState({ admTick: (this.state.admTick || 0) + 1 }); } }));
@@ -454,6 +467,7 @@
     const gb0 = C.goBack;
     C.goBack = () => {
       const p = C.state.page;
+      if (p === 'adm_kd') { C.setState({ page: 'adm_k' }); return; }
       if (p === 'dm') { C.setState({ page: C._dmBack && C._dmBack !== 'dm' && C._dmBack !== 'main' ? C._dmBack : 'dms' }); return; }
       if (p === 'uprof') { C.setState({ page: C._back && C._back !== 'uprof' ? C._back : 'global' }); return; }
       gb0();
@@ -490,6 +504,9 @@
       act(t.st === 'closed' ? 'reopen' : 'close', { tid: t.id }); t.st = t.st === 'closed' ? 'open' : 'closed'; C.setState({ admTick: (C.state.admTick || 0) + 1 });
     };
     C.banToggle = () => { const d = C.state.admU, u = A && A.us[d]; if (!u) return; act('ban', { dev: d, on: !u.ban }); u.ban = !u.ban; C.setState({ admTick: (C.state.admTick || 0) + 1 }); };
+    C.onKdLb = (e) => C.setState({ kdLb: String(e.target.value || '').slice(0, 40) });
+    C.onKdDays = (e) => C.setState({ kdDays: String(e.target.value || '').replace(/\D/g, '').slice(0, 4) });
+    C.onKdN = (e) => C.setState({ kdN: String(e.target.value || '').replace(/\D/g, '').slice(0, 4) });
     C.onKCustom = (e) => C.setState({ kCustom: String(e.target.value || '').replace(/\D/g, '').slice(0, 4) });
     C.onKN = (e) => C.setState({ kN: String(e.target.value || '').replace(/\D/g, '').slice(0, 4) });
     const kDays = () => { const c = parseInt(C.state.kCustom, 10); return c > 0 ? Math.min(3650, c) : C.state.kDay; };
@@ -713,6 +730,8 @@
       up.aiCount = d.aiCount || 0;
       if (d.msg && d.msg.indexOf('key:') === 0) { const k = d.msg.slice(4); NB.copy(k); C.say('🛠 ' + k + ' · ' + tx.ad_keyOk); }
       else if (d.msg === 'bc') C.say('📢 ' + tx.ad_bcOk);
+      else if (d.msg === 'kok') { C.say('✅ ' + tx.bk_saved); up.kdDays = ''; up.kdN = ''; up.kdLb = null; }
+      else if (d.msg === 'kdel') C.say('🗑 ' + tx.bk_deleted);
       else if (d.msg === 'upd') C.say('⚡ ' + tx.ad_updGo);
       else if (d.msg === 'busy') C.say(tx.ad_updBusy);
       if (d.err) C.say('⚠️ ' + d.err);
