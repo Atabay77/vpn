@@ -75,7 +75,7 @@ object State {
 
     /** 1.16.7: kanal («tm») we admin («VIP») kodlary 3 minutda bir barlanýar, netije bota (3 gezek ms ýok — bot aýyrýar). */
     @Volatile private var xAt = 0L
-    fun isExtra(s: Server): Boolean { val t = s.title.lowercase(); return t == "tm" || t == "vip" || t.startsWith("tm ") || t.startsWith("vip ") }
+    fun isExtra(s: Server): Boolean { val t = s.title.lowercase(); return t == "vip" || t.startsWith("vip ") }   // kanal kody («tm») täze kod gelýänçä durýar — barlanmaýar
     fun pingExtra(ctx: Context) {
         val now = System.currentTimeMillis()
         if (now - xAt < 180_000L) return

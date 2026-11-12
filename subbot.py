@@ -1000,7 +1000,7 @@ def app_tg_refresh(force=False):
         for ch, c in found:
             k = code_key(c)
             if k in xs: xs[k]["seen"] = now; continue
-            if k in (x.get("xdead") or {}): continue          # öň işlemän pozulan kod gaýtadan goşulmaýar
+            (x.get("xdead") or {}).pop(k, None)   # kanal kody: kanalda durýança sanawda bolýar
             xs[k] = {"c": c, "src": "tg", "ch": ch, "ts": now, "seen": now, "ok": 0, "bad": 0, "ms": 0}; added += 1
         tg = sorted([k for k, v in xs.items() if v.get("src") == "tg"], key=lambda k: xs[k]["ts"])
         for k in tg[:max(0, len(tg) - APP_TG_MAX)]: xs.pop(k, None)   # köne kodlar (iň köp 20)
@@ -1023,7 +1023,7 @@ def app_x_report(dev, pr):
                 if ms > 0: v.update({"ok": now, "bad": 0, "ms": ms})
                 else:
                     v["bad"] = int(v.get("bad") or 0) + 1
-                    if v["bad"] >= APP_X_DEAD and k not in gone: gone.append(k)   # yzly-yzyna 3 gezek ms ýok — kanal we admin kody aýrylýar
+                    if v.get("src") != "tg" and v["bad"] >= APP_X_DEAD and k not in gone: gone.append(k)   # admin kody: yzly-yzyna 3 gezek ms ýok — aýrylýar (kanal kody täze kod gelýänçä durýar)
         for k in gone:
             xs.pop(k, None); x.setdefault("xdead", {})[k] = now
         dd = x.get("xdead") or {}
@@ -2042,6 +2042,8 @@ async def app_adm(app, dev, o):
                 elif a.get("fid"): await asyncio.to_thread(ntfy_pub, app_topic(a["fid"]) + "g", app_enc(a["fid"], json.dumps({"del": gid})))
         elif act == "ban" and f_:   # 1.16.4: doly gadaganlyk — ýazyp bilmeýär, VPN diňe 20 minut
             dv = str(r.get("dev") or "")
+            staff_ = {d_ for x_ in (a.get("apw") or {}).values() for d_ in (x_.get("hist") or []) + ([x_["dev"]] if x_.get("dev") else [])}
+            if r.get("on") and (dv == dev or dv in staff_): err = "admini gadagan edip bolmaýar"; dv = ""
             if DEV_RE.match(dv):
                 on_ = bool(r.get("on"))
                 app_mut(lambda x: (x.__setitem__("gbans", [b for b in (x.get("gbans") or []) if b != dv] + ([dv] if on_ else [])),

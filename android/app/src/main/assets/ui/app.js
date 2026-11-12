@@ -260,7 +260,7 @@
         : m.t === tx.p_invite ? Object.assign({}, m, { badge: true, bt: tx.r_freeB, bc: 'mbadge-gold' }) : m));
       if (!full) { r.tabUsCls = 'hid'; r.tabIsUs = false; }
       if (!isF) { r.tabAdCls = 'hid'; r.tabBotCls = 'hid'; r.tabIsAd = false; r.tabIsBot = false; if (s.admTab !== 'tk' && !(full && s.admTab === 'us')) r.tabIsTk = true; }
-      r.banCls = isF ? '' : 'hid';
+      { const staff = (d) => d === INFO.dev || !!roleOf(d); r.banCls = isF && !(s.admU && staff(s.admU)) ? '' : 'hid'; r.bcCls = isF ? '' : 'hid'; }   // özüňi / admini gadagan etmek bolmaýar
       const byName = (b) => (/^app:/.test(b) ? b.slice(4) : b === 'ref' ? '🤝' : b === 'gift' ? '🎁' : /^\d+$/.test(b) ? 'Telegram' : b || '?');
       if (A && A.codes) r.codeList = A.codes.map((c, i) => {
         const mine = c.u === INFO.dev, u = c.u ? us[c.u] || { name: '?' } : null;
