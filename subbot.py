@@ -1038,6 +1038,27 @@ TM_CNAME = {"nl": "Niderlandlar", "fi": "Finlýandiýa", "gb": "Beýik Britaniý
             "hk": "Gonkong", "ca": "Kanada", "ir": "Eýran", "md": "Moldowa", "rs": "Serbiýa", "no": "Norwegiýa", "dk": "Daniýa", "be": "Belgiýa", "ie": "Irlandiýa",
             "ge": "Gruziýa", "am": "Ermenistan", "az": "Azerbaýjan", "in": "Hindistan"}
 
+# abunadaky «maglumat» setirleri (ulanyjy ady, duýduryş, galan wagt…) serwer däl
+APP_INFO_RE = re.compile(r"(👤|📢|⏳|📅|📊|ℹ️|⚠️|ulanyjy|hormatly|möhlet|galan|trafik|username|user ?name|expire|traffic|remaining|days? left|"
+                         r"осталось|трафик|истека|пользоват|уважаем|подписк|остаток|telegram|t\.me|@[A-Za-z0-9_]{4,})", re.I)
+
+def app_is_info(c):
+    h, p_ = code_hostport(c)
+    if not h or h in ("0.0.0.0", "127.0.0.1", "localhost", "::1") or not p_ or p_ <= 1: return True
+    return bool(APP_INFO_RE.search(orig_name(c)))
+
+def app_clean_codes(codes):
+    """Abunalardan gelen kodlar: maglumat setirleri aýrylýar, her baýdakdan diňe birinji kod galýar."""
+    out, seen = [], set()
+    for c in codes:
+        if app_is_info(c): continue
+        m = re.search(r"[\U0001F1E6-\U0001F1FF]{2}", orig_name(c))
+        if m:
+            if m.group(0) in seen: continue
+            seen.add(m.group(0))
+        out.append(c)
+    return out
+
 def app_x_named(base_codes, a):
     """Goşmaça kodlar programyň sanawyna: ady «🇹🇷 Türkiýe · tm» (şol baýdak öň bar bolsa «Türkiýe 2»), Russiýa — 🎮 oýun bölümi."""
     xs = a.get("xcodes") or {}
@@ -1142,6 +1163,8 @@ def app_sync(force=False):
                 if k not in keys: keys.add(k); codes.append(c)
         last = {hashlib.md5(u.encode()).hexdigest()[:8]: last[hashlib.md5(u.encode()).hexdigest()[:8]]
                 for u in subs if hashlib.md5(u.encode()).hexdigest()[:8] in last}
+        n_raw = len(codes); codes = app_clean_codes(codes); keys = {code_key(c) for c in codes}   # 1.16.11
+        if n_raw != len(codes): log.info("app: %d maglumat/gaýtalanýan kod aýryldy", n_raw - len(codes))
         try: app_tg_refresh()
         except Exception as e: errs.append(f"Telegram: {str(e)[:60]}")
         try: app_quota_check()
