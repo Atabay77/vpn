@@ -180,6 +180,7 @@ object Msg {
             val n = a.optJSONObject(i) ?: continue
             val j = JSONObject().put("t", n.optString("t")).put("x", n.optString("x"))
             n.optString("img").takeIf { it.isNotEmpty() }?.let { j.put("img", it) }
+            n.optJSONArray("btn")?.let { j.put("btn", it) }
             l.add(Triple(n.optString("id"), n.optLong("ts"), j.toString()))
         }
         val changed = l.map { it.first } != Sub.news.map { it.first }

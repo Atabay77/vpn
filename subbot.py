@@ -866,7 +866,7 @@ def app_meta(cfg):
         if n_ <= 1: out.append(f"#tvk: {app_key_hash(k)} {int(v.get('exp') or 0)}" + (f" {dv_[0]}" if dv_ else ""))
         else: out.append(f"#tvk: {app_key_hash(k)} {int(v.get('exp') or 0)} {','.join(dv_) or '-'} {n_}")   # 1.16: köp adamlyk açar
     for n_ in (cfg.get("news") or [])[:10]:
-        out.append(f"#tvn: {n_['id']} {int(n_['ts'])} " + base64.urlsafe_b64encode(json.dumps({"t": n_["t"], "x": n_["x"], **({"img": n_["img"]} if n_.get("img") else {})}, ensure_ascii=False).encode()).decode().rstrip("="))
+        out.append(f"#tvn: {n_['id']} {int(n_['ts'])} " + base64.urlsafe_b64encode(json.dumps({"t": n_["t"], "x": n_["x"], **({"img": n_["img"]} if n_.get("img") else {}), **({"btn": n_["btn"]} if n_.get("btn") else {})}, ensure_ascii=False).encode()).decode().rstrip("="))
     if RUN.get("app_on"): out.append(f"#tvon: {int(RUN['app_on'])}")
     try: ai_on = bool(ai_key()) and load_db().get("ai_sup", True)
     except Exception: ai_on = False
@@ -937,7 +937,7 @@ def app_news_fs(a=None):
     """Habarlar Firestore-a hem (n/list): programlar açyk wagty 2 minutda bir okaýar — abuna faýlyna garaşmaýar."""
     a = a if a is not None else app_cfg(load_db()); fid = a.get("fid")
     if not (fid and a.get("fs_ok") and a.get("fs_proj")): return
-    lst = [{"id": n_["id"], "ts": int(n_["ts"]), "t": n_["t"], "x": n_["x"], **({"img": n_["img"]} if n_.get("img") else {})} for n_ in (a.get("news") or [])[:10]]
+    lst = [{"id": n_["id"], "ts": int(n_["ts"]), "t": n_["t"], "x": n_["x"], **({"img": n_["img"]} if n_.get("img") else {}), **({"btn": n_["btn"]} if n_.get("btn") else {})} for n_ in (a.get("news") or [])[:10]]
     body = json.dumps({"news": lst}, ensure_ascii=False, sort_keys=True)
     if RUN.get("news_fs") == body: return
     fs_write(a["fs_proj"], "n/list", app_enc(fid, body), None, False)
@@ -1498,6 +1498,7 @@ async def app_on_msg(app, fid, o):
         if r == "bad": await asyncio.to_thread(app_send, dev, {"k": "kbad"})
         if r == "new": RUN["app_dirty"] = True
 
+APP_NEWS_BTN = ("invite", "key", "global", "chat", "servers", "gift", "dms", "update")   # habaryň aşagyndaky düwmeler (programda sahypa açýar)
 APP_NICK_RESERVED = ("owner", "admin", "kurucu", "türkmen vpn", "turkmen vpn", "moderator", "support")
 GCHAT_LINK = re.compile(r"(https?://|www\.|t\.me/|\b[\w-]{2,}\.(com|net|org|ru|tm|me|io|xyz|info|top|site|online|link|app|dev|tk|ly|gg|uz|kz|tr|de|co|su|pro|club|shop|store|live|tv|cc|biz|ua|by)\b)", re.I)
 # aýdyň kemsidiji sözler (galanyny AI tapýar)
@@ -1848,6 +1849,8 @@ async def app_adm(app, dev, o):
             t1, x1 = str(r.get("t") or "").strip()[:80], str(r.get("x") or "").strip()[:600]
             if t1 and x1:
                 nw_ = {"id": "n" + format(int(now), "x"), "ts": int(now), "t": t1, "x": x1}
+                bt_ = [b_ for b_ in (r.get("btn") or []) if b_ in APP_NEWS_BTN][:4]
+                if bt_: nw_["btn"] = bt_
                 ie_ = RUN.get("bcimg", {}).pop(aid + ":" + re.sub(r"[^\w]", "", str(r.get("img") or ""))[:12], None) if r.get("img") else None
                 if ie_ and len(ie_["parts"]) == ie_["n"]:
                     data_ = "".join(ie_["parts"][i] for i in range(ie_["n"]))

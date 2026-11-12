@@ -82,17 +82,21 @@
   function withKeys(parts, C) {
     const out = [];
     for (const q of parts || []) {
-      if (!q.isT || !KEY_RE.test(q.t)) { out.push(Object.assign({ isK: false, cp: null }, q)); continue; }
+      if (!q.isT || !KEY_RE.test(q.t)) { out.push(Object.assign({ isK: false, cp: null, use: null }, q)); continue; }
       KEY_RE.lastIndex = 0; let last = 0, m;
       while ((m = KEY_RE.exec(q.t))) {
-        if (m.index > last) out.push({ t: q.t.slice(last, m.index), isT: true, isL: false, href: '', isK: false, cp: null });
-        const k = m[0]; out.push({ t: k, isT: false, isL: false, href: '', isK: true, cp: () => { NB.copy(k); C.say('✓ ' + C.T()[C.state.lang].copied + ': ' + k); } });
+        if (m.index > last) out.push({ t: q.t.slice(last, m.index), isT: true, isL: false, href: '', isK: false, cp: null, use: null });
+        const k = m[0]; out.push({ t: k, isT: false, isL: false, href: '', isK: true, cp: () => { NB.copy(k); C.say('✓ ' + C.T()[C.state.lang].copied + ': ' + k); },
+          use: () => { NB.copy(k); C.setState({ page: 'key', menu: false, keyIn: k, keyMsg: '' }); } });
         last = m.index + k.length;
       }
-      if (last < q.t.length) out.push({ t: q.t.slice(last), isT: true, isL: false, href: '', isK: false, cp: null });
+      if (last < q.t.length) out.push({ t: q.t.slice(last), isT: true, isL: false, href: '', isK: false, cp: null, use: null });
     }
     return out;
   }
+  // habaryň düwmeleri: kimlik → sahypa
+  const NBTN = { invite: ['🎁', 'p_invite', 'invite'], key: ['🔑', 'p_key', 'key'], global: ['🌐', 'p_global', 'global'], chat: ['💬', 'p_chat', 'chat'],
+    servers: ['🌍', 'p_servers', 'servers'], gift: ['🎁', 'p_gift', 'gift'], dms: ['✉️', 'p_dms', 'dms'], update: ['', 'nb_update', ''] };
   const rpOf = (m, nm) => ({ i: m.id || m.gk || '', n: nm || '', t: (m.st || (m.pi || m.ph ? '📷' : '') || m.x || m.t || '').slice(0, 90) });
 
   function loadServers() {
@@ -332,11 +336,18 @@
         if (n.isTk) return n;
         const b = (s.bcast || [])[bi++] || {};
         if (b.img && !NI[b.img]) askImg('n', b.img);
-        return Object.assign({}, n, { isO: true, tcls: 'goldtxt', date: b.time || '', hasImg: !!(b.img && NI[b.img]), img: (b.img && NI[b.img]) || '', zoom: () => this.setState({ zoom: NI[b.img] || '' }) });
+        const btns = (b.btn || []).filter((k) => NBTN[k]).map((k) => ({ t: (NBTN[k][0] ? NBTN[k][0] + ' ' : '') + tx[NBTN[k][1]], go: () => { if (k === 'update') NB.update(); else this.setState({ page: NBTN[k][2], menu: false }); } }));
+        return Object.assign({}, n, { hasBtn: btns.length > 0, btns, isO: true, tcls: 'goldtxt', date: b.time || '', hasImg: !!(b.img && NI[b.img]), img: (b.img && NI[b.img]) || '', zoom: () => this.setState({ zoom: NI[b.img] || '' }) });
       });
       r.news = r.news.map((n) => Object.assign({}, n, { parts: withKeys(n.parts, this) }));
       r.msgs = r.msgs.map((m) => Object.assign({}, m, { parts: withKeys(this.lk(m.t || ''), this) }));
       r.gRpOn = !!s.gRp && pg === 'global'; r.gRpN = s.gRp ? s.gRp.n : ''; r.gRpT = s.gRp ? s.gRp.t : ''; r.rpX = this.rpX;
+      r.bcBtns = Object.keys(NBTN).map((k) => { const on = (s.bcBtn || []).indexOf(k) >= 0;
+        return { t: (NBTN[k][0] ? NBTN[k][0] + ' ' : '') + tx[NBTN[k][1]], p: on ? 'true' : 'false', cls: on ? 'chip-on' : '',
+          tog: () => { const cur = this.state.bcBtn || []; this.setState({ bcBtn: on ? cur.filter((x) => x !== k) : cur.concat([k]).slice(-4) }); } }; });
+      // baş ýazgy: öz suratym ýa-da logo; «Dostuňy çagyr»: ýükläp almak linki
+      r.hdAv = s.photo || 'img/logo.png'; r.hasDl = !!INFO.dl; r.dlLink = INFO.dl || '';
+      r.copyDl = () => { NB.copy(INFO.dl || ''); this.say('✓ ' + tx.copied); };
       r.onBcImg = this.onBcImg; r.bcHasImg = !!s.bcImg; r.bcImg = s.bcImg || ''; r.bcImgDel = () => this.setState({ bcImg: '' });
       const ava = (dev) => { const ph = dev === me1 ? s.photo : thumbOf(dev), nm = dev === me1 ? this.meName : nameOf(dev);
         if (!ph && dev !== me1 && !phAsked[dev]) { phAsked[dev] = 1; NB.getPhoto(dev); }
@@ -505,6 +516,7 @@
     C.onBcImg = (e) => { const f = fileOf(e); if (!f) return; shrink(f, 960, 0.65, (d) => { if (d) C.setState({ bcImg: d }); else C.say(C.T()[C.state.lang].ph_big); }); e.target.value = ''; };
     // yza: täze sahypalar
     const gb0 = C.goBack;
+    C.goUnlim = () => C.setState({ page: 'invite', menu: false });
     C.goBack = () => {
       const p = C.state.page;
       if (p === 'adm_kd') { C.setState({ page: 'adm_k' }); return; }
@@ -558,9 +570,9 @@
       if (im) {   // surat 4 KB-lyk böleklere bölünýär (bot ýygnap Firestore-a ýazýar)
         const id = Math.random().toString(36).slice(2, 10), N = Math.ceil(im.length / 4000);
         for (let i = 0; i < N; i++) act('imgc', { id, i, n: N, d: im.slice(i * 4000, (i + 1) * 4000) });
-        act('bc', { t, x, img: id });
-      } else act('bc', { t, x });
-      C.setState({ bcT: '', bcX: '', bcImg: '' }); C.say(tx.k_wait);
+        act('bc', { t, x, img: id, btn: s.bcBtn || [] });
+      } else act('bc', { t, x, btn: s.bcBtn || [] });
+      C.setState({ bcT: '', bcX: '', bcImg: '', bcBtn: [] }); C.say(tx.k_wait);
     };
     C.aiToggle = () => { act('ai', { on: !C.state.aiOn }); C.setState({ aiOn: !C.state.aiOn }); };
     C.aiAdd = () => { const t = C.state.aiIn.trim(); if (!t || !A) return; act('note', { t }); A.notes = (A.notes || []).concat([t]); C.setState({ aiIn: '' }); C.say('🤖 ' + C.T()[C.state.lang].ai_added); };
@@ -678,7 +690,7 @@
 
   function news(C, up) {
     INFO = J(NB.info(), INFO);
-    const list = (INFO.news || []).map((n) => { const j = J(n.j, {}); return { id: n.id, t: j.t || '', x: j.x || '', img: j.img || '', time: new Date(n.ts * 1000).toLocaleDateString('ru-RU') }; })
+    const list = (INFO.news || []).map((n) => { const j = J(n.j, {}); return { id: n.id, t: j.t || '', x: j.x || '', img: j.img || '', btn: Array.isArray(j.btn) ? j.btn : [], time: new Date(n.ts * 1000).toLocaleDateString('ru-RU') }; })
       .sort((a, b) => (a.id < b.id ? 1 : -1));
     up.bcast = list;
     const seen = C.state.seenNews || [], fresh = list.filter((n) => seen.indexOf(n.id) < 0);
