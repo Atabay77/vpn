@@ -97,6 +97,12 @@
   // habaryň düwmeleri: kimlik → sahypa
   const NBTN = { invite: ['🎁', 'p_invite', 'invite'], key: ['🔑', 'p_key', 'key'], global: ['🌐', 'p_global', 'global'], chat: ['💬', 'p_chat', 'chat'],
     servers: ['🌍', 'p_servers', 'servers'], gift: ['🎁', 'p_gift', 'gift'], dms: ['✉️', 'p_dms', 'dms'], update: ['', 'nb_update', ''] };
+  /** Kota duýduryşy (telefonda saklanýar): şol duýduryş öň pozulan bolsa gaýtadan çykmaýar, täzesi (başga wagt) çykýar. */
+  function qAdd(id, t, at) {
+    if (!id) return; const q = LS.get('qAlerts', {}), cur = q[id];
+    if (cur && cur.at === (at || 0)) { cur.t = t || cur.t; LS.set('qAlerts', q); return; }
+    q[id] = { t: t || '', at: at || 0, x: 0 }; LS.set('qAlerts', q);
+  }
   const rpOf = (m, nm) => ({ i: m.id || m.gk || '', n: nm || '', t: (m.st || (m.pi || m.ph ? '📷' : '') || m.x || m.t || '').slice(0, 90) });
 
   function loadServers() {
@@ -329,6 +335,9 @@
       if (at && at.fb && at.st === 'closed') r.atMsgs = r.atMsgs.concat([{ t: at.fb === '👍' ? tx.fb_aUp : tx.fb_aDown, time: '', cls: 'bub-s', isAi: false }]);
       // ---- 1.16 ----
       const pg = s.page, me1 = INFO.dev, myRole = roleOf(me1);
+      // kota duýduryşy: diňe eýesine, «Sil» basylýança durýar
+      { const QA = LS.get('qAlerts', {}), own = myRole === 'o' || admMe().role === 'f';
+        r.qAlerts = own ? Object.keys(QA).filter((id) => !QA[id].x).map((id) => ({ t: QA[id].t, del: () => { const q = LS.get('qAlerts', {}); if (q[id]) q[id].x = 1; LS.set('qAlerts', q); this.setState({ qTick: (this.state.qTick || 0) + 1 }); } })) : []; }
       r.isOwner = myRole === 'o'; r.isAdminR = myRole === 'a'; r.ownerTag = r.isOwner && pg === 'main'; r.appVer = INFO.ver || '';
       // oýun serwerleri: hemmesi jogap bermese bellik; täzele + ping
       { const gp = SV.filter((v) => v.game).map((v) => s.pings[v.id]);
@@ -793,6 +802,7 @@
         return;
       }
       const d = e.d || {}; A = d; INFO.admMe = d.me; INFO.adm = true;
+      (d.qal || []).forEach((q) => qAdd(q.id, q.t, q.at));
       if (s.admLogging || !s.admOn) { Object.assign(up, { admOn: true, admAsk: false, admLogging: false, admErr: '', admFails: 0, page: 'admin', admTab: 'tk' }); C.say('🔓 ' + tx.ad_ok); }
       up.admRole = (d.me || {}).role || 'h';
       if (d.sysOn != null) up.sysOn = d.sysOn;
@@ -832,6 +842,7 @@
       else if (m.k === 'nick') {
         if (m.ok) { C.meName = m.n; LS.set('nick', m.n); up.nkSt = 'ok'; up.nkIn = null; } else up.nkSt = m.why === 'taken' ? 'taken' : 'bad';
       } else if (m.k === 'uban') { INFO.uban = !!m.on; if (m.on) C.say('⛔ ' + tx.ub_msg); }
+      else if (m.k === 'quota') { qAdd(m.id, m.t, m.at); up.qTick = (s.qTick || 0) + 1; }
       else if (m.k === 'atk') { if (INFO.adm) { C.say((m.new ? tx.atk_new : '🎫') + ' #' + m.tid + (m.n ? ' · ' + m.n : '') + ': ' + String(m.t || '').slice(0, 70)); admAt = 0; } }
       else if (m.k === 'mute') { LS.set('muteUntil', (m.until || 0) * 1000); C.say('🔇 ' + tx.g_muteOn); }
       else if (m.k === 'gwarn') { C.say('⚠️ ' + tx.g_warn.replace('{n}', String(m.n || 1))); }

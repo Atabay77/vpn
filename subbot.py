@@ -1073,6 +1073,42 @@ def app_x_add(text, who="admin"):
         return n_
     return app_mut(f)
 
+# 1.16.8: programyň kod alýan abunalarynyň kotasy — 85%-den geçende eýesiniň telefonyna gyzyl duýduryş
+APP_QUOTA_EVERY, APP_QUOTA_WARN, APP_QUOTA_RESET = 1800, 0.85, 0.80
+
+def app_quota_txt(v):
+    gb = lambda b: f"{b / 1024 ** 3:.1f} GB"
+    return f"{v['label']}: {int(v['pct'] * 100)}% ({gb(v['used'])} / {gb(v['total'])})"
+
+def app_quota_check(force=False):
+    if not force and time.time() - RUN.get("quota_at", 0) < APP_QUOTA_EVERY: return []
+    RUN["quota_at"] = time.time()
+    db_ = load_db(); a = app_cfg(db_); res, alerts = {}, []
+    urls = list(dict.fromkeys(list(a.get("subs", [])) + list(db_.get("sources", [])) + list(db_.get("source_subs", []))))   # programyň we botuň kod alýan abunalary
+    for u in urls:
+        if not isinstance(u, str) or not u.startswith("http"): continue
+        h = hashlib.md5(u.encode()).hexdigest()[:8]; lim = sub_limits(u)
+        total = int(lim.get("total") or 0)
+        if total <= 0: continue
+        used = int(lim.get("upload") or 0) + int(lim.get("download") or 0)
+        res[h] = {"label": src_label(u), "used": used, "total": total, "pct": round(used / total, 3), "exp": int(lim.get("expire") or 0), "ts": int(time.time())}
+    def f(x):
+        q = x.setdefault("quota", {}); al = x.setdefault("quota_al", {}); out = []
+        q.clear(); q.update(res)
+        for h, v in res.items():
+            if v["pct"] >= APP_QUOTA_WARN and not al.get(h): al[h] = int(time.time()); out.append((h, v))
+            elif v["pct"] < APP_QUOTA_RESET: al.pop(h, None)   # täzelenen abuna: indiki gezek ýene duýdurylýar
+        return out
+    alerts = app_mut(f)
+    for h, v in alerts:
+        txt = app_quota_txt(v)
+        at_ = (app_cfg(load_db()).get("quota_al") or {}).get(h, 0)
+        for d_ in app_staff_devs(tickets=False):
+            try: app_send(d_, {"k": "quota", "id": h, "t": txt, "pct": v["pct"], "at": at_})
+            except Exception as e: log.info("quota send: %s", e)
+        vlog(f"⚠️ Kota dolmak üzere — {txt}")
+    return alerts
+
 def app_news_fs(a=None):
     """Habarlar Firestore-a hem (n/list): programlar açyk wagty 2 minutda bir okaýar — abuna faýlyna garaşmaýar."""
     a = a if a is not None else app_cfg(load_db()); fid = a.get("fid")
@@ -1108,6 +1144,8 @@ def app_sync(force=False):
                 for u in subs if hashlib.md5(u.encode()).hexdigest()[:8] in last}
         try: app_tg_refresh()
         except Exception as e: errs.append(f"Telegram: {str(e)[:60]}")
+        try: app_quota_check()
+        except Exception as e: log.info("quota: %s", e)
         for c in app_x_named(codes, app_cfg(load_db())):   # 1.16.6: kanal + admin kodlary
             if code_key(c) not in keys: keys.add(code_key(c)); codes.append(c)
         meta = app_meta(cfg)
@@ -1876,6 +1914,7 @@ def app_adm_snap(a, e, dev):
                       "ok": app_hm(v.get("ok")) if v.get("ok") else "", "ms": int(v.get("ms") or 0), "bad": int(v.get("bad") or 0), "at": app_hm(v.get("ts"))}
                      for k_, v in sorted((a.get("xcodes") or {}).items(), key=lambda kv: -kv[1].get("ts", 0))]
         out["tgsrc"] = a.get("tgsrc", APP_TG_DEFAULT)
+        out["qal"] = [{"id": h, "t": app_quota_txt(v), "at": (a.get("quota_al") or {}).get(h, 0)} for h, v in (a.get("quota") or {}).items() if (a.get("quota_al") or {}).get(h)]
         out["news"] = [{"t": n_["t"], "x": n_["x"], "time": app_hm(n_.get("ts")), "img": n_.get("img", "")} for n_ in (a.get("news") or [])]
     return out
 
