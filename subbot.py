@@ -4233,7 +4233,7 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
                      "4) APIs &amp; Services → Credentials → «Create API key» → «Restrict key» → diňe «Cloud Firestore API» → açary «🔑 API açary» bilen iberiň")
             pq = "?project=" + urllib.parse.quote(proj) if proj else ""
             links = [[B("1️⃣ Bazany döret", url="https://console.cloud.google.com/firestore/create-database" + pq)],
-                     [B("2️⃣ Düzgünler (Rules)", url="https://console.cloud.google.com/firestore/databases/-default-/security/rules" + pq)],
+                     [B("2️⃣ Düzgünler (Rules)", url="https://console.cloud.google.com/firestore/databases/" + ("-default-" if (a_.get("fs_db") or "(default)") == "(default)" else urllib.parse.quote(a_.get("fs_db"))) + "/security/rules" + pq)],
                      [B("3️⃣ IAM: rol goş", url="https://console.cloud.google.com/iam-admin/iam" + pq)],
                      [B("4️⃣ API açary döret", url="https://console.cloud.google.com/apis/credentials" + pq)]]
             await safe_edit(q, txt_, KB(links + [[B("🔑 API açary", "afs_key", "primary"), B("📋 Düzgünler", "afs_rules")], [B("🔄 Barla", "afs_chk")] + ([B("↩️ Öçür", "afs_off", "danger")] if a_.get("fs_ok") else []), [B("◀️ Programma", "app_v")]])); return
