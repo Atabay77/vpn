@@ -221,7 +221,7 @@
       }
       const at = s.admT != null && A ? A.tk.find((x) => x.id === s.admT) : null;
       if (at && at.fb && at.st === 'closed') r.atMsgs = r.atMsgs.concat([{ t: at.fb === '👍' ? tx.fb_aUp : tx.fb_aDown, time: '', cls: 'bub-s', isAi: false }]);
-      if (s.admOn && full) r.gMsgs = r.gMsgs.map((g) => Object.assign({}, g, { canDel: true, del: () => { act('gdel', { id: g.gk }); gDel[g.gk] = true; this.setState({ gTick: (this.state.gTick || 0) + 1 }); } }));
+      if (s.admOn && isF) r.gMsgs = r.gMsgs.map((g) => Object.assign({}, g, { canDel: true, del: () => { act('gdel', { id: g.gk }); gDel[g.gk] = true; this.setState({ gTick: (this.state.gTick || 0) + 1 }); } }));
       return r;
     };
   };
@@ -350,7 +350,7 @@
     if (lastPage !== s2.page) { NB.gwatch(s2.page === 'global'); lastPage = s2.page; }
     if (INFO.relay) syncPhoto(C);
     if (s2.admOn && ADM_PAGES.indexOf(s2.page) >= 0 && now - admAt > (A ? 20000 : 8000) && !admPend) { admAt = now; act('get'); }
-    if (admPend && now - admPend > 60000) {
+    if (admPend && now - admPend > (s2.admLogging ? 30000 : 60000)) {
       admPend = 0; const tx = C.T()[s2.lang];
       if (s2.admLogging) C.setState({ admLogging: false, admErr: tx.ad_noResp }); else if (s2.admOn && ADM_PAGES.indexOf(s2.page) >= 0) C.say(tx.ad_noResp);
       if (s2.bUpd) C.setState({ bUpd: false });

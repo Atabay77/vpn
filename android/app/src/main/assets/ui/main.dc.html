@@ -70,7 +70,7 @@ button,input{font:inherit;color:inherit}
 .av30{width:30px;height:30px;border-radius:15px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;color:#0B2117;object-fit:cover}
 .avbig{width:104px;height:104px;border-radius:52px;border:3px solid #E0B04A;box-sizing:border-box;box-shadow:0 0 0 5px rgba(11,33,23,.9),0 0 0 6.5px rgba(224,176,74,.55),0 0 28px rgba(224,176,74,.35)}
 .lchip{display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box}
-.gdel{display:block;margin-top:4px;border:none;background:transparent;color:#FF8A78;font-size:10px;font-weight:800;cursor:pointer;padding:0}
+.gcol{display:flex;flex-direction:column;align-items:flex-start;gap:3px;min-width:0}.gm-me .gcol{align-items:flex-end}.gtr{width:30px;height:24px;border-radius:8px;border:1px solid rgba(255,138,120,.6);background:rgba(255,138,120,.14);color:#FF8A78;display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0}.gdel{display:block;margin-top:4px;border:none;background:transparent;color:#FF8A78;font-size:10px;font-weight:800;cursor:pointer;padding:0}
 .bub{overflow-wrap:anywhere}.gb{overflow-wrap:anywhere}
 .bub-ai{border-color:rgba(160,210,255,.55) !important;background:rgba(14,32,44,.94) !important}.bub-ai2{background:linear-gradient(135deg,#7FB6E8,#4F86C6) !important}
 .ailbl{display:block;font-size:10px;font-weight:800;color:#A8D4FF;margin-bottom:2px}
@@ -913,8 +913,11 @@ button,input{font:inherit;color:inherit}
           <div class="gm {{gm.cls}}">
             <sc-if value="{{gm.hasPh}}" hint-placeholder-val="{{false}}"><img src="{{gm.photo}}" alt="" class="av30"></sc-if>
             <sc-if value="{{gm.noPh}}" hint-placeholder-val="{{true}}"><span class="av30" style="background:{{gm.bg}}">{{gm.ini}}</span></sc-if>
-            <div class="gb {{gm.bcls}}">
-              <span style="display:block;font-size:10px;font-weight:800;color:{{gm.nc}};margin-bottom:2px">{{gm.name}}</span>{{gm.t}}<span class="bt">{{gm.time}}</span><sc-if value="{{gm.canDel}}" hint-placeholder-val="{{false}}"><button onClick="{{gm.del}}" class="gdel">🗑 {{tx.g_del}}</button></sc-if>
+            <div class="gcol">
+              <sc-if value="{{gm.canDel}}" hint-placeholder-val="{{false}}"><button onClick="{{gm.del}}" class="gtr tap" aria-label="{{tx.g_del}}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16"></path><path d="M10 11v6M14 11v6"></path><path d="M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12"></path><path d="M9 7V4h6v3"></path></svg></button></sc-if>
+              <div class="gb {{gm.bcls}}">
+              <span style="display:block;font-size:10px;font-weight:800;color:{{gm.nc}};margin-bottom:2px">{{gm.name}}</span>{{gm.t}}<span class="bt">{{gm.time}}</span>
+              </div>
             </div>
           </div>
         </sc-for>

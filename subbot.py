@@ -1658,7 +1658,7 @@ async def app_adm(app, dev, o):
                 except Exception as e2: RUN["app_err"] = str(e2)[:150]
                 msg = "key:" + k_
                 if not f_: await notify_founders(app, f"🛠 <b>{esc(who)}</b> programdan açar döretdi: <code>{k_}</code> · {d_} gün", silent=True)
-        elif act == "gdel" and full:
+        elif act == "gdel" and f_:
             gid = re.sub(r"^g/", "", str(r.get("id") or ""))
             if re.fullmatch(r"[\w\-]{1,60}", gid):
                 if a.get("fs_ok") and a.get("fs_proj"): await asyncio.to_thread(fs_delete, a["fs_proj"], ["g/" + gid])
@@ -1717,14 +1717,15 @@ def apw_view(a):
                      + ("" if apw_valid(x) else " · ⛔ möhleti geçdi") + f"\n<code>{esc(x['pw'])}</code>\n{dv} · 🛠 {int(x.get('made') or 0)} açar")
     rows = [[B(f"🔓 {short(x.get('name') or '?', 14)}: telefony boşat", f"apwk:{aid}"), B("🗑", f"apwd:{aid}", "danger")] for aid, x in ap.items()]
     rows.append([B("➕ Maňa (esasy admin)", "apwme", "primary"), B("➕ Kömekçi admine", "apwh")])
+    rows.append([B("✍️ Öz açar sözüm (esasy admin)", "apwset")])
     rows.append([B("◀️ Programma", "app_v")])
     return ("🔐 <b>Programma admin açar sözleri</b>\n<blockquote>" + ("\n\n".join(lines) or "Açar söz ýok.") + "</blockquote>\n"
             "<i>Programda: «Admine ýaz» sahypasynyň adyna 10 gezek basyň → açar sözi ýazyň. Her açar söz diňe 1 telefonda işleýär. "
             "Kömekçi adminiň möhleti geçse açar sözi hem işlemeýär.</i>"), KB(rows)
 
-def apw_make(uid, name, role, perm):
-    """Adama täze açar söz (köne bar bolsa çalşylýar)."""
-    pw = apw_new()
+def apw_make(uid, name, role, perm, pw=None):
+    """Adama täze açar söz (köne bar bolsa çalşylýar). pw berilmese bot özi döredýär."""
+    pw = apw_norm(pw) if pw else apw_new()
     def f(x):
         ap = x.setdefault("apw", {})
         for k_ in [k_ for k_, v in ap.items() if int(v.get("uid") or 0) == int(uid)]: ap.pop(k_)
@@ -3014,6 +3015,20 @@ async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
             t_, kb_ = app_ticket_view(app_cfg(load_db()), tid)
             await u.message.reply_text(("✅ Iberildi.\n\n" if ok else "⚠️ Bilet ýok.\n\n") + t_, parse_mode="HTML", reply_markup=kb_)
 
+        elif act == "apw_set":
+            if uid not in ORIG_ADMINS: return
+            pw_ = apw_norm(txt)
+            try: await u.message.delete()
+            except Exception: pass
+            if not (6 <= len(pw_) <= 40):
+                STATE[uid] = st; await u.message.reply_text("⚠️ Açar söz 6–40 belgi bolmaly.", reply_markup=back("apw")); return
+            other = (app_cfg(load_db()).get("apw") or {}).get(apw_id(pw_))
+            if other and int(other.get("uid") or 0) != uid:
+                STATE[uid] = st; await u.message.reply_text("⚠️ Bu açar söz başga admine degişli — başgasyny ýazyň.", reply_markup=back("apw")); return
+            apw_make(uid, u.effective_user.full_name or str(uid), "f", "all", pw_); audit(uid, "apw set founder")
+            t_, kb_ = apw_view(app_cfg(load_db()))
+            await u.message.reply_text("✅ Açar söz bellendi. Programda: «Admine ýaz» adyna 10 gezek basyň → şu açar sözi ýazyň.\n\n" + t_, parse_mode="HTML", reply_markup=kb_)
+
         elif act == "afs_key":
             parts_ = txt.split(); key_ = parts_[-1] if parts_ else ""
             try: await u.message.delete()
@@ -4016,7 +4031,7 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
             start_refresh(c.application, "abonelik silindi")
         await safe_edit(q, "✅ Abonelik silindi. Kalan aboneliklerin kodları şimdi yeniden yazılıyor." if ok else "⚠️ Bulunamadı.", back("sources"))
 
-    elif a in ("apw", "apwme", "apwh") or a.startswith(("apwk:", "apwd:", "apwp:", "apwc:")):
+    elif a in ("apw", "apwme", "apwh", "apwset") or a.startswith(("apwk:", "apwd:", "apwp:", "apwc:")):
         if uid not in ORIG_ADMINS:
             await safe_edit(q, "⛔ Erişim yok", back("admin")); return
         if a.startswith("apwk:"):
@@ -4028,6 +4043,10 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
             pw_ = apw_make(uid, q.from_user.full_name or str(uid), "f", "all"); audit(uid, "apw new founder")
             t_, kb_ = apw_view(app_cfg(load_db()))
             await safe_edit(q, f"✅ <b>Täze açar söz (esasy admin):</b>\n<code>{pw_}</code>\n\n" + t_, kb_); return
+        if a == "apwset":
+            STATE[uid] = {"action": "apw_set"}
+            await safe_edit(q, *prompt("✍️ <b>Öz açar sözüňiz</b>", "Programda admin paneline girmek üçin açar sözi ýazyň (6–40 belgi, boşluksyz; harplar baş harpa öwrülýär). "
+                                       "Habaryňyz derrew pozulýar.\n<i>Uzyn we çylşyrymly bolsa gowy (meselem harp + san + belgi).</i>", "apw")); return
         if a == "apwh":
             sas = [(sid, e_) for sid, e_ in load_db().get("sub_admins", {}).items() if float(e_.get("expires", 0)) > time.time()]
             rows_ = [[B(f"👮 {short(e_.get('name') or sid, 24)}", f"apwp:{sid}")] for sid, e_ in sas]
@@ -4141,9 +4160,9 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
             try: lst = await asyncio.to_thread(app_global_list, fid, set(app_cfg(load_db()).get("gbans") or []))
             except Exception as e: await safe_edit(q, f"⚠️ Okalmady: {esc(str(e)[:120])}", back("app_v")); return
             lines = [f"{i + 1}. <b>{esc(o.get('n') or '?')}</b>: {esc(short(o.get('t') or '', 70))}" for i, (_, _, o) in enumerate(lst)]
-            rows = [[B(f"🗑 {i + 1}", f"agd:{mid}"), B(f"🚫 {i + 1}", f"agb:{o.get('i')}")] for i, (mid, _, o) in enumerate(lst) if DEV_RE.match(str(o.get("i") or ""))]
+            rows = grid([B(f"🚫 {i + 1}", f"agb:{o.get('i')}") for i, (mid, _, o) in enumerate(lst) if DEV_RE.match(str(o.get("i") or ""))], 4)   # pozmak: programda (esasy admin, 🗑)
             rows.append([B("🔄 Täzele", "agc"), B("◀️ Programma", "app_v")])
-            await safe_edit(q, "🌐 <b>Global chat</b> (soňky 12 sagat)\n<blockquote>" + ("\n".join(lines) or "Habar ýok.") + "</blockquote>\n<i>🗑 — habary poz · 🚫 — adamy Global chat-dan gadagan et</i>", KB(rows)); return
+            await safe_edit(q, "🌐 <b>Global chat</b> (soňky 12 sagat)\n<blockquote>" + ("\n".join(lines) or "Habar ýok.") + "</blockquote>\n<i>🚫 — adamy Global chat-dan gadagan et. Habary pozmak: programda Admin paneline giriň → Global chat → habaryň üstündäki 🗑.</i>", KB(rows)); return
         return
 
     elif a in ("app_v", "app_add", "app_now", "app_link", "app_kn", "app_kl", "app_up", "app_st", "app_ad", "app_ad_img", "app_ad_link", "app_ad_rm", "app_ad_tg", "app_dl") or a.startswith(("app_rm:", "app_k:", "app_kd:")):
