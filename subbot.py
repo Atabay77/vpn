@@ -872,6 +872,7 @@ def app_meta(cfg):
     except Exception: ai_on = False
     if ai_on: out.append("#tvai: 1")
     if cfg.get("gbans"): out.append("#tvban: " + ",".join(cfg["gbans"][-200:]))
+    if cfg.get("ubans"): out.append("#tvuban: " + ",".join(cfg["ubans"][-200:]))
     seen_, devs_ = set(), cfg.get("devs") or {}
     for x in sorted((cfg.get("apw") or {}).values(), key=lambda x: x.get("role") != "f"):   # 1.16: 👑 Owner / 🛡 Admin
         if not apw_valid(x): continue
@@ -1310,7 +1311,7 @@ Ulanyjynyň dilinde (türkmen, rus ýa-da türk) gysga (1–3 sözlem), dostlukl
 Ulanyjynyň iň soňky habaryna jogap ber. Salamlaşsa ýa-da «sen kim» diýse adaty gürleş, meselem: «Salam! Men Türkmen VPN-iň AI kömekçisi. Size nähili kömek edip bilerin?»
 FAKTLAR:
 - Programma mugt: her birikme 1 sagat dowam edýär, soň täzeden birigip bolýar. Açar bilen çäk ýok.
-- Açar bahalary: """ + APP_PRICES + """. Açary admin satýar: töleg we açar barada admin şu çatda ýazar. Sen töleg kabul etme, açar berme.
+- Açar bahalary: """ + APP_PRICES + """. Açar satyn almak isleýänden haýsy möhleti isleýändigini sora; töleg maglumatlary we açar şu çata iberiler. Sen özüň açar berme.
 - Her açar diňe 1 telefonda işleýär (ilkinji ýazylan telefona baglanýar).
 - Açar ýazmak: Menýu (☰) → iň aşakdaky uly «Açar ýaz» düwmesi.
 - Serwerler: Menýu → Serwerler → «Pingi barla», iň çalt serweri saýla. «Awtomatik» iň çaltyny özi saýlaýar. Russiýa — PUBG oýny üçin.
@@ -1320,8 +1321,8 @@ FAKTLAR:
 - Programma pozulsa: tkmvpnn@gmail.com salgysyna «vpn» diýip hat ýaz — ýükläp almak linki geler (VPN-siz açylýar).
 - Täze wersiýa çykanda programma özi soraýar — «Hawa» bas.
 - «Global chat» — ähli ulanyjylaryň umumy çaty.
-Jogaby diňe şu JSON görnüşinde ber: {"answer": "...", "handoff": false}
-handoff=true: ulanyjy açar satyn almak isleýär / töleg barada soraýar / adam bilen gürleşmek isleýär / soragyna faktlarda jogap ýok. Şeýle ýagdaýda hem answer-de gysga jogap ber (meselem bahalary aýt we «admin ýakyn wagtda şu ýere ýazar» diý)."""
+Hiç haçan «admine geçirýärin», «admin ýazar», «admin jogap berer» diýme — özüň doly jogap ber, gürrüňi dowam et. Ulanyjy «admin gerek» diýse-de özüň kömek et.
+Jogaby diňe şu JSON görnüşinde ber: {"answer": "..."}"""
 
 async def app_ai_reply(app, tid):
     a = app_cfg(load_db()); t = (a.get("tickets") or {}).get(tid)
@@ -1347,7 +1348,7 @@ async def app_ai_reply(app, tid):
         mj = re.search(r"\{.*\}", raw, re.S)
         try: j = json.loads(mj.group(0)) if mj else {"answer": raw, "handoff": False}
         except Exception: j = {"answer": raw, "handoff": False}
-        ans = (j.get("answer") or "").strip()[:2000]; hand = bool(j.get("handoff"))
+        ans = (j.get("answer") or "").strip()[:2000]; hand = False   # 1.16.4: AI hemişe özi jogap berýär
         if not ans: err = (err + " · " if err else "") + "boş jogap: " + raw[:150]
     except Exception as e:
         log.warning("app ai: %s", e); ans, hand = "", False; err = (err + " · " if err else "") + str(e)[:200]   # ýalňyşlykda bilet AI-dan aýrylmaýar
@@ -1356,18 +1357,31 @@ async def app_ai_reply(app, tid):
         t_ = (a_.get("tickets") or {}).get(tid)
         if not t_: return
         if ans: t_["log"].append({"r": "ai", "t": ans, "ts": int(time.time())})
-        if hand: t_["human"] = True
+        t_["human"] = False
     app_mut(f)
     if ans: await asyncio.to_thread(app_send, t["dev"], {"k": "tk", "who": "ai", "t": ans, "tid": tid})
     else:   # AI jogap berip bilmedi: ulanyjy jogapsyz galmasyn
         lang_ = ((a.get("devs") or {}).get(t["dev"]) or {}).get("lang", "tk")
         wait_ = {"ru": "Сообщение получено. Админ скоро ответит здесь.", "tr": "Mesajınız alındı. Yönetici yakında burada yanıtlayacak."}.get(lang_, "Habaryňyz alyndy. Admin ýakyn wagtda şu ýerde jogap berer.")
         await asyncio.to_thread(app_send, t["dev"], {"k": "tk", "who": "ai", "t": wait_, "tid": tid})
-    if hand or (err and not ans):
-        await notify_founders(app, f"🙋 <b>Program bileti #{tid} — admin gerek</b>\n<blockquote>{app_who(app_cfg(load_db()), t['dev'])}\n👤 {esc(t['log'][-1]['t'] if t.get('log') else '')[:600]}"
+    if err and not ans:
+        await notify_founders(app, f"🙋 <b>Program bileti #{tid} — AI jogap berip bilmedi</b>\n<blockquote>{app_who(app_cfg(load_db()), t['dev'])}\n👤 {esc(t['log'][-1]['t'] if t.get('log') else '')[:600]}"
                               + (f"\n🤖 {esc(ans)[:600]}" if ans else "") + "</blockquote>"
                               + (f"\n⚠️ <b>AI ýalňyşlyk:</b> <code>{esc(err)[:300]}</code>" if err and not ans else ""),
                               KB([[B("✍️ Jogap ber", f"atr:{tid}", "primary"), B("🔒 Ýap", f"atc:{tid}", "danger")], [B("📄 Bilet", f"atk:{tid}")]]))
+
+def app_staff_devs(a=None, tickets=True):
+    """Admin paneline giren telefonlar (bilet bildirişleri şolara gidýär)."""
+    a = a if a is not None else app_cfg(load_db())
+    return list(dict.fromkeys(x["dev"] for x in (a.get("apw") or {}).values() if x.get("dev") and apw_valid(x) and (tickets or x.get("role") == "f")))
+
+async def app_staff_notify(app, text, payload, kb=None, silent=False, skip=None):
+    """Bilet bildirişi: admin paneline giren telefonlara (programda); hiç kim girmedik bolsa — Telegram bot."""
+    devs = [d_ for d_ in app_staff_devs() if d_ != skip]
+    if not devs: await notify_founders(app, text, kb, silent=silent); return
+    for d_ in devs:
+        try: await asyncio.to_thread(app_send, d_, dict(payload))
+        except Exception as e: log.info("staff notify %s: %s", d_, e)
 
 async def app_on_msg(app, fid, o):
     """Programdan gelen bir mesaj."""
@@ -1385,6 +1399,7 @@ async def app_on_msg(app, fid, o):
     except Exception: pass
     a = app_cfg(load_db())
     if k == "adm": await app_adm(app, dev, o); return
+    if dev in (a.get("ubans") or []) and k in ("tk", "human", "fb", "rate", "ref", "gift", "nick"): return   # 1.16.4: gadagan — diňe VPN (20 min)
     if k == "tk":
         text = str(o.get("t") or "").strip()[:1000]
         if not text: return
@@ -1410,20 +1425,22 @@ async def app_on_msg(app, fid, o):
         tid, new, human = app_mut(f)
         if new: await asyncio.to_thread(app_send, dev, {"k": "tko", "tid": int(tid)})
         new = new is True
-        ai_on = bool(ai_key()) and load_db().get("ai_sup", True) and not human
-        await notify_founders(app, f"🎫 <b>Program bileti #{tid}</b>{' (täze)' if new else ''}\n<blockquote>{app_who(app_cfg(load_db()), dev)}\n👤 {esc(text)[:900]}</blockquote>"
-                              + ("\n<i>🤖 AI jogap berýär…</i>" if ai_on else ""),
-                              KB([[B("✍️ Jogap ber", f"atr:{tid}", "primary"), B("🔒 Ýap", f"atc:{tid}", "danger")], [B("📄 Bilet", f"atk:{tid}")]]), silent=ai_on)
+        ai_on = bool(ai_key()) and load_db().get("ai_sup", True)   # 1.16.4: «admin gerek» diýse-de AI jogap berýär
+        nk_ = ((app_cfg(load_db()).get("devs") or {}).get(dev) or {}).get("nick") or "?"
+        await app_staff_notify(app, f"🎫 <b>Program bileti #{tid}</b>{' (täze)' if new else ''}\n<blockquote>{app_who(app_cfg(load_db()), dev)}\n👤 {esc(text)[:900]}</blockquote>"
+                               + ("\n<i>🤖 AI jogap berýär…</i>" if ai_on else ""),
+                               {"k": "atk", "tid": int(tid), "n": nk_[:32], "t": text[:200], "new": new},
+                               KB([[B("✍️ Jogap ber", f"atr:{tid}", "primary"), B("🔒 Ýap", f"atc:{tid}", "danger")], [B("📄 Bilet", f"atk:{tid}")]]), silent=ai_on, skip=dev)
         if ai_on: asyncio.create_task(app_ai_reply(app, tid))
     elif k == "human":
         tid = str(int(o.get("tid") or 0))
-        app_mut(lambda a_: (a_.get("tickets") or {}).get(tid, {}).__setitem__("human", True) if tid in (a_.get("tickets") or {}) else None)
-        await notify_founders(app, f"🙋 <b>Program bileti #{tid}: ulanyjy admin bilen gürleşmek isleýär</b>\n<blockquote>{app_who(a, dev)}</blockquote>",
-                              KB([[B("✍️ Jogap ber", f"atr:{tid}", "primary")], [B("📄 Bilet", f"atk:{tid}")]]))
+        await app_staff_notify(app, f"🙋 <b>Program bileti #{tid}: ulanyjy admin bilen gürleşmek isleýär</b>\n<blockquote>{app_who(a, dev)}</blockquote>",
+                               {"k": "atk", "tid": int(tid), "n": (((a.get("devs") or {}).get(dev) or {}).get("nick") or "?")[:32], "t": "🙋 admin", "new": False},
+                               KB([[B("✍️ Jogap ber", f"atr:{tid}", "primary")], [B("📄 Bilet", f"atk:{tid}")]]), skip=dev)
     elif k == "fb":
         tid = str(int(o.get("tid") or 0)); v = "👍" if o.get("v") == "up" else "👎"
         app_mut(lambda a_: (a_.get("tickets") or {}).get(tid, {}).__setitem__("fb", v) if tid in (a_.get("tickets") or {}) else None)
-        await notify_founders(app, f"{v} <b>Bilet #{tid}</b> — ulanyjynyň bahasy", silent=True)
+        await app_staff_notify(app, f"{v} <b>Bilet #{tid}</b> — ulanyjynyň bahasy", {"k": "atk", "tid": int(tid), "n": "", "t": v, "new": False}, silent=True, skip=dev)
     elif k == "rate":
         n = max(1, min(5, int(o.get("n") or 0))); tags = [str(x)[:20] for x in (o.get("tags") or [])][:5]; cm = str(o.get("c") or "")[:500]
         app_mut(lambda a_: a_.__setitem__("rates", ((a_.get("rates") or []) + [{"dev": dev, "n": n, "tags": tags, "c": cm, "ts": now}])[-300:]))
@@ -1521,7 +1538,7 @@ async def app_gmod(app):
     for i, (name, o) in enumerate(rows):
         dv, txt = str(o.get("i") or ""), str(o.get("t") or "")
         if dv in staff: continue
-        if float(mutes.get(dv) or 0) > now: dele.append((name, dv, "mute")); continue
+        if float(mutes.get(dv) or 0) > now or dv in (a.get("ubans") or []): dele.append((name, dv, "mute")); continue
         if GCHAT_LINK.search(txt): dele.append((name, dv, "link")); continue
         if GCHAT_BAD.search(txt): dele.append((name, dv, "bad")); continue
         if txt.strip(): ask.append((i, txt))
@@ -1679,7 +1696,7 @@ def app_adm_snap(a, e, dev):
         users[dv] = {"name": u.get("nick") or "?", "code": app_ref_code(dv), "model": u.get("model") or "?", "ver": u.get("ver") or "?",
                      "lang": u.get("lang") or "tk", "first": app_hm(u.get("f")), "seen": app_hm(u.get("l")), "l": int(u.get("l") or 0),
                      "key": (f"{max(0, int((kv_['exp'] - now) // 86400))} gün" if kv_ and kv_.get("exp") else ("çäksiz" if kv_ else "—")),
-                     "inv": inv_n.get(dv, 0), "ban": dv in bans}
+                     "inv": inv_n.get(dv, 0), "ban": dv in bans or dv in set(a.get("ubans") or [])}
     if full and len(users) > 300:   # köp bolsa: diňe soňky işjeňler + biletdäkiler
         keep = sorted(users, key=lambda d_: users[d_]["l"], reverse=True)[:300]
         users = {d_: users[d_] for d_ in set(keep) | (need & set(users))}
@@ -1815,11 +1832,13 @@ async def app_adm(app, dev, o):
             if re.fullmatch(r"[\w\-]{1,60}", gid):
                 if a.get("fs_ok") and a.get("fs_proj"): await asyncio.to_thread(fs_delete, a["fs_proj"], ["g/" + gid])
                 elif a.get("fid"): await asyncio.to_thread(ntfy_pub, app_topic(a["fid"]) + "g", app_enc(a["fid"], json.dumps({"del": gid})))
-        elif act == "ban" and f_:
+        elif act == "ban" and f_:   # 1.16.4: doly gadaganlyk — ýazyp bilmeýär, VPN diňe 20 minut
             dv = str(r.get("dev") or "")
             if DEV_RE.match(dv):
                 on_ = bool(r.get("on"))
-                app_mut(lambda x: x.__setitem__("gbans", [b for b in (x.get("gbans") or []) if b != dv] + ([dv] if on_ else [])))
+                app_mut(lambda x: (x.__setitem__("gbans", [b for b in (x.get("gbans") or []) if b != dv] + ([dv] if on_ else [])),
+                                   x.__setitem__("ubans", [b for b in (x.get("ubans") or []) if b != dv] + ([dv] if on_ else []))))
+                await asyncio.to_thread(app_send, dv, {"k": "uban", "on": on_})
                 try: await asyncio.to_thread(app_sync, True)
                 except Exception as e2: RUN["app_err"] = str(e2)[:150]
         elif act == "kick" and f_:

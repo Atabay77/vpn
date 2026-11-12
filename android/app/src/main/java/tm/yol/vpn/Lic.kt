@@ -6,6 +6,11 @@ import java.security.MessageDigest
 /** Key: botun ürettiği XXXX-XXXX-XXXX. Geçerliyse 1 saatlik oturum sınırı kalkar. Her key diňe 1 telefonda işleýär. */
 object Lic {
     const val SESSION_MS = 60 * 60 * 1000L
+    const val BANNED_MS = 20 * 60 * 1000L     // gadagan edilen: açar işlemeýär, VPN 20 minut
+
+    /** Admin gadagan etdi: bot habar iberdi ýa-da abuna faýlynda (#tvuban). */
+    fun banned(ctx: Context): Boolean = p(ctx).getBoolean("uban", false) || Msg.dev(ctx) in Sub.ubans
+    private fun session(ctx: Context) = if (banned(ctx)) BANNED_MS else SESSION_MS
 
     fun norm(k: String) = k.uppercase().filter { it.isLetterOrDigit() }.chunked(4).joinToString("-")
     fun hash(k: String): String = MessageDigest.getInstance("SHA-256")
@@ -13,11 +18,13 @@ object Lic {
 
     private fun p(ctx: Context) = ctx.getSharedPreferences("p", 0)
     fun saved(ctx: Context): String? = p(ctx).getString("key", null)
+    fun setBanned(ctx: Context, on: Boolean) = p(ctx).edit().putBoolean("uban", on).apply()
     fun save(ctx: Context, k: String?) = p(ctx).edit().putString("key", k?.let { norm(it) }).apply()
 
     /** Geçerli keyin bitişi (ms, 0 = süresiz) ya da null (key yok / iptal / süresi dolmuş). */
     fun exp(ctx: Context): Long? {
         val k = saved(ctx) ?: return null
+        if (banned(ctx)) return null
         val h = hash(k)
         val e = Sub.keys[h] ?: return null
         if (full(ctx, h)) return null   // başga telefon(lar)a baglanan, ýer ýok
@@ -43,7 +50,7 @@ object Lic {
     /** Kalan süre (ms) ya da null = sınırsız (key). */
     fun left(ctx: Context): Long? {
         if (exp(ctx) != null) return null
-        val s = start(ctx).takeIf { it > 0 } ?: return SESSION_MS
-        return (s + SESSION_MS - System.currentTimeMillis()).coerceAtLeast(0)
+        val s = start(ctx).takeIf { it > 0 } ?: return session(ctx)
+        return (s + session(ctx) - System.currentTimeMillis()).coerceAtLeast(0)
     }
 }

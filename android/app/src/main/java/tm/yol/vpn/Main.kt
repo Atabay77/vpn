@@ -138,6 +138,7 @@ class Main : Activity() {
             INSTALL -> Upd.install(this)
             GO -> if (State.now != State.ON && State.now != State.WAIT) connect()
             CHAT -> push(JSONObject().put("k", "go").put("page", "chat"))
+            ADMT -> push(JSONObject().put("k", "go").put("page", "adm_t").put("tid", i.getIntExtra("tid", 0)))
         }
     }
 
@@ -236,6 +237,7 @@ class Main : Activity() {
                 .put("key", Lic.saved(c) ?: "").put("model", Build.MANUFACTURER + " " + Build.MODEL).put("relay", Sub.relay.isNotEmpty() || Fs.on()).put("fs", Fs.on())
                 .put("dl", (Sub.upd["all"] ?: Sub.upd["64"] ?: Sub.upd["32"])?.let { runCatching { Sub.fileUrl(it.second) }.getOrNull() } ?: "")
                 .put("roles", JSONObject().apply { Sub.roles.forEach { (d, rn) -> put(d, JSONArray().put(rn.first).put(rn.second)) } })
+                .put("uban", Lic.banned(c))
                 .put("adm", Msg.admPw(c) != null).put("admMe", Msg.admMe(c) ?: JSONObject()).toString()
         }
 
@@ -405,9 +407,9 @@ class Main : Activity() {
     }
 
     // ---------- kömekçiler ----------
-    private fun noCodes() = t("Kodlar täzelenýär, takmynan 3-5 minut aralygynda işlär. VPN-den çykyň we 3-5 minutdan giriň.",
-        "Коды обновляются, заработают примерно через 3-5 минут. Выйдите из VPN и зайдите через 3-5 минут.",
-        "Kodlar yenileniyor, yaklaşık 3-5 dakika içinde çalışır. VPN'den çıkın ve 3-5 dakika sonra girin.")
+    private fun noCodes() = t("Kodlar täzelenýär, takmynan 3-5 minut aralygynda işlär.",
+        "Коды обновляются, заработают примерно через 3-5 минут.",
+        "Kodlar yenileniyor, yaklaşık 3-5 dakika içinde çalışır.")
     private fun noNet() = t("Internetiňiz ýok. Telefonyň internetini (Wi-Fi ýa-da mobil internet) barlaň.",
         "Нет интернета. Проверьте Wi-Fi или мобильный интернет.", "İnternetiniz yok. Wi-Fi'yi ya da mobil veriyi kontrol edin.")
     private fun toast(s: String) = Toast.makeText(this, s, Toast.LENGTH_LONG).show()
@@ -424,6 +426,7 @@ class Main : Activity() {
         const val GO = "tm.yol.vpn.GO"
         const val INSTALL = "tm.yol.vpn.INSTALL"
         const val CHAT = "tm.yol.vpn.CHAT"
+        const val ADMT = "tm.yol.vpn.ADMT"
         const val HOST = "tvpn.local"
     }
 }

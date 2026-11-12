@@ -208,7 +208,8 @@ object Msg {
             // Firestore-da IP çägi ýok: jogap garaşylanda ekranda 4 sn-da bir
             val inEvery = if (Fs.on()) (if (visible) (if (waiting) 4_000L else 60_000L) else (if (waiting) 60_000L else 300_000L))
                 else if (visible) (if (waiting) 20_000L else 120_000L) else (if (waiting) 180_000L else 600_000L)
-            if ((visible || on) && now - inAt > inEvery) { inAt = now; runCatching { inbox(c) } }
+            val adm = admPw(c) != null && Fs.on()   // admin: fonda hem bilet bildirişleri (2 minutda bir)
+            if ((visible || on || adm) && now - inAt > (if (adm && !visible) minOf(inEvery, 120_000L) else inEvery)) { inAt = now; runCatching { inbox(c) } }
             val gEvery = if (watchG) 8_000L else 60_000L
             if (visible && now - gAt > gEvery) { gAt = now; runCatching { global() } }
             runCatching { Chat.poll(c, visible, dmPage) }
@@ -251,8 +252,10 @@ object Msg {
             if (s > 0) seq = s
             p.edit().putInt("seq", seq).apply()
             o.optString("key").takeIf { it.isNotEmpty() }?.let { k -> if (Lic.exp(c) == null) Lic.save(c, k) }   // sowgat / çagyryş açary
+            if (o.optString("k") == "uban") Lic.setBanned(c, o.optBoolean("on"))
             pend(c, JSONObject().put("k", "in").put("m", o))
             if (!visible && o.optString("k") == "tk" && o.optString("who") == "a") Svc.notifyReply(c, o.optString("t"))
+            if (!visible && o.optString("k") == "atk" && admPw(c) != null) Svc.notifyAdmin(c, o.optInt("tid"), o.optString("n"), o.optString("t"))
         }
     }
 
@@ -356,7 +359,7 @@ object Msg {
             gfsT = t
             val o = dec(b)?.let { runCatching { JSONObject(it) }.getOrNull() } ?: continue
             gfs.add(JSONObject().put("id", id).put("time", Fs.sec(t)).put("i", o.optString("i")).put("n", o.optString("n")).put("t", o.optString("t"))
-                .put("st", o.optString("st").take(16)).put("pi", o.optString("pi").take(40)))
+                .put("st", o.optString("st").take(16)).put("pi", o.optString("pi").take(40)).put("rp", o.optJSONObject("rp")?.let { Chat.rp(it) } ?: JSONObject.NULL))
         }
         while (gfs.size > 150) gfs.removeAt(0)
         events.add(JSONObject().put("k", "g").put("list", JSONArray(gfs.toList())).put("del", JSONArray()))

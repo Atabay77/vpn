@@ -127,7 +127,8 @@ object Chat {
             val o = Msg.decK("dm|$sec", b)?.let { runCatching { JSONObject(it) }.getOrNull() } ?: continue
             val f = o.optString("f"); if (f != me && f != peer) continue
             if (o.optString("sys") == "acc" && f == peer && rooms(c).optJSONObject(room)?.optString("st") == "out") upd(c, room) { it.put("st", "acc") }
-            out.put(JSONObject().put("id", id).put("t", Fs.sec(t)).put("f", f).put("x", o.optString("x").take(2000)).put("ph", o.optString("ph")).put("st", o.optString("st").take(16)).put("sys", o.optString("sys")))
+            out.put(JSONObject().put("id", id).put("t", Fs.sec(t)).put("f", f).put("x", o.optString("x").take(2000)).put("ph", o.optString("ph")).put("st", o.optString("st").take(16)).put("sys", o.optString("sys"))
+                .put("rp", o.optJSONObject("rp")?.let { rp(it) } ?: JSONObject.NULL))
         }
         if (last.isNotEmpty()) upd(c, room) { it.put("t", last).put("p", peer) }
         if (full || out.length() > 0) Msg.events.add(JSONObject().put("k", "dm").put("peer", peer).put("room", room).put("full", full).put("list", out)
@@ -190,10 +191,14 @@ object Chat {
         }.start()
     }
 
+    /** Alynty: kime jogap (gysga). */
+    fun rp(j: JSONObject): JSONObject = JSONObject().put("i", j.optString("i").take(40)).put("n", j.optString("n").take(32)).put("t", j.optString("t").take(90))
+
     // ---- Global chat: surat / stiker ----
     fun gsend(c: Context, j: JSONObject) {
         val o = JSONObject().put("i", Msg.dev(c)).put("n", j.optString("n").take(32)).put("t", j.optString("t").take(600))
         j.optString("st").takeIf { it.isNotEmpty() }?.let { o.put("st", it.take(16)) }
+        j.optJSONObject("rp")?.let { o.put("rp", rp(it)) }
         if (!Fs.on()) { if (j.optString("t").isNotBlank()) Msg.gsend(c, j.optString("n"), j.optString("t")) else Msg.events.add(JSONObject().put("k", "gfail").put("why", "srv")); return }   // köne ýol (VPS / ntfy)
         Thread {
             var ok = true

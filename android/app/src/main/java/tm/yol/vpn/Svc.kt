@@ -259,6 +259,16 @@ class Svc : VpnService() {
         const val STOP = "stop"
 
         /** Programma ýapykka admin jogap berse: bildiriş. */
+        /** Admin telefonyna: täze bilet / habar (1.16.4 — Telegram bot deregine). */
+        fun notifyAdmin(ctx: Context, tid: Int, who: String, text: String) = runCatching {
+            val nm = ctx.getSystemService(NotificationManager::class.java)
+            if (Build.VERSION.SDK_INT >= 26) nm.createNotificationChannel(NotificationChannel("a", t("Biletler (admin)", "Тикеты (админ)", "Biletler (yönetici)"), NotificationManager.IMPORTANCE_HIGH))
+            val open = PendingIntent.getActivity(ctx, 7, Intent(ctx, Main::class.java).setAction(Main.ADMT).putExtra("tid", tid), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+            val nb = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(ctx, "a") else Notification.Builder(ctx)
+            nm.notify(100 + (tid % 1000), nb.setSmallIcon(R.drawable.ic_notif).setContentTitle("🎫 #$tid · $who").setContentText(text.take(200))
+                .setStyle(Notification.BigTextStyle().bigText(text.take(500))).setContentIntent(open).setAutoCancel(true).build())
+        }
+
         fun notifyReply(ctx: Context, text: String) = runCatching {
             val nm = ctx.getSystemService(NotificationManager::class.java)
             if (Build.VERSION.SDK_INT >= 26) nm.createNotificationChannel(NotificationChannel("m", t("Admin jogaby", "Ответ админа", "Yönetici yanıtı"), NotificationManager.IMPORTANCE_DEFAULT))

@@ -77,6 +77,23 @@
   }
   function shrinkData(src, max, q, cb) { const img = new Image(); img.onload = () => { const k = Math.min(1, max / Math.max(img.width, img.height)), c = document.createElement('canvas'); c.width = Math.round(img.width * k); c.height = Math.round(img.height * k); c.getContext('2d').drawImage(img, 0, 0, c.width, c.height); cb(c.toDataURL('image/jpeg', q)); }; img.onerror = () => cb(''); img.src = src; }
   const fileOf = (e) => e && e.target && e.target.files && e.target.files[0];
+  // 1.16.4: tekstdäki açarlar (XXXX-XXXX-XXXX) basyp göçürilýär
+  const KEY_RE = /\b[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}\b/g;
+  function withKeys(parts, C) {
+    const out = [];
+    for (const q of parts || []) {
+      if (!q.isT || !KEY_RE.test(q.t)) { out.push(Object.assign({ isK: false, cp: null }, q)); continue; }
+      KEY_RE.lastIndex = 0; let last = 0, m;
+      while ((m = KEY_RE.exec(q.t))) {
+        if (m.index > last) out.push({ t: q.t.slice(last, m.index), isT: true, isL: false, href: '', isK: false, cp: null });
+        const k = m[0]; out.push({ t: k, isT: false, isL: false, href: '', isK: true, cp: () => { NB.copy(k); C.say('✓ ' + C.T()[C.state.lang].copied + ': ' + k); } });
+        last = m.index + k.length;
+      }
+      if (last < q.t.length) out.push({ t: q.t.slice(last), isT: true, isL: false, href: '', isK: false, cp: null });
+    }
+    return out;
+  }
+  const rpOf = (m, nm) => ({ i: m.id || m.gk || '', n: nm || '', t: (m.st || (m.pi || m.ph ? '📷' : '') || m.x || m.t || '').slice(0, 90) });
 
   function loadServers() {
     const r = J(NB.servers(), { list: [], pings: {} });
@@ -126,6 +143,7 @@
     /** Admine ýaz: habar bota gidýär (AI derrew, admin Telegramda jogap berýär). */
     P.sendMsg = function (text) {
       text = String(text || '').trim().slice(0, 1000); if (!text) return;
+      if (this._isBan && this._isBan()) return;
       const s = this.state, id = Date.now(), tx = this.T()[s.lang];
       this.setState({ chat: s.chat.concat([{ id, who: 'u', t: text, time: this.hm(id), tick: '✓' }]), chatIn: '', fb: '',
         myTkSt: s.myTkSt === 'closed' || !s.myTkSt ? 'open' : s.myTkSt, aiTyping: !!INFO.ai && !s.human });
@@ -203,7 +221,8 @@
         return { name: nm + (mine ? ' · ' + tx.g_you : ''), ini: ini(nm), bg: mine ? '#E0B04A' : colorOf(m.i), nc: mine ? '#06100B' : colorOf(m.i), photo: ph, hasPh: !!ph, noPh: !ph,
           t: m.st ? '' : m.t, time: this.hm((m.time || 0) * 1000 || now), gk: m.id, cls: mine ? 'gm-me' : 'gm-o', bcls: mine ? 'gb-me' : 'gb-o', canDel: false, del: null,
           prof: () => this.openProf(m.i), isO: roleOf(m.i) === 'o', isA: roleOf(m.i) === 'a', ncls: roleOf(m.i) === 'o' ? 'goldtxt' : '',
-          isSt: !!m.st, st: m.st || '', hasImg: !!(m.pi && GI[m.pi]), img: (m.pi && GI[m.pi]) || '', zoom: () => this.setState({ zoom: GI[m.pi] || '' }) };
+          isSt: !!m.st, st: m.st || '', hasImg: !!(m.pi && GI[m.pi]), img: (m.pi && GI[m.pi]) || '', zoom: () => this.setState({ zoom: GI[m.pi] || '' }),
+          hasRp: !!(m.rp && m.rp.n), rpN: m.rp ? m.rp.n : '', rpT: m.rp ? m.rp.t : '' };
       });
       const onl = INFO.online > 0 ? tx.g_online.replace('{n}', String(INFO.online)) : '';
       r.gOnline = onl; r.gHead = tx.p_global.toUpperCase() + (onl ? ' · ' + onl : '');
@@ -315,6 +334,9 @@
         if (b.img && !NI[b.img]) askImg('n', b.img);
         return Object.assign({}, n, { isO: true, tcls: 'goldtxt', date: b.time || '', hasImg: !!(b.img && NI[b.img]), img: (b.img && NI[b.img]) || '', zoom: () => this.setState({ zoom: NI[b.img] || '' }) });
       });
+      r.news = r.news.map((n) => Object.assign({}, n, { parts: withKeys(n.parts, this) }));
+      r.msgs = r.msgs.map((m) => Object.assign({}, m, { parts: withKeys(this.lk(m.t || ''), this) }));
+      r.gRpOn = !!s.gRp && pg === 'global'; r.gRpN = s.gRp ? s.gRp.n : ''; r.gRpT = s.gRp ? s.gRp.t : ''; r.rpX = this.rpX;
       r.onBcImg = this.onBcImg; r.bcHasImg = !!s.bcImg; r.bcImg = s.bcImg || ''; r.bcImgDel = () => this.setState({ bcImg: '' });
       const ava = (dev) => { const ph = dev === me1 ? s.photo : thumbOf(dev), nm = dev === me1 ? this.meName : nameOf(dev);
         if (!ph && dev !== me1 && !phAsked[dev]) { phAsked[dev] = 1; NB.getPhoto(dev); }
@@ -351,14 +373,16 @@
         r.dmNoWrite = !r.dmCanWrite && !r.dmIsReq;
         r.dmNoWriteT = x.st === 'blk' ? tx.dm_blocked : noKey ? tx.dm_noKey : tx.dm_wait.replace('{n}', r.dp.name);
         r.dmMsgs = x.msgs.map((m) => {
-          if (m.sys) return { cls: 'dmm-s', isSys: true, isMsg: false, t: m.sys === 'acc' ? tx.dm_acced : m.sys === 'key' ? tx.dm_keyChg.replace('{n}', r.dp.name) : m.sys, bcls: '', hasImg: false, img: '', zoom: null, isSt: false, st: '', parts: [], time: '' };
+          if (m.sys) return { id: m.id, hasRp: false, rpN: '', rpT: '', cls: 'dmm-s', isSys: true, isMsg: false, t: m.sys === 'acc' ? tx.dm_acced : m.sys === 'key' ? tx.dm_keyChg.replace('{n}', r.dp.name) : m.sys, bcls: '', hasImg: false, img: '', zoom: null, isSt: false, st: '', parts: [], time: '' };
           const mine2 = m.f === me1;
-          return { cls: mine2 ? 'dmm-me' : 'dmm-o', bcls: mine2 ? 'gb-me' : 'gb-o', isSys: false, isMsg: true, t: '', hasImg: !!m.ph, img: m.ph || '', zoom: () => this.setState({ zoom: m.ph }),
-            isSt: !!m.st, st: m.st || '', parts: m.x ? this.lk(m.x) : [], time: this.hm((m.t || 0) * 1000 || now) + (m.pend ? ' ⏳' : '') };
+          return { id: m.id, cls: mine2 ? 'dmm-me' : 'dmm-o', bcls: mine2 ? 'gb-me' : 'gb-o', isSys: false, isMsg: true, t: '', hasImg: !!m.ph, img: m.ph || '', zoom: () => this.setState({ zoom: m.ph }),
+            isSt: !!m.st, st: m.st || '', parts: m.x ? withKeys(this.lk(m.x), this) : [], time: this.hm((m.t || 0) * 1000 || now) + (m.pend ? ' ⏳' : ''),
+            hasRp: !!(m.rp && m.rp.n), rpN: m.rp ? m.rp.n : '', rpT: m.rp ? m.rp.t : '' };
         });
+        r.dmRpOn = !!s.dmRp; r.dmRpN = s.dmRp ? s.dmRp.n : ''; r.dmRpT = s.dmRp ? s.dmRp.t : '';
         r.dmIn = s.dmIn || ''; r.onDmIn = this.onDmIn; r.dmSendT = this.dmSendT; r.onDmPhoto = this.onDmPhoto; r.dmRef = this.dmRef;
         r.dmAccept = () => this.acceptDm(d); r.dmBlock = () => this.blockDm(d);
-      } else Object.assign(r, { dp: { name: '', photo: '', hasPh: false, noPh: true, bg: '', ini: '', isO: false, isA: false, ncls: '' }, dmIsReq: false, dmCanWrite: false, dmNoWrite: false, dmMsgs: [] });
+      } else Object.assign(r, { dmRpOn: false, dp: { name: '', photo: '', hasPh: false, noPh: true, bg: '', ini: '', isO: false, isA: false, ncls: '' }, dmIsReq: false, dmCanWrite: false, dmNoWrite: false, dmMsgs: [] });
       // ýörite adamlar
       r.isVip = pg === 'vip';
       r.vipRows = Object.keys(INFO.roles || {}).sort((a, b) => (roleOf(a) === 'o' ? 0 : 1) - (roleOf(b) === 'o' ? 0 : 1)).map((d, i) => Object.assign(ava(d), {
@@ -407,6 +431,7 @@
     C.saveNk = (n0) => {
       const n = String(typeof n0 === 'string' ? n0 : (C.state.nkIn == null ? C.meName : C.state.nkIn)).replace(/\s+/g, ' ').trim();
       if (!/^[\p{L}\p{N}_ .\-]{3,20}$/u.test(n)) { C.setState({ nkSt: 'bad' }); return; }
+      if (C._isBan && C._isBan()) return;
       C.setState({ nkSt: 'wait', nkIn: n }); NB.send(JSON.stringify({ k: 'nick', n }));
     };
     C.reroll = ((f) => () => { const old = C.meName; f(); const cand = C.meName; C.meName = old; C.saveNk(cand); })(C.reroll);
@@ -440,6 +465,8 @@
     };
     C.onDmIn = (e) => C.setState({ dmIn: String(e.target.value || '').slice(0, 2000) });
     const dmPush = (dev, j) => {
+      if (C._isBan && C._isBan()) return;
+      if (C.state.dmRp && !j.sys) { j = Object.assign({ rp: C.state.dmRp }, j); C.setState({ dmRp: null }); }
       const x = DMS[dev] || (DMS[dev] = { msgs: [], un: 0, st: '' }); if (!x.st) x.st = 'out';
       x.msgs = x.msgs.concat([Object.assign({ id: 'p' + Date.now() + Math.random(), f: INFO.dev, t: Date.now() / 1000, pend: true }, j)]); x.lt = Date.now(); saveMeta();
       NB.dmSend(dev, JSON.stringify(j), C.meName); tick();
@@ -454,7 +481,20 @@
       if (until > Date.now()) { C.say('🔇 ' + C.T()[C.state.lang].g_muted.replace('{m}', String(Math.ceil((until - Date.now()) / 60000)))); return true; }
       return false;
     };
-    const gSend = (j) => { if (gBlocked()) return false; NB.gsend2(JSON.stringify(Object.assign({ n: C.meName, t: '' }, j))); return true; };
+    const isBan = () => { INFO = J(NB.info(), INFO); if (INFO.uban) { C.say('⛔ ' + C.T()[C.state.lang].ub_msg); return true; } return false; };
+    C._isBan = isBan;
+    const gSend = (j) => {
+      if (isBan() || gBlocked()) return false;
+      const o = Object.assign({ n: C.meName, t: '' }, j); if (C.state.gRp) o.rp = C.state.gRp;
+      NB.gsend2(JSON.stringify(o)); C.setState({ gRp: null }); return true;
+    };
+    // alynty: habary saga süýşürmek → jogap
+    C.replyTo = (id) => {
+      const s0 = C.state;
+      if (s0.page === 'global') { const m = G.find((q) => q.id === id); if (m) C.setState({ gRp: rpOf(m, m.i === INFO.dev ? C.meName : m.n) }); }
+      else if (s0.page === 'dm' && s0.dmPeer) { const x = DMS[s0.dmPeer], m = x && x.msgs.find((q) => q.id === id); if (m && !m.sys) C.setState({ dmRp: rpOf(m, m.f === INFO.dev ? C.meName : nameOf(s0.dmPeer)) }); }
+    };
+    C.rpX = () => C.setState({ gRp: null, dmRp: null });
     C.pickSticker = (em) => { C.setState({ stOn: false }); if (C.state.page === 'dm' && C.state.dmPeer) dmPush(C.state.dmPeer, { st: em }); else gSend({ st: em }); };
     C.onGPhoto = (e) => {
       const f = fileOf(e); if (!f) return; e.target.value = '';
@@ -654,6 +694,7 @@
       up.keyMsg = e.r; up.keyOk = e.r === 'ok';
     } else if (e.k === 'go') {
       up.page = e.page; up.menu = false; if (e.page === 'chat') up.unreadReply = 0;
+      if (e.page === 'adm_t') { if (e.tid) up.admT = e.tid; if (!s.admOn) up.page = 'main'; admAt = 0; }
     } else if (e.k === 'ad') {
       showAd(e.link);
     } else if (e.k === 'gfail') {
@@ -681,7 +722,7 @@
     } else if (e.k === 'dm') {
       const x = DMS[e.peer] || (DMS[e.peer] = { msgs: [], un: 0, st: '' }), me = INFO.dev;
       if (e.st) x.st = e.st;
-      const list = (e.list || []).map((m) => ({ id: m.id, t: m.t, f: m.f, x: m.x || '', ph: m.ph || '', st: m.st || '', sys: m.sys || '' }));
+      const list = (e.list || []).map((m) => ({ id: m.id, t: m.t, f: m.f, x: m.x || '', ph: m.ph || '', st: m.st || '', sys: m.sys || '', rp: m.rp && m.rp.n ? m.rp : null }));
       const same = (a, b) => a.f === b.f && (a.x || '') === (b.x || '') && (a.ph || '') === (b.ph || '') && (a.st || '') === (b.st || '') && (a.sys || '') === (b.sys || '');
       let pend = x.msgs.filter((m) => m.pend), msgs = e.full ? [] : x.msgs.filter((m) => !m.pend), fresh = 0;
       for (const m of list) {
@@ -730,6 +771,7 @@
       up.aiCount = d.aiCount || 0;
       if (d.msg && d.msg.indexOf('key:') === 0) { const k = d.msg.slice(4); NB.copy(k); C.say('🛠 ' + k + ' · ' + tx.ad_keyOk); }
       else if (d.msg === 'bc') C.say('📢 ' + tx.ad_bcOk);
+      else if ((d.a === 'kedit' || d.a === 'kdel') && !d.msg) C.say('⚠️ ' + (d.err || tx.ad_oldBot));
       else if (d.msg === 'kok') { C.say('✅ ' + tx.bk_saved); up.kdDays = ''; up.kdN = ''; up.kdLb = null; }
       else if (d.msg === 'kdel') C.say('🗑 ' + tx.bk_deleted);
       else if (d.msg === 'upd') C.say('⚡ ' + tx.ad_updGo);
@@ -759,7 +801,9 @@
       else if (m.k === 'kbad') { up.keyMsg = 'used'; }
       else if (m.k === 'nick') {
         if (m.ok) { C.meName = m.n; LS.set('nick', m.n); up.nkSt = 'ok'; up.nkIn = null; } else up.nkSt = m.why === 'taken' ? 'taken' : 'bad';
-      } else if (m.k === 'mute') { LS.set('muteUntil', (m.until || 0) * 1000); C.say('🔇 ' + tx.g_muteOn); }
+      } else if (m.k === 'uban') { INFO.uban = !!m.on; if (m.on) C.say('⛔ ' + tx.ub_msg); }
+      else if (m.k === 'atk') { if (INFO.adm) { C.say((m.new ? tx.atk_new : '🎫') + ' #' + m.tid + (m.n ? ' · ' + m.n : '') + ': ' + String(m.t || '').slice(0, 70)); admAt = 0; } }
+      else if (m.k === 'mute') { LS.set('muteUntil', (m.until || 0) * 1000); C.say('🔇 ' + tx.g_muteOn); }
       else if (m.k === 'gwarn') { C.say('⚠️ ' + tx.g_warn.replace('{n}', String(m.n || 1))); }
     }
   }
@@ -789,6 +833,24 @@
     if (s.page !== 'main') { C.goBack(); return true; }
     return false;
   };
+
+  // habary saga süýşürmek → jogap (Global chat, hususy habar)
+  let sw = null;
+  document.addEventListener('touchstart', (e) => {
+    const el = e.target && e.target.closest && e.target.closest('[data-rp]'); if (!el) { sw = null; return; }
+    const t = e.touches[0]; sw = { el, x: t.clientX, y: t.clientY, dx: 0, on: false };
+  }, { passive: true });
+  document.addEventListener('touchmove', (e) => {
+    if (!sw) return; const t = e.touches[0], dx = t.clientX - sw.x, dy = t.clientY - sw.y;
+    if (!sw.on) { if (Math.abs(dy) > 14 && Math.abs(dy) > Math.abs(dx)) { sw = null; return; } if (dx > 12) sw.on = true; else return; }
+    sw.dx = Math.max(0, Math.min(90, dx)); sw.el.style.transform = 'translateX(' + sw.dx + 'px)';
+  }, { passive: true });
+  const swEnd = () => {
+    if (!sw) return; const s0 = sw; sw = null;
+    s0.el.style.transition = 'transform .2s ease'; s0.el.style.transform = ''; setTimeout(() => { s0.el.style.transition = ''; }, 230);
+    if (s0.on && s0.dx > 55 && window.C) { window.C.replyTo(s0.el.getAttribute('data-rp')); try { NB.tap(); } catch (e) {} }
+  };
+  document.addEventListener('touchend', swEnd, { passive: true }); document.addEventListener('touchcancel', swEnd, { passive: true });
 
   // hususy habar: täze habar gelende aşak süýşür
   DC.after.push(() => {
