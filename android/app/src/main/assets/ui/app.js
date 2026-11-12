@@ -43,7 +43,7 @@
   const phAsked = {};
   let A = null;         // admin paneli: botdan gelen ýagdaý (biletler, ulanyjylar, açarlar…)
   let admAt = 0, admPend = 0;
-  const ADM_PAGES = ['admin', 'adm_t', 'adm_u', 'adm_b', 'adm_k', 'adm_kd', 'adm_l', 'adm_s', 'adm_st', 'adm_ai'];
+  const ADM_PAGES = ['admin', 'adm_t', 'adm_u', 'adm_b', 'adm_k', 'adm_kd', 'adm_x', 'adm_l', 'adm_s', 'adm_st', 'adm_ai'];
   const act = (a, o) => { NB.adm(JSON.stringify(Object.assign({ a }, o || {}))); if (!admPend) admPend = Date.now(); };
   const admMe = () => (A && A.me) || INFO.admMe || {};
 
@@ -103,7 +103,8 @@
     const r = J(NB.servers(), { list: [], pings: {} });
     SV = r.list.map((s) => {
       const c = CO[cc(s.flag)];
-      return { id: s.key, f: s.flag, n: c ? { tk: c[2], ru: c[3], tr: c[4] } : { tk: s.country, ru: s.country, tr: s.country }, t: s.title || s.country, p: s.proto, lat: c ? c[0] : 50, lon: c ? c[1] : 10, game: s.game };
+      const num = (String(s.country || '').match(/\s(\d{1,2})$/) || [])[1], sfx = num ? ' ' + num : '';
+      return { id: s.key, f: s.flag, n: c ? { tk: c[2] + sfx, ru: c[3] + sfx, tr: c[4] + sfx } : { tk: s.country, ru: s.country, tr: s.country }, t: s.title || s.country, p: s.proto, lat: c ? c[0] : 50, lon: c ? c[1] : 10, game: s.game };
     });
     return r.pings;
   }
@@ -289,6 +290,17 @@
       r.kCustom = s.kCustom || ''; r.kN = s.kN || ''; r.onKCustom = this.onKCustom; r.onKN = this.onKN; r.kDayPh = '—';
       { const c = parseInt(s.kCustom, 10), dd = c > 0 ? Math.min(3650, c) : s.kDay, nn = Math.max(1, Math.min(1000, parseInt(s.kN, 10) || 1));
         r.kSum = tx.bk_sum.replace('{d}', dd === 0 ? tx.bk_unl : dd === 30 ? tx.bk_month : dd + ' ' + tx.days).replace('{n}', String(nn)); }
+      // goşmaça kodlar (Telegram kanaly + admin)
+      r.isAdmX = s.page === 'adm_x' && s.admOn;
+      if (r.isAdmX) r.pageTitle = '🧩 ' + tx.x_title;
+      if (isF) r.botTiles = r.botTiles.concat([{ i: '🧩', t: tx.x_title, go: () => this.setState({ page: 'adm_x' }), st: '' }]);
+      r.xIn = s.xIn || ''; r.onXIn = this.onXIn; r.xAdd = this.xAdd; r.xChIn = s.xChIn || ''; r.onXChIn = this.onXChIn; r.xChAdd = this.xChAdd;
+      r.xChs = ((A && A.tgsrc) || []).map((ch) => ({ ch, del: () => this.confirm('@' + ch + ' ?', '🗑 ' + tx.cf_yes, () => act('chdel', { ch })) }));
+      const xl = (A && A.xc) || [];
+      r.xCount = tx.x_count.replace('{n}', String(xl.length));
+      r.xList = xl.map((x) => ({ n: (x.name || x.hp), sub: (x.src === 'tg' ? '📡 @' + x.ch : '👤 ' + tx.x_m) + ' · ' + x.hp + ' · ' + x.at,
+        stT: x.ms > 0 ? x.ms + ' ms' : x.bad > 0 ? tx.x_bad + ' ×' + x.bad : tx.x_wait, stCls: x.ms > 0 ? 'tk-ans' : x.bad > 0 ? 'tk-open' : 'tk-closed',
+        del: () => this.confirm(tx.x_delQ, '🗑 ' + tx.cf_yes, () => act('xdel', { id: x.id })) }));
       // açar dolandyrmak
       r.isAdmKd = s.page === 'adm_kd' && s.admOn && !!s.kSel;
       { const kk = ((A && A.keys) || []).find((x) => x.k === s.kSel) || { k: s.kSel || '', n: 1, u: 0, exp: 0 };
@@ -520,6 +532,7 @@
     C.goBack = () => {
       const p = C.state.page;
       if (p === 'adm_kd') { C.setState({ page: 'adm_k' }); return; }
+      if (p === 'adm_x') { C.setState({ page: 'admin', admTab: 'bot' }); return; }
       if (p === 'dm') { C.setState({ page: C._dmBack && C._dmBack !== 'dm' && C._dmBack !== 'main' ? C._dmBack : 'dms' }); return; }
       if (p === 'uprof') { C.setState({ page: C._back && C._back !== 'uprof' ? C._back : 'global' }); return; }
       gb0();
@@ -556,6 +569,10 @@
       act(t.st === 'closed' ? 'reopen' : 'close', { tid: t.id }); t.st = t.st === 'closed' ? 'open' : 'closed'; C.setState({ admTick: (C.state.admTick || 0) + 1 });
     };
     C.banToggle = () => { const d = C.state.admU, u = A && A.us[d]; if (!u) return; act('ban', { dev: d, on: !u.ban }); u.ban = !u.ban; C.setState({ admTick: (C.state.admTick || 0) + 1 }); };
+    C.onXIn = (e) => C.setState({ xIn: String(e.target.value || '').slice(0, 20000) });
+    C.onXChIn = (e) => C.setState({ xChIn: String(e.target.value || '').slice(0, 60) });
+    C.xAdd = () => { const t = (C.state.xIn || '').trim(); if (!t) return; act('xadd', { t }); C.setState({ xIn: '' }); C.say(C.T()[C.state.lang].k_wait); };
+    C.xChAdd = () => { const ch = (C.state.xChIn || '').trim(); if (!ch) return; act('chadd', { ch }); C.setState({ xChIn: '' }); C.say(C.T()[C.state.lang].k_wait); };
     C.onKdLb = (e) => C.setState({ kdLb: String(e.target.value || '').slice(0, 40) });
     C.onKdDays = (e) => C.setState({ kdDays: String(e.target.value || '').replace(/\D/g, '').slice(0, 4) });
     C.onKdN = (e) => C.setState({ kdN: String(e.target.value || '').replace(/\D/g, '').slice(0, 4) });
@@ -784,6 +801,7 @@
       if (d.msg && d.msg.indexOf('key:') === 0) { const k = d.msg.slice(4); NB.copy(k); C.say('🛠 ' + k + ' · ' + tx.ad_keyOk); }
       else if (d.msg === 'bc') C.say('📢 ' + tx.ad_bcOk);
       else if ((d.a === 'kedit' || d.a === 'kdel') && !d.msg) C.say('⚠️ ' + (d.err || tx.ad_oldBot));
+      else if (d.msg && d.msg.indexOf('xadd:') === 0) { const n = parseInt(d.msg.slice(5), 10) || 0; C.say(n ? '✅ ' + tx.x_added.replace('{n}', String(n)) : '⚠️ ' + tx.x_none); }
       else if (d.msg === 'kok') { C.say('✅ ' + tx.bk_saved); up.kdDays = ''; up.kdN = ''; up.kdLb = null; }
       else if (d.msg === 'kdel') C.say('🗑 ' + tx.bk_deleted);
       else if (d.msg === 'upd') C.say('⚡ ' + tx.ad_updGo);

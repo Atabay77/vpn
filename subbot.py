@@ -933,6 +933,120 @@ def app_left(exp):
     d = exp - time.time()
     return f"{int(d // 86400)} gün {int(d % 86400 // 3600)} sagat"
 
+# ───────── 1.16.6: Telegram kanalyndan we admin elinden goşulan kodlar ─────────
+# Kanal (t.me/s/<ady>) 30 minutda bir okalýar; täze kod goşulýar. Programlar ping netijesini iberýärler (k=pr):
+# bir koddan yzly-yzyna 3 gezek jogap gelmese (we soňky 6 sagatda hiç kim işledip bilmese) — kod pozulýar.
+APP_X_PROTOS = ("vless://", "ss://", "hysteria2://", "hy2://")   # programyň goldaýan kodlary
+APP_TG_DEFAULT = ["supervpntm"]
+APP_TG_EVERY, APP_TG_MAX, APP_X_DEAD = 1800, 20, 3
+TG_CODE_RE = re.compile(r"(?:vless|ss|hysteria2|hy2)://[^\s<>\"']+", re.I)
+
+def tg_channel_codes(ch):
+    """Açyk kanalyň web görnüşinden kodlar (täzeleri soňda)."""
+    req = urllib.request.Request(f"https://t.me/s/{urllib.parse.quote(ch)}", headers={"User-Agent": "Mozilla/5.0"})
+    with urllib.request.urlopen(req, timeout=20) as r: page = r.read().decode("utf-8", "ignore")
+    page = re.sub(r"<br\s*/?>", "\n", page)
+    out = []
+    for m in TG_CODE_RE.finditer(page):
+        c = html.unescape(re.sub(r"<[^>]+>", "", m.group(0))).strip().rstrip(".,;)")
+        if "…" in c or "..." in c: continue   # Telegram-yň gysgaldan nusgasy (önizleme) — doly kod başga ýerde bar
+        if c.lower().startswith(APP_X_PROTOS) and code_hostport(c)[0] and c not in out: out.append(c)
+    keys_ = {}
+    for c in out: keys_.setdefault(code_key(c), c)
+    return list(keys_.values())
+
+def app_x_hp(c):
+    h, p_ = code_hostport(c)
+    return f"{h}:{p_}" if h else ""
+
+def app_tg_refresh(force=False):
+    """Kanallardan täze kodlar a["xcodes"]-a goşulýar (src=tg)."""
+    if not force and time.time() - RUN.get("tg_at", 0) < APP_TG_EVERY: return
+    RUN["tg_at"] = time.time()
+    a = app_cfg(load_db()); chs = a.get("tgsrc", APP_TG_DEFAULT)
+    found = []
+    for ch in chs:
+        try: found += [(ch, c) for c in tg_channel_codes(ch)]
+        except Exception as e: log.info("tg %s: %s", ch, e); RUN["tg_err"] = f"{ch}: {str(e)[:80]}"
+    if not found: return
+    def f(x):
+        xs = x.setdefault("xcodes", {}); now = int(time.time()); added = 0
+        for ch, c in found:
+            k = code_key(c)
+            if k in xs: xs[k]["seen"] = now; continue
+            if k in (x.get("xdead") or {}): continue          # öň işlemän pozulan kod gaýtadan goşulmaýar
+            xs[k] = {"c": c, "src": "tg", "ch": ch, "ts": now, "seen": now, "ok": 0, "bad": 0, "ms": 0}; added += 1
+        tg = sorted([k for k, v in xs.items() if v.get("src") == "tg"], key=lambda k: xs[k]["ts"])
+        for k in tg[:max(0, len(tg) - APP_TG_MAX)]: xs.pop(k, None)   # köne kodlar (iň köp 20)
+        return added
+    n_ = app_mut(f)
+    if n_: vlog(f"📡 Telegram kanalyndan {n_} täze kod goşuldy"); RUN["app_dirty"] = True
+
+def app_x_report(dev, pr):
+    """Programdan ping netijeleri: {host:port: ms (-1 = jogap ýok)}."""
+    if not isinstance(pr, dict): return
+    def f(x):
+        xs = x.get("xcodes") or {}; now = int(time.time()); gone = []
+        byhp = {}
+        for k, v in xs.items(): byhp.setdefault(app_x_hp(v["c"]), []).append(k)
+        for hp, ms in list(pr.items())[:80]:
+            for k in byhp.get(str(hp), []):
+                v = xs[k]
+                try: ms = int(ms)
+                except Exception: continue
+                if ms > 0: v.update({"ok": now, "bad": 0, "ms": ms})
+                else:
+                    v["bad"] = int(v.get("bad") or 0) + 1
+                    if v.get("src") == "tg" and v["bad"] >= APP_X_DEAD and now - int(v.get("ok") or 0) > 6 * 3600: gone.append(k)
+        for k in gone:
+            xs.pop(k, None); x.setdefault("xdead", {})[k] = now
+        dd = x.get("xdead") or {}
+        for k in [k for k, t in dd.items() if now - t > 14 * 86400]: dd.pop(k, None)
+        return len(gone)
+    n_ = app_mut(f)
+    if n_: vlog(f"🗑 {n_} kanal kody işlemedi (ms ýok) — aýryldy"); RUN["app_dirty"] = True
+
+TM_CNAME = {"nl": "Niderlandlar", "fi": "Finlýandiýa", "gb": "Beýik Britaniýa", "de": "Germaniýa", "ch": "Şweýsariýa", "pl": "Polşa", "tr": "Türkiýe", "fr": "Fransiýa",
+            "ru": "Russiýa", "se": "Şwesiýa", "us": "ABŞ", "at": "Awstriýa", "it": "Italiýa", "es": "Ispaniýa", "lv": "Latwiýa", "lt": "Litwa", "ee": "Estoniýa",
+            "ro": "Rumyniýa", "bg": "Bolgariýa", "cz": "Çehiýa", "hu": "Wengriýa", "ua": "Ukraina", "kz": "Gazagystan", "ae": "BAE", "sg": "Singapur", "jp": "Ýaponiýa",
+            "hk": "Gonkong", "ca": "Kanada", "ir": "Eýran", "md": "Moldowa", "rs": "Serbiýa", "no": "Norwegiýa", "dk": "Daniýa", "be": "Belgiýa", "ie": "Irlandiýa",
+            "ge": "Gruziýa", "am": "Ermenistan", "az": "Azerbaýjan", "in": "Hindistan"}
+
+def app_x_named(base_codes, a):
+    """Goşmaça kodlar programyň sanawyna: ady «🇹🇷 Türkiýe · tm» (şol baýdak öň bar bolsa «Türkiýe 2»), Russiýa — 🎮 oýun bölümi."""
+    xs = a.get("xcodes") or {}
+    if not xs: return []
+    used = {}
+    for c in base_codes:
+        m = re.search(r"[\U0001F1E6-\U0001F1FF]{2}", orig_name(c))
+        if m: used[m.group(0)] = used.get(m.group(0), 0) + 1
+    hosts = [code_host(v["c"]) for v in xs.values() if code_host(v["c"])]
+    try: geo = geo_lookup(hosts)
+    except Exception: geo = {}
+    out = []
+    for k, v in sorted(xs.items(), key=lambda kv: (kv[1].get("src") != "m", kv[1].get("ts", 0))):
+        cc = exit_country(v["c"], geo)[0] or ""
+        flag = flag_of(cc) if len(cc) == 2 else "🌐"
+        tag = "tm" if v.get("src") == "tg" else "VIP"
+        if cc == "ru":
+            out.append(set_name(v["c"], f"🇷🇺 Russia · 🎮 {tag}")); continue
+        n_ = used.get(flag, 0) + 1; used[flag] = n_
+        nm = TM_CNAME.get(cc) or (COUNTRIES.get(cc, ("", cc.upper()))[1] if cc in COUNTRIES else "Serwer")
+        out.append(set_name(v["c"], f"{flag} {nm}{' ' + str(n_) if n_ > 1 else ''} · {tag}"))
+    return out
+
+def app_x_add(text, who="admin"):
+    """Admin elinden kodlar (src=m): diňe goldanýan görnüşler. Dönüş: goşulan sany."""
+    cs = [l.strip() for l in re.split(r"[\s]+", str(text or "")) if l.strip().lower().startswith(APP_X_PROTOS) and code_hostport(l.strip())[0]]
+    def f(x):
+        xs = x.setdefault("xcodes", {}); now = int(time.time()); n_ = 0
+        for c in cs[:50]:
+            k = code_key(c)
+            if k not in xs: xs[k] = {"c": c, "src": "m", "by": who, "ts": now, "ok": 0, "bad": 0, "ms": 0}; n_ += 1
+            (x.get("xdead") or {}).pop(k, None)
+        return n_
+    return app_mut(f)
+
 def app_news_fs(a=None):
     """Habarlar Firestore-a hem (n/list): programlar açyk wagty 2 minutda bir okaýar — abuna faýlyna garaşmaýar."""
     a = a if a is not None else app_cfg(load_db()); fid = a.get("fid")
@@ -966,6 +1080,10 @@ def app_sync(force=False):
                 if k not in keys: keys.add(k); codes.append(c)
         last = {hashlib.md5(u.encode()).hexdigest()[:8]: last[hashlib.md5(u.encode()).hexdigest()[:8]]
                 for u in subs if hashlib.md5(u.encode()).hexdigest()[:8] in last}
+        try: app_tg_refresh()
+        except Exception as e: errs.append(f"Telegram: {str(e)[:60]}")
+        for c in app_x_named(codes, app_cfg(load_db())):   # 1.16.6: kanal + admin kodlary
+            if code_key(c) not in keys: keys.add(code_key(c)); codes.append(c)
         meta = app_meta(cfg)
         dig = hashlib.sha256("\n".join(meta + codes).encode()).hexdigest()[:16]
         svc = new_service()
@@ -1399,6 +1517,7 @@ async def app_on_msg(app, fid, o):
     except Exception: pass
     a = app_cfg(load_db())
     if k == "adm": await app_adm(app, dev, o); return
+    if k == "pr": await asyncio.to_thread(app_x_report, dev, o.get("p")); return
     if dev in (a.get("ubans") or []) and k in ("tk", "human", "fb", "rate", "ref", "gift", "nick"): return   # 1.16.4: gadagan — diňe VPN (20 min)
     if k == "tk":
         text = str(o.get("t") or "").strip()[:1000]
@@ -1727,6 +1846,10 @@ def app_adm_snap(a, e, dev):
                         "vpn": int(RUN.get("app_on") or 0), "new": sum(1 for u in devs.values() if (u.get("f") or 0) >= today),
                         "keys": len(keys_), "open": sum(1 for t in (a.get("tickets") or {}).values() if t.get("st") != "closed"),
                         "ai": out["aiCount"], "admins": [sum(1 for x in (a.get("apw") or {}).values() if x.get("dev")), len(a.get("apw") or {})]}
+        out["xc"] = [{"id": hashlib.md5(k_.encode()).hexdigest()[:10], "src": v.get("src"), "ch": v.get("ch", ""), "hp": app_x_hp(v["c"]), "name": orig_name(v["c"])[:40],
+                      "ok": app_hm(v.get("ok")) if v.get("ok") else "", "ms": int(v.get("ms") or 0), "bad": int(v.get("bad") or 0), "at": app_hm(v.get("ts"))}
+                     for k_, v in sorted((a.get("xcodes") or {}).items(), key=lambda kv: -kv[1].get("ts", 0))]
+        out["tgsrc"] = a.get("tgsrc", APP_TG_DEFAULT)
         out["news"] = [{"t": n_["t"], "x": n_["x"], "time": app_hm(n_.get("ts")), "img": n_.get("img", "")} for n_ in (a.get("news") or [])]
     return out
 
@@ -1828,6 +1951,25 @@ async def app_adm(app, dev, o):
                 msg = "kdel" if act == "kdel" else "kok"
                 if not f_: await notify_founders(app, f"🛠 <b>{esc(who)}</b> açary {'pozdy' if act == 'kdel' else 'üýtgetdi'}: <code>{k_}</code>", silent=True)
             else: err = "açar tapylmady"
+        elif act == "xadd" and f_:
+            n_ = app_x_add(r.get("t"), who)
+            try: await asyncio.to_thread(app_sync, True)
+            except Exception as e2: RUN["app_err"] = str(e2)[:150]
+            msg = f"xadd:{n_}"
+        elif act == "xdel" and f_:
+            k_ = str(r.get("id") or "")
+            app_mut(lambda x: (x.get("xcodes") or {}).pop(next((kk for kk in (x.get("xcodes") or {}) if hashlib.md5(kk.encode()).hexdigest()[:10] == k_), ""), None))
+            try: await asyncio.to_thread(app_sync, True)
+            except Exception as e2: RUN["app_err"] = str(e2)[:150]
+            msg = "xdel"
+        elif act in ("chadd", "chdel") and f_:
+            ch_ = re.sub(r"^(https?://)?(t\.me/)?(s/)?@?", "", str(r.get("ch") or "").strip()).strip("/")
+            if re.fullmatch(r"[A-Za-z0-9_]{4,40}", ch_):
+                app_mut(lambda x: x.__setitem__("tgsrc", [c_ for c_ in x.get("tgsrc", APP_TG_DEFAULT) if c_.lower() != ch_.lower()] + ([ch_] if act == "chadd" else [])))
+                if act == "chadd":
+                    try: await asyncio.to_thread(app_tg_refresh, True); await asyncio.to_thread(app_sync, True)
+                    except Exception as e2: err = str(e2)[:120]
+            msg = act
         elif act == "gdel" and f_:
             gid = re.sub(r"^g/", "", str(r.get("id") or ""))
             if re.fullmatch(r"[\w\-]{1,60}", gid):

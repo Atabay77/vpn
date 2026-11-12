@@ -110,7 +110,7 @@ class Main : Activity() {
             Lic.saved(this)?.let { k -> val h = Lic.hash(k); if (ok && Sub.keys.containsKey(h) && Msg.dev(this) !in Lic.devs(h) && Lic.exp(this) != null) Msg.send(this, JSONObject().put("k", "ka").put("h", h)) }
             Stats.beat(this, false)
             loadAd()
-            if (State.pings.isEmpty()) { State.warm(); push(JSONObject().put("k", "srv")) }
+            if (State.pings.isEmpty()) { State.warm(); push(JSONObject().put("k", "srv")); State.report(this) }
         }.start()
         if (b == null) handle(intent)
     }
@@ -334,7 +334,7 @@ class Main : Activity() {
             synchronized(this) {
                 left--
                 if (left == 0) {
-                    testing = false; pool.shutdown(); State.pingAt = System.currentTimeMillis()
+                    testing = false; pool.shutdown(); State.pingAt = System.currentTimeMillis(); State.report(this)
                     if (State.pings.values.none { it > 0 }) Thread { val on = State.online(this); ui { info(if (on) noCodes() else noNet()) } }.start()
                 }
             }

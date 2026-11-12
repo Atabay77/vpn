@@ -62,6 +62,17 @@ object State {
         pingAt = System.currentTimeMillis()
     }
 
+    @Volatile private var repAt = 0L
+    /** 1.16.6: ping netijeleri bota (Telegram kanalynyň işlemeýän kodlary aýrylsyn). Iň köp 20 minutda bir;
+     *  hiç bir kod jogap bermese (internet ýok bolup biler) iberilmeýär — ýalňyş «işlemeýär» diýilmesin. */
+    fun report(ctx: Context) {
+        val now = System.currentTimeMillis()
+        if (now - repAt < 20 * 60_000L || pings.values.none { it > 0 }) return
+        repAt = now
+        val o = org.json.JSONObject(); pings.forEach { (k, v) -> o.put(k.substringAfter('|'), v) }
+        Msg.send(ctx, org.json.JSONObject().put("k", "pr").put("p", o))
+    }
+
     @Volatile var noPing = false   // son otomatik denemede hiçbir kod yanıt vermedi
     @Volatile var noNet = false    // telefonun interneti yok / çalışmıyor
 
