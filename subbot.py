@@ -932,9 +932,21 @@ def app_left(exp):
     d = exp - time.time()
     return f"{int(d // 86400)} gün {int(d % 86400 // 3600)} sagat"
 
+def app_news_fs(a=None):
+    """Habarlar Firestore-a hem (n/list): programlar açyk wagty 2 minutda bir okaýar — abuna faýlyna garaşmaýar."""
+    a = a if a is not None else app_cfg(load_db()); fid = a.get("fid")
+    if not (fid and a.get("fs_ok") and a.get("fs_proj")): return
+    lst = [{"id": n_["id"], "ts": int(n_["ts"]), "t": n_["t"], "x": n_["x"], **({"img": n_["img"]} if n_.get("img") else {})} for n_ in (a.get("news") or [])[:10]]
+    body = json.dumps({"news": lst}, ensure_ascii=False, sort_keys=True)
+    if RUN.get("news_fs") == body: return
+    fs_write(a["fs_proj"], "n/list", app_enc(fid, body), None, False)
+    RUN["news_fs"] = body
+
 def app_sync(force=False):
     """Admin bölümünde eklenen aboneliklerin kodlarını toplar, programın Drive dosyasına yazar.
     Bir abonelik o an açılmazsa son başarılı kodları kullanılır. Dönüş: (kod sayısı, hatalar)."""
+    try: app_news_fs()
+    except Exception as e: log.info("news fs: %s", e)
     with APP_LOCK:
         db = load_db(); cfg = app_cfg(db)
         subs = list(cfg.get("subs", []))

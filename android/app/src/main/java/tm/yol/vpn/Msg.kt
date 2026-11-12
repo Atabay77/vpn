@@ -169,6 +169,23 @@ object Msg {
     private val lock = Object()
     fun kick() { synchronized(lock) { lock.notifyAll() } }
     @Volatile private var gAt = 0L
+    @Volatile private var newsAt = 0L
+
+    /** Habarlar Firestore-dan (bot n/list ýazýar): admin iberen badyna gelýär. */
+    private fun newsFs() {
+        val o = Fs.get("n/list")?.first?.let { dec(it) }?.let { runCatching { JSONObject(it) }.getOrNull() } ?: return
+        val a = o.optJSONArray("news") ?: return
+        val l = ArrayList<Triple<String, Long, String>>()
+        for (i in 0 until a.length()) {
+            val n = a.optJSONObject(i) ?: continue
+            val j = JSONObject().put("t", n.optString("t")).put("x", n.optString("x"))
+            n.optString("img").takeIf { it.isNotEmpty() }?.let { j.put("img", it) }
+            l.add(Triple(n.optString("id"), n.optLong("ts"), j.toString()))
+        }
+        val changed = l.map { it.first } != Sub.news.map { it.first }
+        Sub.newsFs = l; Sub.news = l
+        if (changed) events.add(JSONObject().put("k", "srv"))
+    }
     @Volatile private var inAt = 0L
     @Volatile private var waitAt = 0L        // soňky soragyň wagty: jogap garaşylýan wagty ýygy barlanýar
 
@@ -195,6 +212,7 @@ object Msg {
             val gEvery = if (watchG) 8_000L else 60_000L
             if (visible && now - gAt > gEvery) { gAt = now; runCatching { global() } }
             runCatching { Chat.poll(c, visible, dmPage) }
+            if (visible && Fs.on() && now - newsAt > 120_000) { newsAt = now; runCatching { newsFs() } }
             synchronized(lock) { runCatching { lock.wait(if (watchG || Chat.watch != null || (waiting && visible)) 2000L else 5000L) } }
         }
     }

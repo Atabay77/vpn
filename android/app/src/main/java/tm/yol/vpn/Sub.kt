@@ -31,6 +31,7 @@ object Sub {
     @Volatile var ad: Pair<String, String>? = null                     // reklam: (resim Drive dosyası, link)
     @Volatile var okAt = 0L                                            // son başarılı güncelleme
     @Volatile var kdev: Map<String, String> = emptyMap()               // key özeti → baglanan telefon(lar), otur bilen
+    @Volatile var newsFs: List<Triple<String, Long, String>>? = null   // Firestore-dan (n/list) — täzeräk, abuna faýlyndakydan öň
     @Volatile var roles: Map<String, Pair<String, String>> = emptyMap()   // telefon → (o = owner / a = admin, nik)
     @Volatile var kn: Map<String, Int> = emptyMap()                    // key özeti → näçe telefon ulanyp biler (1.16)
     @Volatile var news: List<Triple<String, Long, String>> = emptyList() // (kimlik, wagt, JSON {t,x}) — botdan habarlar
@@ -66,7 +67,7 @@ object Sub {
             if (p.size >= 3 && p[0].startsWith("#tvu") && p[0].endsWith(":")) u[p[0].removePrefix("#tvu").removeSuffix(":")] = p[1] to p[2]
             if (p.size >= 2 && p[0] == "#tvad:") a = p[1] to Cfg.dec(p.getOrElse(2) { "" })
         }
-        keys = k; upd = u; ad = a; kdev = kd; kn = kn2; roles = rl; news = nw; online = on; ai = aiOn; bans = bn; relay = rel; fsProj = fp; fsKey = fk; fsDb = fd
+        keys = k; upd = u; ad = a; kdev = kd; kn = kn2; roles = rl; news = newsFs ?: nw; online = on; ai = aiOn; bans = bn; relay = rel; fsProj = fp; fsKey = fk; fsDb = fd
     }
 
     /** Abonelik metnini sunucu listesine çevirir (desteklenmeyen satırlar atlanır). */
