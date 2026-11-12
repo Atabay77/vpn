@@ -30,6 +30,7 @@ object Msg {
     @Volatile private var started = false
     @Volatile var watchG = false            // Global chat açyk: ýygy-ýygydan barla
     @Volatile var visible = false           // programma ekranda
+    @Volatile var dmPage = false            // hususy habarlar sanawy açyk
     val events = ConcurrentLinkedQueue<JSONObject>()   // ekrana berilýän wakalar (JS alýar)
     private val rnd = SecureRandom()
 
@@ -193,7 +194,8 @@ object Msg {
             if ((visible || on) && now - inAt > inEvery) { inAt = now; runCatching { inbox(c) } }
             val gEvery = if (watchG) 8_000L else 60_000L
             if (visible && now - gAt > gEvery) { gAt = now; runCatching { global() } }
-            synchronized(lock) { runCatching { lock.wait(if (watchG || (waiting && visible)) 2000L else 5000L) } }
+            runCatching { Chat.poll(c, visible, dmPage) }
+            synchronized(lock) { runCatching { lock.wait(if (watchG || Chat.watch != null || (waiting && visible)) 2000L else 5000L) } }
         }
     }
 
@@ -335,7 +337,8 @@ object Msg {
         for ((id, b, t) in got) {
             gfsT = t
             val o = dec(b)?.let { runCatching { JSONObject(it) }.getOrNull() } ?: continue
-            gfs.add(JSONObject().put("id", id).put("time", Fs.sec(t)).put("i", o.optString("i")).put("n", o.optString("n")).put("t", o.optString("t")))
+            gfs.add(JSONObject().put("id", id).put("time", Fs.sec(t)).put("i", o.optString("i")).put("n", o.optString("n")).put("t", o.optString("t"))
+                .put("st", o.optString("st").take(16)).put("pi", o.optString("pi").take(40)))
         }
         while (gfs.size > 150) gfs.removeAt(0)
         events.add(JSONObject().put("k", "g").put("list", JSONArray(gfs.toList())).put("del", JSONArray()))

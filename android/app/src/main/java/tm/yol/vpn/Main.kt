@@ -107,7 +107,7 @@ class Main : Activity() {
             val ok = Sub.refresh(this, 7000)
             push(JSONObject().put("k", "srv").put("ok", ok))
             // 1.13-den täzelenenler: ýatda saklanan açar heniz telefona baglanmadyk bolsa bota habar (1 açar = 1 telefon)
-            Lic.saved(this)?.let { k -> val h = Lic.hash(k); if (ok && Sub.keys.containsKey(h) && Sub.kdev[h] == null && Lic.exp(this) != null) Msg.send(this, JSONObject().put("k", "ka").put("h", h)) }
+            Lic.saved(this)?.let { k -> val h = Lic.hash(k); if (ok && Sub.keys.containsKey(h) && Msg.dev(this) !in Lic.devs(h) && Lic.exp(this) != null) Msg.send(this, JSONObject().put("k", "ka").put("h", h)) }
             Stats.beat(this, false)
             loadAd()
             if (State.pings.isEmpty()) { State.warm(); push(JSONObject().put("k", "srv")) }
@@ -235,6 +235,7 @@ class Main : Activity() {
                 .put("snd", Snd.on(c)).put("news", nw).put("ai", Sub.ai).put("online", Sub.online).put("bans", JSONArray(Sub.bans.toList()))
                 .put("key", Lic.saved(c) ?: "").put("model", Build.MANUFACTURER + " " + Build.MODEL).put("relay", Sub.relay.isNotEmpty() || Fs.on()).put("fs", Fs.on())
                 .put("dl", (Sub.upd["all"] ?: Sub.upd["64"] ?: Sub.upd["32"])?.let { runCatching { Sub.fileUrl(it.second) }.getOrNull() } ?: "")
+                .put("roles", JSONObject().apply { Sub.roles.forEach { (d, rn) -> put(d, JSONArray().put(rn.first).put(rn.second)) } })
                 .put("adm", Msg.admPw(c) != null).put("admMe", Msg.admMe(c) ?: JSONObject()).toString()
         }
 
@@ -266,6 +267,17 @@ class Main : Activity() {
         @JavascriptInterface fun tile() = ui { addTile() }
         @JavascriptInterface fun key(raw: String) = Thread { push(JSONObject().put("k", "key").put("r", checkKey(raw))) }.start()
         @JavascriptInterface fun send(json: String) { runCatching { Msg.send(this@Main, JSONObject(json)) } }
+        // 1.16: profil, hususy habarlar, Global chat suraty
+        @JavascriptInterface fun profile(json: String) { runCatching { Chat.profile(this@Main, JSONObject(json)) } }
+        @JavascriptInterface fun prof(dev: String) = Chat.prof(dev)
+        @JavascriptInterface fun dmSend(peer: String, json: String, nick: String) { runCatching { Chat.send(this@Main, peer, JSONObject(json), nick) } }
+        @JavascriptInterface fun dmOpen(peer: String) = Chat.open(this@Main, peer)
+        @JavascriptInterface fun dmWatch(peer: String) { Chat.watch = peer.ifEmpty { null }; Msg.kick() }
+        @JavascriptInterface fun dmPage(on: Boolean) { Msg.dmPage = on; if (on) Msg.kick() }
+        @JavascriptInterface fun dmSt(peer: String, st: String) = Chat.setSt(this@Main, peer, st)
+        @JavascriptInterface fun dmList(): String = Chat.list(this@Main).toString()
+        @JavascriptInterface fun gsend2(json: String) { runCatching { Chat.gsend(this@Main, JSONObject(json)) } }
+        @JavascriptInterface fun img(kind: String, id: String) = Chat.img(kind, id)
         @JavascriptInterface fun adm(json: String) { runCatching { Msg.adm(this@Main, JSONObject(json)) } }
         @JavascriptInterface fun gsend(nick: String, text: String) = Msg.gsend(this@Main, nick, text)
         @JavascriptInterface fun gwatch(on: Boolean) { Msg.watchG = on; if (on) Msg.kick() }
@@ -289,7 +301,7 @@ class Main : Activity() {
         if (st == "ok") {
             val first = Lic.saved(this) != k
             Lic.save(this, k)
-            if (first || Sub.kdev[Lic.hash(k)] == null) Msg.send(this, JSONObject().put("k", "ka").put("h", Lic.hash(k)))
+            if (first || Msg.dev(this) !in Lic.devs(Lic.hash(k))) Msg.send(this, JSONObject().put("k", "ka").put("h", Lic.hash(k)))
         }
         return st
     }

@@ -47,6 +47,37 @@
   const act = (a, o) => { NB.adm(JSON.stringify(Object.assign({ a }, o || {}))); if (!admPend) admPend = Date.now(); };
   const admMe = () => (A && A.me) || INFO.admMe || {};
 
+  // ---- 1.16: profil, hususy habarlar, nyşanlar ----
+  const P2 = {};          // telefon → {th, ph, bg, n, dm} (doly profil)
+  const DMS = {};         // garşydaş → {st, msgs: [], un, n, lt}
+  const GI = {}, NI = {}, imgAsked = {};   // Global chat / habar suratlary
+  const STICKERS = ['😂', '🤣', '😍', '🥰', '😎', '😭', '😡', '👍', '🙏', '🔥', '❤️', '💯', '🎉', '🤝', '😱', '🤔', '😴', '🥳', '💪', '👑', '🇹🇲', '🚀', '😘', '👋'];
+  const LINK_RE = /(https?:\/\/|www\.|t\.me\/|\b[\w-]{2,}\.(com|net|org|ru|tm|me|io|xyz|info|top|site|online|link|app|dev|tk|ly|gg|uz|kz|tr|de|co|su|pro|club|shop|store|live|tv|cc|biz|ua|by)\b)/i;
+  const roleOf = (dev) => (((INFO.roles || {})[dev] || [])[0] || '');
+  const nameOf = (dev) => { const r = (INFO.roles || {})[dev], p = P2[dev], d = DMS[dev], g = G.slice().reverse().find((m) => m.i === dev);
+    return (p && p.n) || (r && r[1]) || (d && d.n) || (g && g.n) || '?'; };
+  const thumbOf = (dev) => (P2[dev] && (P2[dev].th || P2[dev].ph)) || ((PH[dev] || {}).d || '');
+  const askImg = (kind, id) => { const k = kind + id; if (!id || imgAsked[k]) return; imgAsked[k] = 1; NB.img(kind, id); };
+  /** Surat kiçeltmek: iň uly tarapy max piksel, JPEG. */
+  function shrink(file, max, q, cb, square) {
+    const rd = new FileReader();
+    rd.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        const c = document.createElement('canvas');
+        if (square) { const k = Math.max(max / img.width, max / img.height); c.width = max; c.height = max; c.getContext('2d').drawImage(img, (max - img.width * k) / 2, (max - img.height * k) / 2, img.width * k, img.height * k); }
+        else { const k = Math.min(1, max / Math.max(img.width, img.height)); c.width = Math.round(img.width * k); c.height = Math.round(img.height * k); c.getContext('2d').drawImage(img, 0, 0, c.width, c.height); }
+        cb(c.toDataURL('image/jpeg', q));
+      };
+      img.onerror = () => cb('');
+      img.src = String(rd.result);
+    };
+    rd.onerror = () => cb('');
+    rd.readAsDataURL(file);
+  }
+  function shrinkData(src, max, q, cb) { const img = new Image(); img.onload = () => { const k = Math.min(1, max / Math.max(img.width, img.height)), c = document.createElement('canvas'); c.width = Math.round(img.width * k); c.height = Math.round(img.height * k); c.getContext('2d').drawImage(img, 0, 0, c.width, c.height); cb(c.toDataURL('image/jpeg', q)); }; img.onerror = () => cb(''); img.src = src; }
+  const fileOf = (e) => e && e.target && e.target.files && e.target.files[0];
+
   function loadServers() {
     const r = J(NB.servers(), { list: [], pings: {} });
     SV = r.list.map((s) => {
@@ -134,8 +165,15 @@
       const U = s.usage || {}, mbd = (t) => (U[dayKey(t)] || 0) / 1024;
       const daysV = [6, 5, 4, 3, 2, 1, 0].map((i) => mbd(now - i * DAY));
       const wk = [3, 2, 1, 0].map((w) => [0, 1, 2, 3, 4, 5, 6].reduce((a, i) => a + mbd(now - (w * 7 + i) * DAY), 0));
-      const vals = s.uMode === 'd' ? daysV : wk, mx = Math.max(1, ...vals), mb = (v) => (v >= 1024 ? (v / 1024).toFixed(2) + ' GB' : Math.round(v) + ' MB');
-      r.bars = r.bars.map((b, i) => Object.assign({}, b, { v: i === s.uSel ? mb(vals[i] || 0) : '', h: Math.max(4, Math.round((vals[i] || 0) / mx * 100)), aria: b.l + ': ' + mb(vals[i] || 0) }));
+      const UH = s.usageH || {}, today = dayKey(now);
+      const hrs = [0, 1, 2, 3, 4, 5].map((q) => [0, 1, 2, 3].reduce((a, j) => a + (UH[today + '-' + (q * 4 + j)] || 0), 0) / 1024);
+      const vals = s.uMode === 't' ? hrs : s.uMode === 'd' ? daysV : wk, mx = Math.max(1, ...vals), mb = (v) => (v >= 1024 ? (v / 1024).toFixed(2) + ' GB' : (v < 10 && v > 0 ? v.toFixed(1) : Math.round(v)) + ' MB');
+      if (s.uMode === 't') {
+        const b0 = r.bars[0] || {}, curQ = Math.floor(new Date(now).getHours() / 4), sel = s.uSel > 5 ? curQ : s.uSel;
+        r.bars = hrs.map((v, i) => Object.assign({}, b0, { v: i === sel ? mb(v) : '', h: Math.max(4, Math.round(v / mx * 100)), l: two(i * 4) + '–' + two(i * 4 + 4), lc: i === curQ ? '#FFD27A' : '#C9BFA8',
+          cls: (i === curQ ? 'ubar-today' : '') + (i === sel ? ' ubar-sel' : ''), d: (i * 0.06).toFixed(2), aria: two(i * 4) + ':00: ' + mb(v), pick: () => this.setState({ uSel: i }) }));
+      } else r.bars = r.bars.map((b, i) => Object.assign({}, b, { v: i === s.uSel ? mb(vals[i] || 0) : '', h: Math.max(4, Math.round((vals[i] || 0) / mx * 100)), aria: b.l + ': ' + mb(vals[i] || 0) }));
+      r.uTodayGo = () => this.setState({ uMode: 't', uSel: 9 }); r.uTodayP = s.uMode === 't' ? 'true' : 'false'; r.uTodayCls = s.uMode === 't' ? 'seg-on' : 'seg-off';
       const weekSum = daysV.reduce((a, b) => a + b, 0);
       r.uToday = mb(daysV[6]); r.uWeekT = mb(weekSum); r.uAvg = mb(weekSum / 7);
       // taryh (hakyky)
@@ -158,15 +196,18 @@
       // Global chat (hakyky)
       const bans = INFO.bans || [], me = INFO.dev;
       const gl = G.filter((m) => !gDel[m.id] && bans.indexOf(m.i) < 0);
+      gl.forEach((m) => { if (m.pi && !GI[m.pi]) askImg('g', m.pi); });
       r.gMsgs = gl.map((m) => {
         const mine = m.i === me, nm = mine ? this.meName : m.n || '?';
         const ph = mine ? s.photo : ((PH[m.i] || {}).d || '');
         return { name: nm + (mine ? ' · ' + tx.g_you : ''), ini: ini(nm), bg: mine ? '#E0B04A' : colorOf(m.i), nc: mine ? '#06100B' : colorOf(m.i), photo: ph, hasPh: !!ph, noPh: !ph,
-          t: m.t, time: this.hm((m.time || 0) * 1000 || now), gk: m.id, cls: mine ? 'gm-me' : 'gm-o', bcls: mine ? 'gb-me' : 'gb-o', canDel: false, del: null };
+          t: m.st ? '' : m.t, time: this.hm((m.time || 0) * 1000 || now), gk: m.id, cls: mine ? 'gm-me' : 'gm-o', bcls: mine ? 'gb-me' : 'gb-o', canDel: false, del: null,
+          prof: () => this.openProf(m.i), isO: roleOf(m.i) === 'o', isA: roleOf(m.i) === 'a', ncls: roleOf(m.i) === 'o' ? 'goldtxt' : '',
+          isSt: !!m.st, st: m.st || '', hasImg: !!(m.pi && GI[m.pi]), img: (m.pi && GI[m.pi]) || '', zoom: () => this.setState({ zoom: GI[m.pi] || '' }) };
       });
       const onl = INFO.online > 0 ? tx.g_online.replace('{n}', String(INFO.online)) : '';
       r.gOnline = onl; r.gHead = tx.p_global.toUpperCase() + (onl ? ' · ' + onl : '');
-      r.ticker = gl.length ? gl.slice(-2).map((m) => ({ n: m.i === me ? this.meName : m.n, c: m.i === me ? '#E0B04A' : colorOf(m.i), t: m.t })) : [{ n: '🌐', c: '#6FDB9C', t: tx.g_empty }];
+      r.ticker = gl.length ? gl.slice(-2).map((m) => ({ n: m.i === me ? this.meName : m.n, c: m.i === me ? '#E0B04A' : colorOf(m.i), t: m.st || (m.pi ? '📷 ' + tx.dm_photo : m.t) })) : [{ n: '🌐', c: '#6FDB9C', t: tx.g_empty }];
       // sazlamalar
       r.opts = r.opts.map((o) => {
         if (o.t === tx.s_snd) return Object.assign({}, o, { on: () => { const v = !this.state.snd; NB.snd(v); this.setState({ snd: v }); } });
@@ -184,7 +225,7 @@
       // admin paneli (rugsada görä)
       const am = admMe(), isF = am.role === 'f', full = isF || am.perm === 'all', us = (A && A.us) || {};
       const openN = ((A && A.tk) || []).filter((t) => t.st === 'open').length;
-      r.menuItems = r.menuItems.filter((m) => s.admOn || m.t !== tx.p_admin).map((m) => (m.t === tx.p_global ? Object.assign({}, m, { badge: INFO.online > 0, bt: '● ' + INFO.online })
+      r.menuItems = r.menuItems.filter((m) => (s.admOn || m.t !== tx.p_admin) && m.t !== tx.p_history).map((m) => (m.t === tx.p_global ? Object.assign({}, m, { badge: INFO.online > 0, bt: '● ' + INFO.online })
         : m.t === tx.p_admin ? Object.assign({}, m, { badge: openN > 0, bt: String(openN) }) : m));
       if (!full) { r.tabUsCls = 'hid'; r.tabIsUs = false; }
       if (!isF) { r.tabAdCls = 'hid'; r.tabBotCls = 'hid'; r.tabIsAd = false; r.tabIsBot = false; if (s.admTab !== 'tk' && !(full && s.admTab === 'us')) r.tabIsTk = true; }
@@ -199,7 +240,7 @@
           canKick: isF && !!c.u && !mine, kick: () => { act('kick', { id: c.id }); c.u = null; this.setState({ admTick: (this.state.admTick || 0) + 1 }); this.say('🔓 ' + tx.ad_kicked); } };
       });
       r.keyList = ((A && A.keys) || []).map((k, i) => { const u = k.used ? us[k.used] : null;
-        return { k: k.k, sub: (k.d === 30 ? tx.bk_month : k.d + ' ' + tx.days) + ' · ' + tx.bk_by + ': ' + byName(k.by) + ' · ' + k.at + (u ? ' · ' + u.name : ''), stT: k.used ? tx.bk_used : tx.bk_new, stCls: k.used ? 'tk-closed' : 'tk-ans', d: (i * 0.04).toFixed(2) }; });
+        return { cp: () => { NB.copy(k.k); this.say('✓ ' + tx.copied + ': ' + k.k); }, k: k.k, sub: (k.d === 0 ? '♾' : k.d === 30 ? tx.bk_month : k.d + ' ' + tx.days) + ((k.n || 1) > 1 ? ' · 👥 ' + (k.u || 0) + '/' + k.n : '') + ' · ' + tx.bk_by + ': ' + byName(k.by) + ' · ' + k.at + (u ? ' · ' + u.name : ''), stT: k.used ? tx.bk_used : tx.bk_new, stCls: k.used ? 'tk-closed' : 'tk-ans', d: (i * 0.04).toFixed(2) }; });
       if (A) {
         r.logText = A.logs || '—';
         if (A.next != null) r.sysLine = s.sysOn ? tx.bt_on.replace(/\d+/, String(Math.max(1, Math.round(A.next / 60)))) : tx.bt_off;
@@ -208,6 +249,22 @@
         r.statTiles = [[tx.st_users, S.users, '#F3E7D0'], [tx.st_today, S.today, '#6FDB9C'], [tx.st_vpn, S.vpn, '#6FDB9C'], [tx.st_new, S.new, '#FFD27A'], [tx.st_keys, S.keys, '#FFD27A'],
           [tx.st_open, S.open, '#FFB0A6'], [tx.st_ai, S.ai, '#A8D4FF'], [tx.st_admins, (S.admins || [0, 0]).join(' / '), '#F3E7D0']].map((q) => ({ k: q[0], v: String(q[1] == null ? '—' : q[1]), c: q[2] }));
       }
+      r.cfOn = !!s.cf; r.cfText = s.cf ? s.cf.text : ''; r.cfOk = s.cf ? s.cf.ok : ''; r.cfNo = this.cfNo; r.cfYes = this.cfYes;
+      r.cfBg = s.cf && s.cf.danger ? 'linear-gradient(90deg,#FF8A78,#E05A48)' : 'linear-gradient(90deg,#E0B04A,#C8902E)';
+      // Awtomatik kartasy: haýsy ýurtlar bar we näçe serwer
+      const real = SV.filter((v) => !v.game), fl = [];
+      real.forEach((v) => { if (fl.indexOf(v.f) < 0) fl.push(v.f); });
+      r.svFlags = fl.slice(0, 9).join(' ') + (fl.length > 9 ? ' …' : '') || r.offCard.sub;
+      r.svCount = ({ tk: '{n} serwer', ru: '{n} серв.', tr: '{n} sunucu' }[s.lang] || '{n}').replace('{n}', String(SV.length));
+      r.myCode = INFO.code || '—';
+      // açar döret: 3/7/30 + möhletsiz; elle gün ýazylsa şol
+      r.kDays = [[3, '3 ' + tx.days, '15 TMT'], [7, '7 ' + tx.days, '30 TMT'], [30, tx.bk_month, '100 TMT'], [0, '♾', tx.bk_unl.replace('♾ ', '')]].map((q) => {
+        const on = !(parseInt(s.kCustom, 10) > 0) && s.kDay === q[0];
+        return { t: q[1], p2: q[2], p: on ? 'true' : 'false', cls: on ? 'chip-on' : 'seg-off', pick: () => this.setState({ kDay: q[0], kCustom: '' }) };
+      });
+      r.kCustom = s.kCustom || ''; r.kN = s.kN || ''; r.onKCustom = this.onKCustom; r.onKN = this.onKN; r.kDayPh = '—';
+      { const c = parseInt(s.kCustom, 10), dd = c > 0 ? Math.min(3650, c) : s.kDay, nn = Math.max(1, Math.min(1000, parseInt(s.kN, 10) || 1));
+        r.kSum = tx.bk_sum.replace('{d}', dd === 0 ? tx.bk_unl : dd === 30 ? tx.bk_month : dd + ' ' + tx.days).replace('{n}', String(nn)); }
       r.updLbl = s.bUpd ? tx.s_refing : '⚡ ' + tx.bt_upd;
       r.botTiles = r.botTiles.map((b, i) => (i === 5 ? Object.assign({}, b, { t: s.bUpd ? tx.s_refing : tx.bt_upd }) : b));
       r.aiNotes = this.notes().map((t, i) => ({ t, del: () => { act('notedel', { i }); A.notes = A.notes.filter((_, j) => j !== i); this.setState({ admTick: (this.state.admTick || 0) + 1 }); } }));
@@ -221,7 +278,80 @@
       }
       const at = s.admT != null && A ? A.tk.find((x) => x.id === s.admT) : null;
       if (at && at.fb && at.st === 'closed') r.atMsgs = r.atMsgs.concat([{ t: at.fb === '👍' ? tx.fb_aUp : tx.fb_aDown, time: '', cls: 'bub-s', isAi: false }]);
-      if (s.admOn && isF) r.gMsgs = r.gMsgs.map((g) => Object.assign({}, g, { canDel: true, del: () => { act('gdel', { id: g.gk }); gDel[g.gk] = true; this.setState({ gTick: (this.state.gTick || 0) + 1 }); } }));
+      // ---- 1.16 ----
+      const pg = s.page, me1 = INFO.dev, myRole = roleOf(me1);
+      r.isOwner = myRole === 'o'; r.isAdminR = myRole === 'a'; r.meNcls = myRole === 'o' ? 'goldtxt' : '';
+      r.nkIn = s.nkIn == null ? this.meName : s.nkIn; r.onNk = this.onNk; r.saveNk = this.saveNk;
+      r.nkMsg = s.nkSt ? tx['nk_' + s.nkSt] : ''; r.nkCls = s.nkSt === 'ok' ? 'nk-ok' : s.nkSt === 'wait' ? '' : s.nkSt ? 'nk-bad' : '';
+      const bgUrl = (d) => (d ? 'linear-gradient(rgba(6,16,11,.45),rgba(6,16,11,.88)),url(' + d + ')' : 'none');
+      r.pfBgImg = bgUrl(s.pbg); r.hasBg = !!s.pbg; r.onBg = this.onBg; r.delBg = this.delBg;
+      r.stOn = !!s.stOn; r.stToggle = this.stToggle; r.stickers = STICKERS.map((e) => ({ e, pick: () => this.pickSticker(e) }));
+      r.zoomOn = !!s.zoom; r.zoomSrc = s.zoom || ''; r.zoomClose = () => this.setState({ zoom: '' });
+      r.onGPhoto = this.onGPhoto;
+      // habarlar: eýesiniň habary altyn, surat
+      let bi = 0;
+      r.news = r.news.map((n) => {
+        if (n.isTk) return n;
+        const b = (s.bcast || [])[bi++] || {};
+        if (b.img && !NI[b.img]) askImg('n', b.img);
+        return Object.assign({}, n, { isO: true, tcls: 'goldtxt', date: b.time || '', hasImg: !!(b.img && NI[b.img]), img: (b.img && NI[b.img]) || '', zoom: () => this.setState({ zoom: NI[b.img] || '' }) });
+      });
+      r.onBcImg = this.onBcImg; r.bcHasImg = !!s.bcImg; r.bcImg = s.bcImg || ''; r.bcImgDel = () => this.setState({ bcImg: '' });
+      const ava = (dev) => { const ph = dev === me1 ? s.photo : thumbOf(dev), nm = dev === me1 ? this.meName : nameOf(dev);
+        if (!ph && dev !== me1 && !phAsked[dev]) { phAsked[dev] = 1; NB.getPhoto(dev); }
+        return { photo: ph || '', hasPh: !!ph, noPh: !ph, bg: colorOf(dev), ini: ini(nm), name: nm, isO: roleOf(dev) === 'o', isA: roleOf(dev) === 'a', ncls: roleOf(dev) === 'o' ? 'goldtxt' : '' }; };
+      // başga adamyň profili
+      r.isUprof = pg === 'uprof' && !!s.upDev;
+      if (r.isUprof) {
+        const d = s.upDev, p = P2[d], st = (DMS[d] || {}).st || '', a = ava(d), mine = d === me1;
+        const canDm = !mine && st !== 'blk' && ((p && p.dm) || !!DMS[d]);
+        r.up = Object.assign(a, { photo: (p && p.ph) || a.photo, hasPh: !!((p && p.ph) || a.photo), noPh: !((p && p.ph) || a.photo), bgImg: bgUrl(p && p.bg),
+          sub: a.isO ? tx.vip_o : a.isA ? tx.vip_a : '', canDm, noDm: !canDm, notMe: !mine,
+          why: mine ? tx.dm_me : st === 'blk' ? tx.dm_blocked : !p ? tx.nk_wait : tx.dm_noKey,
+          write: () => this.openDm(d), zoom: () => this.setState({ zoom: (p && p.ph) || a.photo || '' }),
+          blockT: st === 'blk' ? '✅ ' + tx.dm_unblk : '🚫 ' + tx.dm_blk, block: () => this.blockDm(d) });
+      } else r.up = { name: '', photo: '', hasPh: false, noPh: true, bg: '', ini: '', bgImg: 'none', sub: '', canDm: false, noDm: false, notMe: false, why: '', isO: false, isA: false, ncls: '' };
+      // hususy habarlar sanawy
+      r.isDms = pg === 'dms';
+      const rows = Object.keys(DMS).filter((d) => d !== me1).sort((a, b) => (DMS[b].lt || 0) - (DMS[a].lt || 0));
+      r.dmEmpty = !rows.length;
+      r.dmRows = rows.map((d, i) => { const x = DMS[d], m = x.msgs[x.msgs.length - 1], av = ava(d);
+        return Object.assign(av, { d: (i * 0.04).toFixed(2), isReq: x.st === 'in', isBlk: x.st === 'blk', hasUn: (x.un || 0) > 0, un: String(x.un || 0),
+          last: !m ? (x.st === 'in' ? tx.dm_req : '') : (m.f === me1 ? '↩ ' : '') + (m.ph ? '📷 ' + tx.dm_photo : m.st ? m.st : m.sys === 'acc' ? tx.dm_acced : m.x),
+          open: () => this.openDm(d) }); });
+      // hususy habar otagy
+      r.isDm = pg === 'dm' && !!s.dmPeer;
+      if (r.isDm) {
+        const d = s.dmPeer, x = DMS[d] || { st: '', msgs: [] }, p = P2[d], mineN = x.msgs.filter((m) => m.f === me1 && !m.sys).length;
+        r.dp = ava(d); r.dmProf = () => this.openProf(d);
+        r.dmIsReq = x.st === 'in';
+        r.dmReqText = tx.dm_reqText.replace('{n}', r.dp.name);
+        const noKey = !x.st && p && !p.dm;
+        const waitMax = x.st === 'out' && mineN >= 3;
+        r.dmCanWrite = x.st !== 'blk' && x.st !== 'in' && !noKey && !waitMax;
+        r.dmNoWrite = !r.dmCanWrite && !r.dmIsReq;
+        r.dmNoWriteT = x.st === 'blk' ? tx.dm_blocked : noKey ? tx.dm_noKey : tx.dm_wait.replace('{n}', r.dp.name);
+        r.dmMsgs = x.msgs.map((m) => {
+          if (m.sys) return { cls: 'dmm-s', isSys: true, isMsg: false, t: m.sys === 'acc' ? tx.dm_acced : m.sys === 'key' ? tx.dm_keyChg.replace('{n}', r.dp.name) : m.sys, bcls: '', hasImg: false, img: '', zoom: null, isSt: false, st: '', parts: [], time: '' };
+          const mine2 = m.f === me1;
+          return { cls: mine2 ? 'dmm-me' : 'dmm-o', bcls: mine2 ? 'gb-me' : 'gb-o', isSys: false, isMsg: true, t: '', hasImg: !!m.ph, img: m.ph || '', zoom: () => this.setState({ zoom: m.ph }),
+            isSt: !!m.st, st: m.st || '', parts: m.x ? this.lk(m.x) : [], time: this.hm((m.t || 0) * 1000 || now) + (m.pend ? ' ⏳' : '') };
+        });
+        r.dmIn = s.dmIn || ''; r.onDmIn = this.onDmIn; r.dmSendT = this.dmSendT; r.onDmPhoto = this.onDmPhoto; r.dmRef = this.dmRef;
+        r.dmAccept = () => this.acceptDm(d); r.dmBlock = () => this.blockDm(d);
+      } else Object.assign(r, { dp: { name: '', photo: '', hasPh: false, noPh: true, bg: '', ini: '', isO: false, isA: false, ncls: '' }, dmIsReq: false, dmCanWrite: false, dmNoWrite: false, dmMsgs: [] });
+      // ýörite adamlar
+      r.isVip = pg === 'vip';
+      r.vipRows = Object.keys(INFO.roles || {}).sort((a, b) => (roleOf(a) === 'o' ? 0 : 1) - (roleOf(b) === 'o' ? 0 : 1)).map((d, i) => Object.assign(ava(d), {
+        cls: roleOf(d) === 'o' ? 'vo' : '', role: roleOf(d) === 'o' ? tx.vip_o : tx.vip_a, d: (i * 0.06).toFixed(2), open: () => this.openProf(d) }));
+      // sahypa ady we menýu
+      if (pg === 'uprof') r.pageTitle = tx.p_uprof; else if (pg === 'dms') r.pageTitle = tx.p_dms; else if (pg === 'vip') r.pageTitle = tx.p_vip; else if (pg === 'dm') r.pageTitle = r.dp.name;
+      const dmUn = Object.keys(DMS).reduce((a, d) => a + (DMS[d].un || 0) + (DMS[d].st === 'in' && !(DMS[d].seen) ? 1 : 0), 0);
+      const mk = (k, t, i1, i2, badge, bt) => ({ badge, bt, bc: '', t, i1, i2, d: '0.1', cls: pg === k ? 'mi-on' : '', ic: pg === k ? '#6FDB9C' : '#E0B04A', go: () => this.setState({ page: k, menu: false }) });
+      const gi = r.menuItems.findIndex((m) => m.t === tx.p_global);
+      r.menuItems.splice(gi + 1, 0, mk('dms', tx.p_dms, 'M4 6h16v10H8l-4 4z', 'M8 10h8M8 13h5', dmUn > 0, String(dmUn)),
+        mk('vip', tx.p_vip, 'M3 8l4 4 5-7 5 7 4-4-2 11H5z', 'M5 21h14', false, ''));
+      if (s.admOn && isF) r.gMsgs = r.gMsgs.map((g) => Object.assign({}, g, { canDel: true, del: () => this.confirm(tx.cf_gdel, '🗑 ' + tx.cf_yes, () => { act('gdel', { id: g.gk }); gDel[g.gk] = true; this.setState({ gTick: (this.state.gTick || 0) + 1 }); }) }));
       return r;
     };
   };
@@ -232,7 +362,7 @@
     const now = Date.now();
     if (!LS.get('first')) LS.set('first', now);
     // ýatda saklanýanlar
-    const keep = ['bgMode', 'favs', 'read', 'chat', 'tkId', 'myTkSt', 'fb', 'human', 'photo', 'rateCount', 'rateNext', 'tkNews', 'svTab', 'uMode', 'refSet', 'invites', 'warnHidden', 'usage', 'hist2', 'seenNews'];
+    const keep = ['usageH', 'favs', 'read', 'chat', 'tkId', 'myTkSt', 'fb', 'human', 'photo', 'rateCount', 'rateNext', 'tkNews', 'svTab', 'uMode', 'refSet', 'invites', 'warnHidden', 'usage', 'hist2', 'seenNews'];
     const st = {};
     keep.forEach((k) => { const v = LS.get(k); if (v !== undefined && v !== null) st[k] = v; });
     if (st.rateNext == null) st.rateNext = LS.get('first') + DAY;   // «Baha ber» 1 gün soň
@@ -252,13 +382,85 @@
       C.setState({ refMsg: 'wait' }); NB.send(JSON.stringify({ k: 'ref', c }));
     };
     C.claim = () => gift(C, true);
-    C.reroll = ((f) => () => { f(); LS.set('nick', C.meName); })(C.reroll);
+    // ---- 1.16: nik (bot barlaýar: iki adam bir nigi ulanyp bilmeýär) ----
+    Object.assign(C.state, { pbg: LS.get('pbg', ''), nkIn: null, nkSt: '' });
+    C.onNk = (e) => C.setState({ nkIn: String(e.target.value || '').slice(0, 20), nkSt: '' });
+    C.saveNk = (n0) => {
+      const n = String(typeof n0 === 'string' ? n0 : (C.state.nkIn == null ? C.meName : C.state.nkIn)).replace(/\s+/g, ' ').trim();
+      if (!/^[\p{L}\p{N}_ .\-]{3,20}$/u.test(n)) { C.setState({ nkSt: 'bad' }); return; }
+      C.setState({ nkSt: 'wait', nkIn: n }); NB.send(JSON.stringify({ k: 'nick', n }));
+    };
+    C.reroll = ((f) => () => { const old = C.meName; f(); const cand = C.meName; C.meName = old; C.saveNk(cand); })(C.reroll);
+    // ---- profil suraty (512 — ulaldyp görmek üçin) we fon ----
+    C.onPhoto = (e) => { const f = fileOf(e); if (!f) return; shrink(f, 512, 0.82, (d) => { if (d) C.setState({ photo: d }); }, true); e.target.value = ''; };
+    C.onBg = (e) => { const f = fileOf(e); if (!f) return; shrink(f, 900, 0.7, (d) => { if (d) { C.setState({ pbg: d }); LS.set('pbg', d); } else C.say(C.T()[C.state.lang].ph_big); }); e.target.value = ''; };
+    C.delBg = () => { C.setState({ pbg: '' }); LS.set('pbg', ''); };
+    // ---- profil / hususy habarlar ----
+    J(NB.dmList(), []).forEach((q) => { if (q.p) DMS[q.p] = Object.assign(DMS[q.p] || { msgs: [], un: 0 }, { st: q.st || '', n: q.n || '' }); });
+    { const meta = LS.get('dmMeta', {}); Object.keys(meta).forEach((d) => { const x = DMS[d] || (DMS[d] = { msgs: [], un: 0, st: '' }); x.lt = meta[d].lt || 0; x.un = meta[d].un || 0; x.n = x.n || meta[d].n || ''; x.seen = !!meta[d].seen; }); }
+    const saveMeta = () => { const m = {}; Object.keys(DMS).forEach((d) => { m[d] = { lt: DMS[d].lt || 0, un: DMS[d].un || 0, n: DMS[d].n || '', seen: !!DMS[d].seen }; }); LS.set('dmMeta', m); };
+    C._saveMeta = saveMeta;
+    const tick = () => C.setState({ dmTick: (C.state.dmTick || 0) + 1 });
+    C.openProf = (dev) => {
+      if (!dev) return;
+      if (dev === INFO.dev) { C.setState({ page: 'profile', menu: false }); return; }
+      if (C.state.page !== 'uprof') C._back = C.state.page;
+      C.setState({ page: 'uprof', upDev: dev, menu: false }); NB.prof(dev);
+    };
+    C.openDm = (dev) => {
+      if (!dev || dev === INFO.dev) return;
+      const x = DMS[dev] || (DMS[dev] = { msgs: [], un: 0, st: '' }); x.un = 0; x.seen = true; saveMeta();
+      if (C.state.page !== 'dm') C._dmBack = C.state.page;
+      C.setState({ page: 'dm', dmPeer: dev, dmIn: '', menu: false }); NB.dmOpen(dev); if (!P2[dev]) NB.prof(dev);
+    };
+    C.acceptDm = (dev) => { NB.dmSt(dev, 'acc'); (DMS[dev] || {}).st = 'acc'; tick(); };
+    C.blockDm = (dev) => {
+      const x = DMS[dev] || (DMS[dev] = { msgs: [], un: 0, st: '' }), tx = C.T()[C.state.lang];
+      if (x.st === 'blk') { NB.dmSt(dev, 'del'); x.st = x.msgs.some((m) => m.f === dev) ? 'in' : ''; if (x.st) NB.dmSt(dev, 'in'); tick(); return; }
+      C.confirm(tx.dm_blk + '?', '🚫 ' + tx.dm_blk, () => { NB.dmSt(dev, 'blk'); x.st = 'blk'; if (C.state.page === 'dm') C.setState({ page: 'dms' }); else tick(); });
+    };
+    C.onDmIn = (e) => C.setState({ dmIn: String(e.target.value || '').slice(0, 2000) });
+    const dmPush = (dev, j) => {
+      const x = DMS[dev] || (DMS[dev] = { msgs: [], un: 0, st: '' }); if (!x.st) x.st = 'out';
+      x.msgs = x.msgs.concat([Object.assign({ id: 'p' + Date.now() + Math.random(), f: INFO.dev, t: Date.now() / 1000, pend: true }, j)]); x.lt = Date.now(); saveMeta();
+      NB.dmSend(dev, JSON.stringify(j), C.meName); tick();
+    };
+    C.dmSendT = () => { const t = (C.state.dmIn || '').trim(); if (!t || !C.state.dmPeer) return; dmPush(C.state.dmPeer, { x: t }); C.setState({ dmIn: '' }); };
+    C.onDmPhoto = (e) => { const f = fileOf(e), peer = C.state.dmPeer; if (!f || !peer) return; shrink(f, 720, 0.6, (d) => { if (!d) { C.say(C.T()[C.state.lang].ph_big); return; } dmPush(peer, { ph: d }); }); e.target.value = ''; };
+    C.dmRef = (el) => { C.dmEl = el; if (el) setTimeout(() => { el.scrollTop = 1e6; }, 30); };
+    // ---- Global chat: link ýok, surat, stiker, sögünç gadaganlygy ----
+    C.stToggle = () => C.setState({ stOn: !C.state.stOn });
+    const gBlocked = () => {
+      const until = LS.get('muteUntil', 0);
+      if (until > Date.now()) { C.say('🔇 ' + C.T()[C.state.lang].g_muted.replace('{m}', String(Math.ceil((until - Date.now()) / 60000)))); return true; }
+      return false;
+    };
+    const gSend = (j) => { if (gBlocked()) return false; NB.gsend2(JSON.stringify(Object.assign({ n: C.meName, t: '' }, j))); return true; };
+    C.pickSticker = (em) => { C.setState({ stOn: false }); if (C.state.page === 'dm' && C.state.dmPeer) dmPush(C.state.dmPeer, { st: em }); else gSend({ st: em }); };
+    C.onGPhoto = (e) => {
+      const f = fileOf(e); if (!f) return; e.target.value = '';
+      if (gBlocked()) return;
+      shrink(f, 640, 0.55, (d) => { const tx = C.T()[C.state.lang]; if (!d) { C.say(tx.ph_big); return; } if (gSend({ ph: d })) C.say(tx.g_sending); });
+    };
+    // admin: habara surat
+    C.onBcImg = (e) => { const f = fileOf(e); if (!f) return; shrink(f, 960, 0.65, (d) => { if (d) C.setState({ bcImg: d }); else C.say(C.T()[C.state.lang].ph_big); }); e.target.value = ''; };
+    // yza: täze sahypalar
+    const gb0 = C.goBack;
+    C.goBack = () => {
+      const p = C.state.page;
+      if (p === 'dm') { C.setState({ page: C._dmBack && C._dmBack !== 'dm' && C._dmBack !== 'main' ? C._dmBack : 'dms' }); return; }
+      if (p === 'uprof') { C.setState({ page: C._back && C._back !== 'uprof' ? C._back : 'global' }); return; }
+      gb0();
+    };
     C.fbUp = () => { C.setState({ fb: 'up' }); NB.send(JSON.stringify({ k: 'fb', v: 'up', tid: C.state.tkId })); };
     C.fbDown = () => { C.setState({ fb: 'down' }); NB.send(JSON.stringify({ k: 'fb', v: 'down', tid: C.state.tkId })); };
     C.sendG = () => {
       const t = C.state.gIn.trim().slice(0, 600); if (!t) return;
-      NB.gsend(C.meName, t); C.setState({ gIn: '' });
-      if (C.state.st !== 'on' && !INFO.fs) C.say(C.T()[C.state.lang].q_wait);
+      const tx = C.T()[C.state.lang];
+      if (LINK_RE.test(t)) { C.say('🚫 ' + tx.g_link); return; }
+      if (!gSend({ t })) return;
+      C.setState({ gIn: '' });
+      if (C.state.st !== 'on' && !INFO.fs) C.say(tx.q_wait);
     };
     const sr0 = C.sendRate;
     C.sendRate = () => {
@@ -282,16 +484,28 @@
       act(t.st === 'closed' ? 'reopen' : 'close', { tid: t.id }); t.st = t.st === 'closed' ? 'open' : 'closed'; C.setState({ admTick: (C.state.admTick || 0) + 1 });
     };
     C.banToggle = () => { const d = C.state.admU, u = A && A.us[d]; if (!u) return; act('ban', { dev: d, on: !u.ban }); u.ban = !u.ban; C.setState({ admTick: (C.state.admTick || 0) + 1 }); };
-    C.mkKey = () => { act('mkkey', { d: C.state.kDay }); C.say(C.T()[C.state.lang].k_wait); };
+    C.onKCustom = (e) => C.setState({ kCustom: String(e.target.value || '').replace(/\D/g, '').slice(0, 4) });
+    C.onKN = (e) => C.setState({ kN: String(e.target.value || '').replace(/\D/g, '').slice(0, 4) });
+    const kDays = () => { const c = parseInt(C.state.kCustom, 10); return c > 0 ? Math.min(3650, c) : C.state.kDay; };
+    C.mkKey = () => { act('mkkey', { d: kDays(), n: Math.max(1, Math.min(1000, parseInt(C.state.kN, 10) || 1)) }); C.say(C.T()[C.state.lang].k_wait); };
     C.sendBc = () => {
       const s = C.state, tx = C.T()[s.lang], t = s.bcT.trim(), x = s.bcX.trim();
       if (!t || !x) { C.say(tx.ad_bcNeed); return; }
-      act('bc', { t, x }); C.setState({ bcT: '', bcX: '' }); C.say(tx.k_wait);
+      const im = s.bcImg;
+      if (im) {   // surat 4 KB-lyk böleklere bölünýär (bot ýygnap Firestore-a ýazýar)
+        const id = Math.random().toString(36).slice(2, 10), N = Math.ceil(im.length / 4000);
+        for (let i = 0; i < N; i++) act('imgc', { id, i, n: N, d: im.slice(i * 4000, (i + 1) * 4000) });
+        act('bc', { t, x, img: id });
+      } else act('bc', { t, x });
+      C.setState({ bcT: '', bcX: '', bcImg: '' }); C.say(tx.k_wait);
     };
     C.aiToggle = () => { act('ai', { on: !C.state.aiOn }); C.setState({ aiOn: !C.state.aiOn }); };
     C.aiAdd = () => { const t = C.state.aiIn.trim(); if (!t || !A) return; act('note', { t }); A.notes = (A.notes || []).concat([t]); C.setState({ aiIn: '' }); C.say('🤖 ' + C.T()[C.state.lang].ai_added); };
     C.sysToggle = () => { const on = !C.state.sysOn, tx = C.T()[C.state.lang]; act('sys', { on }); C.setState({ sysOn: on }); C.say(on ? '▶️ ' + tx.bt_started : '⏸ ' + tx.bt_stopped); };
     C.botUpd = () => { if (C.state.bUpd) return; act('upd'); C.setState({ bUpd: true }); };
+    C.confirm = (text, ok, fn, danger) => { C._cfFn = fn; C.setState({ cf: { text, ok, danger: danger !== false } }); };
+    C.cfNo = () => { C._cfFn = null; C.setState({ cf: null }); };
+    C.cfYes = () => { const f = C._cfFn; C._cfFn = null; C.setState({ cf: null }); if (f) f(); };
     C.toHuman = () => { C.setState({ human: true }); NB.send(JSON.stringify({ k: 'human', tid: C.state.tkId })); };
     // bot telefony tanasyn (çagyryş kody işlesin): günde bir gezek
     if (LS.get('hiDay') !== dayKey(Date.now())) { LS.set('hiDay', dayKey(Date.now())); NB.send(JSON.stringify({ k: 'hi', nick: C.meName })); }
@@ -314,7 +528,7 @@
     else C.say('🎁 ' + tx.g_ok.replace('{n}', String(7 - streak)));
   }
 
-  let saveAt = 0, lastPick = null, lastLang = null, lastPage = null;
+  let saveAt = 0, lastPick = null, lastLang = null, lastPage = null, lastDmW = null;
   function poll(C, first) {
     const s = C.state, now = Date.now(), up = {};
     const n = J(NB.state(), null);
@@ -330,7 +544,12 @@
       if (st === 'on') {
         up.hist = s.hist.concat([up.dn]).slice(-40);
         const kb = (n.rxT + n.txT) / 1024, d = Math.max(0, kb - lastRx); lastRx = kb; sessKB = kb;
-        if (d > 0) { const U = Object.assign({}, s.usage), k = dayKey(now); U[k] = (U[k] || 0) + d; up.usage = U; }
+        if (d > 0) {
+          const U = Object.assign({}, s.usage), k = dayKey(now); U[k] = (U[k] || 0) + d; up.usage = U;
+          const UH = {}, hk = k + '-' + new Date(now).getHours(), old = s.usageH || {};
+          Object.keys(old).forEach((q) => { if (q.indexOf(k + '-') === 0) UH[q] = old[q]; });   // diňe şu gün
+          UH[hk] = (UH[hk] || 0) + d; up.usageH = UH;
+        }
         if (lastSt !== 'on') lastOn = n.onAt || now;
       } else up.hist = [];
       if (lastSt === 'on' && st !== 'on' && lastOn) {
@@ -347,7 +566,9 @@
     const s2 = C.state;
     if (lastPick !== null && s2.pick !== lastPick) { lastPick = s2.pick; const v = SV[s2.pick]; NB.select(v ? v.id : ''); }
     if (lastLang !== s2.lang) { if (lastLang !== null) { NB.lang(s2.lang); INFO = J(NB.info(), INFO); } lastLang = s2.lang; }
-    if (lastPage !== s2.page) { NB.gwatch(s2.page === 'global'); lastPage = s2.page; }
+    if (lastPage !== s2.page) { NB.gwatch(s2.page === 'global'); NB.dmPage(s2.page === 'dms'); lastPage = s2.page; }
+    const dmW = s2.page === 'dm' ? (s2.dmPeer || '') : '';
+    if (dmW !== lastDmW) { NB.dmWatch(dmW); lastDmW = dmW; }
     if (INFO.relay) syncPhoto(C);
     if (s2.admOn && ADM_PAGES.indexOf(s2.page) >= 0 && now - admAt > (A ? 20000 : 8000) && !admPend) { admAt = now; act('get'); }
     if (admPend && now - admPend > (s2.admLogging ? 30000 : 60000)) {
@@ -357,7 +578,7 @@
     }
     if (now - saveAt > 2000) {
       saveAt = now;
-      ['bgMode', 'favs', 'read', 'chat', 'tkId', 'myTkSt', 'fb', 'human', 'photo', 'rateCount', 'rateNext', 'tkNews', 'svTab', 'uMode', 'refSet', 'invites', 'warnHidden', 'usage', 'hist2', 'seenNews']
+      ['usageH', 'favs', 'read', 'chat', 'tkId', 'myTkSt', 'fb', 'human', 'photo', 'rateCount', 'rateNext', 'tkNews', 'svTab', 'uMode', 'refSet', 'invites', 'warnHidden', 'usage', 'hist2', 'seenNews']
         .forEach((k) => LS.set(k, s2[k]));
     }
     if (dayKey(now) !== C._day) { C._day = dayKey(now); gift(C, false); }
@@ -376,23 +597,25 @@
   /** Öz suratyň: kiçeldip serwere (hemmeler görsün). */
   let sentPh = null, phWait = 0;
   function syncPhoto(C) {
-    const d = C.state.photo || '';
-    if (sentPh === null) { sentPh = LS.get('phSent', ''); }
-    if (d === sentPh || Date.now() < phWait) return;
-    sentPh = d; LS.set('phSent', d);
-    if (!d) { NB.photo(''); return; }
+    const d = C.state.photo || '', bg = C.state.pbg || '', key = 'v2|' + d.length + d.slice(-40) + '|' + bg.length + bg.slice(-40) + '|' + C.meName;
+    if (sentPh === null) { sentPh = LS.get('profSent', ''); }
+    if (key === sentPh || Date.now() < phWait) return;
+    sentPh = key; LS.set('profSent', key);
+    const go = (th) => NB.profile(JSON.stringify({ th, big: d, bg, n: C.meName }));
+    if (!d) { go(''); return; }
     const img = new Image();
     img.onload = () => {
       const z = 128, k = Math.max(z / img.width, z / img.height), cv = document.createElement('canvas'); cv.width = z; cv.height = z;
       cv.getContext('2d').drawImage(img, (z - img.width * k) / 2, (z - img.height * k) / 2, img.width * k, img.height * k);
-      NB.photo(cv.toDataURL('image/jpeg', 0.8));
+      go(cv.toDataURL('image/jpeg', 0.8));
     };
+    img.onerror = () => go('');
     img.src = d;
   }
 
   function news(C, up) {
     INFO = J(NB.info(), INFO);
-    const list = (INFO.news || []).map((n) => { const j = J(n.j, {}); return { id: n.id, t: j.t || '', x: j.x || '', time: new Date(n.ts * 1000).toLocaleDateString('ru-RU') }; })
+    const list = (INFO.news || []).map((n) => { const j = J(n.j, {}); return { id: n.id, t: j.t || '', x: j.x || '', img: j.img || '', time: new Date(n.ts * 1000).toLocaleDateString('ru-RU') }; })
       .sort((a, b) => (a.id < b.id ? 1 : -1));
     up.bcast = list;
     const seen = C.state.seenNews || [], fresh = list.filter((n) => seen.indexOf(n.id) < 0);
@@ -426,6 +649,45 @@
       (e.del || []).forEach((id) => { gDel[id] = true; });
       INFO = J(NB.info(), INFO);
       up.gTick = (s.gTick || 0) + 1;
+    } else if (e.k === 'phretry') {
+      sentPh = '\u0000'; phWait = Date.now() + 15 * 60000;
+    } else if (e.k === 'prof') {
+      P2[e.dev] = { th: e.th || '', ph: e.ph || '', bg: e.bg || '', n: e.n || '', dm: !!e.dm };
+      if (e.th) PH[e.dev] = { d: e.th, at: Date.now() };
+      up.dmTick = (s.dmTick || 0) + 1;
+    } else if (e.k === 'dm') {
+      const x = DMS[e.peer] || (DMS[e.peer] = { msgs: [], un: 0, st: '' }), me = INFO.dev;
+      if (e.st) x.st = e.st;
+      const list = (e.list || []).map((m) => ({ id: m.id, t: m.t, f: m.f, x: m.x || '', ph: m.ph || '', st: m.st || '', sys: m.sys || '' }));
+      const same = (a, b) => a.f === b.f && (a.x || '') === (b.x || '') && (a.ph || '') === (b.ph || '') && (a.st || '') === (b.st || '') && (a.sys || '') === (b.sys || '');
+      let pend = x.msgs.filter((m) => m.pend), msgs = e.full ? [] : x.msgs.filter((m) => !m.pend), fresh = 0;
+      for (const m of list) {
+        if (msgs.some((q) => q.id === m.id)) continue;
+        const pi = pend.findIndex((q) => same(q, m)); if (pi >= 0) pend.splice(pi, 1);
+        msgs.push(m);
+        if (!e.full && m.f === e.peer && !m.sys) fresh++;
+      }
+      x.msgs = msgs.concat(pend).sort((a, b) => (a.t || 0) - (b.t || 0)).slice(-300);
+      const last = x.msgs[x.msgs.length - 1]; if (last) x.lt = Math.max(x.lt || 0, (last.t || 0) * 1000);
+      const viewing = s.page === 'dm' && s.dmPeer === e.peer;
+      if (fresh && !viewing) { x.un = (x.un || 0) + fresh; x.seen = false; const m = list.filter((q) => q.f === e.peer).pop(); C.say('✉️ ' + nameOf(e.peer) + ': ' + (m && (m.x || m.st || '📷') || '').slice(0, 60)); }
+      if (C._saveMeta) C._saveMeta();
+      up.dmTick = (s.dmTick || 0) + 1;
+    } else if (e.k === 'dmreq') {
+      const x = DMS[e.peer] || (DMS[e.peer] = { msgs: [], un: 0, st: '' });
+      if (!x.st) x.st = 'in'; if (e.n) x.n = e.n; x.lt = Date.now(); if (x.st === 'in') x.seen = false;
+      if (C._saveMeta) C._saveMeta();
+      if (x.st === 'in') C.say('✉️ ' + tx.dm_reqText.replace('{n}', e.n || '?'));
+      up.dmTick = (s.dmTick || 0) + 1;
+    } else if (e.k === 'dmerr') {
+      C.say('⚠️ ' + (e.why === 'nokey' ? tx.dm_noKey : tx.dm_fail));
+    } else if (e.k === 'dmkey') {
+      const x = DMS[e.peer]; if (x) { x.msgs = x.msgs.concat([{ id: 'k' + t, f: '', t: t / 1000, sys: 'key' }]); up.dmTick = (s.dmTick || 0) + 1; }
+    } else if (e.k === 'img') {
+      (e.kind === 'n' ? NI : GI)[e.id] = e.d || '';
+      up.gTick = (s.gTick || 0) + 1;
+    } else if (e.k === 'gok') {
+      // Global chat: habar gitdi
     } else if (e.k === 'adm') {
       admPend = 0; up.bUpd = false;
       if (e.err) {
@@ -470,6 +732,10 @@
       } else if (m.k === 'refok') { up.refSet = m.c || s.refIn; up.refMsg = 'ok'; }
       else if (m.k === 'refbad') up.refMsg = m.why === 'own' ? 'own' : 'bad';
       else if (m.k === 'kbad') { up.keyMsg = 'used'; }
+      else if (m.k === 'nick') {
+        if (m.ok) { C.meName = m.n; LS.set('nick', m.n); up.nkSt = 'ok'; up.nkIn = null; } else up.nkSt = m.why === 'taken' ? 'taken' : 'bad';
+      } else if (m.k === 'mute') { LS.set('muteUntil', (m.until || 0) * 1000); C.say('🔇 ' + tx.g_muteOn); }
+      else if (m.k === 'gwarn') { C.say('⚠️ ' + tx.g_warn.replace('{n}', String(m.n || 1))); }
     }
   }
 
@@ -489,6 +755,9 @@
   window.NBack = function () {
     const C = window.C; if (!C) return false; const s = C.state;
     if (document.getElementById('tvad')) { document.getElementById('tvad').remove(); return true; }
+    if (s.zoom) { C.setState({ zoom: '' }); return true; }
+    if (s.stOn) { C.setState({ stOn: false }); return true; }
+    if (s.cf) { C.cfNo(); return true; }
     if (s.menu) { C.setState({ menu: false }); return true; }
     if (s.fan) { C.setState({ fan: false }); return true; }
     if (s.sharing) { C.setState({ sharing: false }); return true; }
@@ -496,6 +765,12 @@
     return false;
   };
 
+  // hususy habar: täze habar gelende aşak süýşür
+  DC.after.push(() => {
+    const C = window.C; if (!C || !C.dmEl || !C.dmEl.isConnected) return;
+    const el = C.dmEl, h = el.scrollHeight;
+    if (el.__h !== h) { const near = !el.__h || el.scrollTop + el.clientHeight >= el.__h - 120; el.__h = h; if (near) el.scrollTop = h; }
+  });
   // çat: täze habar gelende aşak süýşür
   DC.after.push(() => {
     const C = window.C; if (!C || !C.chatEl || !C.chatEl.isConnected) return;

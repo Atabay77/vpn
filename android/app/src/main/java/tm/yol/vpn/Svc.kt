@@ -148,10 +148,15 @@ class Svc : VpnService() {
         if (!want || g != gen) return
         try {
             stopCore()
-            // liste 10 dk'dan eskiyse kısa bekleyerek yenile; yoksa hemen bağlan (yenileme sonra)
-            if (Sub.list.isEmpty() || System.currentTimeMillis() - Sub.okAt > 10 * 60_000) Sub.refresh(this, 3500)
+            // 1.16: her birikmede ilki abuna täzelenýär (iň köp 5 sn). Gijä galsa — häzirki sanawdan iň çalt jogap bereni saýlanýar
+            val app = applicationContext
+            val th = Thread { runCatching { if (Sub.refresh(app, 5000)) Msg.events.add(org.json.JSONObject().put("k", "srv")) } }.apply { isDaemon = true; start() }
+            th.join(5000)
+            val slow = th.isAlive
+            if (Sub.list.isEmpty()) Sub.load(this)
+            if (!want || g != gen) return
             State.noPing = false; State.noNet = false; State.ms = 0
-            val sel = State.selected(this)
+            val sel = if (slow) null else State.selected(this)
             if (sel != null && !State.online(this)) { State.noNet = true; throw IllegalStateException("internet yok") }
             val s = sel ?: State.best(this) ?: throw IllegalStateException("ping yok")
             if (sel != null) State.ms = State.pings[sel.key]?.takeIf { it > 0 && System.currentTimeMillis() - State.pingAt < 5 * 60_000 } ?: 0L
@@ -182,8 +187,7 @@ class Svc : VpnService() {
             State.set(State.ON)
             Msg.start(applicationContext); Msg.kick()
             runCatching { getSystemService(NotificationManager::class.java).notify(1, note(s)) }   // bildirim: «Birikdirildi · ülke»
-            val app = applicationContext
-            Thread { if (System.currentTimeMillis() - Sub.okAt > 60_000) Sub.refresh(app) }.start()
+            if (slow) Thread { if (System.currentTimeMillis() - Sub.okAt > 60_000) Sub.refresh(app) }.start()
         } catch (e: Throwable) {
             stopCore()
             if (!want || g != gen) return   // kullanıcı iptal etti ya da yeni bağlantı istendi

@@ -860,14 +860,26 @@ def app_keys_live(cfg):
 
 def app_meta(cfg):
     """Programın dosyasına konan gizli satırlar: geçerli keylerin özeti + yayınlanan sürümler."""
-    out = [f"#tvk: {app_key_hash(k)} {int(v.get('exp') or 0)}" + (f" {v['dev']}" if v.get("dev") else "") for k, v in sorted(app_keys_live(cfg).items())]
+    out = []
+    for k, v in sorted(app_keys_live(cfg).items()):
+        n_ = int(v.get("n") or 1); dv_ = app_key_devs(v)
+        if n_ <= 1: out.append(f"#tvk: {app_key_hash(k)} {int(v.get('exp') or 0)}" + (f" {dv_[0]}" if dv_ else ""))
+        else: out.append(f"#tvk: {app_key_hash(k)} {int(v.get('exp') or 0)} {','.join(dv_) or '-'} {n_}")   # 1.16: köp adamlyk açar
     for n_ in (cfg.get("news") or [])[:10]:
-        out.append(f"#tvn: {n_['id']} {int(n_['ts'])} " + base64.urlsafe_b64encode(json.dumps({"t": n_["t"], "x": n_["x"]}, ensure_ascii=False).encode()).decode().rstrip("="))
+        out.append(f"#tvn: {n_['id']} {int(n_['ts'])} " + base64.urlsafe_b64encode(json.dumps({"t": n_["t"], "x": n_["x"], **({"img": n_["img"]} if n_.get("img") else {})}, ensure_ascii=False).encode()).decode().rstrip("="))
     if RUN.get("app_on"): out.append(f"#tvon: {int(RUN['app_on'])}")
     try: ai_on = bool(ai_key()) and load_db().get("ai_sup", True)
     except Exception: ai_on = False
     if ai_on: out.append("#tvai: 1")
     if cfg.get("gbans"): out.append("#tvban: " + ",".join(cfg["gbans"][-200:]))
+    seen_, devs_ = set(), cfg.get("devs") or {}
+    for x in sorted((cfg.get("apw") or {}).values(), key=lambda x: x.get("role") != "f"):   # 1.16: 👑 Owner / 🛡 Admin
+        if not apw_valid(x): continue
+        for dv in (x.get("hist") or []) + ([x["dev"]] if x.get("dev") else []):
+            if dv in seen_ or not DEV_RE.match(str(dv)): continue
+            seen_.add(dv); u_ = devs_.get(dv) or {}
+            nk_ = u_.get("nk") or u_.get("nick") or x.get("name") or ""
+            out.append(f"#tvrole: {dv} {'o' if x.get('role') == 'f' else 'a'} " + base64.urlsafe_b64encode(nk_[:32].encode()).decode().rstrip("="))
     rel = (os.environ.get("RELAY_URL") or cfg.get("relay") or "").strip().rstrip("/")
     if rel: out.append(f"#tvrel: {rel}")
     if cfg.get("fs_proj") and cfg.get("fs_key") and cfg.get("fs_ok"): out.append(f"#tvfs: {cfg['fs_proj']} {cfg['fs_key']}" + (f" {cfg['fs_db']}" if cfg.get("fs_db") and cfg["fs_db"] != "(default)" else ""))
@@ -1216,8 +1228,13 @@ service cloud.firestore {
                      && request.resource.data.b.matches('v1[.].*') && request.resource.data.b.size() < n && request.resource.data.t == request.time; }
     match /m/{id} { allow create: if ok(9000); }
     match /g/{id} { allow read; allow create: if ok(5000); }
+    match /gi/{id} { allow read; allow create: if ok(160000); }
     match /p/{dev} { allow read; allow write: if ok(120000); }
+    match /q/{dev} { allow read; allow write: if ok(600000); }
     match /d/{dev}/i/{id} { allow read; }
+    match /n/{id} { allow read; }
+    match /x/{room}/i/{id} { allow read; allow create: if ok(200000); }
+    match /r/{dev}/i/{id} { allow read; allow create: if ok(3000); }
   }
 }"""
 
@@ -1256,9 +1273,16 @@ def app_resend(fid, dev, ack):
             try: ntfy_pub(app_topic(fid) + "d" + dev, app_enc(fid, json.dumps(o, ensure_ascii=False)))
             except Exception: break
 
-def app_key_make(days, dev, by):
-    k = app_key_new(); exp = int(time.time() + days * 86400)
-    app_mut(lambda a: a.setdefault("keys", {}).__setitem__(k, {"exp": exp, "ts": int(time.time()), "by": by, "dev": dev}))
+def app_key_devs(v):
+    """Açara baglanan telefonlar (köne ýazgylarda diňe «dev»)."""
+    return list(v.get("devs") or ([v["dev"]] if v.get("dev") else []))
+
+def app_key_make(days, dev, by, n=1):
+    """days=0 — möhletsiz; n — näçe telefon ulanyp biler."""
+    k = app_key_new(); exp = int(time.time() + days * 86400) if days else 0
+    rec = {"exp": exp, "ts": int(time.time()), "by": by, "dev": dev}
+    if int(n) > 1: rec.update({"n": int(n), "devs": [dev] if dev else []})
+    app_mut(lambda a: a.setdefault("keys", {}).__setitem__(k, rec))
     return k, exp
 
 def app_who(a, dev):
@@ -1417,18 +1441,99 @@ async def app_on_msg(app, fid, o):
         gk, _ = app_key_make(2, dev, "gift")
         await asyncio.to_thread(app_send, dev, {"k": "key", "key": gk, "why": "gift", "days": 2})
         RUN["app_dirty"] = True
+    elif k == "nick":   # 1.16: öz nigiňi ýazmak — iki adam bir nigi ulanyp bilmeýär
+        n_ = re.sub(r"\s+", " ", str(o.get("n") or "")).strip()[:20]
+        low = n_.casefold()
+        if not re.fullmatch(r"[\w .\-]{3,20}", n_) or any(w in low for w in APP_NICK_RESERVED):
+            await asyncio.to_thread(app_send, dev, {"k": "nick", "ok": False, "n": n_, "why": "bad"}); return
+        def fn_(a_):
+            for dv, u_ in (a_.get("devs") or {}).items():
+                if dv != dev and (u_.get("nk") or "").casefold() == low: return False
+            a_["devs"][dev]["nk"] = n_; a_["devs"][dev]["nick"] = n_; return True
+        ok_ = app_mut(fn_)
+        if ok_: RUN["app_dirty"] = True
+        await asyncio.to_thread(app_send, dev, {"k": "nick", "ok": ok_, "n": n_, "why": "" if ok_ else "taken"})
     elif k == "ka":
         h = str(o.get("h") or "")
         def f(a_):
             for kk, v in (a_.get("keys") or {}).items():
                 if app_key_hash(kk) == h:
-                    if v.get("dev") and v["dev"] != dev: return "bad"
-                    if not v.get("dev"): v["dev"] = dev; v["at"] = int(time.time()); return "new"
-                    return "same"
+                    dv_ = app_key_devs(v)
+                    if dev in dv_: return "same"
+                    if len(dv_) >= int(v.get("n") or 1): return "bad"
+                    if int(v.get("n") or 1) > 1: v["devs"] = dv_ + [dev]
+                    if not v.get("dev"): v["dev"] = dev
+                    v["at"] = int(time.time()); return "new"
             return "none"
         r = app_mut(f)
         if r == "bad": await asyncio.to_thread(app_send, dev, {"k": "kbad"})
         if r == "new": RUN["app_dirty"] = True
+
+APP_NICK_RESERVED = ("owner", "admin", "kurucu", "türkmen vpn", "turkmen vpn", "moderator", "support")
+GCHAT_LINK = re.compile(r"(https?://|www\.|t\.me/|\b[\w-]{2,}\.(com|net|org|ru|tm|me|io|xyz|info|top|site|online|link|app|dev|tk|ly|gg|uz|kz|tr|de|co|su|pro|club|shop|store|live|tv|cc|biz|ua|by)\b)", re.I)
+# aýdyň kemsidiji sözler (galanyny AI tapýar)
+GCHAT_BAD = re.compile(r"(хуй|хуе|хуё|хуя|пизд|п[иі]здец|еба[нлт]|ебу|выеб|бля[дт]?|сука|суки|мудак|пидор|пидар|гандон|залуп|шлюх|\bamk\b|amına|amina koy|orospu|siktir|sikerim|sikeyim|yarrak|yarak|pezevenk|\bpi[cç]\b|ananı|amyňa|amyna|sikdir|sikim|jelep|gotuňa|gotuna)", re.I)
+GMOD_AI = ["google/gemini-3.8-flash", "qwen/qwen3.8-omni-flash:free", "mistralai/mistral-large-2512"]
+
+def gmod_ai(texts):
+    """[(i, tekst)] → ýaramaz sözli habarlaryň i-leri (AI). Ýalňyşlykda boş."""
+    if not texts or not ai_key(): return set()
+    sys_ = ("Sen çat moderatory. Her setirde «belgi: habar». Söwmek, kemsidiji/ahlaksyz sözler (türkmen, rus, türk, iňlis dillerinde, "
+            "harplary çalşyrylan görnüşleri hem) bar bolan habarlaryň belgilerini ber. Adaty jedel, gaharly ýöne sögünmeýän söz — düzgün bozmak däl. "
+            "Jogaby diňe JSON: {\"bad\": [belgiler]}")
+    msg = "\n".join(f"{i}: {t[:300]}" for i, t in texts)
+    for mdl in GMOD_AI:
+        try:
+            raw = ai_call(sys_, [{"role": "user", "content": msg}], None, 200, 25, mdl)
+            m_ = re.search(r"\{.*\}", raw, re.S)
+            return {int(x) for x in (json.loads(m_.group(0)).get("bad") or []) if str(x).lstrip("-").isdigit()} if m_ else set()
+        except Exception as e: log.info("gmod ai %s: %s", mdl, e)
+    return set()
+
+async def app_gmod(app):
+    """Global chat: link we sögünç pozulýar; yzly-yzyna 3 gezek sögen 10 minut ýazyp bilmeýär."""
+    a = app_cfg(load_db()); fid = a.get("fid")
+    if not (fid and a.get("fs_ok") and a.get("fs_proj")): return
+    got = await asyncio.to_thread(fs_query, a["fs_proj"], "", "g", a.get("gmod_since"), 50)
+    if not got: return
+    now = time.time(); mutes = dict(a.get("gmutes") or {}); strikes = dict(a.get("gstrikes") or {})
+    staff = {dv for x in (a.get("apw") or {}).values() if apw_valid(x) for dv in (x.get("hist") or []) + ([x["dev"]] if x.get("dev") else [])}
+    rows, last = [], a.get("gmod_since")
+    for name, b, t in got:
+        last = t
+        try: o = json.loads(app_dec(fid, b) or "null")
+        except Exception: o = None
+        if not isinstance(o, dict): continue
+        rows.append((name, o))
+    dele, ask = [], []
+    for i, (name, o) in enumerate(rows):
+        dv, txt = str(o.get("i") or ""), str(o.get("t") or "")
+        if dv in staff: continue
+        if float(mutes.get(dv) or 0) > now: dele.append((name, dv, "mute")); continue
+        if GCHAT_LINK.search(txt): dele.append((name, dv, "link")); continue
+        if GCHAT_BAD.search(txt): dele.append((name, dv, "bad")); continue
+        if txt.strip(): ask.append((i, txt))
+    bad_ai = await asyncio.to_thread(gmod_ai, ask)
+    for i, _ in ask:
+        if i in bad_ai: name, o = rows[i]; dele.append((name, str(o.get("i") or ""), "bad"))
+    why_ = {n_: w_ for n_, _, w_ in dele}
+    notes = []
+    for name, o in rows:   # tertip boýunça: sögünç +1, arassa habar — hasap nola
+        dv = str(o.get("i") or "")
+        if why_.get(name) == "bad":
+            if float(mutes.get(dv) or 0) > now: continue
+            strikes[dv] = int(strikes.get(dv) or 0) + 1
+            if strikes[dv] >= 3: mutes[dv] = now + 600; strikes.pop(dv, None); notes.append((dv, {"k": "mute", "until": int(now + 600)}))
+            else: notes.append((dv, {"k": "gwarn", "n": strikes[dv]}))
+        elif name not in why_ and str(o.get("t") or "").strip(): strikes.pop(dv, None)
+    if dele: await asyncio.to_thread(fs_delete, a["fs_proj"], [n_ for n_, _, _ in dele])
+    mutes = {d_: u_ for d_, u_ in mutes.items() if float(u_) > now}
+    app_mut(lambda x: x.update({"gmod_since": last, "gmutes": mutes, "gstrikes": strikes}))
+    for dv, m_ in notes:
+        if DEV_RE.match(dv):
+            try: await asyncio.to_thread(app_send, dv, m_)
+            except Exception: pass
+    if dele: log.info("gmod: %d pozuldy", len(dele))
 
 async def app_msg_loop(app):
     """Programdan gelen mesajları okur."""
@@ -1467,6 +1572,8 @@ async def app_msg_loop(app):
                             except Exception: log.exception("app msg (fs)")
                         if done: await asyncio.to_thread(fs_delete, a["fs_proj"], done)
                         RUN.pop("fs_err", None)
+                        try: await app_gmod(app)
+                        except Exception as e2: log.info("gmod: %s", e2)
                     except Exception as e:
                         if RUN.get("fs_err") != str(e)[:100]: RUN["fs_err"] = str(e)[:100]; log.warning("fs poll: %s", e)
                 if RUN.pop("app_dirty", None):
@@ -1547,7 +1654,8 @@ def app_adm_snap(a, e, dev):
     keys_ = a.get("keys") or {}
     by_dev = {}
     for k_, v in keys_.items():
-        if v.get("dev") and (not v.get("exp") or v["exp"] > now): by_dev[v["dev"]] = v
+        if not v.get("exp") or v["exp"] > now:
+            for dv_ in app_key_devs(v): by_dev[dv_] = v
     inv_n = {}
     for v in (a.get("ref_devs") or {}).values(): inv_n[v] = inv_n.get(v, 0) + 1
     users = {}
@@ -1568,7 +1676,7 @@ def app_adm_snap(a, e, dev):
         mine = None if f_ else f"app:{e.get('name')}"
         ks = sorted(((k_, v) for k_, v in keys_.items() if mine is None or v.get("by") == mine), key=lambda kv: kv[1].get("ts", 0), reverse=True)[:40]
         out["keys"] = [{"k": k_, "d": max(1, round(((v.get("exp") or 0) - (v.get("ts") or 0)) / 86400)) if v.get("exp") else 0,
-                        "by": str(v.get("by") or ""), "used": v.get("dev"), "at": app_hm(v.get("ts"))} for k_, v in ks]
+                        "by": str(v.get("by") or ""), "used": v.get("dev"), "at": app_hm(v.get("ts")), "n": int(v.get("n") or 1), "u": len(app_key_devs(v))} for k_, v in ks]
     if f_:
         out["codes"] = [{"id": aid, "code": (x["pw"] if aid == apw_id(e["pw"]) else x["pw"][:4] + "-••••-••••-" + x["pw"][-4:]), "role": x.get("role"),
                          "name": x.get("name") or "", "perm": x.get("perm"), "u": x.get("dev"), "seen": app_hm(x.get("seen")),
@@ -1588,7 +1696,7 @@ def app_adm_snap(a, e, dev):
                         "vpn": int(RUN.get("app_on") or 0), "new": sum(1 for u in devs.values() if (u.get("f") or 0) >= today),
                         "keys": len(keys_), "open": sum(1 for t in (a.get("tickets") or {}).values() if t.get("st") != "closed"),
                         "ai": out["aiCount"], "admins": [sum(1 for x in (a.get("apw") or {}).values() if x.get("dev")), len(a.get("apw") or {})]}
-        out["news"] = [{"t": n_["t"], "x": n_["x"], "time": app_hm(n_.get("ts"))} for n_ in (a.get("news") or [])]
+        out["news"] = [{"t": n_["t"], "x": n_["x"], "time": app_hm(n_.get("ts")), "img": n_.get("img", "")} for n_ in (a.get("news") or [])]
     return out
 
 def app_adm_out(dev, pw, resp):
@@ -1631,10 +1739,20 @@ async def app_adm(app, dev, o):
     pw = e["pw"]; f_ = e.get("role") == "f"; full = f_ or e.get("perm") == "all"
     def touch(a_):
         x = (a_.get("apw") or {}).get(aid)
-        if x: x["lts"] = ts; x["seen"] = int(now); x["dev"] = None if act == "logout" else dev
+        if x:
+            x["lts"] = ts; x["seen"] = int(now); x["dev"] = None if act == "logout" else dev
+            if act != "logout" and dev not in (x.get("hist") or []):
+                x["hist"] = ((x.get("hist") or []) + [dev])[-3:]; RUN["app_dirty"] = True
     app_mut(touch)
     if act == "logout":
         await notify_founders(app, f"🔒 <b>Programma admini çykdy</b> — {esc(e.get('name') or '?')}", silent=True); return
+    if act == "imgc" and f_:   # 1.16: habaryň suraty bölekleýin gelýär (her bölek ~5 KB)
+        key_ = aid + ":" + re.sub(r"[^\w]", "", str(r.get("id") or ""))[:12]
+        bx = RUN.setdefault("bcimg", {})
+        for k2 in [k2 for k2, v2 in bx.items() if now - v2["ts"] > 1800]: bx.pop(k2, None)
+        e2 = bx.setdefault(key_, {"n": max(1, min(80, int(r.get("n") or 1))), "parts": {}, "ts": now})
+        e2["parts"][int(r.get("i") or 0)] = str(r.get("d") or "")[:6000]
+        return
     if act == "login":
         await notify_founders(app, f"🔓 <b>Programma admin paneline girildi</b>\n<blockquote>{esc(e.get('name') or '?')} · {app_who(app_cfg(load_db()), dev)}</blockquote>", silent=True)
     msg, err = "", ""
@@ -1650,14 +1768,14 @@ async def app_adm(app, dev, o):
             app_mut(lambda x: x["tickets"][tid].update({"st": st_, "human": False} if st_ == "closed" else {"st": st_}))
             await asyncio.to_thread(app_send, t_["dev"], {"k": "tkst", "st": st_, "tid": int(tid)})
         elif act == "mkkey" and full:
-            d_ = int(r.get("d") or 0)
-            if d_ in (3, 7, 30):
-                k_, _ = app_key_make(d_, None, f"app:{who}")
+            d_ = int(r.get("d") or 0); n_ = max(1, min(1000, int(r.get("n") or 1)))
+            if 0 <= d_ <= 3650:
+                k_, _ = app_key_make(d_, None, f"app:{who}", n_)
                 app_mut(lambda x: x["apw"][aid].__setitem__("made", int(x["apw"][aid].get("made") or 0) + 1))
                 try: await asyncio.to_thread(app_sync, True)
                 except Exception as e2: RUN["app_err"] = str(e2)[:150]
                 msg = "key:" + k_
-                if not f_: await notify_founders(app, f"🛠 <b>{esc(who)}</b> programdan açar döretdi: <code>{k_}</code> · {d_} gün", silent=True)
+                if not f_: await notify_founders(app, f"🛠 <b>{esc(who)}</b> programdan açar döretdi: <code>{k_}</code> · {d_ or '♾'} gün · {n_} adam", silent=True)
         elif act == "gdel" and f_:
             gid = re.sub(r"^g/", "", str(r.get("id") or ""))
             if re.fullmatch(r"[\w\-]{1,60}", gid):
@@ -1677,6 +1795,13 @@ async def app_adm(app, dev, o):
             t1, x1 = str(r.get("t") or "").strip()[:80], str(r.get("x") or "").strip()[:600]
             if t1 and x1:
                 nw_ = {"id": "n" + format(int(now), "x"), "ts": int(now), "t": t1, "x": x1}
+                ie_ = RUN.get("bcimg", {}).pop(aid + ":" + re.sub(r"[^\w]", "", str(r.get("img") or ""))[:12], None) if r.get("img") else None
+                if ie_ and len(ie_["parts"]) == ie_["n"]:
+                    data_ = "".join(ie_["parts"][i] for i in range(ie_["n"]))
+                    if re.match(r"data:image/(jpeg|png|webp);base64,", data_) and a.get("fs_ok") and a.get("fs_proj") and a.get("fid"):
+                        await asyncio.to_thread(fs_write, a["fs_proj"], f"n/{nw_['id']}", app_enc(a["fid"], json.dumps({"ph": data_})), None, False)
+                        nw_["img"] = nw_["id"]
+                elif r.get("img"): err = "surat doly gelmedi — täzeden synanyşyň"
                 app_mut(lambda x: x.__setitem__("news", ([nw_] + (x.get("news") or []))[:10]))
                 try: await asyncio.to_thread(app_sync, True)
                 except Exception as e2: RUN["app_err"] = str(e2)[:150]

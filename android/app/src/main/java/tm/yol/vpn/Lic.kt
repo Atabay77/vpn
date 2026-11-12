@@ -20,16 +20,21 @@ object Lic {
         val k = saved(ctx) ?: return null
         val h = hash(k)
         val e = Sub.keys[h] ?: return null
-        Sub.kdev[h]?.let { if (it != Msg.dev(ctx)) return null }   // başga telefona baglanan
+        if (full(ctx, h)) return null   // başga telefon(lar)a baglanan, ýer ýok
         return if (e == 0L || e * 1000 > System.currentTimeMillis()) e * 1000 else null
     }
 
     /** Key ýagdaýy: "ok", "used" (başga telefonda), "bad" (ýok / möhleti geçen). */
     fun status(ctx: Context, k: String): String {
         val h = hash(k); val e = Sub.keys[h] ?: return "bad"
-        Sub.kdev[h]?.let { if (it != Msg.dev(ctx)) return "used" }
+        if (full(ctx, h)) return "used"
         return if (e == 0L || e * 1000 > System.currentTimeMillis()) "ok" else "bad"
     }
+
+    /** Açara baglanan telefonlar. */
+    fun devs(h: String): List<String> = Sub.kdev[h]?.split(',')?.filter { it.isNotBlank() } ?: emptyList()
+    /** Bu telefon sanawda ýok we ähli ýerler eýýäm alnan. */
+    fun full(ctx: Context, h: String): Boolean { val d = devs(h); return d.isNotEmpty() && Msg.dev(ctx) !in d && d.size >= (Sub.kn[h] ?: 1) }
 
     // ---- oturum ----
     fun start(ctx: Context): Long = p(ctx).getLong("start", 0)
