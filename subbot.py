@@ -1498,14 +1498,14 @@ async def app_gmod(app):
     if not got: return
     now = time.time(); mutes = dict(a.get("gmutes") or {}); strikes = dict(a.get("gstrikes") or {})
     staff = {dv for x in (a.get("apw") or {}).values() if apw_valid(x) for dv in (x.get("hist") or []) + ([x["dev"]] if x.get("dev") else [])}
-    rows, last = [], a.get("gmod_since")
+    rows, last, junk = [], a.get("gmod_since"), []
     for name, b, t in got:
         last = t
         try: o = json.loads(app_dec(fid, b) or "null")
         except Exception: o = None
-        if not isinstance(o, dict): continue
+        if not isinstance(o, dict): junk.append((name, "", "junk")); continue   # açylmaýan (programdan däl) ýazgy
         rows.append((name, o))
-    dele, ask = [], []
+    dele, ask = list(junk), []
     for i, (name, o) in enumerate(rows):
         dv, txt = str(o.get("i") or ""), str(o.get("t") or "")
         if dv in staff: continue

@@ -226,7 +226,8 @@
       const am = admMe(), isF = am.role === 'f', full = isF || am.perm === 'all', us = (A && A.us) || {};
       const openN = ((A && A.tk) || []).filter((t) => t.st === 'open').length;
       r.menuItems = r.menuItems.filter((m) => (s.admOn || m.t !== tx.p_admin) && m.t !== tx.p_history).map((m) => (m.t === tx.p_global ? Object.assign({}, m, { badge: INFO.online > 0, bt: '● ' + INFO.online })
-        : m.t === tx.p_admin ? Object.assign({}, m, { badge: openN > 0, bt: String(openN) }) : m));
+        : m.t === tx.p_admin ? Object.assign({}, m, { badge: openN > 0, bt: String(openN) })
+        : m.t === tx.p_invite ? Object.assign({}, m, { badge: true, bt: tx.r_freeB, bc: 'mbadge-gold' }) : m));
       if (!full) { r.tabUsCls = 'hid'; r.tabIsUs = false; }
       if (!isF) { r.tabAdCls = 'hid'; r.tabBotCls = 'hid'; r.tabIsAd = false; r.tabIsBot = false; if (s.admTab !== 'tk' && !(full && s.admTab === 'us')) r.tabIsTk = true; }
       r.banCls = isF ? '' : 'hid';
@@ -280,7 +281,12 @@
       if (at && at.fb && at.st === 'closed') r.atMsgs = r.atMsgs.concat([{ t: at.fb === '👍' ? tx.fb_aUp : tx.fb_aDown, time: '', cls: 'bub-s', isAi: false }]);
       // ---- 1.16 ----
       const pg = s.page, me1 = INFO.dev, myRole = roleOf(me1);
-      r.isOwner = myRole === 'o'; r.isAdminR = myRole === 'a'; r.meNcls = myRole === 'o' ? 'goldtxt' : '';
+      r.isOwner = myRole === 'o'; r.isAdminR = myRole === 'a'; r.ownerTag = r.isOwner && pg === 'main'; r.appVer = INFO.ver || '';
+      // oýun serwerleri: hemmesi jogap bermese bellik; täzele + ping
+      { const gp = SV.filter((v) => v.game).map((v) => s.pings[v.id]);
+        r.gAllNa = gp.length > 0 && gp.every((m) => m != null && m < 0); r.gHasNa = !r.gAllNa;
+        r.gRefCls = s.refreshing || s.testing ? 'spin' : '';
+        r.gRefresh = () => { if (this.state.refreshing) return; this.setState({ refreshing: true, gRetest: true }); NB.refresh(); }; } r.meNcls = myRole === 'o' ? 'goldtxt' : '';
       r.nkIn = s.nkIn == null ? this.meName : s.nkIn; r.onNk = this.onNk; r.saveNk = this.saveNk;
       r.nkMsg = s.nkSt ? tx['nk_' + s.nkSt] : ''; r.nkCls = s.nkSt === 'ok' ? 'nk-ok' : s.nkSt === 'wait' ? '' : s.nkSt ? 'nk-bad' : '';
       const bgUrl = (d) => (d ? 'linear-gradient(rgba(6,16,11,.45),rgba(6,16,11,.88)),url(' + d + ')' : 'none');
@@ -626,7 +632,7 @@
     const s = C.state, tx = C.T()[s.lang], t = Date.now();
     if (e.k === 'srv') {
       up.pings = loadServers(); news(C, up);
-      if (e.manual) { up.refreshing = false; C.say((e.ok ? '✅ ' : '⚠️ ') + (e.ok ? tx.t_ref : tx.s_refS)); }
+      if (e.manual) { up.refreshing = false; C.say((e.ok ? '✅ ' : '⚠️ ') + (e.ok ? tx.t_ref : tx.s_refS)); if (s.gRetest) { up.gRetest = false; setTimeout(() => C.runTest(), 300); } }
     } else if (e.k === 'key') {
       up.keyMsg = e.r; up.keyOk = e.r === 'ok';
     } else if (e.k === 'go') {
@@ -634,7 +640,7 @@
     } else if (e.k === 'ad') {
       showAd(e.link);
     } else if (e.k === 'gfail') {
-      C.say(tx.g_fail);
+      C.say(e.why === 'net' ? '📵 ' + tx.g_net : e.why === 'srv' ? '⚠️ ' + tx.g_srv : tx.g_fail);
     } else if (e.k === 'phfail') {
       C.say(tx.ph_fail); sentPh = '\u0000'; phWait = Date.now() + 60000;
     } else if (e.k === 'ph') {

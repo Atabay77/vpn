@@ -194,8 +194,9 @@ object Chat {
     fun gsend(c: Context, j: JSONObject) {
         val o = JSONObject().put("i", Msg.dev(c)).put("n", j.optString("n").take(32)).put("t", j.optString("t").take(600))
         j.optString("st").takeIf { it.isNotEmpty() }?.let { o.put("st", it.take(16)) }
+        if (!Fs.on()) { if (j.optString("t").isNotBlank()) Msg.gsend(c, j.optString("n"), j.optString("t")) else Msg.events.add(JSONObject().put("k", "gfail").put("why", "srv")); return }   // köne ýol (VPS / ntfy)
         Thread {
-            var ok = Fs.on()
+            var ok = true
             val ph = j.optString("ph")
             if (ok && ph.isNotEmpty()) {
                 val pid = Fs.newId()
@@ -203,7 +204,7 @@ object Chat {
                 if (ok) o.put("pi", pid)
             }
             if (ok) ok = Msg.enc(o.toString())?.let { Fs.write("g/" + Fs.newId(), it) } ?: false
-            Msg.events.add(JSONObject().put("k", if (ok) "gok" else "gfail"))
+            Msg.events.add(if (ok) JSONObject().put("k", "gok") else JSONObject().put("k", "gfail").put("why", if (State.online(c)) "srv" else "net"))
             if (ok) Msg.kick()
         }.start()
     }
