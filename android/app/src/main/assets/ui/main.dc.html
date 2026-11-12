@@ -1207,7 +1207,7 @@ class Component extends DCLogic {
     const A1 = ['Silent', 'Golden', 'Night', 'Swift', 'Iron', 'Shadow', 'Lucky', 'Frost', 'Wild', 'Cosmic', 'Brave', 'Silver'], A2 = ['Falcon', 'Wolf', 'Tiger', 'Eagle', 'Fox', 'Hawk', 'Panther', 'Lion', 'Raven', 'Phoenix', 'Cobra', 'Rider'];
     const pickR = (a) => a[Math.floor(Math.random() * a.length)];
     this.meName = pickR(A1) + pickR(A2) + '_' + (10 + Math.floor(Math.random() * 90));
-    this.taps = 0; this.tapAt = 0; this.ADMIN_PASS = '7890987@';   // hakyky programmada: açar söz botda bellenýär, programma diňe heşini alýar
+    this.taps = 0; this.tapAt = 0; this.ADMIN_PASS = 'ADM-DEMO-0000';   // hakyky programmada: açar söz botda bellenýär, programma diňe heşini alýar
     this.reroll = () => { this.meName = pickR(A1) + pickR(A2) + '_' + (10 + Math.floor(Math.random() * 90)); this.setState({}); };
     this.fbUp = () => this.setState({ fb: 'up' });
     this.fbDown = () => this.setState({ fb: 'down' });
@@ -1445,7 +1445,7 @@ class Component extends DCLogic {
   }
   codes() {
     return this.state.admCodes || [
-      { code: '7890987@', role: 'f', u: null },
+      { code: 'ADM-DEMO-0000', role: 'f', u: null },
       { code: 'ADM-4821', role: 'h', u: 'u1', vpn: true, seen: '2 min', made: 12 },
       { code: 'ADM-7703', role: 'h', u: 'u5', vpn: false, seen: '3 sag', made: 5 },
       { code: 'ADM-1190', role: 'h', u: null, made: 0 }
