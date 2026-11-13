@@ -10,6 +10,12 @@
     set(k, v) { try { localStorage.setItem('tv.' + k, JSON.stringify(v)); } catch (e) {} }
   };
   const DAY = 86400000;
+  // fon: her gün başga ýer (Garaşsyzlyk / Bagt köşgi / Älem), gündiz we agşam görnüşi
+  (function bgDay() {
+    const d = new Date(), n = Math.floor((d.getTime() - d.getTimezoneOffset() * 60000) / DAY) % 3, r = document.documentElement.style;
+    r.setProperty('--bgN', 'url(img/bg' + n + '_n.jpg)'); r.setProperty('--bgD', 'url(img/bg' + n + '_d.jpg)');
+    setTimeout(bgDay, 600000);
+  })();
   const dayKey = (t) => { const x = new Date(t); return x.getFullYear() + '-' + (x.getMonth() + 1) + '-' + x.getDate(); };
   const two = (n) => (n < 10 ? '0' : '') + n;
 

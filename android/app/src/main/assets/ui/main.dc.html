@@ -13,7 +13,7 @@
 body{margin:0}
 a{color:#E0B04A}a:hover{color:#F2CD7A}
 button,input{font:inherit;color:inherit}
-.c-bg{background:#06100B url(img/ashgabat.jpg) center -60px/418px 738px no-repeat;animation:kb 40s ease-in-out infinite}
+.c-bg{background:#06100B var(--bgN,url(img/bg0_n.jpg)) center bottom/cover no-repeat;animation:kb 40s ease-in-out infinite}
 @keyframes kb{0%,100%{transform:scale(1.02)}50%{transform:scale(1.07) translate3d(-6px,-6px,0)}}
 .shade{background:linear-gradient(180deg,rgba(6,16,11,.5) 0%,rgba(6,16,11,.08) 18%,rgba(6,16,11,0) 45%,rgba(6,16,11,.05) 64%,rgba(6,16,11,.6) 79%,rgba(6,16,11,.92) 90%,#06100B 100%)}
 .shade-pg{background:linear-gradient(180deg,rgba(6,16,11,.82) 0%,rgba(6,16,11,.93) 40%,#06100B 100%)}
@@ -80,7 +80,7 @@ button,input{font:inherit;color:inherit}
 .btile{min-height:74px;border-radius:16px;display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:6px;padding:10px 12px;cursor:pointer;text-align:left;color:#F3E7D0}
 .on-g{color:#6FDB9C;border:1px solid rgba(111,219,156,.7);background:rgba(43,191,122,.14)}.on-n{color:#8E9C93;border:1px solid rgba(142,156,147,.5);background:rgba(142,156,147,.1)}
 .logpre{font-family:'JetBrains Mono',monospace;font-size:10.5px;line-height:1.6;color:#C9E8D5;white-space:pre-wrap;overflow-wrap:anywhere;margin:0}
-.c-day{background:#8DB9DE url(img/ashgabat_day.jpg) center -60px/418px 738px no-repeat;opacity:0;transition:opacity 1.2s ease;animation:kb 40s ease-in-out infinite}
+.c-day{background:#8DB9DE var(--bgD,url(img/bg0_d.jpg)) center bottom/cover no-repeat;opacity:0;transition:opacity 1.2s ease;animation:kb 40s ease-in-out infinite}
 .day-on{opacity:1}
 .shade-day{background:linear-gradient(180deg,rgba(6,16,11,.42) 0%,rgba(6,16,11,.18) 30%,rgba(6,16,11,0) 47%);opacity:0;transition:opacity 1.2s ease}
 .shade-day.day-on{opacity:1}
