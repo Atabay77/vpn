@@ -1710,7 +1710,7 @@ async def app_on_msg(app, fid, o):
         if r == "bad": await asyncio.to_thread(app_send, dev, {"k": "kbad"})
         if r == "new": RUN["app_dirty"] = True
 
-APP_NEWS_BTN = ("invite", "key", "global", "chat", "servers", "gift", "dms", "update")   # habaryň aşagyndaky düwmeler (programda sahypa açýar)
+APP_NEWS_BTN = ("invite", "key", "global", "chat", "servers", "gift", "dms", "update", "vpn")   # habaryň aşagyndaky düwmeler (programda sahypa açýar)
 APP_NICK_RESERVED = ("owner", "admin", "kurucu", "türkmen vpn", "turkmen vpn", "moderator", "support")
 GCHAT_LINK = re.compile(r"(https?://|www\.|t\.me/|\b[\w-]{2,}\.(com|net|org|ru|tm|me|io|xyz|info|top|site|online|link|app|dev|tk|ly|gg|uz|kz|tr|de|co|su|pro|club|shop|store|live|tv|cc|biz|ua|by)\b)", re.I)
 # aýdyň kemsidiji sözler (galanyny AI tapýar)
@@ -2051,6 +2051,17 @@ async def app_adm(app, dev, o):
             try: await asyncio.to_thread(app_sync, True)
             except Exception as e2: RUN["app_err"] = str(e2)[:150]
             msg = f"xadd:{n_}"
+        elif act == "ndel" and f_:   # habary eýesi zil sahypasyndan pozýar — hemme telefonlardan aýrylýar
+            nid_ = str(r.get("id") or "")
+            old_ = next((n_ for n_ in (a.get("news") or []) if n_.get("id") == nid_), None)
+            if old_:
+                app_mut(lambda x: x.__setitem__("news", [n_ for n_ in (x.get("news") or []) if n_.get("id") != nid_]))
+                if old_.get("img") and a.get("fs_proj"):
+                    try: await asyncio.to_thread(fs_delete, a["fs_proj"], ["n/" + old_["img"]])
+                    except Exception as e2: log.info("news img del: %s", e2)
+                try: await asyncio.to_thread(app_sync, True)
+                except Exception as e2: RUN["app_err"] = str(e2)[:150]
+            msg = "ndel"
         elif act == "xdel" and f_:
             k_ = str(r.get("id") or "")
             app_mut(lambda x: (x.get("xcodes") or {}).pop(next((kk for kk in (x.get("xcodes") or {}) if hashlib.md5(kk.encode()).hexdigest()[:10] == k_), ""), None))

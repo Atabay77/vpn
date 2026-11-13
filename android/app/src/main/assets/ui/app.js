@@ -96,7 +96,8 @@
   }
   // habaryň düwmeleri: kimlik → sahypa
   const NBTN = { invite: ['🎁', 'p_invite', 'invite'], key: ['🔑', 'p_key', 'key'], global: ['🌐', 'p_global', 'global'], chat: ['💬', 'p_chat', 'chat'],
-    servers: ['🌍', 'p_servers', 'servers'], gift: ['🎁', 'p_gift', 'gift'], dms: ['✉️', 'p_dms', 'dms'], update: ['', 'nb_update', ''] };
+    servers: ['🌍', 'p_servers', 'servers'], gift: ['🎁', 'p_gift', 'gift'], dms: ['✉️', 'p_dms', 'dms'], update: ['', 'nb_update', ''], vpn: ['', 'nb_vpn', ''] };
+  const NDEL = {};   // eýesiniň pozan habarlary (bot täzeläýänçä görünmesin)
   /** Kota duýduryşy (telefonda saklanýar): şol duýduryş öň pozulan bolsa gaýtadan çykmaýar, täzesi (başga wagt) çykýar. */
   function qAdd(id, t, at) {
     if (!id) return; const q = LS.get('qAlerts', {}), cur = q[id];
@@ -360,8 +361,9 @@
         if (n.isTk) return n;
         const b = (s.bcast || [])[bi++] || {};
         if (b.img && !NI[b.img]) askImg('n', b.img);
-        const btns = (b.btn || []).filter((k) => NBTN[k]).map((k) => ({ t: (NBTN[k][0] ? NBTN[k][0] + ' ' : '') + tx[NBTN[k][1]], go: () => { if (k === 'update') NB.update(); else this.setState({ page: NBTN[k][2], menu: false }); } }));
-        return Object.assign({}, n, { hasBtn: btns.length > 0, btns, isO: true, tcls: 'goldtxt', date: b.time || '', hasImg: !!(b.img && NI[b.img]), img: (b.img && NI[b.img]) || '', zoom: () => this.setState({ zoom: NI[b.img] || '' }) });
+        const btns = (b.btn || []).filter((k) => NBTN[k]).map((k) => ({ t: (NBTN[k][0] ? NBTN[k][0] + ' ' : '') + tx[NBTN[k][1]], go: () => { if (k === 'update') NB.update(); else if (k === 'vpn') { const st = J(NB.state(), {}).st; if (st !== 'on' && st !== 'wait') NB.connect(); this.setState({ page: 'main', menu: false }); } else this.setState({ page: NBTN[k][2], menu: false }); } }));
+        const canDel = !!(s.admOn && admMe().role === 'f' && b.id);
+        return Object.assign({}, n, { canDel, del: () => this.confirm(tx.cf_ndel, '🗑 ' + tx.cf_yes, () => { act('ndel', { id: b.id }); NDEL[b.id] = true; this.setState({ bcast: (this.state.bcast || []).filter((x) => x.id !== b.id) }); }), hasBtn: btns.length > 0, btns, isO: true, tcls: 'goldtxt', date: b.time || '', hasImg: !!(b.img && NI[b.img]), img: (b.img && NI[b.img]) || '', zoom: () => this.setState({ zoom: NI[b.img] || '' }) });
       });
       r.news = r.news.map((n) => Object.assign({}, n, { parts: withKeys(n.parts, this) }));
       r.msgs = r.msgs.map((m) => Object.assign({}, m, { parts: withKeys(this.lk(m.t || ''), this) }));
@@ -722,7 +724,7 @@
   function news(C, up) {
     INFO = J(NB.info(), INFO);
     const list = (INFO.news || []).map((n) => { const j = J(n.j, {}); return { id: n.id, t: j.t || '', x: j.x || '', img: j.img || '', btn: Array.isArray(j.btn) ? j.btn : [], time: new Date(n.ts * 1000).toLocaleDateString('ru-RU') }; })
-      .sort((a, b) => (a.id < b.id ? 1 : -1));
+      .filter((n) => !NDEL[n.id]).sort((a, b) => (a.id < b.id ? 1 : -1));
     up.bcast = list;
     const seen = C.state.seenNews || [], fresh = list.filter((n) => seen.indexOf(n.id) < 0);
     if (fresh.length) { up.newsBan = true; up.banHidden = false; up.seenNews = seen.concat(fresh.map((n) => n.id)).slice(-50); }
@@ -821,6 +823,7 @@
       else if (d.msg === 'qnone') C.say('⚠️ ' + tx.q_none);
       else if (d.msg === 'kok') { C.say('✅ ' + tx.bk_saved); up.kdDays = ''; up.kdN = ''; up.kdLb = null; }
       else if (d.msg === 'kdel') C.say('🗑 ' + tx.bk_deleted);
+      else if (d.msg === 'ndel') C.say('🗑 ' + tx.n_deleted);
       else if (d.msg === 'upd') C.say('⚡ ' + tx.ad_updGo);
       else if (d.msg === 'busy') C.say(tx.ad_updBusy);
       if (d.err) C.say('⚠️ ' + d.err);
