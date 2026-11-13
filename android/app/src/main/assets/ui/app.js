@@ -302,6 +302,9 @@
       if (isF) r.botTiles = r.botTiles.concat([{ i: '🧩', t: tx.x_title, go: () => this.setState({ page: 'adm_x' }), st: '' }]);
       r.xIn = s.xIn || ''; r.onXIn = this.onXIn; r.xAdd = this.xAdd; r.xChIn = s.xChIn || ''; r.onXChIn = this.onXChIn; r.xChAdd = this.xChAdd;
       r.xChs = ((A && A.tgsrc) || []).map((ch) => ({ ch, del: () => this.confirm('@' + ch + ' ?', '🗑 ' + tx.cf_yes, () => act('chdel', { ch })) }));
+      r.qSubs = ((A && A.qsubs) || []).map((q) => ({ label: q.label, t: q.t || tx.q_wait, c: (q.pct || 0) >= 0.85 ? '#FF6B5C' : '#6FDB9C',
+        del: () => this.confirm(q.label + ' ?', '🗑 ' + tx.cf_yes, () => act('qdel', { u: q.u })) }));
+      r.qIn = s.qIn || ''; r.onQIn = this.onQIn; r.qAddB = this.qAddB;
       const xl = (A && A.xc) || [];
       r.xCount = tx.x_count.replace('{n}', String(xl.length));
       r.xList = xl.map((x) => ({ n: (x.name || x.hp), sub: (x.src === 'tg' ? '📡 @' + x.ch : '👤 ' + tx.x_m) + ' · ' + x.hp + ' · ' + x.at,
@@ -578,6 +581,8 @@
       act(t.st === 'closed' ? 'reopen' : 'close', { tid: t.id }); t.st = t.st === 'closed' ? 'open' : 'closed'; C.setState({ admTick: (C.state.admTick || 0) + 1 });
     };
     C.banToggle = () => { const d = C.state.admU, u = A && A.us[d]; if (!u) return; act('ban', { dev: d, on: !u.ban }); u.ban = !u.ban; C.setState({ admTick: (C.state.admTick || 0) + 1 }); };
+    C.onQIn = (e) => C.setState({ qIn: String(e.target.value || '').trim().slice(0, 500) });
+    C.qAddB = () => { const u = (C.state.qIn || '').trim(); if (!/^https?:\/\/\S{8,}/.test(u)) return; act('qadd', { u }); C.setState({ qIn: '' }); C.say(C.T()[C.state.lang].k_wait); };
     C.onXIn = (e) => C.setState({ xIn: String(e.target.value || '').slice(0, 20000) });
     C.onXChIn = (e) => C.setState({ xChIn: String(e.target.value || '').slice(0, 60) });
     C.xAdd = () => { const t = (C.state.xIn || '').trim(); if (!t) return; act('xadd', { t }); C.setState({ xIn: '' }); C.say(C.T()[C.state.lang].k_wait); };
@@ -812,6 +817,8 @@
       else if (d.msg === 'bc') C.say('📢 ' + tx.ad_bcOk);
       else if ((d.a === 'kedit' || d.a === 'kdel') && !d.msg) C.say('⚠️ ' + (d.err || tx.ad_oldBot));
       else if (d.msg && d.msg.indexOf('xadd:') === 0) { const n = parseInt(d.msg.slice(5), 10) || 0; C.say(n ? '✅ ' + tx.x_added.replace('{n}', String(n)) : '⚠️ ' + tx.x_none); }
+      else if (d.msg === 'qok') C.say('📊 ' + tx.q_ok);
+      else if (d.msg === 'qnone') C.say('⚠️ ' + tx.q_none);
       else if (d.msg === 'kok') { C.say('✅ ' + tx.bk_saved); up.kdDays = ''; up.kdN = ''; up.kdLb = null; }
       else if (d.msg === 'kdel') C.say('🗑 ' + tx.bk_deleted);
       else if (d.msg === 'upd') C.say('⚡ ' + tx.ad_updGo);

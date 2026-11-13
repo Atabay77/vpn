@@ -1105,7 +1105,7 @@ def app_quota_check(force=False):
     if not force and time.time() - RUN.get("quota_at", 0) < APP_QUOTA_EVERY: return []
     RUN["quota_at"] = time.time()
     db_ = load_db(); a = app_cfg(db_); res, alerts = {}, []
-    urls = list(dict.fromkeys(list(a.get("subs", [])) + list(db_.get("sources", [])) + list(db_.get("source_subs", []))))   # programyň we botuň kod alýan abunalary
+    urls = list(dict.fromkeys(list(a.get("qsubs", [])) + list(a.get("subs", [])) + list(db_.get("sources", [])) + list(db_.get("source_subs", []))))   # kota üçin bellenen panel linkleri + kod alýan abunalar
     for u in urls:
         if not isinstance(u, str) or not u.startswith("http"): continue
         h = hashlib.md5(u.encode()).hexdigest()[:8]; lim = sub_limits(u)
@@ -1114,19 +1114,24 @@ def app_quota_check(force=False):
         used = int(lim.get("upload") or 0) + int(lim.get("download") or 0)
         res[h] = {"label": src_label(u), "used": used, "total": total, "pct": round(used / total, 3), "exp": int(lim.get("expire") or 0), "ts": int(time.time())}
     def f(x):
-        q = x.setdefault("quota", {}); al = x.setdefault("quota_al", {}); out = []
+        q = x.setdefault("quota", {}); al = x.setdefault("quota_al", {}); sent = x.setdefault("quota_sent", {}); out = []; now = int(time.time())
         q.clear(); q.update(res)
         for h, v in res.items():
-            if v["pct"] >= APP_QUOTA_WARN and not al.get(h): al[h] = int(time.time()); out.append((h, v))
-            elif v["pct"] < APP_QUOTA_RESET: al.pop(h, None)   # täzelenen abuna: indiki gezek ýene duýdurylýar
+            if v["pct"] >= APP_QUOTA_WARN:
+                if not al.get(h): al[h] = now
+                if now - int(sent.get(h) or 0) >= 6 * 3600: sent[h] = now; out.append((h, v))   # ýetmedik bolsa 6 sagatdan gaýtadan (programda pozulany gaýtadan çykmaýar)
+            elif v["pct"] < APP_QUOTA_RESET: al.pop(h, None); sent.pop(h, None)   # täzelenen abuna: indiki gezek ýene duýdurylýar
         return out
     alerts = app_mut(f)
     for h, v in alerts:
         txt = app_quota_txt(v)
-        at_ = (app_cfg(load_db()).get("quota_al") or {}).get(h, 0)
-        for d_ in app_staff_devs(tickets=False):
+        a2 = app_cfg(load_db()); at_ = (a2.get("quota_al") or {}).get(h, 0)
+        owners = list(dict.fromkeys(d_ for x_ in (a2.get("apw") or {}).values() if x_.get("role") == "f" and apw_valid(x_)
+                                    for d_ in (x_.get("hist") or []) + ([x_["dev"]] if x_.get("dev") else []) if DEV_RE.match(str(d_))))
+        for d_ in owners:   # eýesiniň telefonlary (admin paneline häzir girmedik bolsa-da)
             try: app_send(d_, {"k": "quota", "id": h, "t": txt, "pct": v["pct"], "at": at_})
             except Exception as e: log.info("quota send: %s", e)
+        if not owners or v["pct"] >= 0.99: RUN.setdefault("quota_tg", []).append(txt)   # programda eýe ýok ýa-da kota doldy — Telegram hem
         vlog(f"⚠️ Kota dolmak üzere — {txt}")
     return alerts
 
@@ -1240,6 +1245,7 @@ async def app_loop(app):
             try:
                 n, errs = await asyncio.to_thread(app_sync)
                 RUN.pop("app_err", None)
+                for t_ in RUN.pop("quota_tg", []): await notify_founders(app, f"⚠️ <b>Kota dolmak üzere</b>\n<blockquote>{esc(t_)}</blockquote>")
             except Exception as e:
                 msg = str(e)[:150]
                 if RUN.get("app_err") != msg:
@@ -1937,6 +1943,7 @@ def app_adm_snap(a, e, dev):
                       "ok": app_hm(v.get("ok")) if v.get("ok") else "", "ms": int(v.get("ms") or 0), "bad": int(v.get("bad") or 0), "at": app_hm(v.get("ts"))}
                      for k_, v in sorted((a.get("xcodes") or {}).items(), key=lambda kv: -kv[1].get("ts", 0))]
         out["tgsrc"] = a.get("tgsrc", APP_TG_DEFAULT)
+        out["qsubs"] = [{"u": u_, "label": src_label(u_), **({"pct": v_["pct"], "t": app_quota_txt(v_), "exp": v_.get("exp", 0)} if (v_ := (a.get("quota") or {}).get(hashlib.md5(u_.encode()).hexdigest()[:8])) else {})} for u_ in a.get("qsubs", [])]
         out["qal"] = [{"id": h, "t": app_quota_txt(v), "at": (a.get("quota_al") or {}).get(h, 0)} for h, v in (a.get("quota") or {}).items() if (a.get("quota_al") or {}).get(h)]
         out["news"] = [{"t": n_["t"], "x": n_["x"], "time": app_hm(n_.get("ts")), "img": n_.get("img", "")} for n_ in (a.get("news") or [])]
     return out
@@ -2050,6 +2057,15 @@ async def app_adm(app, dev, o):
             try: await asyncio.to_thread(app_sync, True)
             except Exception as e2: RUN["app_err"] = str(e2)[:150]
             msg = "xdel"
+        elif act in ("qadd", "qdel") and f_:   # kota yzarlanýan panel linki (Drive faýly kota görkezmeýär)
+            u_ = str(r.get("u") or "").strip()
+            if re.fullmatch(r"https?://\S{8,500}", u_):
+                app_mut(lambda x: x.__setitem__("qsubs", [q_ for q_ in (x.get("qsubs") or []) if q_ != u_] + ([u_] if act == "qadd" else [])))
+                if act == "qadd":
+                    lim_ = await asyncio.to_thread(sub_limits, u_)
+                    msg = "qok" if int(lim_.get("total") or 0) > 0 else "qnone"
+                    await asyncio.to_thread(app_quota_check, True)
+                else: msg = "qdel"
         elif act in ("chadd", "chdel") and f_:
             ch_ = re.sub(r"^(https?://)?(t\.me/)?(s/)?@?", "", str(r.get("ch") or "").strip()).strip("/")
             if re.fullmatch(r"[A-Za-z0-9_]{4,40}", ch_):
