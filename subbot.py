@@ -1774,7 +1774,8 @@ async def app_on_msg(app, fid, o):
         await asyncio.to_thread(app_lvl_check, dev, True)
         await asyncio.to_thread(app_send, dev, {"k": "top", "l": app_top(app_cfg(load_db()))})
     elif k == "payq":   # 1.19: satyn almak sahypasy — bahalar we töleg maglumaty
-        await asyncio.to_thread(app_send, dev, {"k": "pay", "p": [list(x_) for x_ in APP_PLANS], "i": str(load_db().get("pay_info") or "")[:1500]})
+        a_ = app_cfg(load_db())
+        await asyncio.to_thread(app_send, dev, {"k": "pay", "p": [list(x_) for x_ in APP_PLANS], "i": str(a_.get("pay_txt") or load_db().get("pay_info") or "")[:1500], "pi": a_.get("pay_img") or ""})
     elif k == "buy":
         d_ = int(o.get("d") or 0) if str(o.get("d") or "").isdigit() else 0
         plan_ = next((p_ for p_ in APP_PLANS if p_[0] == d_), None)
@@ -2004,18 +2005,18 @@ def apw_valid(e):
     """Kömekçi adminiň möhleti geçse açar sözi hem işlemeýär."""
     if not e: return False
     if e.get("role") == "f": return int(e.get("uid") or 0) in ORIG_ADMINS
-    if e.get("once") and not e.get("dev") and (e.get("hist") or time.time() > float(e.get("exp") or 0)): return False   # 1 girişlik: ulanyldy ýa-da 24 sagat geçdi
+    if e.get("once") and not e.get("dev") and e.get("hist"): return False   # 1 girişlik: ulanyldy (1.22: möhleti ýok)
     return is_admin(int(e.get("uid") or 0))
 
-APW_ONCE_TTL = 86400   # 1 girişlik açar: 24 sagadyň içinde ulanylmasa ýanýar
-def apw_once_make(uid, name, perm):
-    """Eýesi programdan 1 girişlik admin açaryny döredýär: bir telefonda bir gezek girilýär, çykanda/çykarylanda pozulýar."""
-    pw = apw_new()
+def apw_once_make(uid, name, perm, pw=None):
+    """Eýesi programdan 1 girişlik admin açaryny döredýär: bir telefonda bir gezek girilýär, çykanda/çykarylanda pozulýar.
+    1.22: açar — eýesiniň ýazan sözi (iň az 2 harp), möhleti ýok. Dönüş: açar ýa-da None (eýýäm bar)."""
+    pw = apw_norm(pw) if pw else apw_new()
+    if (app_cfg(load_db()).get("apw") or {}).get(apw_id(pw)): return None
     def f(x):
         ap = x.setdefault("apw", {}); now_ = time.time()
-        for k_ in [k_ for k_, v in ap.items() if v.get("once") and not v.get("dev") and (v.get("hist") or now_ > float(v.get("exp") or 0))]: ap.pop(k_)
-        ap[apw_id(pw)] = {"pw": pw, "uid": int(uid), "name": (name or "1 girişlik")[:32], "role": "h", "perm": perm, "dev": None, "ts": int(now_), "made": 0,
-                          "once": True, "exp": int(now_ + APW_ONCE_TTL)}
+        for k_ in [k_ for k_, v in ap.items() if v.get("once") and not v.get("dev") and v.get("hist")]: ap.pop(k_)
+        ap[apw_id(pw)] = {"pw": pw, "uid": int(uid), "name": (name or "1 girişlik")[:32], "role": "h", "perm": perm, "dev": None, "ts": int(now_), "made": 0, "once": True}
     app_mut(f)
     return pw
 
@@ -2060,6 +2061,7 @@ def app_adm_snap(a, e, dev):
         keep = sorted(users, key=lambda d_: users[d_]["l"], reverse=True)[:300]
         users = {d_: users[d_] for d_ in set(keep) | (need & set(users))}
     out = {"me": {"role": e.get("role"), "perm": "all" if f_ else e.get("perm"), "name": e.get("name") or ""}, "tk": tk_out, "us": users}
+    if f_: out["pay"] = {"t": str(a.get("pay_txt") or db.get("pay_info") or "")[:1500], "img": a.get("pay_img") or ""}
     if full:
         mine = None if f_ else f"app:{e.get('name')}"
         ks = sorted(((k_, v) for k_, v in keys_.items() if mine is None or v.get("by") == mine), key=lambda kv: kv[1].get("ts", 0), reverse=True)[:40]
@@ -2280,8 +2282,36 @@ async def app_adm(app, dev, o):
                                              else (x.get("apw") or {}).get(k_, {}).__setitem__("dev", None)) if k_ in (x.get("apw") or {}) else None)
         elif act == "mkadm" and f_:   # 1.17: 1 girişlik admin açary (diňe eýesi)
             perm_ = "all" if r.get("perm") == "all" else "tk"
-            msg = "adm:" + await asyncio.to_thread(apw_once_make, int(e.get("uid") or 0), str(r.get("n") or "").strip()[:32] or "1 girişlik", perm_)
-            await notify_founders(app, f"🔑 Programdan 1 girişlik admin açary döredildi · {APW_PERM.get(perm_)}", silent=True)
+            k_ = apw_norm(str(r.get("n") or ""))[:32]
+            if len(k_) < 2: err = "açar iň az 2 harp bolmaly"
+            else:
+                pw_ = await asyncio.to_thread(apw_once_make, int(e.get("uid") or 0), k_, perm_, k_)
+                if not pw_: err = "bu açar eýýäm bar — başga söz ýazyň"
+                else:
+                    msg = "adm:" + pw_
+                    await notify_founders(app, f"🔑 Programdan 1 girişlik admin açary döredildi · {APW_PERM.get(perm_)}", silent=True)
+        elif act == "payset" and f_:   # 1.22: «Açar satyn al» sahypasynyň töleg bölümi (tekst + surat)
+            t_ = str(r.get("t") or "").strip()[:1500]
+            img_ = a.get("pay_img") or ""
+            ie_ = RUN.get("bcimg", {}).pop(aid + ":" + re.sub(r"[^\w]", "", str(r.get("img") or ""))[:12], None) if r.get("img") else None
+            if ie_ and len(ie_["parts"]) == ie_["n"]:
+                data_ = "".join(ie_["parts"][i] for i in range(ie_["n"]))
+                if re.match(r"data:image/(jpeg|png|webp);base64,", data_) and a.get("fs_ok") and a.get("fs_proj") and a.get("fid"):
+                    new_ = "pay" + str(int(now))
+                    await asyncio.to_thread(fs_write, a["fs_proj"], f"n/{new_}", app_enc(a["fid"], json.dumps({"ph": data_})), None, False)
+                    if img_:
+                        try: await asyncio.to_thread(fs_delete, a["fs_proj"], ["n/" + img_])
+                        except Exception: pass
+                    img_ = new_
+                else: err = "surat ýazylmady"
+            elif r.get("img"): err = "surat doly gelmedi — täzeden synanyşyň"
+            if r.get("noimg") and img_ and a.get("fs_proj"):
+                try: await asyncio.to_thread(fs_delete, a["fs_proj"], ["n/" + img_])
+                except Exception: pass
+                img_ = ""
+            if not err:
+                app_mut(lambda x: x.update({"pay_txt": t_, "pay_img": img_}))
+                msg = "payok"
         elif act == "bc" and f_:
             t1, x1 = str(r.get("t") or "").strip()[:80], str(r.get("x") or "").strip()[:600]
             if t1 and x1:

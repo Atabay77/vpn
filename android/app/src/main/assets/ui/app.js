@@ -58,6 +58,11 @@
   const DMS = {};         // garşydaş → {st, msgs: [], un, n, lt}
   const MUTE = LS.get('dmMute', {}) || {};   // 1.21: sessize alnanlar (sanalmaýar, duýduryş ýok)
   const UPX = {};         // 1.21: eýesiniň beren bal/derejesiniň netijesi
+  // 1.22: tegelek baýdaklar (img/flags/xx.svg) — emoji baýdagyndan ýurt kody
+  const FLAGS = new Set('ac,ad,ae,af,ag,ai,al,am,an,ao,aq,ar,as,at,au,aw,ax,az,ba,bb,bd,be,bf,bg,bh,bi,bj,bl,bm,bn,bo,bq,br,bs,bt,bv,bw,by,bz,ca,cc,cd,cf,cg,ch,ci,ck,cl,cm,cn,co,cp,cq,cr,cu,cv,cw,cx,cy,cz,de,dg,dj,dk,dm,do,dz,ea,ec,ee,eg,eh,er,es,et,eu,fi,fj,fk,fm,fo,fr,fx,ga,gb,gd,ge,gf,gg,gh,gi,gl,gm,gn,gp,gq,gr,gs,gt,gu,gw,gy,hk,hm,hn,hr,ht,hu,ic,id,ie,il,im,in,io,iq,ir,is,it,je,jm,jo,jp,ke,kg,kh,ki,km,kn,kp,kr,kw,ky,kz,la,lb,lc,li,lk,lr,ls,lt,lu,lv,ly,ma,mc,md,me,mf,mg,mh,mk,ml,mm,mn,mo,mp,mq,mr,ms,mt,mu,mv,mw,mx,my,mz,na,nc,ne,nf,ng,ni,nl,no,np,nr,nu,nz,om,pa,pe,pf,pg,ph,pk,pl,pm,pn,pr,ps,pt,pw,py,qa,re,ro,rs,ru,rw,sa,sb,sc,sd,se,sg,sh,si,sj,sk,sl,sm,sn,so,sr,ss,st,su,sv,sx,sy,sz,ta,tc,td,tf,tg,th,tj,tk,tl,tm,tn,to,tr,tt,tv,tw,tz,ua,ug,uk,um,un,us,uy,uz,va,vc,ve,vg,vi,vn,vu,wf,ws,xk,xx,ye,yt,yu,za,zm,zw'.split(','));
+  const fcc = (f) => { const c = Array.from(String(f || '')).map((ch) => ch.codePointAt(0)).filter((x) => x >= 0x1F1E6 && x <= 0x1F1FF);
+    if (c.length !== 2) return ''; const k = String.fromCharCode(c[0] - 0x1F1E6 + 97, c[1] - 0x1F1E6 + 97); return FLAGS.has(k) ? k : ''; };
+  const withFc = (o) => { if (!o) return o; const fc = fcc(o.f); return Object.assign({}, o, { fc, hasFc: !!fc, noFc: !fc }); };
   const dmPrev = (m, tx, me) => (m.f === me ? '↩ ' : '') + (m.ph ? '📷 ' + tx.dm_photo : m.st ? m.st : m.sys === 'acc' ? tx.dm_acced : m.x || '');
   const GI = {}, NI = {}, imgAsked = {};   // Global chat / habar suratlary
   const EMOJI = ['😀', '😁', '😂', '🤣', '😊', '🙂', '😉', '😍', '🥰', '😘', '😎', '🤔', '😅', '😴', '😭', '😡', '😱', '🥳', '👍', '👎', '🙏', '👏', '💪', '🤝', '👋', '🔥', '❤️', '💔', '💯', '🎉', '✅', '❌', '⚡', '🚀', '⭐', '🌙', '☀️', '🎮', '📶', '🔒', '💬', '🇹🇲'];
@@ -330,9 +335,9 @@
       const byName = (b) => (/^app:/.test(b) ? b.slice(4) : b === 'ref' ? '🤝' : b === 'gift' ? '🎁' : /^\d+$/.test(b) ? 'Telegram' : b || '?');
       if (A && A.codes) r.codeList = A.codes.map((c, i) => {
         const mine = c.u === INFO.dev, u = c.u ? us[c.u] || { name: '?' } : null;
-        if (c.once) { const hl = Math.max(1, Math.ceil(((c.exp || 0) * 1000 - Date.now()) / 3600000));
+        if (c.once) {
           return { code: c.code, icon: '🔑', ibg: 'rgba(224,176,74,.3)', role: tx.oa_once + ' · ' + (c.perm === 'all' ? tx.oa_all : tx.oa_tk) + ' · ' + c.name,
-            who: u ? u.name : tx.ad_free, sub: u ? (u.model || '') + ' · ' + tx.ad_seen + ': ' + c.seen : tx.oa_left.replace('{h}', String(hl)),
+            who: u ? u.name : tx.ad_free, sub: u ? (u.model || '') + ' · ' + tx.ad_seen + ': ' + c.seen : tx.oa_unused,
             stT: !u ? tx.ad_unused : c.vpn ? '🟢 ' + tx.ad_vpnOn : '⚪ ' + tx.ad_vpnOff, stCls: !u ? 'tk-closed' : c.vpn ? 'on-g' : 'on-n', d: (i * 0.05).toFixed(2),
             canKick: isF, kick: () => { act('kick', { id: c.id }); A.codes = A.codes.filter((x) => x.id !== c.id); this.setState({ admTick: (this.state.admTick || 0) + 1 }); this.say('🔓 ' + tx.ad_kicked); } }; }
         return { code: c.code, icon: c.role === 'f' ? '👑' : '👮', ibg: c.role === 'f' ? 'linear-gradient(145deg,#F2CD7A,#C8902E)' : 'rgba(111,168,220,.35)',
@@ -344,7 +349,7 @@
       // 1 girişlik admin açary
       r.onceN = s.onceN || ''; r.onOnceN = (e) => this.setState({ onceN: e.target.value });
       r.oncePerms = [['tk', tx.oa_tk], ['all', tx.oa_all]].map(([k, t]) => { const on = (s.oncePerm || 'tk') === k; return { t, p: on ? 'true' : 'false', cls: on ? 'chip-on' : '', pick: () => this.setState({ oncePerm: k }) }; });
-      r.mkOnce = () => { act('mkadm', { perm: s.oncePerm || 'tk', n: (s.onceN || '').trim() }); this.say(tx.k_wait); };
+      r.mkOnce = () => { const n = (s.onceN || '').replace(/\s+/g, ''); if (n.length < 2) { this.say('⚠️ ' + tx.oa_short); return; } act('mkadm', { perm: s.oncePerm || 'tk', n }); this.say(tx.k_wait); };
       r.hasOnceK = !!s.onceK; r.onceK = s.onceK || ''; r.cpOnceK = () => { NB.copy(s.onceK); this.say('✓ ' + tx.copied); };
       r.keyList = ((A && A.keys) || []).map((k, i) => { const u = k.used ? us[k.used] : null;
         return { cp: () => this.setState({ page: 'adm_kd', kSel: k.k, kdLb: null, kdDays: '', kdN: '' }), k: k.k, sub: (k.lb ? '🏷 ' + k.lb + ' · ' : '') + (k.d === 0 ? '♾' : k.d === 30 ? tx.bk_month : k.d + ' ' + tx.days) + ((k.n || 1) > 1 ? ' · 👥 ' + (k.u || 0) + '/' + k.n : '') + ' · ' + tx.bk_by + ': ' + byName(k.by) + ' · ' + k.at + (u ? ' · ' + u.name : ''), stT: k.used ? tx.bk_used : tx.bk_new, stCls: k.used ? 'tk-closed' : 'tk-ans', d: (i * 0.04).toFixed(2) }; });
@@ -454,7 +459,9 @@
       { const pay = LS.get('payInfo', null), plans = (pay && pay.p) || [[3, 15], [7, 30], [30, 100]], sel = s.buyD || plans[1][0];
         if (r.isBuy && (!pay || Date.now() - (pay.at || 0) > 600000) && Date.now() - (this._payQ || 0) > 60000) { this._payQ = Date.now(); NB.send(JSON.stringify({ k: 'payq' })); }
         r.buyPlans = plans.map(([d2, p2]) => ({ t: (d2 === 30 ? tx.bk_month : d2 + ' ' + tx.days), p: p2 + ' TMT', cls: d2 === sel ? 'bp-on' : '', pick: () => this.setState({ buyD: d2 }) }));
-        r.payInfo = (pay && pay.i) || tx.by_noInfo; r.cpPay = () => { NB.copy(r.payInfo); this.say('✓ ' + tx.copied); };
+        r.payInfo = (pay && pay.i) || tx.by_noInfo;
+        if (r.isBuy && pay && pay.pi) askImg('n', pay.pi);
+        r.payPic = (pay && pay.pi && NI[pay.pi]) || ''; r.hasPayPic = !!r.payPic; r.zoomPay = () => this.setState({ zoom: r.payPic }); r.cpPay = () => { NB.copy(r.payInfo); this.say('✓ ' + tx.copied); };
         r.hasBuyImg = !!s.buyImg; r.noBuyImg = !s.buyImg; r.buyImg = s.buyImg || ''; r.onBuyImg = this.onBuyImg; r.buyN = s.buyN || ''; r.onBuyN = (e) => this.setState({ buyN: e.target.value.slice(0, 200) });
         r.buyBtn = s.buySending ? tx.g_sending : tx.by_send; r.buyGo = () => this.buySend(sel);
         r.buyOrders = (LS.get('orders', []) || []).slice(0, 5).map((o) => ({ t: '#' + o.id + ' · ' + (o.d === 30 ? tx.bk_month : o.d + ' ' + tx.days), st: o.st === 'ok' ? tx.or_ok : o.st === 'no' ? tx.or_no : tx.or_wait,
@@ -620,6 +627,32 @@
       const gi = r.menuItems.findIndex((m) => m.t === tx.p_global);
       r.menuItems.splice(gi + 1, 0, mk('dms', tx.p_dms, 'M4 6h16v10H8l-4 4z', 'M8 10h8M8 13h5', dmUn > 0, String(dmUn)),
         mk('vip', tx.p_vip, 'M3 8l4 4 5-7 5 7 4-4-2 11H5z', 'M5 21h14', false, ''));
+      // 1.22: tegelek baýdaklar
+      ['cur', 'offCard', 'sCur'].forEach((k) => { if (r[k]) r[k] = withFc(r[k]); });
+      ['srvList', 'gList'].forEach((k) => { if (Array.isArray(r[k])) r[k] = r[k].map(withFc); });
+      { const all = SV.filter((v) => !v.game).map((v) => fcc(v.f)).filter(Boolean), uq = all.filter((c, i) => all.indexOf(c) === i);
+        r.svFl = uq.slice(0, 9).map((fc) => ({ fc })); r.svFlMore = uq.length > 9; r.svFlNone = !uq.length; }
+      r.langFc = fcc(r.langFlag) || 'tm'; if (Array.isArray(r.langs)) r.langs = r.langs.map((l) => Object.assign({}, l, { fc: fcc(l.flag) || 'tm' }));
+      // 1.22: eýesi baş sahypada dereje ýa-da OWNER saýlap bilýär
+      { const isOw = myRole === 'o', on = isOw && !!LS.get('ownTag', false);
+        r.ownTagOn = on && pg === 'main'; r.rkPillOn = !on;
+        if (isOw && Array.isArray(r.opts)) { const sn = r.opts.find((o) => o.t === tx.s_snd);
+          if (sn) r.opts.push(Object.assign({}, sn, { i1: 'M3 8l4 4 5-7 5 7 4-4-2 11H5z', i2: 'M5 21h14', t: tx.ow_t, s: on ? tx.ow_on : tx.ow_off, aria: on ? 'true' : 'false', swCls: on ? 'sw-on' : '', d: '0.45',
+            on: () => { LS.set('ownTag', !on); this.setState({ owTick: (this.state.owTick || 0) + 1 }); } })); } }
+      r.dgLbl = r.dgCls === 'on' ? tx.dg_btnOff : tx.dg_btn;
+      // 1.22: derejäni synap görmek (chatda we baş sahypada)
+      { const mt = rkT(r.rkmT); r.rkmFr = mt >= 3 ? 'fr' + mt : ''; r.rkmNm = rkNm(mt); r.rkmMe = this.meName || '…'; r.rkmIni = ini(this.meName || '?'); r.rkmBg = '#E0B04A'; r.rkmHasB = mt >= 2; }
+      // 1.22: admin — «Açar satyn al» sahypasynyň töleg maglumaty
+      { const ap = (A && A.pay) || { t: '', img: '' };
+        if (ap.img && s.admTab === 'bot') askImg('n', ap.img);
+        r.payT = s.payT != null ? s.payT : ap.t; r.onPayT = (e) => this.setState({ payT: String(e.target.value || '').slice(0, 1500) });
+        r.payEdImg = s.payImg || (!s.payNoImg && ap.img && NI[ap.img]) || ''; r.hasPayEd = !!r.payEdImg;
+        r.onPayImg = this.onPayImg; r.payImgDel = () => this.setState({ payImg: '', payNoImg: true });
+        r.paySave = () => { const t = String(r.payT || '').trim(), im = this.state.payImg;
+          if (im) { const id = Math.random().toString(36).slice(2, 10), N = Math.ceil(im.length / 4000);
+            for (let i = 0; i < N; i++) act('imgc', { id, i, n: N, d: im.slice(i * 4000, (i + 1) * 4000) });
+            act('payset', { t, img: id }); } else act('payset', Object.assign({ t }, this.state.payNoImg ? { noimg: true } : {}));
+          this.say(tx.k_wait); }; }
       if (s.admOn && isF) r.gMsgs = r.gMsgs.map((g) => Object.assign({}, g, { canDel: true, del: () => this.confirm(tx.cf_gdel, '🗑 ' + tx.cf_yes, () => { act('gdel', { id: g.gk }); gDel[g.gk] = true; this.setState({ gTick: (this.state.gTick || 0) + 1 }); }) }));
       return r;
     };
@@ -753,6 +786,7 @@
       fitShrink(f, 1280, 108000, (d) => { const tx = C.T()[C.state.lang]; if (!d) { C.say(tx.ph_big); return; } if (gSend({ ph: d })) C.say(tx.g_sending); });
     };
     // admin: habara surat
+    C.onPayImg = (e) => { const f = fileOf(e); if (!f) return; shrink(f, 1100, 0.8, (d) => { if (d) C.setState({ payImg: d, payNoImg: false }); else C.say(C.T()[C.state.lang].ph_big); }); e.target.value = ''; };
     C.onBcImg = (e) => { const f = fileOf(e); if (!f) return; shrink(f, 960, 0.65, (d) => { if (d) C.setState({ bcImg: d }); else C.say(C.T()[C.state.lang].ph_big); }); e.target.value = ''; };
     // yza: täze sahypalar
     const gb0 = C.goBack;
@@ -789,7 +823,7 @@
       const s = C.state, tx = C.T()[s.lang];
       if (s.admLock > Date.now()) { C.setState({ admErr: tx.ad_locked.replace('{s}', String(Math.ceil((s.admLock - Date.now()) / 1000))) }); return; }
       const pw = s.admPw.replace(/\s+/g, '').toUpperCase();
-      if (pw.length < 6) { C.setState({ admErr: tx.ad_bad, admShakeK: s.admShakeK + 1 }); return; }
+      if (pw.length < 2) { C.setState({ admErr: tx.ad_bad, admShakeK: s.admShakeK + 1 }); return; }
       act('login', { pw }); C.setState({ admPw: '', admErr: tx.k_wait, admLogging: true });
     };
     C.admExit = () => { act('logout'); admPend = 0; A = null; C.setState({ admOn: false, page: 'main' }); C.say('🔒 ' + C.T()[C.state.lang].ad_closed); };
@@ -1045,6 +1079,7 @@
       else if (d.msg === 'kok') { C.say('✅ ' + tx.bk_saved); up.kdDays = ''; up.kdN = ''; up.kdLb = null; }
       else if (d.msg === 'kdel') C.say('🗑 ' + tx.bk_deleted);
       else if (d.msg === 'ndel') C.say('🗑 ' + tx.n_deleted);
+      else if (d.msg === 'payok') { C.say('💳 ' + tx.ps_ok); up.payT = null; up.payImg = ''; up.payNoImg = false; LS.set('payInfo', null); }
       else if (d.msg && d.msg.indexOf('xp:') === 0) { const q = d.msg.split(':'); UPX[q[3]] = { lv: +q[1], xp: +q[2] }; C.say('✅ ' + tx.gv_ok.replace('{l}', q[1]).replace('{x}', q[2])); }
       else if (d.msg && d.msg.indexOf('adm:') === 0) { const k = d.msg.slice(4); NB.copy(k); up.onceK = k; up.onceN = ''; C.say('🔑 ' + tx.oa_ok); act('get'); }
       else if (d.msg === 'upd') C.say('⚡ ' + tx.ad_updGo);
@@ -1082,7 +1117,7 @@
         LS.set('lvl', { lv: m.lv, xp: m.xp, cur: m.cur, next: m.next, inv: m.inv }); up.payTick = t; if (m.inv != null) up.invites = m.inv;
         if (m.up) { up.rkm = { t: rkT(m.lv), up: true, days: m.days || 0 }; C.party('⭐ ' + tx.lv_up.replace('{n}', String(m.lv)) + (m.days ? ' · +' + m.days + ' ' + tx.days : '')); }
       } else if (m.k === 'top') { LS.set('top', m.l || []); up.payTick = t; }
-      else if (m.k === 'pay') { LS.set('payInfo', { p: m.p, i: m.i, at: Date.now() }); up.payTick = t; }
+      else if (m.k === 'pay') { LS.set('payInfo', { p: m.p, i: m.i, pi: m.pi || '', at: Date.now() }); up.payTick = t; }
       else if (m.k === 'buy') {
         const os = LS.get('orders', []) || [];
         if (m.wait && m.oid) { LS.set('orders', [{ id: m.oid, d: m.days, st: 'w' }].concat(os).slice(0, 10)); up.payTick = t; }
