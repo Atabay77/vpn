@@ -1827,6 +1827,11 @@ async def app_on_msg(app, fid, o):
         await asyncio.to_thread(app_send, dev, {"k": "top", "l": app_top(a_), "wk": [[(dv_.get(d_) or {}).get("nick") or "?", n_] for d_, n_ in app_wk_rank(a_, w0, w1)[:10]],
                                                 "wkEnd": w1, "wkLast": a_.get("wk_last") or [], "wkMin": APP_WK_MIN,
                                                 "wkMe": next((n_ for d_, n_ in app_wk_rank(a_, w0, w1) if d_ == dev), 0)})
+    elif k == "lvof":   # 1.30.2: başga ulanyjylaryň derejesi (Global chatda / profilde nyşan üçin)
+        ds_ = [str(x_) for x_ in (o.get("d") or []) if DEV_RE.match(str(x_))][:60]
+        a_ = app_cfg(load_db()); dv_ = a_.get("devs") or {}
+        out_ = {d_: app_lvl(app_xp(a_, d_)[0]) for d_ in ds_ if d_ in dv_}
+        await asyncio.to_thread(app_send, dev, {"k": "lvs", "m": out_})
     elif k == "kgift":   # 1.28: öz açaryňdan dostuňa (ID bilen) gün sowgat etmek
         to_ = str(o.get("to") or "").upper().strip()
         d_ = int(o.get("d") or 0) if str(o.get("d") or "").isdigit() else 0

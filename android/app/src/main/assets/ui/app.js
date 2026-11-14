@@ -61,6 +61,11 @@
   // 1.28: eýesi hemme ýerde OWNER ýazgysy bilen ýa-da derejesi (nyşan) bilen görünýär — öz saýlawy; başgalary onuň soňky Global habaryndaky «ow» belgisinden bilýär
   const ownOn = (dev) => { if (dev === INFO.dev) return !!LS.get('ownTag', false); let v = null; for (let i = G.length - 1; i >= 0; i--) { const q = G[i]; if (q.i === dev && q.ow != null && q.ow >= 0) { v = q.ow; break; } } return v == null ? true : !!v; };
   const isOwnShown = (dev) => roleOf(dev) === 'o' && ownOn(dev);
+  const LVB = LS.get('lvb', {}) || {};   // 1.30.2: botdan alnan derejeler {telefon: [dereje, wagt]}
+  let lvAskAt = 0;
+  const lvOf = (dev, msgLv) => (LVB[dev] ? LVB[dev][0] : msgLv || 0);
+  const lvAsk = (devs) => { const tn = Date.now(), need = devs.filter((d) => d && d !== INFO.dev && (!LVB[d] || tn - LVB[d][1] > 15 * 60000));
+    if (!need.length || tn - lvAskAt < 60000) return; lvAskAt = tn; NB.send(JSON.stringify({ k: 'lvof', d: need.filter((d, i) => need.indexOf(d) === i).slice(0, 60) })); };
   const UPX = {};         // 1.21: eýesiniň beren bal/derejesiniň netijesi
   // 1.22: tegelek baýdaklar (img/flags/xx.svg) — emoji baýdagyndan ýurt kody
   const FLAGS = new Set('ac,ad,ae,af,ag,ai,al,am,an,ao,aq,ar,as,at,au,aw,ax,az,ba,bb,bd,be,bf,bg,bh,bi,bj,bl,bm,bn,bo,bq,br,bs,bt,bv,bw,by,bz,ca,cc,cd,cf,cg,ch,ci,ck,cl,cm,cn,co,cp,cq,cr,cu,cv,cw,cx,cy,cz,de,dg,dj,dk,dm,do,dz,ea,ec,ee,eg,eh,er,es,et,eu,fi,fj,fk,fm,fo,fr,fx,ga,gb,gd,ge,gf,gg,gh,gi,gl,gm,gn,gp,gq,gr,gs,gt,gu,gw,gy,hk,hm,hn,hr,ht,hu,ic,id,ie,il,im,in,io,iq,ir,is,it,je,jm,jo,jp,ke,kg,kh,ki,km,kn,kp,kr,kw,ky,kz,la,lb,lc,li,lk,lr,ls,lt,lu,lv,ly,ma,mc,md,me,mf,mg,mh,mk,ml,mm,mn,mo,mp,mq,mr,ms,mt,mu,mv,mw,mx,my,mz,na,nc,ne,nf,ng,ni,nl,no,np,nr,nu,nz,om,pa,pe,pf,pg,ph,pk,pl,pm,pn,pr,ps,pt,pw,py,qa,re,ro,rs,ru,rw,sa,sb,sc,sd,se,sg,sh,si,sj,sk,sl,sm,sn,so,sr,ss,st,su,sv,sx,sy,sz,ta,tc,td,tf,tg,th,tj,tk,tl,tm,tn,to,tr,tt,tv,tw,tz,ua,ug,uk,um,un,us,uy,uz,va,vc,ve,vg,vi,vn,vu,wf,ws,xk,xx,ye,yt,yu,za,zm,zw'.split(','));
@@ -300,7 +305,7 @@
       const gl = G.filter((m) => !m.re && !m.dl && !m.ed && !m.sty && !GE.D[m.id] && !gDel[m.id] && bans.indexOf(m.i) < 0).concat(LGM), RXG = rxAgg(G.concat(LRX));
       gl.forEach((m) => { if (m.pi && !GI[m.pi]) askImg('g', m.pi); });
       r.gMsgs = gl.map((m) => {
-        const mine = m.i === me, nm = mine ? this.meName : m.n || '?', lvq = mine ? (LS.get('lvl', {}) || {}).lv || 0 : m.lv || 0, rt = rkT(lvq);
+        const mine = m.i === me, nm = mine ? this.meName : m.n || '?', lvq = mine ? (LS.get('lvl', {}) || {}).lv || 0 : lvOf(m.i, m.lv), rt = rkT(lvq);
         const ph = mine ? s.photo : ((PH[m.i] || {}).d || '');
         return { name: nm + (mine ? ' · ' + tx.g_you : ''), ini: ini(nm), bg: mine ? '#E0B04A' : colorOf(m.i), nc: mine ? '#06100B' : colorOf(m.i), photo: ph, hasPh: !!ph, noPh: !ph,
           t: m.st ? '' : GE.E[m.id] != null ? GE.E[m.id] : m.t, time: (GE.E[m.id] != null ? tx.m_edited + ' ' : '') + this.hm((m.time || 0) * 1000 || now) + (m.pend ? ' ⏳' : ''), gk: m.id, cls: mine ? 'gm-me' : 'gm-o', bcls: mine ? 'gb-me' : 'gb-o', canDel: false, del: null,
@@ -311,6 +316,7 @@
           rx: rxList(RXG, m.id, me, (e) => this.gReact(m.id, e)), hasRx: !!RXG[m.id] && Object.keys(RXG[m.id]).length > 0,
           rxOpen: s.rxFor === m.id, rxPick: RX_E.map((e) => ({ e, go: () => { this.setState({ rxFor: null }); this.gReact(m.id, e); } })), rpGo: () => this.replyTo(m.id) };
       });
+      if (s.page === 'global') lvAsk(gl.map((m) => m.i));
       const onl = INFO.online > 0 ? tx.g_online.replace('{n}', String(INFO.online)) : '';
       r.gOnline = onl; r.gHead = tx.p_global.toUpperCase() + (onl ? ' · ' + onl : '');
       r.ticker = gl.length ? gl.slice(-2).map((m) => ({ n: m.i === me ? this.meName : m.n, c: m.i === me ? '#E0B04A' : colorOf(m.i), t: m.st || (m.pi ? '📷 ' + tx.dm_photo : m.t) })) : [{ n: '🌐', c: '#6FDB9C', t: tx.g_empty }];
@@ -559,7 +565,7 @@
           write: () => this.openDm(d), zoom: () => this.setState({ zoom: (p && p.ph) || a.photo || '' }),
           blockT: st === 'blk' ? '✅ ' + tx.dm_unblk : '🚫 ' + tx.dm_blk, block: () => this.blockDm(d) });
         let ul = mine ? (LS.get('lvl', {}) || {}).lv || 0 : 0;   // derejesi: Global chatdaky iň soňky habaryndan
-        if (!mine) G.forEach((q) => { if (q.i === d && q.lv) ul = q.lv; });
+        if (!mine) { G.forEach((q) => { if (q.i === d && q.lv) ul = q.lv; }); ul = lvOf(d, ul); lvAsk([d]); }
         Object.assign(r.up, { hasRk: (ul >= 1 || roleOf(d) === 'o') && !a.isO, rkT: String(rkT(ul)), rkName: tx['rk_n' + rkT(ul)], rkNcls: rkNc(rkT(ul)) });
         // 1.21: sessiz; eýesine — ID we bal/dereje bermek
         const own = myRole === 'o' || admMe().role === 'f', canGive = !!(s.admOn && isF), au2 = (A && A.us && A.us[d]) || null, ux = UPX[d];
@@ -1179,7 +1185,7 @@
       else if (d.msg === 'kdel') C.say('🗑 ' + tx.bk_deleted);
       else if (d.msg === 'ndel') C.say('🗑 ' + tx.n_deleted);
       else if (d.msg === 'payok') { C.say('💳 ' + tx.ps_ok); up.payT = null; up.payImg = ''; up.payNoImg = false; LS.set('payInfo', null); }
-      else if (d.msg && d.msg.indexOf('xp:') === 0) { const q = d.msg.split(':'); UPX[q[3]] = { lv: +q[1], xp: +q[2] }; C.say('✅ ' + tx.gv_ok.replace('{l}', q[1]).replace('{x}', q[2])); }
+      else if (d.msg && d.msg.indexOf('xp:') === 0) { const q = d.msg.split(':'); UPX[q[3]] = { lv: +q[1], xp: +q[2] }; LVB[q[3]] = [+q[1], Date.now()]; LS.set('lvb', LVB); C.say('✅ ' + tx.gv_ok.replace('{l}', q[1]).replace('{x}', q[2])); }
       else if (d.msg && d.msg.indexOf('adm:') === 0) { const k = d.msg.slice(4); NB.copy(k); up.onceK = k; up.onceN = ''; C.say('🔑 ' + tx.oa_ok); act('get'); }
       else if (d.msg === 'upd') C.say('⚡ ' + tx.ad_updGo);
       else if (d.msg === 'busy') C.say(tx.ad_updBusy);
@@ -1217,6 +1223,7 @@
         LS.set('lvl', { lv: m.lv, xp: m.xp, cur: m.cur, next: m.next, inv: m.inv }); up.payTick = t; if (m.inv != null) up.invites = m.inv;
         if (m.up) { up.rkm = { t: rkT(m.lv), up: true, days: m.days || 0 }; C.party('⭐ ' + tx.lv_up.replace('{n}', String(m.lv)) + (m.days ? ' · +' + m.days + ' ' + tx.days : '')); }
       } else if (m.k === 'top') { LS.set('top', m.l || []); if (m.wk) LS.set('wk', { l: m.wk, end: m.wkEnd || 0, last: m.wkLast || [], me: m.wkMe || 0, min: m.wkMin || 5 }); up.payTick = t; }
+      else if (m.k === 'lvs') { const tn = Date.now(); Object.keys(m.m || {}).forEach((d) => { LVB[d] = [+m.m[d] || 0, tn]; }); LS.set('lvb', LVB); up.gTick = (s.gTick || 0) + 1; }
       else if (m.k === 'kgift') { if (m.ok) { C.say(tx.gf_ok.replace('{n}', m.to || '?').replace('{d}', String(m.d || 1))); up.gfTo = ''; try { NB.refresh(); } catch (e2) {} } else C.say('⚠️ ' + (tx['gf_e_' + m.why] || tx.gf_e_notfound)); }
       else if (m.k === 'pay') { LS.set('payInfo', { p: m.p, i: m.i, pi: m.pi || '', at: Date.now() }); up.payTick = t; }
       else if (m.k === 'buy') {

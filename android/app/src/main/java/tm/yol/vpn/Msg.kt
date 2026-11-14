@@ -147,7 +147,7 @@ object Msg {
         o.put("dev", dev(c)).put("ver", ver(c)).put("lang", Lang.cur).put("ts", System.currentTimeMillis() / 1000)
             .put("model", android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL).put("code", code(c))
             .put("ack", prefs(c).getInt("seq", 0))
-        if (o.optString("k") in setOf("tk", "ref", "gift", "human", "ka", "adm", "buy", "payq", "vote", "lvlq", "kgift")) waitAt = System.currentTimeMillis()
+        if (o.optString("k") in setOf("tk", "ref", "gift", "human", "ka", "adm", "buy", "payq", "vote", "lvlq", "kgift", "lvof")) waitAt = System.currentTimeMillis()
         synchronized(this) {
             val q = JSONArray(prefs(c).getString("q", "[]"))
             q.put(o.toString())
