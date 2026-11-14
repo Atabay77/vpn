@@ -56,9 +56,11 @@ object Msg {
     }
 
     /** Çagyryş kody: TM-XXXXX (bot hem şol bir usulda hasaplaýar). */
-    fun code(ctx: Context): String {
+    fun code(ctx: Context): String = codeOf(dev(ctx))
+    /** Islendik telefonyň kody (eýesi başga ulanyjynyň ID-sini görýär). */
+    fun codeOf(d: String): String {
         val a = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
-        val h = sha("tvref|" + dev(ctx))
+        val h = sha("tvref|" + d)
         return "TM-" + (0 until 5).map { a[(h[it].toInt() and 0xff) % a.length] }.joinToString("")
     }
 

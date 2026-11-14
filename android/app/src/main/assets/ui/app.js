@@ -56,6 +56,9 @@
   // ---- 1.16: profil, hususy habarlar, nyşanlar ----
   const P2 = {};          // telefon → {th, ph, bg, n, dm} (doly profil)
   const DMS = {};         // garşydaş → {st, msgs: [], un, n, lt}
+  const MUTE = LS.get('dmMute', {}) || {};   // 1.21: sessize alnanlar (sanalmaýar, duýduryş ýok)
+  const UPX = {};         // 1.21: eýesiniň beren bal/derejesiniň netijesi
+  const dmPrev = (m, tx, me) => (m.f === me ? '↩ ' : '') + (m.ph ? '📷 ' + tx.dm_photo : m.st ? m.st : m.sys === 'acc' ? tx.dm_acced : m.x || '');
   const GI = {}, NI = {}, imgAsked = {};   // Global chat / habar suratlary
   const EMOJI = ['😀', '😁', '😂', '🤣', '😊', '🙂', '😉', '😍', '🥰', '😘', '😎', '🤔', '😅', '😴', '😭', '😡', '😱', '🥳', '👍', '👎', '🙏', '👏', '💪', '🤝', '👋', '🔥', '❤️', '💔', '💯', '🎉', '✅', '❌', '⚡', '🚀', '⭐', '🌙', '☀️', '🎮', '📶', '🔒', '💬', '🇹🇲'];
   // tepkiler: {re: habaryň kimligi, e: emoji, off: aýyrmak}; her adamyň bir habara bir tepkisi
@@ -414,7 +417,7 @@
         const ph = (PH[s.admU] || {}).d || '';
         if (!ph && !phAsked[s.admU]) { phAsked[s.admU] = 1; NB.getPhoto(s.admU); }
         r.au = Object.assign({}, r.au, { photo: ph, hasPh: !!ph, noPh: !ph });
-        r.auInfo = [[tx.ad_model, au.model], [tx.ad_ver, au.ver], [tx.ad_lang, { tk: '🇹🇲 Türkmençe', ru: '🇷🇺 Русский', tr: '🇹🇷 Türkçe' }[au.lang] || au.lang], [tx.ad_first, au.first], [tx.ad_seen, au.seen], [tx.ad_key, au.key], [tx.ad_inv, String(au.inv || 0)]].map((q) => ({ k: q[0], v: q[1] || '—' }));
+        r.auInfo = [['ID', au.code], [tx.ad_model, au.model], [tx.ad_ver, au.ver], [tx.ad_lang, { tk: '🇹🇲 Türkmençe', ru: '🇷🇺 Русский', tr: '🇹🇷 Türkçe' }[au.lang] || au.lang], [tx.ad_first, au.first], [tx.ad_seen, au.seen], [tx.ad_key, au.key], [tx.ad_inv, String(au.inv || 0)]].map((q) => ({ k: q[0], v: q[1] || '—' }));
         r.banT = au.ban ? '✅ ' + tx.ad_unban : '🚫 ' + tx.ad_ban; r.banC = au.ban ? '#6FDB9C' : '#FFB0A6'; r.banBc = au.ban ? 'rgba(111,219,156,.6)' : 'rgba(255,138,120,.6)';
       }
       const at = s.admT != null && A ? A.tk.find((x) => x.id === s.admT) : null;
@@ -542,15 +545,39 @@
         let ul = mine ? (LS.get('lvl', {}) || {}).lv || 0 : 0;   // derejesi: Global chatdaky iň soňky habaryndan
         if (!mine) G.forEach((q) => { if (q.i === d && q.lv) ul = q.lv; });
         Object.assign(r.up, { hasRk: ul >= 1, rkT: String(rkT(ul)), rkName: tx['rk_n' + rkT(ul)], rkNcls: rkNc(rkT(ul)) });
-      } else r.up = { name: '', photo: '', hasPh: false, noPh: true, bg: '', ini: '', bgImg: 'none', sub: '', canDm: false, noDm: false, notMe: false, why: '', isO: false, isA: false, ncls: '', hasRk: false, rkT: '1', rkName: '', rkNcls: '' };
+        // 1.21: sessiz; eýesine — ID we bal/dereje bermek
+        const own = myRole === 'o' || admMe().role === 'f', canGive = !!(s.admOn && isF), au2 = (A && A.us && A.us[d]) || null, ux = UPX[d];
+        const xpK = ux ? ux.xp : au2 && au2.xp != null ? au2.xp : null, lvK = ux ? ux.lv : xpK != null ? RK_L.filter((q) => xpK >= q).length : ul;
+        Object.assign(r.up, { hasMute: !mine && !!DMS[d], muteT: MUTE[d] ? tx.dm_unmute : tx.dm_mute, mute: () => this.muteDm(d),
+          isOwnV: own && !mine, code: own && !mine && typeof NB.codeOf === 'function' ? NB.codeOf(d) || '—' : '—', cpId: () => { NB.copy(r.up.code); this.say('✓ ' + tx.copied); },
+          lvNow: lvK ? tx.gv_now.replace('{n}', tx['rk_n' + rkT(lvK)]).replace('{l}', String(rkT(lvK))).replace('{x}', xpK != null ? String(xpK) : '?') : tx.gv_unk,
+          canGive, needAdm: own && !mine && !canGive, goAdm: () => this.setState({ page: 'admin' }),
+          giveX: () => { const x = parseInt(this.state.gvX, 10); if (!x) { this.say('⚠️ ' + tx.gv_bad); return; }
+            this.confirm(tx.gv_qX.replace('{n}', a.name).replace('{x}', String(x)), '✅ ' + tx.gv_btn, () => { act('xpgive', { dev: d, x }); this.setState({ gvX: '' }); }, false); },
+          lvBtns: RK_L.map((q, i) => ({ t: String(i + 1), name: tx['rk_n' + (i + 1)], cls: lvK === i + 1 ? 'on' : '',
+            go: () => this.confirm(tx.gv_qLv.replace('{n}', a.name).replace('{r}', tx['rk_n' + (i + 1)]).replace('{l}', String(i + 1)), '✅ ' + tx.gv_lv, () => act('xpgive', { dev: d, lv: i + 1 }), false) })) });
+      } else r.up = { name: '', photo: '', hasPh: false, noPh: true, bg: '', ini: '', bgImg: 'none', sub: '', canDm: false, noDm: false, notMe: false, why: '', isO: false, isA: false, ncls: '', hasRk: false, rkT: '1', rkName: '', rkNcls: '', hasMute: false, muteT: '', mute: null, isOwnV: false, code: '', cpId: null, lvNow: '', canGive: false, needAdm: false, goAdm: null, giveX: null, lvBtns: [] };
+      r.gvX = s.gvX || ''; r.onGvX = (e) => this.setState({ gvX: String(e.target.value || '').replace(/[^0-9-]/g, '').slice(0, 7) });
       // hususy habarlar sanawy
       r.isDms = pg === 'dms';
       const rows = Object.keys(DMS).filter((d) => d !== me1).sort((a, b) => (DMS[b].lt || 0) - (DMS[a].lt || 0));
       r.dmEmpty = !rows.length;
       r.dmRows = rows.map((d, i) => { const x = DMS[d], m = x.msgs.filter((q) => !isCtl(q)).pop(), av = ava(d);
         return Object.assign(av, { d: (i * 0.04).toFixed(2), isReq: x.st === 'in', isBlk: x.st === 'blk', hasUn: (x.un || 0) > 0, un: String(x.un || 0),
-          last: !m ? (x.st === 'in' ? tx.dm_req : '') : (m.f === me1 ? '↩ ' : '') + (m.ph ? '📷 ' + tx.dm_photo : m.st ? m.st : m.sys === 'acc' ? tx.dm_acced : m.x),
-          open: () => this.openDm(d) }); });
+          last: m ? dmPrev(m, tx, me1) : x.ls ? x.ls : x.st === 'in' ? tx.dm_req : '', lastCls: (x.un || 0) > 0 ? 'dmlast-un' : '',
+          dev: d, muted: !!MUTE[d], unCls: MUTE[d] ? 'mut' : '',
+          open: () => { if (Date.now() - (window.__lpDm || 0) < 900) return; this.openDm(d); } }); });
+      r.dmHint = rows.length > 0;
+      // 1.21: söhbeti açmazdan görmek — okaldy belligi iberilmeýär, okalmadyk san üýtgemeýär
+      r.pkOn = !!s.dmPeek;
+      if (r.pkOn) { const d = s.dmPeek, x = DMS[d] || { msgs: [] }, list = x.msgs.filter((q) => !isCtl(q)).slice(-15);
+        r.pk = Object.assign(ava(d), { empty: !list.length, emptyT: x.ls || tx.dm_peekEmpty,
+          msgs: list.map((m) => { const mn = m.f === me1;
+            if (m.sys) return { cls: 'dmm-s', bcls: '', t: m.sys === 'acc' ? tx.dm_acced : m.sys === 'key' ? tx.dm_keyChg.replace('{n}', nameOf(d)) : m.sys, hasImg: false, img: '', isSt: false, st: '', time: '' };
+            return { cls: mn ? 'dmm-me' : 'dmm-o', bcls: mn ? 'gb-me' : 'gb-o', t: m.x || '', hasImg: !!m.ph, img: m.ph || '', isSt: !!m.st, st: m.st || '', time: this.hm((m.t || 0) * 1000 || now) }; }),
+          muteT: MUTE[d] ? tx.dm_unmute : tx.dm_mute, mute: () => this.muteDm(d), open: () => { this.setState({ dmPeek: null }); this.openDm(d); } });
+      } else r.pk = { name: '', photo: '', hasPh: false, noPh: true, bg: '', ini: '', ncls: '', empty: true, emptyT: '', msgs: [], muteT: '', mute: null, open: null };
+      r.pkX = () => this.setState({ dmPeek: null });
       // hususy habar otagy
       r.isDm = pg === 'dm' && !!s.dmPeer;
       if (r.isDm) {
@@ -587,7 +614,8 @@
         cls: roleOf(d) === 'o' ? 'vo' : '', role: roleOf(d) === 'o' ? tx.vip_o : tx.vip_a, d: (i * 0.06).toFixed(2), open: () => this.openProf(d) }));
       // sahypa ady we menýu
       if (pg === 'uprof') r.pageTitle = tx.p_uprof; else if (pg === 'dms') r.pageTitle = tx.p_dms; else if (pg === 'vip') r.pageTitle = tx.p_vip; else if (pg === 'dm') r.pageTitle = r.dp.name;
-      const dmUn = Object.keys(DMS).reduce((a, d) => a + (DMS[d].un || 0) + (DMS[d].st === 'in' && !(DMS[d].seen) ? 1 : 0), 0);
+      const dmUn = Object.keys(DMS).filter((d) => !MUTE[d]).reduce((a, d) => a + (DMS[d].un || 0) + (DMS[d].st === 'in' && !(DMS[d].seen) ? 1 : 0), 0);
+      r.menuUn = dmUn > 0; r.menuUnT = dmUn > 9 ? '9+' : String(dmUn);
       const mk = (k, t, i1, i2, badge, bt) => ({ badge, bt, bc: '', t, i1, i2, d: '0.1', cls: pg === k ? 'mi-on' : '', ic: pg === k ? '#6FDB9C' : '#E0B04A', go: () => this.setState({ page: k, menu: false }) });
       const gi = r.menuItems.findIndex((m) => m.t === tx.p_global);
       r.menuItems.splice(gi + 1, 0, mk('dms', tx.p_dms, 'M4 6h16v10H8l-4 4z', 'M8 10h8M8 13h5', dmUn > 0, String(dmUn)),
@@ -639,8 +667,8 @@
     C.delBg = () => { C.setState({ pbg: '' }); LS.set('pbg', ''); };
     // ---- profil / hususy habarlar ----
     J(NB.dmList(), []).forEach((q) => { if (q.p) DMS[q.p] = Object.assign(DMS[q.p] || { msgs: [], un: 0 }, { st: q.st || '', n: q.n || '' }); });
-    { const meta = LS.get('dmMeta', {}); Object.keys(meta).forEach((d) => { const x = DMS[d] || (DMS[d] = { msgs: [], un: 0, st: '' }); x.lt = meta[d].lt || 0; x.un = meta[d].un || 0; x.n = x.n || meta[d].n || ''; x.seen = !!meta[d].seen; }); }
-    const saveMeta = () => { const m = {}; Object.keys(DMS).forEach((d) => { m[d] = { lt: DMS[d].lt || 0, un: DMS[d].un || 0, n: DMS[d].n || '', seen: !!DMS[d].seen }; }); LS.set('dmMeta', m); };
+    { const meta = LS.get('dmMeta', {}); Object.keys(meta).forEach((d) => { const x = DMS[d] || (DMS[d] = { msgs: [], un: 0, st: '' }); x.lt = meta[d].lt || 0; x.un = meta[d].un || 0; x.n = x.n || meta[d].n || ''; x.seen = !!meta[d].seen; x.ls = meta[d].ls || ''; }); }
+    const saveMeta = () => { const m = {}; Object.keys(DMS).forEach((d) => { m[d] = { lt: DMS[d].lt || 0, un: DMS[d].un || 0, n: DMS[d].n || '', seen: !!DMS[d].seen, ls: DMS[d].ls || '' }; }); LS.set('dmMeta', m); };
     C._saveMeta = saveMeta;
     const tick = () => C.setState({ dmTick: (C.state.dmTick || 0) + 1 });
     C.openProf = (dev) => {
@@ -655,6 +683,8 @@
       if (C.state.page !== 'dm') C._dmBack = C.state.page;
       C.setState({ page: 'dm', dmPeer: dev, dmIn: '', menu: false }); NB.dmOpen(dev); if (!P2[dev]) NB.prof(dev);
     };
+    C.muteDm = (dev) => { const tx = C.T()[C.state.lang]; if (MUTE[dev]) delete MUTE[dev]; else MUTE[dev] = 1; LS.set('dmMute', MUTE); C.say(MUTE[dev] ? '🔇 ' + tx.dm_mutedOk : '🔔 ' + tx.dm_unmutedOk); tick(); };
+    C.peekDm = (dev) => { if (!dev || !DMS[dev]) return; C.setState({ dmPeek: dev }); NB.dmOpen(dev); };   // doly sanaw gelýär, «okaldy» iberilmeýär
     C.acceptDm = (dev) => { NB.dmSt(dev, 'acc'); (DMS[dev] || {}).st = 'acc'; tick(); };
     C.blockDm = (dev) => {
       const x = DMS[dev] || (DMS[dev] = { msgs: [], un: 0, st: '' }), tx = C.T()[C.state.lang];
@@ -969,7 +999,8 @@
       const viewing = s.page === 'dm' && s.dmPeer === e.peer;
       if (viewing) { const lp = x.msgs.filter((m) => m.f === e.peer && !isCtl(m) && !m.sys).pop();   // okaldy bellik
         if (lp && (x.rdSent || 0) < (lp.t || 0)) { x.rdSent = lp.t; NB.dmSend(e.peer, JSON.stringify({ rd: lp.t }), C.meName); } }
-      if (fresh && !viewing) { x.un = (x.un || 0) + fresh; x.seen = false; const m = list.filter((q) => q.f === e.peer && !isCtl(q)).pop(); C.say('✉️ ' + nameOf(e.peer) + ': ' + (m && (m.x || m.st || '📷') || '').slice(0, 60)); }
+      if (fresh && !viewing) { x.un = (x.un || 0) + fresh; x.seen = false; const m = list.filter((q) => q.f === e.peer && !isCtl(q)).pop(); if (!MUTE[e.peer]) C.say('✉️ ' + nameOf(e.peer) + ': ' + (m && (m.x || m.st || '📷') || '').slice(0, 60)); }
+      { const lm = x.msgs.filter((q) => !isCtl(q) && !q.pend).pop(); if (lm) x.ls = dmPrev(lm, tx, me).slice(0, 120); }
       if (C._saveMeta) C._saveMeta();
       up.dmTick = (s.dmTick || 0) + 1;
     } else if (e.k === 'dmreq') {
@@ -1014,6 +1045,7 @@
       else if (d.msg === 'kok') { C.say('✅ ' + tx.bk_saved); up.kdDays = ''; up.kdN = ''; up.kdLb = null; }
       else if (d.msg === 'kdel') C.say('🗑 ' + tx.bk_deleted);
       else if (d.msg === 'ndel') C.say('🗑 ' + tx.n_deleted);
+      else if (d.msg && d.msg.indexOf('xp:') === 0) { const q = d.msg.split(':'); UPX[q[3]] = { lv: +q[1], xp: +q[2] }; C.say('✅ ' + tx.gv_ok.replace('{l}', q[1]).replace('{x}', q[2])); }
       else if (d.msg && d.msg.indexOf('adm:') === 0) { const k = d.msg.slice(4); NB.copy(k); up.onceK = k; up.onceN = ''; C.say('🔑 ' + tx.oa_ok); act('get'); }
       else if (d.msg === 'upd') C.say('⚡ ' + tx.ad_updGo);
       else if (d.msg === 'busy') C.say(tx.ad_updBusy);
@@ -1047,7 +1079,7 @@
         if (m.invites != null) up.invites = m.invites;
         C.party(m.why === 'gift' ? tx.gift_got : m.why === 'ref' ? tx.ref_got.replace('{d}', String(m.days || 1)) : tx.k_ext);
       } else if (m.k === 'lvl') {
-        LS.set('lvl', { lv: m.lv, xp: m.xp, cur: m.cur, next: m.next, inv: m.inv }); up.payTick = t;
+        LS.set('lvl', { lv: m.lv, xp: m.xp, cur: m.cur, next: m.next, inv: m.inv }); up.payTick = t; if (m.inv != null) up.invites = m.inv;
         if (m.up) { up.rkm = { t: rkT(m.lv), up: true, days: m.days || 0 }; C.party('⭐ ' + tx.lv_up.replace('{n}', String(m.lv)) + (m.days ? ' · +' + m.days + ' ' + tx.days : '')); }
       } else if (m.k === 'top') { LS.set('top', m.l || []); up.payTick = t; }
       else if (m.k === 'pay') { LS.set('payInfo', { p: m.p, i: m.i, at: Date.now() }); up.payTick = t; }
@@ -1088,6 +1120,7 @@
     if (document.getElementById('tvad')) { document.getElementById('tvad').remove(); return true; }
     if (s.zoom) { C.setState({ zoom: '' }); return true; }
     if (s.rkm) { C.setState({ rkm: null }); return true; }
+    if (s.dmPeek) { C.setState({ dmPeek: null }); return true; }
     if (s.stOn) { C.setState({ stOn: false }); return true; }
     if (s.cf) { C.cfNo(); return true; }
     if (s.menu) { C.setState({ menu: false }); return true; }
@@ -1120,6 +1153,19 @@
     lpAt = Date.now(); NB.copy(t); try { NB.tap(); } catch (e) {}
     window.C.say('✓ ' + window.C.T()[window.C.state.lang].copied);
   }
+  // 1.21: hususy habarlar sanawynda adyň üstüne basyp saklamak → açmazdan görmek
+  let dmLp = null;
+  document.addEventListener('touchstart', (e) => {
+    const el = e.target && e.target.closest && e.target.closest('[data-dv]'); if (!el) { dmLp = null; return; }
+    const t = e.touches[0], o = { x: t.clientX, y: t.clientY };
+    o.tm = setTimeout(() => { if (dmLp !== o) return; dmLp = null; window.__lpDm = Date.now(); try { NB.tap(); } catch (e2) {} if (window.C) window.C.peekDm(el.getAttribute('data-dv')); }, 450);
+    dmLp = o;
+  }, { passive: true });
+  document.addEventListener('touchmove', (e) => { if (!dmLp) return; const t = e.touches[0]; if (Math.abs(t.clientX - dmLp.x) > 10 || Math.abs(t.clientY - dmLp.y) > 10) { clearTimeout(dmLp.tm); dmLp = null; } }, { passive: true });
+  const dmLpEnd = () => { if (dmLp) { clearTimeout(dmLp.tm); dmLp = null; } };
+  document.addEventListener('touchend', dmLpEnd, { passive: true }); document.addEventListener('touchcancel', dmLpEnd, { passive: true });
+  document.addEventListener('contextmenu', (e) => { const el = e.target && e.target.closest && e.target.closest('[data-dv]'); if (!el || !window.C) return; e.preventDefault();
+    if (Date.now() - (window.__lpDm || 0) < 900) return; window.__lpDm = Date.now(); window.C.peekDm(el.getAttribute('data-dv')); });
   // habary saga süýşürmek → jogap (Global chat, hususy habar)
   let sw = null;
   document.addEventListener('touchstart', (e) => {

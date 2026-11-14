@@ -1617,17 +1617,20 @@ def app_grant_days(dev, days, by):
 APP_LVL = [0, 50, 120, 250, 400, 600, 850, 1150, 1500, 2000]
 APP_LVL_GIFT = {3: 1, 5: 3, 7: 5, 10: 7}
 def app_xp(a, dev):
+    """(bal, dost sany). «bx» — eýesiniň beren ballary: dost çagyryşy hökmünde görünýär (her 50 bal = 1 dost)."""
     u = (a.get("devs") or {}).get(dev) or {}
     inv = sum(1 for v in (a.get("ref_devs") or {}).values() if v == dev)
-    return int(u.get("ad") or 0) * 10 + inv * 50, inv
+    bx = int(u.get("bx") or 0)
+    return max(0, int(u.get("ad") or 0) * 10 + inv * 50 + bx), inv + max(0, bx // 50)
 def app_lvl(xp): return sum(1 for t_ in APP_LVL if xp >= t_)
 
 def app_lvl_check(dev, tell=False):
     """Dereje täzelenýär; täze dereje — sowgat günler; telefona häzirki dereje iberilýär."""
     a = app_cfg(load_db()); xp, inv = app_xp(a, dev); lv = app_lvl(xp)
-    old = int(((a.get("devs") or {}).get(dev) or {}).get("lv") or 1)
-    gift = sum(d_ for l_, d_ in APP_LVL_GIFT.items() if old < l_ <= lv)
-    if lv != old: app_mut(lambda x: x.setdefault("devs", {}).setdefault(dev, {}).__setitem__("lv", lv))
+    u_ = (a.get("devs") or {}).get(dev) or {}
+    old = int(u_.get("lv") or 1); top_ = max(old, int(u_.get("lgm") or 1))   # lgm: sowgat berlen iň ýokary dereje (iki gezek berilmesin)
+    gift = sum(d_ for l_, d_ in APP_LVL_GIFT.items() if top_ < l_ <= lv)
+    if lv != old or lv > top_: app_mut(lambda x: x.setdefault("devs", {}).setdefault(dev, {}).update({"lv": lv, "lgm": max(top_, lv)}))
     k_ = app_grant_days(dev, gift, "lvl") if gift else None
     if tell or lv != old:
         nxt = APP_LVL[lv] if lv < len(APP_LVL) else 0
@@ -1639,6 +1642,8 @@ def app_top(a):
     c_ = {}
     for v in (a.get("ref_devs") or {}).values(): c_[v] = c_.get(v, 0) + 1
     devs_ = a.get("devs") or {}
+    for d_, u_ in devs_.items():
+        if int(u_.get("bx") or 0) >= 50: c_[d_] = c_.get(d_, 0) + int(u_["bx"]) // 50
     return [[(devs_.get(d_) or {}).get("nick") or "?", n_, app_lvl(app_xp(a, d_)[0])] for d_, n_ in sorted(c_.items(), key=lambda kv: -kv[1])[:10]]
 
 def app_order_done(oid, ok, who):
@@ -2049,7 +2054,8 @@ def app_adm_snap(a, e, dev):
         users[dv] = {"name": u.get("nick") or "?", "code": app_ref_code(dv), "model": u.get("model") or "?", "ver": u.get("ver") or "?",
                      "lang": u.get("lang") or "tk", "first": app_hm(u.get("f")), "seen": app_hm(u.get("l")), "l": int(u.get("l") or 0),
                      "key": (f"{max(0, int((kv_['exp'] - now) // 86400))} gün" if kv_ and kv_.get("exp") else ("çäksiz" if kv_ else "—")),
-                     "inv": inv_n.get(dv, 0), "ban": dv in bans or dv in set(a.get("ubans") or [])}
+                     "inv": inv_n.get(dv, 0) + max(0, int(u.get("bx") or 0) // 50), "ban": dv in bans or dv in set(a.get("ubans") or []),
+                     "xp": max(0, int(u.get("ad") or 0) * 10 + inv_n.get(dv, 0) * 50 + int(u.get("bx") or 0))}
     if full and len(users) > 300:   # köp bolsa: diňe soňky işjeňler + biletdäkiler
         keep = sorted(users, key=lambda d_: users[d_]["l"], reverse=True)[:300]
         users = {d_: users[d_] for d_ in set(keep) | (need & set(users))}
@@ -2199,6 +2205,22 @@ async def app_adm(app, dev, o):
             try: await asyncio.to_thread(app_sync, True)
             except Exception as e2: RUN["app_err"] = str(e2)[:150]
             msg = f"xadd:{n_}"
+        elif act == "xpgive" and f_:   # 1.21: eýesi ulanyja bal ýa-da dereje berýär (dost çagyryşy ýaly görünýär)
+            dv = str(r.get("dev") or "")
+            if DEV_RE.match(dv) and dv in (a.get("devs") or {}):
+                xp0 = app_xp(a, dv)[0]
+                try: add_ = int(r.get("x") or 0)
+                except Exception: add_ = 0
+                try: lv_t = int(r.get("lv") or 0)
+                except Exception: lv_t = 0
+                if 1 <= lv_t <= len(APP_LVL): add_ = APP_LVL[lv_t - 1] - xp0
+                add_ = max(-xp0, min(100000, add_))
+                if add_:
+                    app_mut(lambda x: x["devs"][dv].__setitem__("bx", int(x["devs"][dv].get("bx") or 0) + add_))
+                    await asyncio.to_thread(app_lvl_check, dv, True)
+                xp1 = app_xp(app_cfg(load_db()), dv)[0]
+                msg = f"xp:{app_lvl(xp1)}:{xp1}:{dv}"
+            else: err = "ulanyjy tapylmady"
         elif act in ("ordok", "ordno") and full:   # 1.19: sargyt
             od_ = await asyncio.to_thread(app_order_done, str(r.get("id") or ""), act == "ordok", f"app:{who}")
             msg = act if od_ else "ordx"

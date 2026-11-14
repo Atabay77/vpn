@@ -297,6 +297,7 @@ open class Main : Activity() {
         @JavascriptInterface fun dmPage(on: Boolean) { Msg.dmPage = on; if (on) Msg.kick() }
         @JavascriptInterface fun dmSt(peer: String, st: String) = Chat.setSt(this@Main, peer, st)
         @JavascriptInterface fun dmList(): String = Chat.list(this@Main).toString()
+        @JavascriptInterface fun codeOf(dev: String): String = if (Regex("^[0-9a-f]{12}$").matches(dev)) Msg.codeOf(dev) else ""
         @JavascriptInterface fun gsend2(json: String) { runCatching { Chat.gsend(this@Main, JSONObject(json)) } }
         @JavascriptInterface fun img(kind: String, id: String) = Chat.img(kind, id)
         @JavascriptInterface fun adm(json: String) { runCatching { Msg.adm(this@Main, JSONObject(json)) } }
