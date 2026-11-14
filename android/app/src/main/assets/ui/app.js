@@ -717,18 +717,6 @@
               on: () => { try { NB.killSw(!kon); } catch (e) {} this.setState({ kson: !kon }); } }));
             r.opts.push({ i1: 'M4 6h16v12H4z', i2: 'M9 18v2h6v-2M8 10h8', t: tx.ks_sys, s: tx.ks_sysS, isSw: false, isBtn: true, arrow: 'M9 6l6 6-6 6', icCls: '', isSeg: false, segs: [], aria: 'false', swCls: '', d: '0.55',
               on: () => { try { NB.vpnSettings(); } catch (e) {} } }); } } }
-      // 1.28: haftalyk ýaryş
-      { const W = LS.get('wk', null) || { l: [], end: 0, last: [] }, left = Math.max(0, (W.end || 0) - Date.now() / 1000);
-        r.wkLeft = W.end ? (left >= 86400 ? tx.wk_d.replace('{d}', String(Math.floor(left / 86400))) + ' ' : '') + tx.wk_h.replace('{h}', String(Math.floor(left % 86400 / 3600))) : '—';
-        r.wkP1 = tx.wk_d.replace('{d}', '7'); r.wkP2 = tx.wk_d.replace('{d}', '3'); r.wkP3 = tx.wk_d.replace('{d}', '1');
-        r.wkList = (W.l || []).slice(0, 10).map((q, i) => ({ place: i < 3 ? ['🥇', '🥈', '🥉'][i] : (i + 1) + '.', n: q[0], c: tx.wk_c.replace('{n}', String(q[1])), cls: q[0] === this.meName ? 'me' : '' }));
-        r.wkEmpty = !r.wkList.length;
-        // 1.30: baş sahypada haftalyk ýaryş zolagy
-        const dH = window.innerHeight * 390 / Math.max(1, window.innerWidth);   // bagly wagty kartoçka uly — gysga ekranda ýazga degmesin
-        r.wkBarOn = pg === 'main' && (s.st !== 'on' || dH >= 790); const mn = W.min || 5, me2 = W.me || 0;
-        r.wkBarT = !W.end ? tx.wk_go : tx.wk_me.replace('{n}', String(me2)) + ' · ' + (me2 >= mn ? tx.wk_go : tx.wk_need.replace('{n}', String(mn - me2)));
-        r.goWk = () => { this._rkBack = 'main'; this.setState({ page: 'rank' }); setTimeout(() => { const el = document.querySelector('.wkc'); if (el) el.scrollIntoView({ block: 'center' }); }, 350); };
-        if (pg === 'main' && Date.now() - (this._wkQ || 0) > 600000) { this._wkQ = Date.now(); this._lvQ = Date.now(); NB.send(JSON.stringify({ k: 'lvlq' })); } r.wkHasLast = !!(W.last && W.last.length); r.wkLastT = r.wkHasLast ? tx.wk_last.replace('{l}', W.last.map((q, i) => ['🥇', '🥈', '🥉'][i] + ' ' + q[0]).join(', ')) : ''; }
       // 1.28: açar sowgat etmek
       { const kl = s.hasKey && s.kexp > 0 ? Math.floor((s.kexp - Date.now() / 1000) / 86400) : 0, gd = s.gfD || 1;
         r.gfOn = kl >= 2; r.gfSub = tx.gf_sub.replace('{d}', String(kl));
@@ -1222,7 +1210,7 @@
       } else if (m.k === 'lvl') {
         LS.set('lvl', { lv: m.lv, xp: m.xp, cur: m.cur, next: m.next, inv: m.inv }); up.payTick = t; if (m.inv != null) up.invites = m.inv;
         if (m.up) { up.rkm = { t: rkT(m.lv), up: true, days: m.days || 0 }; C.party('⭐ ' + tx.lv_up.replace('{n}', String(m.lv)) + (m.days ? ' · +' + m.days + ' ' + tx.days : '')); }
-      } else if (m.k === 'top') { LS.set('top', m.l || []); if (m.wk) LS.set('wk', { l: m.wk, end: m.wkEnd || 0, last: m.wkLast || [], me: m.wkMe || 0, min: m.wkMin || 5 }); up.payTick = t; }
+      } else if (m.k === 'top') { LS.set('top', m.l || []); up.payTick = t; }
       else if (m.k === 'lvs') { const tn = Date.now(); Object.keys(m.m || {}).forEach((d) => { LVB[d] = [+m.m[d] || 0, tn]; }); LS.set('lvb', LVB); up.gTick = (s.gTick || 0) + 1; }
       else if (m.k === 'kgift') { if (m.ok) { C.say(tx.gf_ok.replace('{n}', m.to || '?').replace('{d}', String(m.d || 1))); up.gfTo = ''; try { NB.refresh(); } catch (e2) {} } else C.say('⚠️ ' + (tx['gf_e_' + m.why] || tx.gf_e_notfound)); }
       else if (m.k === 'pay') { LS.set('payInfo', { p: m.p, i: m.i, pi: m.pi || '', at: Date.now() }); up.payTick = t; }

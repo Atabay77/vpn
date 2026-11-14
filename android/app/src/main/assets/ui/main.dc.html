@@ -295,14 +295,6 @@ html.ph-s .c-bg{background-image:var(--bgS,url(img/bg0_s.jpg))!important}
           </div>
         </div>
       </sc-if>
-      <sc-if value="{{wkBarOn}}" hint-placeholder-val="{{true}}"><button onClick="{{goWk}}" class="wkbar tap" aria-label="{{tx.wk_title}}">
-        <span class="wkbi">🏁</span>
-        <span style="flex-grow:1;min-width:0;display:flex;flex-direction:column;gap:1px;text-align:left">
-          <span style="font-size:9px;font-weight:800;letter-spacing:.14em;color:#FFD27A;white-space:nowrap">{{tx.wk_title}} · ⏳ {{wkLeft}}</span>
-          <span style="font-size:12px;font-weight:700;color:#F3E7D0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{wkBarT}}</span>
-        </span>
-        <span class="wkbp">🥇 {{wkP1}}</span>
-      </button></sc-if>
       <button onClick="{{goGlobal}}" class="warn tap" aria-label="{{tx.p_global}}" style="min-height:62px;width:100%;border-radius:14px;display:flex;align-items:center;gap:10px;padding:8px 8px 8px 12px;box-sizing:border-box;background:rgba(8,24,17,.93);border:1px solid rgba(111,219,156,.6);box-shadow:0 6px 20px rgba(0,0,0,.45);cursor:pointer;text-align:left;color:#F3E7D0">
         <span style="flex-grow:1;min-width:0;display:flex;flex-direction:column;gap:3px">
           <span style="display:flex;align-items:center;gap:6px;font-size:9px;font-weight:800;letter-spacing:.14em;color:#6FDB9C"><span class="livedot"></span>{{gHead}}</span>
@@ -919,14 +911,6 @@ html.ph-s .c-bg{background-image:var(--bgS,url(img/bg0_s.jpg))!important}
       <div class="glass" style="border-radius:18px;padding:14px;display:flex;flex-direction:column;gap:6px;flex-shrink:0">
         <div style="font-size:11px;font-weight:800;letter-spacing:.14em;color:#E0B04A">{{tx.rk_how}}</div>
         <div style="font-size:12px;color:#C9BFA8;line-height:1.5">{{lvHow}}</div>
-      </div>
-      <div class="glass wkc">
-        <div style="display:flex;align-items:center;gap:8px"><span style="flex-grow:1;font-size:11px;font-weight:800;letter-spacing:.14em;color:#E0B04A">🏁 {{tx.wk_title}}</span><span class="wkleft">⏳ {{wkLeft}}</span></div>
-        <div class="wkpr"><span>🥇 {{wkP1}}</span><span>🥈 {{wkP2}}</span><span>🥉 {{wkP3}}</span></div>
-        <sc-if value="{{wkEmpty}}" hint-placeholder-val="{{true}}"><div style="font-size:12px;color:#C9BFA8">{{tx.wk_empty}}</div></sc-if>
-        <sc-for list="{{wkList}}" as="wk" hint-placeholder-count="3"><div class="wkr {{wk.cls}}"><span class="wkn">{{wk.place}}</span><span style="flex-grow:1;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{wk.n}}</span><span style="color:#C9BFA8;font-size:12px">{{wk.c}}</span></div></sc-for>
-        <sc-if value="{{wkHasLast}}" hint-placeholder-val="{{false}}"><div style="font-size:11px;color:#8E9C93;line-height:1.4">{{wkLastT}}</div></sc-if>
-        <div style="font-size:10.5px;color:#8E9C93;line-height:1.4">{{tx.wk_note}}</div>
       </div>
       <sc-if value="{{hasTop}}" hint-placeholder-val="{{false}}"><div class="glass" style="border-radius:18px;padding:14px;display:flex;flex-direction:column;gap:6px;flex-shrink:0">
         <div style="font-size:11px;font-weight:800;letter-spacing:.14em;color:#E0B04A">🏆 {{tx.lv_top}}</div>
