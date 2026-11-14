@@ -1863,6 +1863,12 @@ async def app_admin_reply(app, tid, text):
 # Program haýyşy açar söz bilen şifrleýär (app_enc("adm|" + pw)) — diňe açar sözi bilýän ýazyp/okap bilýär.
 # Jogap (doly ýagdaý) Firestore-a d/<telefon>/i/adm resminamasyna ýazylýar (her gezek üstüne).
 APW_ABC = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+def news_id(news, now=None):
+    """Habaryň kimligi: wagt (sekunt, 16-lyk). Şol sekuntda başga habar bar bolsa indiki san — iki habar bir kimlik almasyn."""
+    t_ = int(now or time.time()); ids = {n_.get("id") for n_ in (news or [])}
+    while "n" + format(t_, "x") in ids: t_ += 1
+    return "n" + format(t_, "x")
+
 def apw_new(): return "ADM-" + "-".join("".join(random.SystemRandom().choice(APW_ABC) for _ in range(4)) for _ in range(3))
 def apw_norm(pw): return re.sub(r"\s+", "", str(pw or "")).upper()
 def apw_id(pw): return hashlib.sha256(("tvaid|" + apw_norm(pw)).encode()).hexdigest()[:16]
@@ -1872,7 +1878,20 @@ def apw_valid(e):
     """Kömekçi adminiň möhleti geçse açar sözi hem işlemeýär."""
     if not e: return False
     if e.get("role") == "f": return int(e.get("uid") or 0) in ORIG_ADMINS
+    if e.get("once") and not e.get("dev") and (e.get("hist") or time.time() > float(e.get("exp") or 0)): return False   # 1 girişlik: ulanyldy ýa-da 24 sagat geçdi
     return is_admin(int(e.get("uid") or 0))
+
+APW_ONCE_TTL = 86400   # 1 girişlik açar: 24 sagadyň içinde ulanylmasa ýanýar
+def apw_once_make(uid, name, perm):
+    """Eýesi programdan 1 girişlik admin açaryny döredýär: bir telefonda bir gezek girilýär, çykanda/çykarylanda pozulýar."""
+    pw = apw_new()
+    def f(x):
+        ap = x.setdefault("apw", {}); now_ = time.time()
+        for k_ in [k_ for k_, v in ap.items() if v.get("once") and not v.get("dev") and (v.get("hist") or now_ > float(v.get("exp") or 0))]: ap.pop(k_)
+        ap[apw_id(pw)] = {"pw": pw, "uid": int(uid), "name": (name or "1 girişlik")[:32], "role": "h", "perm": perm, "dev": None, "ts": int(now_), "made": 0,
+                          "once": True, "exp": int(now_ + APW_ONCE_TTL)}
+    app_mut(f)
+    return pw
 
 def app_hm(ts):
     if not ts: return ""
@@ -1921,10 +1940,11 @@ def app_adm_snap(a, e, dev):
                         "by": str(v.get("by") or ""), "used": v.get("dev"), "at": app_hm(v.get("ts")), "n": int(v.get("n") or 1), "u": len(app_key_devs(v)),
                         "lb": v.get("lb", ""), "exp": int(v.get("exp") or 0), "dvs": app_key_devs(v)[:20]} for k_, v in ks]
     if f_:
-        out["codes"] = [{"id": aid, "code": (x["pw"] if aid == apw_id(e["pw"]) else x["pw"][:4] + "-••••-••••-" + x["pw"][-4:]), "role": x.get("role"),
+        out["codes"] = [{"id": aid, "code": (x["pw"] if aid == apw_id(e["pw"]) or (x.get("once") and not x.get("hist")) else x["pw"][:4] + "-••••-••••-" + x["pw"][-4:]), "role": x.get("role"),
                          "name": x.get("name") or "", "perm": x.get("perm"), "u": x.get("dev"), "seen": app_hm(x.get("seen")),
-                         "vpn": bool(x.get("dev")) and now - float(x.get("seen") or 0) < 300, "made": int(x.get("made") or 0), "ok": apw_valid(x)}
-                        for aid, x in (a.get("apw") or {}).items()]
+                         "vpn": bool(x.get("dev")) and now - float(x.get("seen") or 0) < 300, "made": int(x.get("made") or 0), "ok": apw_valid(x),
+                         "once": bool(x.get("once")), "exp": int(x.get("exp") or 0)}
+                        for aid, x in (a.get("apw") or {}).items() if apw_valid(x) or not x.get("once")]
         out["notes"] = [n_["t"] for n_ in db.get("ai_notes", [])]
         out["aiOn"] = bool(db.get("ai_sup", True)); out["aiKey"] = bool(ai_key())
         out["aiCount"] = sum(1 for t in (a.get("tickets") or {}).values() for x in t.get("log", []) if x.get("r") == "ai" and x.get("ts", 0) >= today)
@@ -1994,6 +2014,7 @@ async def app_adm(app, dev, o):
                 x["hist"] = ((x.get("hist") or []) + [dev])[-3:]; RUN["app_dirty"] = True
     app_mut(touch)
     if act == "logout":
+        if e.get("once"): app_mut(lambda x: (x.get("apw") or {}).pop(aid, None))   # 1 girişlik açar çykanda ýanýar
         await notify_founders(app, f"🔒 <b>Programma admini çykdy</b> — {esc(e.get('name') or '?')}", silent=True); return
     if act == "imgc" and f_:   # 1.16: habaryň suraty bölekleýin gelýär (her bölek ~5 KB)
         key_ = aid + ":" + re.sub(r"[^\w]", "", str(r.get("id") or ""))[:12]
@@ -2103,11 +2124,16 @@ async def app_adm(app, dev, o):
                 except Exception as e2: RUN["app_err"] = str(e2)[:150]
         elif act == "kick" and f_:
             k_ = str(r.get("id") or "")
-            if k_ != aid: app_mut(lambda x: (x.get("apw") or {}).get(k_, {}).__setitem__("dev", None) if k_ in (x.get("apw") or {}) else None)
+            if k_ != aid: app_mut(lambda x: ((x.get("apw") or {}).pop(k_, None) if (x.get("apw") or {}).get(k_, {}).get("once")
+                                             else (x.get("apw") or {}).get(k_, {}).__setitem__("dev", None)) if k_ in (x.get("apw") or {}) else None)
+        elif act == "mkadm" and f_:   # 1.17: 1 girişlik admin açary (diňe eýesi)
+            perm_ = "all" if r.get("perm") == "all" else "tk"
+            msg = "adm:" + await asyncio.to_thread(apw_once_make, int(e.get("uid") or 0), str(r.get("n") or "").strip()[:32] or "1 girişlik", perm_)
+            await notify_founders(app, f"🔑 Programdan 1 girişlik admin açary döredildi · {APW_PERM.get(perm_)}", silent=True)
         elif act == "bc" and f_:
             t1, x1 = str(r.get("t") or "").strip()[:80], str(r.get("x") or "").strip()[:600]
             if t1 and x1:
-                nw_ = {"id": "n" + format(int(now), "x"), "ts": int(now), "t": t1, "x": x1}
+                nw_ = {"id": news_id(app_cfg(load_db()).get("news"), now), "ts": int(now), "t": t1, "x": x1}
                 bt_ = [b_ for b_ in (r.get("btn") or []) if b_ in APP_NEWS_BTN][:4]
                 if bt_: nw_["btn"] = bt_
                 ie_ = RUN.get("bcimg", {}).pop(aid + ":" + re.sub(r"[^\w]", "", str(r.get("img") or ""))[:12], None) if r.get("img") else None
@@ -3508,7 +3534,7 @@ async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
         elif act == "anews":
             ls_ = [x for x in txt.splitlines()]
             if len(ls_) < 2 or not ls_[0].strip(): STATE[uid] = st; await u.message.reply_text("⚠️ Birinji setir ady, ikinji setirden tekst bolmaly.", reply_markup=back("anews")); return
-            nw_ = {"id": "n" + format(int(time.time()), "x"), "ts": int(time.time()), "t": ls_[0].strip()[:80], "x": "\n".join(ls_[1:]).strip()[:600]}
+            nw_ = {"id": news_id(app_cfg(load_db()).get("news")), "ts": int(time.time()), "t": ls_[0].strip()[:80], "x": "\n".join(ls_[1:]).strip()[:600]}
             app_mut(lambda x: x.__setitem__("news", ([nw_] + (x.get("news") or []))[:10]))
             try: await asyncio.to_thread(app_sync, True); RUN.pop("app_err", None)
             except Exception as e: RUN["app_err"] = str(e)[:150]

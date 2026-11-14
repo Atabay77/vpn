@@ -13,7 +13,7 @@
   // fon: her gün başga ýer (Garaşsyzlyk / Bagt köşgi / Älem), gündiz we agşam görnüşi
   (function bgDay() {
     const d = new Date(), n = Math.floor((d.getTime() - d.getTimezoneOffset() * 60000) / DAY) % 3, r = document.documentElement.style;
-    r.setProperty('--bgN', 'url(img/bg' + n + '_n.jpg)'); r.setProperty('--bgD', 'url(img/bg' + n + '_d.jpg)');
+    r.setProperty('--bgN', 'url(img/bg' + n + '_n.jpg)'); r.setProperty('--bgD', 'url(img/bg' + n + '_d.jpg)'); r.setProperty('--bgS', 'url(img/bg' + n + '_s.jpg)');
     setTimeout(bgDay, 600000);
   })();
   const dayKey = (t) => { const x = new Date(t); return x.getFullYear() + '-' + (x.getMonth() + 1) + '-' + x.getDate(); };
@@ -173,6 +173,7 @@
     const rv0 = P.renderVals;
     P.renderVals = function () {
       const r = rv0.call(this), s = this.state, tx = r.tx, on = s.st === 'on', now = Date.now();
+      if (r.phase && document.documentElement.className !== 'ph-' + r.phase) document.documentElement.className = 'ph-' + r.phase;   // wagta görä tema
       if (INFO.ver) ['s_updS', 'i_ver'].forEach((k) => { tx[k] = String(tx[k]).replace(/1\.\d+(\.\d+)?/, INFO.ver); });
       const kexp = s.kexp; // -1 ýok, 0 çäksiz, >0 möhlet (sn)
       const keyLeft = kexp > 0 ? Math.max(0, kexp - now / 1000) : 0;
@@ -271,12 +272,22 @@
       const byName = (b) => (/^app:/.test(b) ? b.slice(4) : b === 'ref' ? '🤝' : b === 'gift' ? '🎁' : /^\d+$/.test(b) ? 'Telegram' : b || '?');
       if (A && A.codes) r.codeList = A.codes.map((c, i) => {
         const mine = c.u === INFO.dev, u = c.u ? us[c.u] || { name: '?' } : null;
+        if (c.once) { const hl = Math.max(1, Math.ceil(((c.exp || 0) * 1000 - Date.now()) / 3600000));
+          return { code: c.code, icon: '🔑', ibg: 'rgba(224,176,74,.3)', role: tx.oa_once + ' · ' + (c.perm === 'all' ? tx.oa_all : tx.oa_tk) + ' · ' + c.name,
+            who: u ? u.name : tx.ad_free, sub: u ? (u.model || '') + ' · ' + tx.ad_seen + ': ' + c.seen : tx.oa_left.replace('{h}', String(hl)),
+            stT: !u ? tx.ad_unused : c.vpn ? '🟢 ' + tx.ad_vpnOn : '⚪ ' + tx.ad_vpnOff, stCls: !u ? 'tk-closed' : c.vpn ? 'on-g' : 'on-n', d: (i * 0.05).toFixed(2),
+            canKick: isF, kick: () => { act('kick', { id: c.id }); A.codes = A.codes.filter((x) => x.id !== c.id); this.setState({ admTick: (this.state.admTick || 0) + 1 }); this.say('🔓 ' + tx.ad_kicked); } }; }
         return { code: c.code, icon: c.role === 'f' ? '👑' : '👮', ibg: c.role === 'f' ? 'linear-gradient(145deg,#F2CD7A,#C8902E)' : 'rgba(111,168,220,.35)',
           role: (c.role === 'f' ? tx.ad_founder : tx.ad_helper + ' · ' + tx.ad_made.replace('{n}', String(c.made || 0))) + ' · ' + c.name + (c.ok ? '' : ' · ⛔'),
           who: u ? u.name + (mine ? ' · ' + tx.g_you : '') : tx.ad_free, sub: u ? (u.model || '') + ' · ' + tx.ad_seen + ': ' + (mine ? tx.ad_now : c.seen) : tx.ad_freeS,
           stT: !u ? tx.ad_unused : c.vpn || mine ? '🟢 ' + tx.ad_vpnOn : '⚪ ' + tx.ad_vpnOff, stCls: !u ? 'tk-closed' : c.vpn || mine ? 'on-g' : 'on-n', d: (i * 0.05).toFixed(2),
           canKick: isF && !!c.u && !mine, kick: () => { act('kick', { id: c.id }); c.u = null; this.setState({ admTick: (this.state.admTick || 0) + 1 }); this.say('🔓 ' + tx.ad_kicked); } };
       });
+      // 1 girişlik admin açary
+      r.onceN = s.onceN || ''; r.onOnceN = (e) => this.setState({ onceN: e.target.value });
+      r.oncePerms = [['tk', tx.oa_tk], ['all', tx.oa_all]].map(([k, t]) => { const on = (s.oncePerm || 'tk') === k; return { t, p: on ? 'true' : 'false', cls: on ? 'chip-on' : '', pick: () => this.setState({ oncePerm: k }) }; });
+      r.mkOnce = () => { act('mkadm', { perm: s.oncePerm || 'tk', n: (s.onceN || '').trim() }); this.say(tx.k_wait); };
+      r.hasOnceK = !!s.onceK; r.onceK = s.onceK || ''; r.cpOnceK = () => { NB.copy(s.onceK); this.say('✓ ' + tx.copied); };
       r.keyList = ((A && A.keys) || []).map((k, i) => { const u = k.used ? us[k.used] : null;
         return { cp: () => this.setState({ page: 'adm_kd', kSel: k.k, kdLb: null, kdDays: '', kdN: '' }), k: k.k, sub: (k.lb ? '🏷 ' + k.lb + ' · ' : '') + (k.d === 0 ? '♾' : k.d === 30 ? tx.bk_month : k.d + ' ' + tx.days) + ((k.n || 1) > 1 ? ' · 👥 ' + (k.u || 0) + '/' + k.n : '') + ' · ' + tx.bk_by + ': ' + byName(k.by) + ' · ' + k.at + (u ? ' · ' + u.name : ''), stT: k.used ? tx.bk_used : tx.bk_new, stCls: k.used ? 'tk-closed' : 'tk-ans', d: (i * 0.04).toFixed(2) }; });
       if (A) {
@@ -830,6 +841,7 @@
       else if (d.msg === 'kok') { C.say('✅ ' + tx.bk_saved); up.kdDays = ''; up.kdN = ''; up.kdLb = null; }
       else if (d.msg === 'kdel') C.say('🗑 ' + tx.bk_deleted);
       else if (d.msg === 'ndel') C.say('🗑 ' + tx.n_deleted);
+      else if (d.msg && d.msg.indexOf('adm:') === 0) { const k = d.msg.slice(4); NB.copy(k); up.onceK = k; up.onceN = ''; C.say('🔑 ' + tx.oa_ok); act('get'); }
       else if (d.msg === 'upd') C.say('⚡ ' + tx.ad_updGo);
       else if (d.msg === 'busy') C.say(tx.ad_updBusy);
       if (d.err) C.say('⚠️ ' + d.err);
@@ -891,19 +903,31 @@
     return false;
   };
 
+  // habaryň tekstini basyp saklap göçürmek (ady, alynty, surat, wagt goşulmaýar)
+  function lpCopy(el) {
+    const c = el.cloneNode(true);
+    c.querySelectorAll('.gnm,.rpq,img,.gst,.bt,.ailbl,button:not(.kchip)').forEach((x) => x.remove());
+    const t = (c.innerText || c.textContent || '').replace(/📋/g, '').trim();
+    if (!t || !window.C) return;
+    NB.copy(t); try { NB.tap(); } catch (e) {}
+    window.C.say('✓ ' + window.C.T()[window.C.state.lang].copied);
+  }
   // habary saga süýşürmek → jogap (Global chat, hususy habar)
   let sw = null;
   document.addEventListener('touchstart', (e) => {
-    const el = e.target && e.target.closest && e.target.closest('[data-rp]'); if (!el) { sw = null; return; }
+    const el = e.target && e.target.closest && (e.target.closest('[data-rp]') || e.target.closest('.bub')); if (!el) { sw = null; return; }
     const t = e.touches[0]; sw = { el, x: t.clientX, y: t.clientY, dx: 0, on: false };
+    const s1 = sw; sw.lp = setTimeout(() => { if (sw !== s1 || s1.on) return; sw = null; lpCopy(el); }, 550);   // basyp saklamak → göçür
   }, { passive: true });
   document.addEventListener('touchmove', (e) => {
     if (!sw) return; const t = e.touches[0], dx = t.clientX - sw.x, dy = t.clientY - sw.y;
+    if (Math.abs(dx) > 8 || Math.abs(dy) > 8) clearTimeout(sw.lp);
+    if (!sw.el.hasAttribute('data-rp')) return;   // admin/AI söhbeti: diňe göçürmek
     if (!sw.on) { if (Math.abs(dy) > 14 && Math.abs(dy) > Math.abs(dx)) { sw = null; return; } if (dx > 12) sw.on = true; else return; }
     sw.dx = Math.max(0, Math.min(90, dx)); sw.el.style.transform = 'translateX(' + sw.dx + 'px)';
   }, { passive: true });
   const swEnd = () => {
-    if (!sw) return; const s0 = sw; sw = null;
+    if (!sw) return; const s0 = sw; sw = null; clearTimeout(s0.lp);
     s0.el.style.transition = 'transform .2s ease'; s0.el.style.transform = ''; setTimeout(() => { s0.el.style.transition = ''; }, 230);
     if (s0.on && s0.dx > 55 && window.C) { window.C.replyTo(s0.el.getAttribute('data-rp')); try { NB.tap(); } catch (e) {} }
   };
