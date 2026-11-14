@@ -45,7 +45,7 @@ trojan://x@1.1.1.1:1#skip
         assertEquals(2, ins.length()); assertEquals("127.0.0.1", ins.getJSONObject(1).getString("listen")); assertEquals(23456, ins.getJSONObject(1).getInt("port"))
         assertEquals("http", ins.getJSONObject(1).getString("protocol"))
         assertEquals(1, JSONObject(Cfg.full(l[0].uri, true)).getJSONArray("inbounds").length())
-        assertEquals(60 * 60 * 1000L, Lic.SESSION_MS)
+        assertEquals(90 * 60 * 1000L, Lic.SESSION_MS)
         println("NAME " + Sub.splitName("🇷🇺 Russia · 🎮 PUBG Gaming Server") + " " + Sub.splitName("Plain"))
         println("VLESS " + Cfg.outbound("vless://uuid-1@[2001:db8::1]:443?type=tcp&security=reality&pbk=K&sid=ab&sni=x.com&fp=chrome&flow=xtls-rprx-vision#n"))
     }

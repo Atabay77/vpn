@@ -5,7 +5,7 @@ import java.security.MessageDigest
 
 /** Key: botun ürettiği XXXX-XXXX-XXXX. Geçerliyse 1 saatlik oturum sınırı kalkar. Her key diňe 1 telefonda işleýär. */
 object Lic {
-    const val SESSION_MS = 60 * 60 * 1000L
+    const val SESSION_MS = 90 * 60 * 1000L   // 1.23: mugt birikme 1,5 sagat
     const val BANNED_MS = 20 * 60 * 1000L     // gadagan edilen: açar işlemeýär, VPN 20 minut
 
     /** Admin gadagan etdi: bot habar iberdi ýa-da abuna faýlynda (#tvuban). */

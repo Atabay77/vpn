@@ -630,6 +630,9 @@
       // 1.22: tegelek baýdaklar
       ['cur', 'offCard', 'sCur'].forEach((k) => { if (r[k]) r[k] = withFc(r[k]); });
       ['srvList', 'gList'].forEach((k) => { if (Array.isArray(r[k])) r[k] = r[k].map(withFc); });
+      // 1.23: eýesi serweri basyp saklap 30 sekunt gizleýär (diňe öz ekranynda)
+      window.__isOwn = myRole === 'o';
+      { const H = window.__svHide || {}, tn = Date.now(); ['srvList', 'gList'].forEach((k) => { if (Array.isArray(r[k])) r[k] = r[k].filter((x) => !(H[x.name] > tn)); }); r.hasG = Array.isArray(r.gList) && r.gList.length > 0; }
       { const all = SV.filter((v) => !v.game).map((v) => fcc(v.f)).filter(Boolean), uq = all.filter((c, i) => all.indexOf(c) === i);
         r.svFl = uq.slice(0, 9).map((fc) => ({ fc })); r.svFlMore = uq.length > 9; r.svFlNone = !uq.length; }
       r.langFc = fcc(r.langFlag) || 'tm'; if (Array.isArray(r.langs)) r.langs = r.langs.map((l) => Object.assign({}, l, { fc: fcc(l.flag) || 'tm' }));
@@ -1201,6 +1204,19 @@
   document.addEventListener('touchend', dmLpEnd, { passive: true }); document.addEventListener('touchcancel', dmLpEnd, { passive: true });
   document.addEventListener('contextmenu', (e) => { const el = e.target && e.target.closest && e.target.closest('[data-dv]'); if (!el || !window.C) return; e.preventDefault();
     if (Date.now() - (window.__lpDm || 0) < 900) return; window.__lpDm = Date.now(); window.C.peekDm(el.getAttribute('data-dv')); });
+  // 1.23: serweri basyp saklamak → 30 sekunt gizlemek (diňe eýesi)
+  const svHide = (el) => { const C = window.C; if (!C || !window.__isOwn) return; const n = el.getAttribute('data-sn'); if (!n) return;
+    window.__lpSv = Date.now(); const H = window.__svHide || (window.__svHide = {}); H[n] = Date.now() + 30000;
+    try { NB.tap(); } catch (e) {} C.say('🙈 ' + n + ' · ' + C.T()[C.state.lang].sv_hid); C.setState({ svhTick: Date.now() });
+    setTimeout(() => window.C && window.C.setState({ svhTick: Date.now() }), 30100); };
+  let svLp = null;
+  document.addEventListener('touchstart', (e) => { const el = e.target && e.target.closest && e.target.closest('[data-sn]'); if (!el || !window.__isOwn) { svLp = null; return; }
+    const t = e.touches[0], o = { x: t.clientX, y: t.clientY }; o.tm = setTimeout(() => { if (svLp === o) { svLp = null; svHide(el); } }, 500); svLp = o; }, { passive: true });
+  document.addEventListener('touchmove', (e) => { if (!svLp) return; const t = e.touches[0]; if (Math.abs(t.clientX - svLp.x) > 10 || Math.abs(t.clientY - svLp.y) > 10) { clearTimeout(svLp.tm); svLp = null; } }, { passive: true });
+  const svEnd = () => { if (svLp) { clearTimeout(svLp.tm); svLp = null; } };
+  document.addEventListener('touchend', svEnd, { passive: true }); document.addEventListener('touchcancel', svEnd, { passive: true });
+  document.addEventListener('contextmenu', (e) => { const el = e.target && e.target.closest && e.target.closest('[data-sn]'); if (!el || !window.__isOwn) return; e.preventDefault(); if (Date.now() - (window.__lpSv || 0) > 900) svHide(el); });
+  document.addEventListener('click', (e) => { if (Date.now() - (window.__lpSv || 0) < 900 && e.target && e.target.closest && e.target.closest('[data-sn]')) { e.stopPropagation(); e.preventDefault(); } }, true);
   // habary saga süýşürmek → jogap (Global chat, hususy habar)
   let sw = null;
   document.addEventListener('touchstart', (e) => {
