@@ -63,6 +63,13 @@
   let LRX = [];
   let LGM = [];   // ugradylan, entek serwerden gelmedik öz Global habarlarym   // ugradylan, entek serwerden gelmedik Global tepkiler
   const isCtl = (m) => !!(m.re || m.ty || m.rd);   // tepki / ýazýar / okaldy — habar däl
+  // 1.20: derejeler (bot bilen deň: APP_LVL, APP_LVL_GIFT)
+  const RK_L = [0, 50, 120, 250, 400, 600, 850, 1150, 1500, 2000], RK_G = { 3: 1, 5: 3, 7: 5, 10: 7 };
+  const RK_PK = { 2: ['pk_chat'], 3: ['g', 'pk_fr3'], 4: ['pk_fr4'], 5: ['g', 'pk_sh'], 6: ['pk_fr6', 'pk_tw'], 7: ['g', 'pk_nm7', 'pk_ry'], 8: ['pk_fr8', 'pk_em'], 9: ['pk_fr9', 'pk_nm9'], 10: ['g', 'pk_fr10', 'pk_au'] };
+  const rkT = (lv) => Math.max(1, Math.min(10, Math.floor(+lv) || 1));
+  const rkNm = (t) => (t >= 10 ? 'nm10' : t >= 9 ? 'nm9' : t >= 7 ? 'nm7' : '');   // chatdaky nik
+  const rkNc = (t) => rkNm(t) || 'rc' + t;   // derejäniň ady
+  const rkPk = (t, tx) => (RK_PK[t] || []).map((k) => ({ t: k === 'g' ? '🎁 ' + tx.pk_gift.replace('{d}', String(RK_G[t])) : tx[k], c: k === 'g' ? 'pkg' : '' }));
   function rxAgg(rows) {
     const m = {};
     rows.filter((r) => r.re).sort((a, b) => (a.time || a.t || 0) - (b.time || b.t || 0)).forEach((r) => {
@@ -277,14 +284,14 @@
       const gl = G.filter((m) => !m.re && !gDel[m.id] && bans.indexOf(m.i) < 0).concat(LGM), RXG = rxAgg(G.concat(LRX));
       gl.forEach((m) => { if (m.pi && !GI[m.pi]) askImg('g', m.pi); });
       r.gMsgs = gl.map((m) => {
-        const mine = m.i === me, nm = mine ? this.meName : m.n || '?';
+        const mine = m.i === me, nm = mine ? this.meName : m.n || '?', lvq = mine ? (LS.get('lvl', {}) || {}).lv || 0 : m.lv || 0, rt = rkT(lvq);
         const ph = mine ? s.photo : ((PH[m.i] || {}).d || '');
         return { name: nm + (mine ? ' · ' + tx.g_you : ''), ini: ini(nm), bg: mine ? '#E0B04A' : colorOf(m.i), nc: mine ? '#06100B' : colorOf(m.i), photo: ph, hasPh: !!ph, noPh: !ph,
           t: m.st ? '' : m.t, time: this.hm((m.time || 0) * 1000 || now) + (m.pend ? ' ⏳' : ''), gk: m.id, cls: mine ? 'gm-me' : 'gm-o', bcls: mine ? 'gb-me' : 'gb-o', canDel: false, del: null,
-          prof: () => this.openProf(m.i), isO: roleOf(m.i) === 'o', isA: roleOf(m.i) === 'a', ncls: roleOf(m.i) === 'o' ? 'goldtxt' : '',
+          prof: () => this.openProf(m.i), isO: roleOf(m.i) === 'o', isA: roleOf(m.i) === 'a', ncls: roleOf(m.i) === 'o' ? 'goldtxt' : (lvq ? rkNm(rt) : ''), fr: lvq && rt >= 3 ? 'fr' + rt : '',
           isSt: !!m.st, st: m.st || '', hasImg: !!(m.pi && GI[m.pi]), img: (m.pi && GI[m.pi]) || '', zoom: () => this.setState({ zoom: GI[m.pi] || '' }),
           hasRp: !!(m.rp && m.rp.n), rpN: m.rp ? m.rp.n : '', rpT: m.rp ? m.rp.t : '',
-          hasLv: (mine ? (LS.get('lvl', {}).lv || 0) : (m.lv || 0)) >= 2, lv: String(mine ? (LS.get('lvl', {}).lv || 0) : (m.lv || 0)),
+          hasLv: lvq >= 2, lv: String(rt),
           rx: rxList(RXG, m.id, me, (e) => this.gReact(m.id, e)), hasRx: !!RXG[m.id] && Object.keys(RXG[m.id]).length > 0,
           rxOpen: s.rxFor === m.id, rxPick: RX_E.map((e) => ({ e, go: () => { this.setState({ rxFor: null }); this.gReact(m.id, e); } })), rpGo: () => this.replyTo(m.id) };
       });
@@ -438,7 +445,7 @@
         r.hasLvl = !!L; r.lvN = L ? String(L.lv) : '1'; r.lvXp = L ? tx.lv_xp.replace('{x}', String(L.xp)).replace('{n}', L.next ? String(L.next) : '—') : '';
         r.lvBar = L && L.next ? Math.max(3, Math.min(100, Math.round((L.xp - L.cur) * 100 / Math.max(1, L.next - L.cur)))) : 100;
         r.lvHow = tx.lv_how; r.hasTop = top.length > 0;
-        r.topList = top.map((q, i) => ({ n: (i < 3 ? ['🥇', '🥈', '🥉'][i] : (i + 1) + '.') + ' ' + q[0], c: tx.lv_inv.replace('{n}', String(q[1])), lv: '⭐' + q[2] })); }
+        r.topList = top.map((q, i) => ({ n: (i < 3 ? ['🥇', '🥈', '🥉'][i] : (i + 1) + '.') + ' ' + q[0], c: tx.lv_inv.replace('{n}', String(q[1])), lv: String(rkT(q[2])) })); }
       // 1.19: açar satyn almak
       r.isBuy = pg === 'buy'; if (r.isBuy) r.pageTitle = tx.p_buy;
       { const pay = LS.get('payInfo', null), plans = (pay && pay.p) || [[3, 15], [7, 30], [30, 100]], sel = s.buyD || plans[1][0];
@@ -463,6 +470,30 @@
         if (sn) r.opts.push(Object.assign({}, sn, { i1: 'M7 3h10a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z', i2: 'M8.5 7h7M9 12h.01M12 12h.01M15 12h.01M9 16h.01M12 16h.01M15 16h.01',
           t: tx.dg_t, s: dg ? tx.dg_on : tx.dg_off, aria: dg ? 'true' : 'false', swCls: dg ? 'sw-on' : '', d: '0.4',
           on: () => this.confirm(dg ? tx.dg_qOff : tx.dg_qOn, dg ? tx.dg_yOff : tx.dg_yOn, () => { NB.disguise(!dg); this.setState({ disg: !dg }); this.say(dg ? tx.dg_doneOff : tx.dg_doneOn); }) })); }
+      // 1.20: derejeler — baş sahypadaky düwme, profil kartoçkasy, «Derejeler» sahypasy, nyşany ýakyndan görmek
+      { const L = LS.get('lvl', null), t0 = L ? rkT(L.lv) : 1, xp = L ? +L.xp || 0 : 0, nx = t0 < 10 ? (L && L.next) || RK_L[t0] : 0;
+        r.rkT = String(t0); r.rkName = tx['rk_n' + t0]; r.rkNcls = rkNc(t0); r.rkAria = tx.p_rank + ': ' + r.rkName + ' · ' + t0;
+        r.rkXpT = tx.rk_pts.replace('{x}', t0 < 10 ? xp + ' / ' + nx : String(xp));
+        r.rkHeroSub = tx.rk_lv.replace('{n}', String(t0)) + ' · ' + tx.rk_pts.replace('{x}', String(xp));
+        r.rkNext = t0 >= 10 ? tx.rk_max : tx.rk_left.replace('{n}', tx['rk_n' + (t0 + 1)]).replace('{x}', String(Math.max(0, nx - xp)));
+        if (!L) r.lvBar = 0;
+        r.goRank = () => { this._rkBack = this.state.page; this.setState({ page: 'rank', menu: false, fan: false }); };
+        r.isRank = pg === 'rank'; if (r.isRank) r.pageTitle = tx.p_rank;
+        if (r.isRank && Date.now() - (this._lvQ || 0) > 120000) { this._lvQ = Date.now(); NB.send(JSON.stringify({ k: 'lvlq' })); }
+        r.rkRows = RK_L.map((need, i) => { const t = i + 1, got = t <= t0, cur = t === t0;
+          return { t: String(t), name: tx['rk_n' + t], ncls: got ? rkNc(t) : '', lk: cur ? 'fx' : got ? 'lite' : 'lock',
+            need: cur ? tx.rk_now2 + ' · ' + tx.rk_pts.replace('{x}', String(xp)) : got ? tx.rk_got : tx.rk_need.replace('{x}', String(need)),
+            pk: rkPk(t, tx), st: cur ? tx.rk_now : got ? '✓' : '🔒', stc: cur ? 'cur' : got ? 'ok' : 'lk', cls: cur ? 'rk-cur' : got ? 'rk-got' : 'rk-lk',
+            open: () => this.setState({ rkm: { t, up: false } }) }; });
+        const M = s.rkm, mt = M ? rkT(M.t) : 1, mgot = mt <= t0;
+        r.rkmOn = !!M; r.rkmT = String(mt); r.rkmCls = M && M.up ? 'up' : mgot ? '' : 'lkd';
+        r.rkmTitle = M && M.up ? tx.rk_upT : tx.rk_lv.replace('{n}', String(mt)); r.rkmName = tx['rk_n' + mt]; r.rkmNcls = rkNc(mt);
+        r.rkmSub = M && M.up ? (M.days ? tx.rk_upGift.replace('{d}', String(M.days)) : tx.rk_upSub) : mgot ? tx.rk_gotL : tx.rk_wait.replace('{x}', String(RK_L[mt - 1]));
+        r.rkmPk = rkPk(mt, tx); r.rkmBtn = M && M.up ? tx.rk_ok : tx.close; r.rkmX = () => this.setState({ rkm: null }); }
+      // 1.20: gizli nyşan — baş sahypadaky kiçi düwme (Sazlamalardaky bilen birmeňzeş)
+      { const dg = !!(s.disg != null ? s.disg : INFO.disg);
+        r.dgCls = dg ? 'on' : ''; r.dgAria = dg ? 'true' : 'false';
+        r.dgTap = () => this.confirm(dg ? tx.dg_qOff : tx.dg_qOn, dg ? tx.dg_yOff : tx.dg_yOn, () => { NB.disguise(!dg); this.setState({ disg: !dg }); this.say(dg ? tx.dg_doneOff : tx.dg_doneOn); }); }
       r.zoomOn = !!s.zoom; r.zoomSrc = s.zoom || ''; r.zoomClose = () => this.setState({ zoom: '' });
       r.onGPhoto = this.onGPhoto;
       // habarlar: eýesiniň habary altyn, surat
@@ -508,7 +539,10 @@
           why: mine ? tx.dm_me : st === 'blk' ? tx.dm_blocked : !p ? tx.nk_wait : tx.dm_noKey,
           write: () => this.openDm(d), zoom: () => this.setState({ zoom: (p && p.ph) || a.photo || '' }),
           blockT: st === 'blk' ? '✅ ' + tx.dm_unblk : '🚫 ' + tx.dm_blk, block: () => this.blockDm(d) });
-      } else r.up = { name: '', photo: '', hasPh: false, noPh: true, bg: '', ini: '', bgImg: 'none', sub: '', canDm: false, noDm: false, notMe: false, why: '', isO: false, isA: false, ncls: '' };
+        let ul = mine ? (LS.get('lvl', {}) || {}).lv || 0 : 0;   // derejesi: Global chatdaky iň soňky habaryndan
+        if (!mine) G.forEach((q) => { if (q.i === d && q.lv) ul = q.lv; });
+        Object.assign(r.up, { hasRk: ul >= 1, rkT: String(rkT(ul)), rkName: tx['rk_n' + rkT(ul)], rkNcls: rkNc(rkT(ul)) });
+      } else r.up = { name: '', photo: '', hasPh: false, noPh: true, bg: '', ini: '', bgImg: 'none', sub: '', canDm: false, noDm: false, notMe: false, why: '', isO: false, isA: false, ncls: '', hasRk: false, rkT: '1', rkName: '', rkNcls: '' };
       // hususy habarlar sanawy
       r.isDms = pg === 'dms';
       const rows = Object.keys(DMS).filter((d) => d !== me1).sort((a, b) => (DMS[b].lt || 0) - (DMS[a].lt || 0));
@@ -699,6 +733,7 @@
       if (p === 'adm_x' || p === 'adm_or') { C.setState({ page: 'admin', admTab: 'bot' }); return; }
       if (p === 'dm') { C.setState({ page: C._dmBack && C._dmBack !== 'dm' && C._dmBack !== 'main' ? C._dmBack : 'dms' }); return; }
       if (p === 'uprof') { C.setState({ page: C._back && C._back !== 'uprof' ? C._back : 'global' }); return; }
+      if (p === 'rank') { C.setState({ page: C._rkBack && C._rkBack !== 'rank' ? C._rkBack : 'main' }); return; }
       gb0();
     };
     C.fbUp = () => { C.setState({ fb: 'up' }); NB.send(JSON.stringify({ k: 'fb', v: 'up', tid: C.state.tkId })); };
@@ -1013,7 +1048,7 @@
         C.party(m.why === 'gift' ? tx.gift_got : m.why === 'ref' ? tx.ref_got.replace('{d}', String(m.days || 1)) : tx.k_ext);
       } else if (m.k === 'lvl') {
         LS.set('lvl', { lv: m.lv, xp: m.xp, cur: m.cur, next: m.next, inv: m.inv }); up.payTick = t;
-        if (m.up) C.party('⭐ ' + tx.lv_up.replace('{n}', String(m.lv)) + (m.days ? ' · +' + m.days + ' ' + tx.days : ''));
+        if (m.up) { up.rkm = { t: rkT(m.lv), up: true, days: m.days || 0 }; C.party('⭐ ' + tx.lv_up.replace('{n}', String(m.lv)) + (m.days ? ' · +' + m.days + ' ' + tx.days : '')); }
       } else if (m.k === 'top') { LS.set('top', m.l || []); up.payTick = t; }
       else if (m.k === 'pay') { LS.set('payInfo', { p: m.p, i: m.i, at: Date.now() }); up.payTick = t; }
       else if (m.k === 'buy') {
@@ -1052,6 +1087,7 @@
     const C = window.C; if (!C) return false; const s = C.state;
     if (document.getElementById('tvad')) { document.getElementById('tvad').remove(); return true; }
     if (s.zoom) { C.setState({ zoom: '' }); return true; }
+    if (s.rkm) { C.setState({ rkm: null }); return true; }
     if (s.stOn) { C.setState({ stOn: false }); return true; }
     if (s.cf) { C.cfNo(); return true; }
     if (s.menu) { C.setState({ menu: false }); return true; }
