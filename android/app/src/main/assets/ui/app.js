@@ -57,6 +57,7 @@
   const P2 = {};          // telefon → {th, ph, bg, n, dm} (doly profil)
   const DMS = {};         // garşydaş → {st, msgs: [], un, n, lt}
   const GI = {}, NI = {}, imgAsked = {};   // Global chat / habar suratlary
+  const EMOJI = ['😀', '😁', '😂', '🤣', '😊', '🙂', '😉', '😍', '🥰', '😘', '😎', '🤔', '😅', '😴', '😭', '😡', '😱', '🥳', '👍', '👎', '🙏', '👏', '💪', '🤝', '👋', '🔥', '❤️', '💔', '💯', '🎉', '✅', '❌', '⚡', '🚀', '⭐', '🌙', '☀️', '🎮', '📶', '🔒', '💬', '🇹🇲'];
   const STICKERS = ['😂', '🤣', '😍', '🥰', '😎', '😭', '😡', '👍', '🙏', '🔥', '❤️', '💯', '🎉', '🤝', '😱', '🤔', '😴', '🥳', '💪', '👑', '🇹🇲', '🚀', '😘', '👋'];
   const LINK_RE = /(https?:\/\/|www\.|t\.me\/|\b[\w-]{2,}\.(com|net|org|ru|tm|me|io|xyz|info|top|site|online|link|app|dev|tk|ly|gg|uz|kz|tr|de|co|su|pro|club|shop|store|live|tv|cc|biz|ua|by)\b)/i;
   const roleOf = (dev) => (((INFO.roles || {})[dev] || [])[0] || '');
@@ -370,6 +371,16 @@
       const bgUrl = (d) => (d ? 'linear-gradient(rgba(6,16,11,.45),rgba(6,16,11,.88)),url(' + d + ')' : 'none');
       r.pfBgImg = bgUrl(s.pbg); r.hasBg = !!s.pbg; r.onBg = this.onBg; r.delBg = this.delBg;
       r.stOn = !!s.stOn; r.stToggle = this.stToggle; r.stickers = STICKERS.map((e) => ({ e, pick: () => this.pickSticker(e) }));
+      // emoji: ýazga goşulýar (Telegram ýaly); stiker: uly bolup gidýär
+      { const tab = s.stTab || 'e'; r.stIsEmo = tab === 'e'; r.stIsSt = tab === 's';
+        r.stTabs = [['e', tx.st_emo], ['s', tx.st_st]].map(([k, t]) => ({ t, p: tab === k ? 'true' : 'false', cls: tab === k ? 'on' : '', pick: () => this.setState({ stTab: k }) }));
+        r.emojis = EMOJI.map((e) => ({ e, pick: () => { if (this.state.page === 'dm') this.setState({ dmIn: (this.state.dmIn || '') + e }); else this.setState({ gIn: (this.state.gIn || '') + e }); } })); }
+      { const cb = LS.get('chatBg', 'p'); r.tgbgCls = { p: 'bgp', f: 'bgf', l: 'bgl' }[cb] || 'bgp';
+        // Sazlamalar: chat fony (nagyş / baýdak / şäher)
+        if (Array.isArray(r.opts)) { const at = r.opts.findIndex((o) => o.t === tx.bg_t);
+          const ob = { i1: 'M4 5h16v11H9l-5 4z', i2: 'M8 9h8M8 12h5', t: tx.cb_t, s: '', isSw: false, isBtn: false, isSeg: true, aria: 'false', swCls: '', icCls: '', arrow: '', d: '0.1',
+            segs: [['p', tx.cb_p], ['f', tx.cb_f], ['l', tx.cb_l]].map((q) => ({ t: q[1], p: cb === q[0] ? 'true' : 'false', cls: cb === q[0] ? 'seg-on' : 'seg-off', on: () => { LS.set('chatBg', q[0]); this.setState({ cbTick: Date.now() }); } })) };
+          r.opts = r.opts.slice(0, at + 1).concat([Object.assign({}, r.opts[at], ob)], r.opts.slice(at + 1)); } }
       r.zoomOn = !!s.zoom; r.zoomSrc = s.zoom || ''; r.zoomClose = () => this.setState({ zoom: '' });
       r.onGPhoto = this.onGPhoto;
       // habarlar: eýesiniň habary altyn, surat
