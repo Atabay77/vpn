@@ -46,6 +46,11 @@ trojan://x@1.1.1.1:1#skip
         assertEquals("http", ins.getJSONObject(1).getString("protocol"))
         assertEquals(1, JSONObject(Cfg.full(l[0].uri, true)).getJSONArray("inbounds").length())
         assertEquals(60 * 60 * 1000L, Lic.SESSION_MS); assertEquals(90 * 60 * 1000L, Lic.BONUS_MS)
+        // 1.29: botuň biziň atlarymyz (URL kodlanan)
+        val br = Sub.parse("ss://YWVzLTI1Ni1nY206cA==@1.2.3.4:1080#" + java.net.URLEncoder.encode("🇪🇸 Ispaniýa · Türkmen VPN · 4", "UTF-8").replace("+", "%20") +
+            "\nss://YWVzLTI1Ni1nY206cA==@1.2.3.9:1080#" + java.net.URLEncoder.encode("🇷🇺 Russiýa · Türkmen VPN · PUBG 1 🎮", "UTF-8").replace("+", "%20"))
+        assertEquals("🇪🇸", br[0].flag); assertEquals("Ispaniýa", br[0].country); assertEquals("Türkmen VPN · 4", br[0].title); assertEquals(false, br[0].game)
+        assertEquals(true, br[1].game); assertEquals("🇷🇺", br[1].flag)
         println("NAME " + Sub.splitName("🇷🇺 Russia · 🎮 PUBG Gaming Server") + " " + Sub.splitName("Plain"))
         println("VLESS " + Cfg.outbound("vless://uuid-1@[2001:db8::1]:443?type=tcp&security=reality&pbk=K&sid=ab&sni=x.com&fp=chrome&flow=xtls-rprx-vision#n"))
     }

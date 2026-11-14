@@ -1038,6 +1038,19 @@ TM_CNAME = {"nl": "Niderlandlar", "fi": "Finlýandiýa", "gb": "Beýik Britaniý
             "hk": "Gonkong", "ca": "Kanada", "ir": "Eýran", "md": "Moldowa", "rs": "Serbiýa", "no": "Norwegiýa", "dk": "Daniýa", "be": "Belgiýa", "ie": "Irlandiýa",
             "ge": "Gruziýa", "am": "Ermenistan", "az": "Azerbaýjan", "in": "Hindistan"}
 
+def app_brand_names(codes):
+    """1.29: kodlaryň ady abunanyňky däl, biziňki: «🇪🇸 Ispaniýa · Türkmen VPN · 4»; oýun kodlary «🇷🇺 Russiýa · Türkmen VPN · PUBG 1 🎮»."""
+    out, n_, g_ = [], 0, 0
+    for c in codes:
+        nm = orig_name(c)
+        m = re.search(r"[\U0001F1E6-\U0001F1FF]{2}", nm)
+        flag = m.group(0) if m else "🌐"
+        cc = "".join(chr(ord(ch) - 0x1F1E6 + 97) for ch in flag) if m else ""
+        if "🎮" in nm or re.search(r"pubg|gaming|oýun|game", nm, re.I):
+            g_ += 1; out.append(set_name(c, urllib.parse.quote(f"🇷🇺 Russiýa · Türkmen VPN · PUBG {g_} 🎮"))); continue
+        n_ += 1; out.append(set_name(c, urllib.parse.quote(f"{flag} {TM_CNAME.get(cc, cc.upper() or 'Serwer')} · Türkmen VPN · {n_}")))
+    return out
+
 # abunadaky «maglumat» setirleri (ulanyjy ady, duýduryş, galan wagt…) serwer däl
 APP_INFO_RE = re.compile(r"(👤|📢|⏳|📅|📊|ℹ️|⚠️|ulanyjy|hormatly|möhlet|galan|trafik|username|user ?name|expire|traffic|remaining|days? left|"
                          r"осталось|трафик|истека|пользоват|уважаем|подписк|остаток|telegram|t\.me|@[A-Za-z0-9_]{4,})", re.I)
@@ -1176,6 +1189,7 @@ def app_sync(force=False):
         except Exception as e: log.info("quota: %s", e)
         for c in app_x_named(codes, app_cfg(load_db())):   # 1.16.6: kanal + admin kodlary
             if code_key(c) not in keys: keys.add(code_key(c)); codes.append(c)
+        codes = app_brand_names(codes)   # 1.29: abunanyň atlary görünmesin
         meta = app_meta(cfg)
         dig = hashlib.sha256("\n".join(meta + codes).encode()).hexdigest()[:16]
         svc = new_service()
