@@ -1666,6 +1666,7 @@ def app_top(a):
 
 # 1.28: haftalyk ýaryş — her duşenbe 00:00 (Aşgabat) geçen hepdäniň iň köp dost çagyran 3 adamyna mugt gün
 APP_WK_PRIZE = [7, 3, 1]
+APP_WK_MIN = 5   # 1.30: baýrak üçin hepdede iň az 5 dost
 def app_wk_bounds(now_=None):
     d = datetime.datetime.fromtimestamp(now_ or time.time(), TM_TZ)
     st = (d - datetime.timedelta(days=d.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
@@ -1687,7 +1688,7 @@ def app_wk_check(now_=None):
     if done >= t0: return []
     if not done: app_mut(lambda x: x.__setitem__("wk_done", t0)); return []   # ilkinji işledilişi: diňe başlangyç
     devs_ = a.get("devs") or {}; out = []
-    for i, (d_, n_) in enumerate(app_wk_rank(a, t0 - 7 * 86400, t0)[:3]):
+    for i, (d_, n_) in enumerate([x_ for x_ in app_wk_rank(a, t0 - 7 * 86400, t0) if x_[1] >= APP_WK_MIN][:3]):
         days = APP_WK_PRIZE[i]; kk = app_grant_days(d_, days, "week")
         app_send(d_, {"k": "key", "why": "week", "place": i + 1, "days": days, **({"key": kk} if kk else {})})
         out.append([(devs_.get(d_) or {}).get("nick") or "?", n_, i + 1, days])
@@ -1824,7 +1825,8 @@ async def app_on_msg(app, fid, o):
         await asyncio.to_thread(app_lvl_check, dev, True)
         a_ = app_cfg(load_db()); w0, w1 = app_wk_bounds(); dv_ = a_.get("devs") or {}
         await asyncio.to_thread(app_send, dev, {"k": "top", "l": app_top(a_), "wk": [[(dv_.get(d_) or {}).get("nick") or "?", n_] for d_, n_ in app_wk_rank(a_, w0, w1)[:10]],
-                                                "wkEnd": w1, "wkLast": a_.get("wk_last") or []})
+                                                "wkEnd": w1, "wkLast": a_.get("wk_last") or [], "wkMin": APP_WK_MIN,
+                                                "wkMe": next((n_ for d_, n_ in app_wk_rank(a_, w0, w1) if d_ == dev), 0)})
     elif k == "kgift":   # 1.28: öz açaryňdan dostuňa (ID bilen) gün sowgat etmek
         to_ = str(o.get("to") or "").upper().strip()
         d_ = int(o.get("d") or 0) if str(o.get("d") or "").isdigit() else 0
