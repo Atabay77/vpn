@@ -633,6 +633,8 @@
       ['srvList', 'gList'].forEach((k) => { if (Array.isArray(r[k])) r[k] = r[k].map(withFc); });
       // 1.23: eýesi serweri basyp saklap 30 sekunt gizleýär (diňe öz ekranynda)
       window.__isOwn = myRole === 'o';
+      r.isOwnP = myRole === 'o' && pg === 'servers';
+      r.fakePing = () => { const f = {}; SV.forEach((v) => { f[v.id] = 100 + Math.floor(Math.random() * 71); }); this.setState({ pings: f, testing: false }); this.say(tx.fp_ok); };
       { const H = window.__svHide || {}, tn = Date.now(); ['srvList', 'gList'].forEach((k) => { if (Array.isArray(r[k])) r[k] = r[k].filter((x) => !(H[x.name] > tn)); }); r.hasG = Array.isArray(r.gList) && r.gList.length > 0; }
       { const all = SV.filter((v) => !v.game).map((v) => fcc(v.f)).filter(Boolean), uq = all.filter((c, i) => all.indexOf(c) === i);
         r.svFl = uq.slice(0, 9).map((fc) => ({ fc })); r.svFlMore = uq.length > 9; r.svFlNone = !uq.length; }
