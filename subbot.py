@@ -1265,9 +1265,9 @@ async def app_loop(app):
                 if RUN.get("app_err") != msg:
                     RUN["app_err"] = msg; log.warning("app sync: %s", e)
                     await notify_founders(app, f"⚠️ <b>Türkmen VPN programı güncellenemedi</b>\n<blockquote>{esc(msg)}</blockquote>")
-        try:   # 1.28: haftalyk ýaryşyň baýraklary
+        try:   # 1.28: hepdelik ýaryşyň baýraklary
             won = await asyncio.to_thread(app_wk_check)
-            if won: await notify_founders(app, "🏁 <b>Haftalyk ýaryş — ýeňijiler</b>\n<blockquote>" + "\n".join(f"{p_}. {esc(n_)} · {c_} dost → +{d_} gün" for n_, c_, p_, d_ in won) + "</blockquote>", silent=True)
+            if won: await notify_founders(app, "🏁 <b>Hepdelik ýaryş — ýeňijiler</b>\n<blockquote>" + "\n".join(f"{p_}. {esc(n_)} · {c_} dost → +{d_} gün" for n_, c_, p_, d_ in won) + "</blockquote>", silent=True)
         except Exception as e: log.info("wk: %s", e)
         await asyncio.sleep(APP_EVERY)
 
@@ -1664,7 +1664,7 @@ def app_top(a):
         if int(u_.get("bx") or 0) >= 50: c_[d_] = c_.get(d_, 0) + int(u_["bx"]) // 50
     return [[(devs_.get(d_) or {}).get("nick") or "?", n_, app_lvl(app_xp(a, d_)[0])] for d_, n_ in sorted(c_.items(), key=lambda kv: -kv[1])[:10]]
 
-# 1.28: haftalyk ýaryş — her duşenbe 00:00 (Aşgabat) geçen hepdäniň iň köp dost çagyran 3 adamyna mugt gün
+# 1.28: hepdelik ýaryş — her duşenbe 00:00 (Aşgabat) geçen hepdäniň iň köp dost çagyran 3 adamyna mugt gün
 APP_WK_PRIZE = [7, 3, 1]
 APP_WK_MIN = 5   # 1.30: baýrak üçin hepdede iň az 5 dost
 def app_wk_bounds(now_=None):
@@ -1806,7 +1806,7 @@ async def app_on_msg(app, fid, o):
         if not inv or inv == dev: await asyncio.to_thread(app_send, dev, {"k": "refbad", "why": "own" if inv == dev else "bad"}); return
         def f(a_):
             a_.setdefault("ref_devs", {})[dev] = inv
-            a_.setdefault("ref_ts", {})[dev] = int(time.time())   # 1.28: haftalyk ýaryş üçin wagt
+            a_.setdefault("ref_ts", {})[dev] = int(time.time())   # 1.28: hepdelik ýaryş üçin wagt
             cnt = sum(1 for v in a_["ref_devs"].values() if v == inv)
             rk = (a_.get("refkey") or {}).get(inv); keys = a_.setdefault("keys", {})
             if rk and rk in keys and keys[rk].get("exp", 0) > time.time():
