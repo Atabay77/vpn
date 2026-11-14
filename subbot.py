@@ -2215,7 +2215,7 @@ def app_global_list(fid, gb):
             if not pt: continue
             try: o = json.loads(pt)
             except Exception: continue
-            if o.get("i") not in gb: res.append(("fs:" + name.split("/")[-1], t, o))
+            if o.get("i") not in gb and not o.get("re"): res.append(("fs:" + name.split("/")[-1], t, o))   # tepkiler sanawda görkezilmeýär
         return res[:15][::-1]
     out = []
     for j in ntfy_poll(app_topic(fid) + "g", "12h"):

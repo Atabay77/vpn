@@ -355,15 +355,16 @@ object Msg {
     private fun globalFs() {
         val now = System.currentTimeMillis()
         val full = gfsT == null || now - gfsFull > 180_000
-        val got = (if (full) Fs.query("", "g", null, 60, desc = true)?.reversed() else Fs.query("", "g", gfsT, 50)) ?: return
+        val got = (if (full) Fs.query("", "g", null, 150, desc = true)?.reversed() else Fs.query("", "g", gfsT, 80)) ?: return   // tepkiler hem setir bolup gelýär
         if (full) { gfs.clear(); gfsFull = now }
         for ((id, b, t) in got) {
             gfsT = t
             val o = dec(b)?.let { runCatching { JSONObject(it) }.getOrNull() } ?: continue
             gfs.add(JSONObject().put("id", id).put("time", Fs.sec(t)).put("i", o.optString("i")).put("n", o.optString("n")).put("t", o.optString("t"))
-                .put("st", o.optString("st").take(16)).put("pi", o.optString("pi").take(40)).put("rp", o.optJSONObject("rp")?.let { Chat.rp(it) } ?: JSONObject.NULL))
+                .put("st", o.optString("st").take(16)).put("pi", o.optString("pi").take(40)).put("rp", o.optJSONObject("rp")?.let { Chat.rp(it) } ?: JSONObject.NULL)
+                .put("re", o.optString("re").take(40)).put("e", o.optString("e").take(8)).put("off", o.optBoolean("off")))
         }
-        while (gfs.size > 150) gfs.removeAt(0)
+        while (gfs.size > 400) gfs.removeAt(0)
         events.add(JSONObject().put("k", "g").put("list", JSONArray(gfs.toList())).put("del", JSONArray()))
     }
 
