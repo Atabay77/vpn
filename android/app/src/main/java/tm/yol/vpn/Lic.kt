@@ -5,12 +5,15 @@ import java.security.MessageDigest
 
 /** Key: botun ürettiği XXXX-XXXX-XXXX. Geçerliyse 1 saatlik oturum sınırı kalkar. Her key diňe 1 telefonda işleýär. */
 object Lic {
-    const val SESSION_MS = 90 * 60 * 1000L   // 1.23: mugt birikme 1,5 sagat
+    const val SESSION_MS = 60 * 60 * 1000L
+    const val BONUS_MS = 90 * 60 * 1000L      // 1.24: profilde nigini üýtgeden — 1,5 sagat
     const val BANNED_MS = 20 * 60 * 1000L     // gadagan edilen: açar işlemeýär, VPN 20 minut
 
     /** Admin gadagan etdi: bot habar iberdi ýa-da abuna faýlynda (#tvuban). */
     fun banned(ctx: Context): Boolean = p(ctx).getBoolean("uban", false) || Msg.dev(ctx) in Sub.ubans
-    private fun session(ctx: Context) = if (banned(ctx)) BANNED_MS else SESSION_MS
+    fun bonus(ctx: Context) = p(ctx).getBoolean("nkb", false)
+    fun setBonus(ctx: Context) = p(ctx).edit().putBoolean("nkb", true).apply()
+    private fun session(ctx: Context) = if (banned(ctx)) BANNED_MS else if (bonus(ctx)) BONUS_MS else SESSION_MS
 
     fun norm(k: String) = k.uppercase().filter { it.isLetterOrDigit() }.chunked(4).joinToString("-")
     fun hash(k: String): String = MessageDigest.getInstance("SHA-256")

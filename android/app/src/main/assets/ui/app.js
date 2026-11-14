@@ -438,6 +438,7 @@
         r.gAllNa = gp.length > 0 && gp.every((m) => m != null && m < 0); r.gHasNa = !r.gAllNa;
         r.gRefCls = s.refreshing || s.testing ? 'spin' : '';
         r.gRefresh = () => { if (this.state.refreshing) return; this.setState({ refreshing: true, gRetest: true }); NB.refresh(); }; } r.meNcls = myRole === 'o' ? 'goldtxt' : '';
+      r.nkBonT = INFO.nkb ? tx.nk_bonYes : tx.nk_bonNo;
       r.nkIn = s.nkIn == null ? this.meName : s.nkIn; r.onNk = this.onNk; r.saveNk = this.saveNk;
       r.nkMsg = s.nkSt ? tx['nk_' + s.nkSt] : ''; r.nkCls = s.nkSt === 'ok' ? 'nk-ok' : s.nkSt === 'wait' ? '' : s.nkSt ? 'nk-bad' : '';
       const bgUrl = (d) => (d ? 'linear-gradient(rgba(6,16,11,.45),rgba(6,16,11,.88)),url(' + d + ')' : 'none');
@@ -694,6 +695,7 @@
       const n = String(typeof n0 === 'string' ? n0 : (C.state.nkIn == null ? C.meName : C.state.nkIn)).replace(/\s+/g, ' ').trim();
       if (!/^[\p{L}\p{N}_ .\-]{3,20}$/u.test(n)) { C.setState({ nkSt: 'bad' }); return; }
       if (C._isBan && C._isBan()) return;
+      C._nkCustom = typeof n0 !== 'string';   // 1.24: diňe özi ýazan nik (tötänleýin däl) — mugt wagt 1,5 sagat
       C.setState({ nkSt: 'wait', nkIn: n }); NB.send(JSON.stringify({ k: 'nick', n }));
     };
     C.reroll = ((f) => () => { const old = C.meName; f(); const cand = C.meName; C.meName = old; C.saveNk(cand); })(C.reroll);
@@ -1131,7 +1133,7 @@
       else if (m.k === 'refbad') up.refMsg = m.why === 'own' ? 'own' : 'bad';
       else if (m.k === 'kbad') { up.keyMsg = 'used'; }
       else if (m.k === 'nick') {
-        if (m.ok) { C.meName = m.n; LS.set('nick', m.n); up.nkSt = 'ok'; up.nkIn = null; } else up.nkSt = m.why === 'taken' ? 'taken' : 'bad';
+        if (m.ok) { C.meName = m.n; LS.set('nick', m.n); up.nkSt = 'ok'; up.nkIn = null; if (C._nkCustom && !INFO.nkb) { try { NB.nickBonus(); } catch (e2) {} INFO.nkb = true; } } else up.nkSt = m.why === 'taken' ? 'taken' : 'bad';
       } else if (m.k === 'uban') { INFO.uban = !!m.on; if (m.on) C.say('⛔ ' + tx.ub_msg); }
       else if (m.k === 'quota') { qAdd(m.id, m.t, m.at); up.qTick = (s.qTick || 0) + 1; }
       else if (m.k === 'atk') { if (INFO.adm) { C.say((m.new ? tx.atk_new : '🎫') + ' #' + m.tid + (m.n ? ' · ' + m.n : '') + ': ' + String(m.t || '').slice(0, 70)); admAt = 0; } }

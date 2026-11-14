@@ -304,8 +304,8 @@ class Svc : VpnService() {
         if (Build.VERSION.SDK_INT >= 26) nm.createNotificationChannel(NotificationChannel("e", "VPN", NotificationManager.IMPORTANCE_DEFAULT))
         val open = PendingIntent.getActivity(this, 4, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
         val nb = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(this, "e") else Notification.Builder(this)
-        val txt = t("1,5 sagat doldy, VPN öçdi. Dowam etmek üçin täzeden birikiň ýa-da açar alyň.", "1,5 часа истекли, VPN отключён. Подключитесь снова или купите ключ.",
-            "1,5 saat doldu, VPN kapandı. Yeniden bağlanın ya da anahtar alın.")
+        val txt = t("Mugt wagt doldy, VPN öçdi. Dowam etmek üçin täzeden birikiň ýa-da açar alyň.", "Бесплатное время истекло, VPN отключён. Подключитесь снова или купите ключ.",
+            "Ücretsiz süre doldu, VPN kapandı. Yeniden bağlanın ya da anahtar alın.")
         nm.notify(3, nb.setSmallIcon(R.drawable.ic_notif).setContentTitle(getString(R.string.app_name)).setContentText(txt)
             .setStyle(Notification.BigTextStyle().bigText(txt)).setContentIntent(open).setAutoCancel(true).build())
     }

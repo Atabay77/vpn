@@ -238,6 +238,7 @@ open class Main : Activity() {
                 .put("dl", (Sub.upd["all"] ?: Sub.upd["64"] ?: Sub.upd["32"])?.let { runCatching { Sub.fileUrl(it.second) }.getOrNull() } ?: "")
                 .put("roles", JSONObject().apply { Sub.roles.forEach { (d, rn) -> put(d, JSONArray().put(rn.first).put(rn.second)) } })
                 .put("uban", Lic.banned(c))
+                .put("nkb", Lic.bonus(c))
                 .put("disg", runCatching { packageManager.getComponentEnabledSetting(android.content.ComponentName(c, "tm.yol.vpn.Calc")) == android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED }.getOrDefault(false))
                 .put("adm", Msg.admPw(c) != null).put("admMe", Msg.admMe(c) ?: JSONObject()).toString()
         }
@@ -297,6 +298,7 @@ open class Main : Activity() {
         @JavascriptInterface fun dmPage(on: Boolean) { Msg.dmPage = on; if (on) Msg.kick() }
         @JavascriptInterface fun dmSt(peer: String, st: String) = Chat.setSt(this@Main, peer, st)
         @JavascriptInterface fun dmList(): String = Chat.list(this@Main).toString()
+        @JavascriptInterface fun nickBonus() = Lic.setBonus(this@Main)   // 1.24: nik üýtgedildi → mugt wagt 1,5 sagat
         @JavascriptInterface fun codeOf(dev: String): String = if (Regex("^[0-9a-f]{12}$").matches(dev)) Msg.codeOf(dev) else ""
         @JavascriptInterface fun gsend2(json: String) { runCatching { Chat.gsend(this@Main, JSONObject(json)) } }
         @JavascriptInterface fun img(kind: String, id: String) = Chat.img(kind, id)
