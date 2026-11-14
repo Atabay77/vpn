@@ -18,7 +18,7 @@ class Tile : TileService() {
             startService(Intent(this, Svc::class.java).setAction(Svc.STOP))
             return
         }
-        val i = Intent(this, Main::class.java).setAction(Main.GO).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        val i = Intent(this, MainActivity::class.java).setAction(Main.GO).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         if (Build.VERSION.SDK_INT >= 34)
             startActivityAndCollapse(PendingIntent.getActivity(this, 3, i, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT))
         else @Suppress("DEPRECATION") startActivityAndCollapse(i)

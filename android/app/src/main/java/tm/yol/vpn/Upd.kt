@@ -162,7 +162,7 @@ object Upd {
     fun notify(ctx: Context, text: String, tapInstall: Boolean) {
         val nm = ctx.getSystemService(NotificationManager::class.java)
         if (Build.VERSION.SDK_INT >= 26) nm.createNotificationChannel(NotificationChannel("u", "Täzelenme", NotificationManager.IMPORTANCE_DEFAULT))
-        val open = Intent(ctx, Main::class.java).setAction(if (tapInstall) Main.INSTALL else Intent.ACTION_MAIN)
+        val open = Intent(ctx, MainActivity::class.java).setAction(if (tapInstall) Main.INSTALL else Intent.ACTION_MAIN)
         val pi = PendingIntent.getActivity(ctx, 9, open, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val b = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(ctx, "u") else Notification.Builder(ctx)
         nm.notify(2, b.setSmallIcon(R.drawable.ic_notif).setContentTitle(ctx.getString(R.string.app_name))

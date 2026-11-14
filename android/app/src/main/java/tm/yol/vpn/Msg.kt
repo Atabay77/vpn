@@ -145,7 +145,7 @@ object Msg {
         o.put("dev", dev(c)).put("ver", ver(c)).put("lang", Lang.cur).put("ts", System.currentTimeMillis() / 1000)
             .put("model", android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL).put("code", code(c))
             .put("ack", prefs(c).getInt("seq", 0))
-        if (o.optString("k") in setOf("tk", "ref", "gift", "human", "ka", "adm")) waitAt = System.currentTimeMillis()
+        if (o.optString("k") in setOf("tk", "ref", "gift", "human", "ka", "adm", "buy", "payq", "vote", "lvlq")) waitAt = System.currentTimeMillis()
         synchronized(this) {
             val q = JSONArray(prefs(c).getString("q", "[]"))
             q.put(o.toString())
@@ -255,7 +255,7 @@ object Msg {
             if (s in 1..seq) continue      // öň gelen habar (bot gaýtadan iberdi)
             if (s > 0) seq = s
             p.edit().putInt("seq", seq).apply()
-            o.optString("key").takeIf { it.isNotEmpty() }?.let { k -> if (Lic.exp(c) == null) Lic.save(c, k) }   // sowgat / çagyryş açary
+            o.optString("key").takeIf { it.isNotEmpty() }?.let { k -> if (Lic.exp(c) == null || o.optString("k") == "buy" || o.optString("k") == "lvl") Lic.save(c, k) }   // sowgat / çagyryş / satyn alnan açar
             if (o.optString("k") == "uban") Lic.setBanned(c, o.optBoolean("on"))
             pend(c, JSONObject().put("k", "in").put("m", o))
             if (!visible && o.optString("k") == "tk" && o.optString("who") == "a") Svc.notifyReply(c, o.optString("t"))
@@ -364,7 +364,7 @@ object Msg {
             val o = dec(b)?.let { runCatching { JSONObject(it) }.getOrNull() } ?: continue
             gfs.add(JSONObject().put("id", id).put("time", Fs.sec(t)).put("i", o.optString("i")).put("n", o.optString("n")).put("t", o.optString("t"))
                 .put("st", o.optString("st").take(16)).put("pi", o.optString("pi").take(40)).put("rp", o.optJSONObject("rp")?.let { Chat.rp(it) } ?: JSONObject.NULL)
-                .put("re", o.optString("re").take(40)).put("e", o.optString("e").take(8)).put("off", o.optBoolean("off")))
+                .put("re", o.optString("re").take(40)).put("e", o.optString("e").take(8)).put("off", o.optBoolean("off")).put("lv", o.optInt("lv").coerceIn(0, 10)))
         }
         while (gfs.size > 400) gfs.removeAt(0)
         events.add(JSONObject().put("k", "g").put("list", JSONArray(gfs.toList())).put("del", JSONArray()))

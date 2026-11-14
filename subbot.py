@@ -866,7 +866,7 @@ def app_meta(cfg):
         if n_ <= 1: out.append(f"#tvk: {app_key_hash(k)} {int(v.get('exp') or 0)}" + (f" {dv_[0]}" if dv_ else ""))
         else: out.append(f"#tvk: {app_key_hash(k)} {int(v.get('exp') or 0)} {','.join(dv_) or '-'} {n_}")   # 1.16: köp adamlyk açar
     for n_ in (cfg.get("news") or [])[:10]:
-        out.append(f"#tvn: {n_['id']} {int(n_['ts'])} " + base64.urlsafe_b64encode(json.dumps({"t": n_["t"], "x": n_["x"], **({"img": n_["img"]} if n_.get("img") else {}), **({"btn": n_["btn"]} if n_.get("btn") else {})}, ensure_ascii=False).encode()).decode().rstrip("="))
+        out.append(f"#tvn: {n_['id']} {int(n_['ts'])} " + base64.urlsafe_b64encode(json.dumps({"t": n_["t"], "x": n_["x"], **({"img": n_["img"]} if n_.get("img") else {}), **({"btn": n_["btn"]} if n_.get("btn") else {}), **({"poll": n_["poll"]} if n_.get("poll") else {})}, ensure_ascii=False).encode()).decode().rstrip("="))
     if RUN.get("app_on"): out.append(f"#tvon: {int(RUN['app_on'])}")
     try: ai_on = bool(ai_key()) and load_db().get("ai_sup", True)
     except Exception: ai_on = False
@@ -1139,7 +1139,7 @@ def app_news_fs(a=None):
     """Habarlar Firestore-a hem (n/list): programlar açyk wagty 2 minutda bir okaýar — abuna faýlyna garaşmaýar."""
     a = a if a is not None else app_cfg(load_db()); fid = a.get("fid")
     if not (fid and a.get("fs_ok") and a.get("fs_proj")): return
-    lst = [{"id": n_["id"], "ts": int(n_["ts"]), "t": n_["t"], "x": n_["x"], **({"img": n_["img"]} if n_.get("img") else {}), **({"btn": n_["btn"]} if n_.get("btn") else {})} for n_ in (a.get("news") or [])[:10]]
+    lst = [{"id": n_["id"], "ts": int(n_["ts"]), "t": n_["t"], "x": n_["x"], **({"img": n_["img"]} if n_.get("img") else {}), **({"btn": n_["btn"]} if n_.get("btn") else {}), **({"poll": n_["poll"]} if n_.get("poll") else {})} for n_ in (a.get("news") or [])[:10]]
     body = json.dumps({"news": lst}, ensure_ascii=False, sort_keys=True)
     if RUN.get("news_fs") == body: return
     fs_write(a["fs_proj"], "n/list", app_enc(fid, body), None, False)
@@ -1290,6 +1290,7 @@ def app_view(db):
 # Habarlar şifreli (açar programmanyň Drive faýlynyň kimliginden), program hem şol bir usulda hasaplaýar (Msg.kt).
 APP_MSG_EVERY = 8   # Firestore-da IP çägi ýok; AI jogaby gijä galmasyn
 APP_PRICES = "3 gün — 15 TMT · 7 gün — 30 TMT · 1 aý — 100 TMT"
+APP_PLANS = [(3, 15), (7, 30), (30, 100)]   # 1.19: programda satyn almak: (gün, TMT)
 REF_ABC = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
 DEV_RE = re.compile(r"^[0-9a-f]{12}$")
 
@@ -1586,6 +1587,87 @@ def app_staff_devs(a=None, tickets=True):
     a = a if a is not None else app_cfg(load_db())
     return list(dict.fromkeys(x["dev"] for x in (a.get("apw") or {}).values() if x.get("dev") and apw_valid(x) and (tickets or x.get("role") == "f")))
 
+def fs_get(proj, path):
+    """Bir resminamanyň «b» meýdany (hyzmat hasaby bilen)."""
+    r = fs_req("GET", fs_base(proj) + "/" + path)
+    return ((r.get("fields") or {}).get("b") or {}).get("stringValue")
+
+def app_order_img(oid):
+    """Sargydyň töleg çeki (surat baýtlary) ýa-da None."""
+    a = app_cfg(load_db()); od = (a.get("orders") or {}).get(oid) or {}
+    if not (od.get("pi") and a.get("fs_proj") and a.get("fid")): return None
+    try:
+        pt = app_dec(a["fid"], fs_get(a["fs_proj"], "gi/" + od["pi"]) or "")
+        d_ = json.loads(pt or "{}").get("ph", "")
+        m_ = re.match(r"data:image/[a-z]+;base64,(.+)$", d_, re.S)
+        return base64.b64decode(m_.group(1)) if m_ else None
+    except Exception as e:
+        log.info("order img %s: %s", oid, e); return None
+
+def app_grant_days(dev, days, by):
+    """Telefona gün goşmak: işjeň (1 adamlyk) açary bar bolsa uzaldylýar, ýogsa täze açar. Dönüş: açar."""
+    a = app_cfg(load_db()); now_ = time.time(); kk = None
+    for k_, v in (a.get("keys") or {}).items():
+        if dev in app_key_devs(v) and int(v.get("n") or 1) == 1 and (int(v.get("exp") or 0) == 0 or v.get("exp") > now_): kk = k_; break
+    if kk and int(a["keys"][kk].get("exp") or 0) > 0: app_mut(lambda x: x["keys"][kk].__setitem__("exp", int(x["keys"][kk]["exp"]) + days * 86400))
+    elif not kk: kk, _ = app_key_make(days, dev, by)
+    return kk
+
+# 1.19: derejeler — her işjeň gün 10 bal, her çagyrylan dost 50 bal; käbir derejede mugt gün
+APP_LVL = [0, 50, 120, 250, 400, 600, 850, 1150, 1500, 2000]
+APP_LVL_GIFT = {3: 1, 5: 3, 7: 5, 10: 7}
+def app_xp(a, dev):
+    u = (a.get("devs") or {}).get(dev) or {}
+    inv = sum(1 for v in (a.get("ref_devs") or {}).values() if v == dev)
+    return int(u.get("ad") or 0) * 10 + inv * 50, inv
+def app_lvl(xp): return sum(1 for t_ in APP_LVL if xp >= t_)
+
+def app_lvl_check(dev, tell=False):
+    """Dereje täzelenýär; täze dereje — sowgat günler; telefona häzirki dereje iberilýär."""
+    a = app_cfg(load_db()); xp, inv = app_xp(a, dev); lv = app_lvl(xp)
+    old = int(((a.get("devs") or {}).get(dev) or {}).get("lv") or 1)
+    gift = sum(d_ for l_, d_ in APP_LVL_GIFT.items() if old < l_ <= lv)
+    if lv != old: app_mut(lambda x: x.setdefault("devs", {}).setdefault(dev, {}).__setitem__("lv", lv))
+    k_ = app_grant_days(dev, gift, "lvl") if gift else None
+    if tell or lv != old:
+        nxt = APP_LVL[lv] if lv < len(APP_LVL) else 0
+        app_send(dev, {"k": "lvl", "lv": lv, "xp": xp, "cur": APP_LVL[lv - 1], "next": nxt, "inv": inv, "up": lv > old, "days": gift, **({"key": k_} if k_ else {})})
+        if k_: RUN["app_dirty"] = True
+
+def app_top(a):
+    """Iň köp dost çagyranlar (ilkinji 10)."""
+    c_ = {}
+    for v in (a.get("ref_devs") or {}).values(): c_[v] = c_.get(v, 0) + 1
+    devs_ = a.get("devs") or {}
+    return [[(devs_.get(d_) or {}).get("nick") or "?", n_, app_lvl(app_xp(a, d_)[0])] for d_, n_ in sorted(c_.items(), key=lambda kv: -kv[1])[:10]]
+
+def app_order_done(oid, ok, who):
+    """Sargyt tassyklandy (açar berilýär — işjeň açary bar bolsa uzaldylýar) ýa-da ret edildi. Dönüş: sargyt ýa-da None."""
+    a = app_cfg(load_db()); od = dict((a.get("orders") or {}).get(oid) or {})
+    if od.get("st") != "w": return None
+    dev, now_ = od["dev"], time.time(); kk = None
+    if ok: kk = app_grant_days(dev, od["d"], "buy")
+    app_mut(lambda x: x["orders"][oid].update({"st": "ok" if ok else "no", "k": kk, "by": who, "at": int(now_)}))
+    if od.get("pi") and a.get("fs_proj"):
+        try: fs_delete(a["fs_proj"], ["gi/" + od["pi"]])
+        except Exception: pass
+    app_send(dev, {"k": "buy", "ok": bool(ok), "days": od["d"], **({"key": kk} if ok else {})})
+    RUN["app_dirty"] = True
+    return od
+
+async def app_order_notify(app, oid):
+    a = app_cfg(load_db()); od = (a.get("orders") or {}).get(oid) or {}
+    who_ = app_who(a, od.get("dev", ""))
+    cap = (f"🧾 <b>Täze sargyt #{oid}</b>\n<blockquote>{who_}\n⏳ {od.get('d')} gün · 💰 {od.get('p')} TMT"
+           + (f"\n📝 {esc(od.get('n'))}" if od.get("n") else "") + "</blockquote>")
+    kb_ = KB([[B("✅ Tassykla", f"ordok:{oid}", "success"), B("❌ Ret et", f"ordno:{oid}", "danger")]])
+    img = await asyncio.to_thread(app_order_img, oid)
+    for fid_ in ADMINS:
+        try:
+            if img: await app.bot.send_photo(chat_id=fid_, photo=io.BytesIO(img), caption=cap, parse_mode="HTML", reply_markup=kb_)
+            else: await app.bot.send_message(chat_id=fid_, text=cap + "\n⚠️ Çek suraty açylmady", parse_mode="HTML", reply_markup=kb_)
+        except Exception as e: log.warning("order notify: %s", e)
+
 async def app_staff_notify(app, text, payload, kb=None, silent=False, skip=None):
     """Bilet bildirişi: admin paneline giren telefonlara (programda); hiç kim girmedik bolsa — Telegram bot."""
     devs = [d_ for d_ in app_staff_devs() if d_ != skip]
@@ -1604,10 +1686,16 @@ async def app_on_msg(app, fid, o):
         for f_ in ("nick", "model", "ver", "lang"):
             if o.get(f_): u[f_] = str(o[f_])[:40]
         u["l"] = now
+        day_ = tm_now().strftime("%Y-%m-%d")
+        if u.get("ld") != day_: u["ld"] = day_; u["ad"] = int(u.get("ad") or 0) + 1; RUN.setdefault("lvl_q", set()).add(dev)   # 1.19: işjeň gün
         a.setdefault("codes", {})[app_ref_code(dev)] = dev
     app_mut(reg)
     try: await asyncio.to_thread(app_resend, fid, dev, int(o.get("ack") or 0))
     except Exception: pass
+    if dev in RUN.get("lvl_q", set()):
+        RUN["lvl_q"].discard(dev)
+        try: await asyncio.to_thread(app_lvl_check, dev, True)
+        except Exception as e: log.info("lvl: %s", e)
     a = app_cfg(load_db())
     if k == "adm": await app_adm(app, dev, o); return
     if k == "pr": await asyncio.to_thread(app_x_report, dev, o.get("p")); return
@@ -1674,7 +1762,40 @@ async def app_on_msg(app, fid, o):
         rk, exp, cnt = app_mut(f)
         await asyncio.to_thread(app_send, dev, {"k": "refok", "c": c})
         await asyncio.to_thread(app_send, inv, {"k": "key", "key": rk, "why": "ref", "days": max(1, round((exp - time.time()) / 86400)), "invites": cnt})
+        try: await asyncio.to_thread(app_lvl_check, inv)
+        except Exception as e: log.info("lvl ref: %s", e)
         RUN["app_dirty"] = True
+    elif k == "lvlq":   # 1.19: dereje we iň köp çagyranlar
+        await asyncio.to_thread(app_lvl_check, dev, True)
+        await asyncio.to_thread(app_send, dev, {"k": "top", "l": app_top(app_cfg(load_db()))})
+    elif k == "payq":   # 1.19: satyn almak sahypasy — bahalar we töleg maglumaty
+        await asyncio.to_thread(app_send, dev, {"k": "pay", "p": [list(x_) for x_ in APP_PLANS], "i": str(load_db().get("pay_info") or "")[:1500]})
+    elif k == "buy":
+        d_ = int(o.get("d") or 0) if str(o.get("d") or "").isdigit() else 0
+        plan_ = next((p_ for p_ in APP_PLANS if p_[0] == d_), None)
+        pi_ = re.sub(r"[^\w-]", "", str(o.get("pi") or ""))[:40]
+        if not plan_ or not pi_: return
+        oid = format(now, "x")[-5:] + random.choice("abcdefghjkmnpqrstuvwxyz") + str(random.randint(10, 99))
+        def fo_(a_):
+            os_ = a_.setdefault("orders", {})
+            if sum(1 for x_ in os_.values() if x_.get("dev") == dev and x_.get("st") == "w") >= 3: return False
+            for k2 in [k2 for k2, x_ in os_.items() if x_.get("st") != "w" and now - int(x_.get("ts") or 0) > 30 * 86400]: os_.pop(k2)
+            os_[oid] = {"dev": dev, "d": d_, "p": plan_[1], "pi": pi_, "n": str(o.get("n") or "").strip()[:200], "ts": now, "st": "w"}; return True
+        if not app_mut(fo_):
+            await asyncio.to_thread(app_send, dev, {"k": "buy", "ok": False, "why": "many"}); return
+        await asyncio.to_thread(app_send, dev, {"k": "buy", "wait": True, "oid": oid, "days": d_})
+        await app_order_notify(app, oid)
+    elif k == "vote":   # 1.19: anket — her telefon 1 ses (soňky saýlawy hasaplanýar)
+        nid_, oi_ = str(o.get("n") or "")[:20], int(o.get("o")) if str(o.get("o")).lstrip("-").isdigit() else -1
+        def fv_(a_):
+            nw_ = next((n_ for n_ in (a_.get("news") or []) if n_.get("id") == nid_ and n_.get("poll")), None)
+            if not nw_ or not 0 <= oi_ < len(nw_["poll"]["o"]): return False
+            vs_ = a_.setdefault("votes", {}).setdefault(nid_, {}); vs_[dev] = oi_
+            c_ = [0] * len(nw_["poll"]["o"])
+            for v_ in vs_.values():
+                if 0 <= v_ < len(c_): c_[v_] += 1
+            nw_["poll"]["c"] = c_; return True
+        if app_mut(fv_): RUN["app_dirty"] = True
     elif k == "gift":
         last = (a.get("gift") or {}).get(dev, 0)
         if now - last < 6.5 * 86400: return
@@ -1946,6 +2067,12 @@ def app_adm_snap(a, e, dev):
                          "once": bool(x.get("once")), "exp": int(x.get("exp") or 0)}
                         for aid, x in (a.get("apw") or {}).items() if apw_valid(x) or not x.get("once")]
         out["notes"] = [n_["t"] for n_ in db.get("ai_notes", [])]
+    if full:
+        devs_o = a.get("devs") or {}
+        out["orders"] = [{"id": oid, "dev": x.get("dev"), "nm": (devs_o.get(x.get("dev")) or {}).get("nick") or "?", "d": x.get("d"), "p": x.get("p"), "n": x.get("n", ""),
+                          "pi": x.get("pi") if x.get("st") == "w" else "", "st": x.get("st"), "at": app_hm(x.get("ts"))}
+                         for oid, x in sorted((a.get("orders") or {}).items(), key=lambda kv: (kv[1].get("st") != "w", -int(kv[1].get("ts") or 0)))[:30]]
+    if f_:
         out["aiOn"] = bool(db.get("ai_sup", True)); out["aiKey"] = bool(ai_key())
         out["aiCount"] = sum(1 for t in (a.get("tickets") or {}).values() for x in t.get("log", []) if x.get("r") == "ai" and x.get("ts", 0) >= today)
         out["sysOn"] = not os.path.exists(STOP_FLAG)
@@ -2072,6 +2199,9 @@ async def app_adm(app, dev, o):
             try: await asyncio.to_thread(app_sync, True)
             except Exception as e2: RUN["app_err"] = str(e2)[:150]
             msg = f"xadd:{n_}"
+        elif act in ("ordok", "ordno") and full:   # 1.19: sargyt
+            od_ = await asyncio.to_thread(app_order_done, str(r.get("id") or ""), act == "ordok", f"app:{who}")
+            msg = act if od_ else "ordx"
         elif act == "ndel" and f_:   # habary eýesi zil sahypasyndan pozýar — hemme telefonlardan aýrylýar
             nid_ = str(r.get("id") or "")
             old_ = next((n_ for n_ in (a.get("news") or []) if n_.get("id") == nid_), None)
@@ -2136,6 +2266,9 @@ async def app_adm(app, dev, o):
                 nw_ = {"id": news_id(app_cfg(load_db()).get("news"), now), "ts": int(now), "t": t1, "x": x1}
                 bt_ = [b_ for b_ in (r.get("btn") or []) if b_ in APP_NEWS_BTN][:4]
                 if bt_: nw_["btn"] = bt_
+                pq_ = r.get("poll") if isinstance(r.get("poll"), dict) else None   # 1.19: anket
+                po_ = [str(x_).strip()[:40] for x_ in ((pq_ or {}).get("o") or []) if str(x_).strip()][:4]
+                if pq_ and len(po_) >= 2: nw_["poll"] = {"q": str(pq_.get("q") or t1).strip()[:120], "o": po_, "c": [0] * len(po_)}
                 ie_ = RUN.get("bcimg", {}).pop(aid + ":" + re.sub(r"[^\w]", "", str(r.get("img") or ""))[:12], None) if r.get("img") else None
                 if ie_ and len(ie_["parts"]) == ie_["n"]:
                     data_ = "".join(ie_["parts"][i] for i in range(ie_["n"]))
@@ -4605,6 +4738,15 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         if a == "anews_new":
             STATE[uid] = {"action": "anews"}
             await safe_edit(q, *prompt("📰 <b>Täze habar</b>", "Birinji setir — ady, galany — teksti. Link goýup bilersiňiz (basylýar).\nMeselem:\nTäze serwer\nPolşa serweri goşuldy!", "anews")); return
+        if a.startswith(("ordok:", "ordno:")):   # 1.19: programdan sargyt
+            oid = a.split(":", 1)[1]
+            od = await asyncio.to_thread(app_order_done, oid, a.startswith("ordok:"), f"tg:{uid}")
+            txt_ = ("✅ Tassyklandy — açar berildi" if a.startswith("ordok:") else "❌ Ret edildi") if od else "ℹ️ Bu sargyt eýýäm çözüldi"
+            try: await q.edit_message_reply_markup(reply_markup=None)
+            except Exception: pass
+            try: await q.message.reply_text(f"🧾 #{esc(oid)} · {txt_}", parse_mode="HTML")
+            except Exception: pass
+            return
         if a.startswith("anews_del:"):
             nid = a.split(":", 1)[1]
             app_mut(lambda x: x.__setitem__("news", [n_ for n_ in (x.get("news") or []) if n_["id"] != nid]))

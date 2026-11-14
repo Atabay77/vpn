@@ -149,8 +149,17 @@ class Svc : VpnService() {
     @Volatile private var gen = 0                 // her bağlan/kapat isteğinde artar: eski deneme sonucu yok sayılır
     private val h = Handler(Looper.getMainLooper())
     private var beatAt = 0L
+    // 1.19: awtomatik serwer çalşmak — birikdirilen serwer jogap bermese (yzly-yzyna 3 gezek) başga iň çalt serwere geçilýär
+    @Volatile private var hcBusy = false
+    private var hcAt = 0L
+    private var bad = 0
+    @Volatile private var failover = false
     private val tick = object : Runnable {
         override fun run() {
+            val now0 = System.currentTimeMillis()
+            if (want && State.now == State.ON && !hcBusy && now0 - hcAt > 15_000 && now0 - State.onAt > 20_000) {
+                hcAt = now0; hcBusy = true; Thread { try { health() } finally { hcBusy = false } }.start()
+            }
             // 1 sagat dolunca (key yoksa) VPN durur; kullanıcı elle yeniden başlatır
             if (want && State.now == State.ON && Lic.left(this@Svc) == 0L) { stop(); expired(); return }
             if (want && State.now == State.ON && System.currentTimeMillis() - beatAt > 5 * 60_000) {
@@ -158,6 +167,18 @@ class Svc : VpnService() {
             }
             if (want) h.postDelayed(this, 10_000)
         }
+    }
+
+    private fun health() {
+        val c = core ?: return
+        val v = runCatching { c.measureDelay(State.PING) }.getOrDefault(-1L)
+        if (v in 1..2999) { bad = 0; State.ms = v; return }
+        if (++bad < 3) return
+        bad = 0
+        if (!State.online(this)) return   // telefonyň interneti ýok — serwer günäkär däl
+        if (!want || State.now != State.ON) return
+        failover = true
+        h.post { if (want) { State.set(State.WAIT); val g = ++gen; Thread { start(g) }.start() } }
     }
 
     override fun onCreate() { super.onCreate(); State.app = applicationContext; Lang.init(this) }
@@ -188,7 +209,8 @@ class Svc : VpnService() {
             if (Sub.list.isEmpty()) Sub.load(this)
             if (!want || g != gen) return
             State.noPing = false; State.noNet = false; State.ms = 0
-            val sel = if (slow) null else State.selected(this)
+            val fo = failover; failover = false
+            val sel = if (slow || fo) null else State.selected(this)
             if (sel != null && !State.online(this)) { State.noNet = true; throw IllegalStateException("internet yok") }
             val s = sel ?: State.best(this) ?: throw IllegalStateException("ping yok")
             if (sel != null) State.ms = State.pings[sel.key]?.takeIf { it > 0 && System.currentTimeMillis() - State.pingAt < 5 * 60_000 } ?: 0L
@@ -219,6 +241,7 @@ class Svc : VpnService() {
             State.set(State.ON)
             Msg.start(applicationContext); Msg.kick()
             runCatching { getSystemService(NotificationManager::class.java).notify(1, note(s)) }   // bildirim: «Birikdirildi · ülke»
+            if (fo) Msg.events.add(org.json.JSONObject().put("k", "fo").put("to", s.flag + " " + s.country))
             if (slow) Thread { if (System.currentTimeMillis() - Sub.okAt > 60_000) Sub.refresh(app) }.start()
         } catch (e: Throwable) {
             stopCore()
@@ -265,7 +288,7 @@ class Svc : VpnService() {
 
     /** s == null: bağlanıyor; değilse «Birikdirildi · ülke». */
     private fun note(s: Server?): Notification {
-        val open = PendingIntent.getActivity(this, 0, Intent(this, Main::class.java), PendingIntent.FLAG_IMMUTABLE)
+        val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
         val off = PendingIntent.getService(this, 1, Intent(this, Svc::class.java).setAction(STOP), PendingIntent.FLAG_IMMUTABLE)
         val nb = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(this, "v") else Notification.Builder(this)
         val txt = if (s == null) t("Birikdirilýär…", "Подключение…", "Bağlanıyor…")
@@ -279,7 +302,7 @@ class Svc : VpnService() {
     private fun expired() = runCatching {
         val nm = getSystemService(NotificationManager::class.java)
         if (Build.VERSION.SDK_INT >= 26) nm.createNotificationChannel(NotificationChannel("e", "VPN", NotificationManager.IMPORTANCE_DEFAULT))
-        val open = PendingIntent.getActivity(this, 4, Intent(this, Main::class.java), PendingIntent.FLAG_IMMUTABLE)
+        val open = PendingIntent.getActivity(this, 4, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
         val nb = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(this, "e") else Notification.Builder(this)
         val txt = t("1 sagat doldy, VPN öçdi. Dowam etmek üçin täzeden birikiň ýa-da açar alyň.", "1 час истёк, VPN отключён. Подключитесь снова или купите ключ.",
             "1 saat doldu, VPN kapandı. Yeniden bağlanın ya da anahtar alın.")
@@ -295,7 +318,7 @@ class Svc : VpnService() {
         fun notifyAdmin(ctx: Context, tid: Int, who: String, text: String) = runCatching {
             val nm = ctx.getSystemService(NotificationManager::class.java)
             if (Build.VERSION.SDK_INT >= 26) nm.createNotificationChannel(NotificationChannel("a", t("Biletler (admin)", "Тикеты (админ)", "Biletler (yönetici)"), NotificationManager.IMPORTANCE_HIGH))
-            val open = PendingIntent.getActivity(ctx, 7, Intent(ctx, Main::class.java).setAction(Main.ADMT).putExtra("tid", tid), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+            val open = PendingIntent.getActivity(ctx, 7, Intent(ctx, MainActivity::class.java).setAction(Main.ADMT).putExtra("tid", tid), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
             val nb = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(ctx, "a") else Notification.Builder(ctx)
             nm.notify(100 + (tid % 1000), nb.setSmallIcon(R.drawable.ic_notif).setContentTitle("🎫 #$tid · $who").setContentText(text.take(200))
                 .setStyle(Notification.BigTextStyle().bigText(text.take(500))).setContentIntent(open).setAutoCancel(true).build())
@@ -304,7 +327,7 @@ class Svc : VpnService() {
         fun notifyReply(ctx: Context, text: String) = runCatching {
             val nm = ctx.getSystemService(NotificationManager::class.java)
             if (Build.VERSION.SDK_INT >= 26) nm.createNotificationChannel(NotificationChannel("m", t("Admin jogaby", "Ответ админа", "Yönetici yanıtı"), NotificationManager.IMPORTANCE_DEFAULT))
-            val open = PendingIntent.getActivity(ctx, 5, Intent(ctx, Main::class.java).setAction(Main.CHAT), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+            val open = PendingIntent.getActivity(ctx, 5, Intent(ctx, MainActivity::class.java).setAction(Main.CHAT), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
             val nb = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(ctx, "m") else Notification.Builder(ctx)
             val title = "💬 " + t("Admin jogap berdi", "Ответ админа", "Yönetici yanıtladı")
             nm.notify(6, nb.setSmallIcon(R.drawable.ic_notif).setContentTitle(title).setContentText(text.take(200))

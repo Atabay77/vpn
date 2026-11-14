@@ -94,7 +94,7 @@ object Chat {
                 val w = Fs.write("x/$room/i/" + Fs.newId(), Msg.encK("dm|$sec", j.toString()))
                 // garşydaşa bildiriş: ilkinji habarda ýa-da 6 sagatdan soň
                 val rq = rooms(c).optJSONObject(room)?.optLong("rq") ?: 0L
-                if (w && j.optString("sys").isEmpty() && System.currentTimeMillis() - rq > 6 * 3600_000L) {
+                if (w && j.optString("sys").isEmpty() && !j.has("ty") && !j.has("rd") && !j.has("re") && System.currentTimeMillis() - rq > 6 * 3600_000L) {
                     Msg.enc(JSONObject().put("f", me).put("n", (nick ?: "").take(32)).toString())?.let { if (Fs.write("r/$peer/i/" + Fs.newId(), it)) upd(c, room) { r2 -> r2.put("rq", System.currentTimeMillis()) } }
                 }
                 w
@@ -120,7 +120,7 @@ object Chat {
         if (r?.optString("st") == "blk" && !full) return
         val k = (if (full || r?.optString("k").isNullOrEmpty()) peerKey(c, peer, room) else r?.optString("k")) ?: return
         val sec = secret(c, k) ?: return
-        val got = (if (full) Fs.query("x/$room", "i", null, 120, desc = true)?.reversed() else Fs.query("x/$room", "i", r?.optString("t"), 60)) ?: return
+        val got = (if (full) Fs.query("x/$room", "i", null, 200, desc = true)?.reversed() else Fs.query("x/$room", "i", r?.optString("t"), 60)) ?: return
         val me = Msg.dev(c); val out = JSONArray(); var last = r?.optString("t").orEmpty()
         for ((id, b, t) in got) {
             if (t > last) last = t
@@ -129,7 +129,8 @@ object Chat {
             if (o.optString("sys") == "acc" && f == peer && rooms(c).optJSONObject(room)?.optString("st") == "out") upd(c, room) { it.put("st", "acc") }
             out.put(JSONObject().put("id", id).put("t", Fs.sec(t)).put("f", f).put("x", o.optString("x").take(2000)).put("ph", o.optString("ph")).put("st", o.optString("st").take(16)).put("sys", o.optString("sys"))
                 .put("rp", o.optJSONObject("rp")?.let { rp(it) } ?: JSONObject.NULL)
-                .put("re", o.optString("re").take(40)).put("e", o.optString("e").take(8)).put("off", o.optBoolean("off")))
+                .put("re", o.optString("re").take(40)).put("e", o.optString("e").take(8)).put("off", o.optBoolean("off"))
+                .put("ty", o.optInt("ty")).put("rd", o.optLong("rd")))
         }
         if (last.isNotEmpty()) upd(c, room) { it.put("t", last).put("p", peer) }
         if (full || out.length() > 0) Msg.events.add(JSONObject().put("k", "dm").put("peer", peer).put("room", room).put("full", full).put("list", out)
@@ -200,6 +201,7 @@ object Chat {
         val o = JSONObject().put("i", Msg.dev(c)).put("n", j.optString("n").take(32)).put("t", j.optString("t").take(600))
         j.optString("st").takeIf { it.isNotEmpty() }?.let { o.put("st", it.take(16)) }
         j.optJSONObject("rp")?.let { o.put("rp", rp(it)) }
+        j.optInt("lv").takeIf { it in 2..10 }?.let { o.put("lv", it) }   // dereje nyşany
         j.optString("re").takeIf { it.isNotEmpty() }?.let { o.put("re", it.take(40)).put("e", j.optString("e").take(8)).put("off", j.optBoolean("off")) }   // tepki
         if (!Fs.on() && o.has("re")) return   // köne ýolda tepki ýok
         if (!Fs.on()) { if (j.optString("t").isNotBlank()) Msg.gsend(c, j.optString("n"), j.optString("t")) else Msg.events.add(JSONObject().put("k", "gfail").put("why", "srv")); return }   // köne ýol (VPS / ntfy)

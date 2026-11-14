@@ -43,7 +43,7 @@ import java.util.concurrent.Executors
  * 1.14: ekranlar tasarymyň özi (assets/ui, WebView içinde). VPN, serwerler, açar, täzelenme we habarlaşma şu ýerde (Kotlin).
  * Sahypa https://tvpn.local/ salgysyndan açylýar — faýllar programmanyň içinden berilýär (internet gerek däl).
  */
-class Main : Activity() {
+open class Main : Activity() {
     private lateinit var web: WebView
     private val h = Handler(Looper.getMainLooper())
     private var fromApp = false
@@ -238,6 +238,7 @@ class Main : Activity() {
                 .put("dl", (Sub.upd["all"] ?: Sub.upd["64"] ?: Sub.upd["32"])?.let { runCatching { Sub.fileUrl(it.second) }.getOrNull() } ?: "")
                 .put("roles", JSONObject().apply { Sub.roles.forEach { (d, rn) -> put(d, JSONArray().put(rn.first).put(rn.second)) } })
                 .put("uban", Lic.banned(c))
+                .put("disg", runCatching { packageManager.getComponentEnabledSetting(android.content.ComponentName(c, "tm.yol.vpn.Calc")) == android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED }.getOrDefault(false))
                 .put("adm", Msg.admPw(c) != null).put("admMe", Msg.admMe(c) ?: JSONObject()).toString()
         }
 
@@ -258,6 +259,24 @@ class Main : Activity() {
             ui { if (State.now == State.ON || State.now == State.WAIT) startVpn() }
         }
         @JavascriptInterface fun test() = measure()
+        /** 1.19: açar satyn almak — töleg çekiniň suraty Firestore-a (gi/), sargyt bota. */
+        @JavascriptInterface fun buy(json: String) {
+            val o = runCatching { JSONObject(json) }.getOrNull() ?: return
+            Thread {
+                val ph = o.optString("ph"); val pid = Fs.newId()
+                val ok = Fs.on() && ph.length in 1..110_000 && (Msg.enc(JSONObject().put("ph", ph).toString())?.let { Fs.write("gi/$pid", it) } ?: false)
+                if (ok) Msg.send(this@Main, JSONObject().put("k", "buy").put("d", o.optInt("d")).put("pi", pid).put("n", o.optString("n").take(200)))
+                push(JSONObject().put("k", if (ok) "buysent" else "buyfail"))
+            }.start()
+        }
+        /** 1.19: gizli nyşan — telefonda «Kalkulýator» bolup görünýär. */
+        @JavascriptInterface fun disguise(on: Boolean) {
+            val pm = packageManager
+            val calc = android.content.ComponentName(this@Main, "tm.yol.vpn.Calc"); val norm = android.content.ComponentName(this@Main, "tm.yol.vpn.Main")
+            pm.setComponentEnabledSetting(if (on) calc else norm, android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED, android.content.pm.PackageManager.DONT_KILL_APP)
+            pm.setComponentEnabledSetting(if (on) norm else calc, android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED, android.content.pm.PackageManager.DONT_KILL_APP)
+        }
+        @JavascriptInterface fun speed() { if (!Speed.busy) Thread { Speed.run() }.start() }
         @JavascriptInterface fun lang(l: String) { if (l in Lang.codes) Lang.set(this@Main, l) }
         @JavascriptInterface fun snd(on: Boolean) = Snd.setOn(this@Main, on)
         @JavascriptInterface fun tap() = Snd.play(this@Main, R.raw.tap, 0.4f)
