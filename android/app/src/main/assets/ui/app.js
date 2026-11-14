@@ -573,6 +573,15 @@
           lvBtns: RK_L.map((q, i) => ({ t: String(i + 1), name: tx['rk_n' + (i + 1)], cls: lvK === i + 1 ? 'on' : '',
             go: () => this.confirm(tx.gv_qLv.replace('{n}', a.name).replace('{r}', tx['rk_n' + (i + 1)]).replace('{l}', String(i + 1)), '✅ ' + tx.gv_lv, () => act('xpgive', { dev: d, lv: i + 1 }), false) })) });
       } else r.up = { name: '', photo: '', hasPh: false, noPh: true, bg: '', ini: '', bgImg: 'none', sub: '', canDm: false, noDm: false, notMe: false, why: '', isO: false, isA: false, ncls: '', hasRk: false, rkT: '1', rkName: '', rkNcls: '', hasMute: false, muteT: '', mute: null, isOwnV: false, code: '', cpId: null, lvNow: '', canGive: false, needAdm: false, goAdm: null, giveX: null, lvBtns: [] };
+      // 1.28.1: eýesi öz profilinde özüne bal / dereje berýär
+      { const own = myRole === 'o' || admMe().role === 'f', canGive = !!(s.admOn && isF), L = LS.get('lvl', null), ux = UPX[me1];
+        const xpK = ux ? ux.xp : L ? +L.xp || 0 : null, lvK = ux ? ux.lv : L ? rkT(L.lv) : 0;
+        r.mg = { on: own && pg === 'profile', canGive, needAdm: own && !canGive, goAdm: () => this.setState({ page: 'admin' }),
+          lvNow: lvK ? tx.gv_now.replace('{n}', tx['rk_n' + rkT(lvK)]).replace('{l}', String(rkT(lvK))).replace('{x}', xpK != null ? String(xpK) : '?') : tx.gv_unk,
+          giveX: () => { const x = parseInt(this.state.gvX, 10); if (!x) { this.say('⚠️ ' + tx.gv_bad); return; }
+            this.confirm(tx.gv_qX.replace('{n}', this.meName).replace('{x}', String(x)), '✅ ' + tx.gv_btn, () => { act('xpgive', { dev: me1, x }); this.setState({ gvX: '' }); }, false); },
+          lvBtns: RK_L.map((q, i) => ({ t: String(i + 1), name: tx['rk_n' + (i + 1)], cls: lvK === i + 1 ? 'on' : '',
+            go: () => this.confirm(tx.gv_qLv.replace('{n}', this.meName).replace('{r}', tx['rk_n' + (i + 1)]).replace('{l}', String(i + 1)), '✅ ' + tx.gv_lv, () => act('xpgive', { dev: me1, lv: i + 1 }), false) })) }; }
       r.gvX = s.gvX || ''; r.onGvX = (e) => this.setState({ gvX: String(e.target.value || '').replace(/[^0-9-]/g, '').slice(0, 7) });
       // hususy habarlar sanawy
       r.isDms = pg === 'dms';
