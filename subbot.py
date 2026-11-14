@@ -1550,6 +1550,24 @@ FAKTLAR:
 Hiç haçan «admine geçirýärin», «admin ýazar», «admin jogap berer» diýme — özüň doly jogap ber, gürrüňi dowam et. Ulanyjy «admin gerek» diýse-de özüň kömek et.
 Jogaby diňe şu JSON görnüşinde ber: {"answer": "..."}"""
 
+APP_AI_HOLD = 300   # 1.31: admin bilete ýazandan soň AI 5 minut dymýar
+def app_adm_last(t):
+    return max([int(x.get("ts") or 0) for x in (t or {}).get("log", []) if x.get("r") == "a"] or [0])
+
+async def app_ai_later(app, tid, la):
+    """Admin 5 minut ýazmasa, garaşýan ulanyja AI özi jogap berýär."""
+    if tid in RUN.setdefault("ai_wait", set()): return
+    RUN["ai_wait"].add(tid)
+    try:
+        await asyncio.sleep(max(1, la + APP_AI_HOLD - int(time.time()) + 1))
+        t = (app_cfg(load_db()).get("tickets") or {}).get(tid)
+        if not t or t.get("st") == "closed" or not t.get("log") or t["log"][-1].get("r") != "u": return
+        la2 = app_adm_last(t)
+        if la2 != la:   # admin täzeden ýazdy: täze 5 minutdan soň gaýtadan barla
+            RUN["ai_wait"].discard(tid); asyncio.create_task(app_ai_later(app, tid, la2)); return
+        if bool(ai_key()) and load_db().get("ai_sup", True): await app_ai_reply(app, tid)
+    finally: RUN["ai_wait"].discard(tid)
+
 async def app_ai_reply(app, tid):
     a = app_cfg(load_db()); t = (a.get("tickets") or {}).get(tid)
     if not t: return
@@ -1745,12 +1763,16 @@ async def app_on_msg(app, fid, o):
         if new: await asyncio.to_thread(app_send, dev, {"k": "tko", "tid": int(tid)})
         new = new is True
         ai_on = bool(ai_key()) and load_db().get("ai_sup", True)   # 1.16.4: «admin gerek» diýse-de AI jogap berýär
+        la_ = app_adm_last((app_cfg(load_db()).get("tickets") or {}).get(tid))
+        hold_ = ai_on and int(time.time()) - la_ < APP_AI_HOLD   # 1.31: admin ýaňy ýazdy — AI garaşýar
+        if hold_: ai_on = False
         nk_ = ((app_cfg(load_db()).get("devs") or {}).get(dev) or {}).get("nick") or "?"
         await app_staff_notify(app, f"🎫 <b>Program bileti #{tid}</b>{' (täze)' if new else ''}\n<blockquote>{app_who(app_cfg(load_db()), dev)}\n👤 {esc(text)[:900]}</blockquote>"
                                + ("\n<i>🤖 AI jogap berýär…</i>" if ai_on else ""),
                                {"k": "atk", "tid": int(tid), "n": nk_[:32], "t": text[:200], "new": new},
                                KB([[B("✍️ Jogap ber", f"atr:{tid}", "primary"), B("🔒 Ýap", f"atc:{tid}", "danger")], [B("📄 Bilet", f"atk:{tid}")]]), silent=ai_on, skip=dev)
         if ai_on: asyncio.create_task(app_ai_reply(app, tid))
+        elif hold_: asyncio.create_task(app_ai_later(app, tid, la_))
     elif k == "human":
         tid = str(int(o.get("tid") or 0))
         await app_staff_notify(app, f"🙋 <b>Program bileti #{tid}: ulanyjy admin bilen gürleşmek isleýär</b>\n<blockquote>{app_who(a, dev)}</blockquote>",

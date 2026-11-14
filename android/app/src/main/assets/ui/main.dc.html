@@ -724,9 +724,6 @@ html.ph-s .c-bg{background-image:var(--bgS,url(img/bg0_s.jpg))!important}
         <sc-if value="{{fbDone}}" hint-placeholder-val="{{false}}"><div class="bub bub-s">{{tx.fb_thx}}</div></sc-if>
         <sc-if value="{{aiTyping}}" hint-placeholder-val="{{false}}"><div class="bub bub-a bub-ai"><span class="ailbl">🤖 {{tx.ai_name}}</span>{{tx.ai_typing}}</div></sc-if>
       </div>
-      <div style="display:flex;gap:6px;overflow-x:auto;flex-shrink:0;padding-bottom:2px">
-        <sc-for list="{{chips}}" as="ch" hint-placeholder-count="4"><button onClick="{{ch.send}}" class="chip tap">{{ch.t}}</button></sc-for>
-      </div>
       <div class="glass" style="border-radius:24px;padding:5px 5px 5px 14px;display:flex;align-items:center;gap:8px;flex-shrink:0">
         <input value="{{chatIn}}" onChange="{{onChat}}" placeholder="{{tx.c_ph}}" aria-label="{{tx.c_ph}}" autocomplete="off" style="flex-grow:1;min-width:0;height:42px;border:none;background:transparent;outline:none;font-size:14px;color:#F3E7D0">
         <button onClick="{{sendChat}}" aria-label="{{tx.c_send}}" class="tap" style="width:44px;height:44px;border-radius:22px;border:none;background:linear-gradient(135deg,#E0B04A,#C8902E);display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0;flex-shrink:0">
@@ -1096,11 +1093,13 @@ html.ph-s .c-bg{background-image:var(--bgS,url(img/bg0_s.jpg))!important}
 
   <sc-if value="{{isAdmT}}" hint-placeholder-val="{{false}}">
     <div class="pg" style="position:absolute;left:16px;right:16px;top:94px;bottom:0;display:flex;flex-direction:column;gap:8px;padding-bottom:16px">
-      <button onClick="{{openAdmTUser}}" class="glass tap" style="border-radius:16px;padding:10px 12px;display:flex;align-items:center;gap:10px;cursor:pointer;text-align:left;flex-shrink:0">
-        <span style="width:42px;height:42px;border-radius:21px;background:{{at.bg}};display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:800;color:#0B2117;flex-shrink:0">{{at.ini}}</span>
+      <div class="glass" style="border-radius:16px;padding:10px 12px;display:flex;align-items:center;gap:10px;text-align:left;flex-shrink:0">
+        <button onClick="{{atProf}}" class="tap" aria-label="{{at.name}}" style="width:42px;height:42px;border-radius:21px;border:none;padding:0;background:none;cursor:pointer;flex-shrink:0"><sc-if value="{{at.hasPh}}" hint-placeholder-val="{{false}}"><img src="{{at.photo}}" alt="" style="width:42px;height:42px;border-radius:21px;object-fit:cover;border:2px solid #E0B04A;box-sizing:border-box;pointer-events:none"></sc-if><sc-if value="{{at.noPh}}" hint-placeholder-val="{{true}}"><span style="pointer-events:none;width:42px;height:42px;border-radius:21px;background:{{at.bg}};display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:800;color:#0B2117;flex-shrink:0">{{at.ini}}</span></sc-if></button>
+        <button onClick="{{openAdmTUser}}" class="tap" style="flex-grow:1;min-width:0;display:flex;align-items:center;gap:10px;border:none;background:none;padding:0;color:inherit;font-family:inherit;text-align:left;cursor:pointer">
         <span style="flex-grow:1;display:flex;flex-direction:column;gap:2px;min-width:0"><span style="font-size:14px;font-weight:800">{{at.name}}</span><span style="font-size:11px;color:#C9BFA8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{at.sub}}</span></span>
         <span class="pill {{at.stCls}}">{{at.stT}}</span>
-      </button>
+        </button>
+      </div>
       <div ref="{{chatRef}}" style="flex-grow:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:8px;padding:4px 2px">
         <sc-for list="{{atMsgs}}" as="am" hint-placeholder-count="3">
           <div class="bub {{am.cls}}"><sc-if value="{{am.isAi}}" hint-placeholder-val="{{false}}"><span class="ailbl" style="color:#0B2117">🤖 {{tx.ai_name}}</span></sc-if>{{am.t}}<span class="bt">{{am.time}}</span></div>
@@ -1124,7 +1123,7 @@ html.ph-s .c-bg{background-image:var(--bgS,url(img/bg0_s.jpg))!important}
   <sc-if value="{{isAdmU}}" hint-placeholder-val="{{false}}">
     <div class="pg" style="position:absolute;left:16px;right:16px;top:94px;bottom:0;overflow-y:auto;display:flex;flex-direction:column;gap:10px;padding-bottom:24px">
       <div class="glass" style="border-radius:20px;padding:16px;display:flex;flex-direction:column;align-items:center;gap:6px;text-align:center;flex-shrink:0">
-        <sc-if value="{{au.hasPh}}" hint-placeholder-val="{{false}}"><img src="{{au.photo}}" alt="" style="width:64px;height:64px;border-radius:32px;object-fit:cover;border:2px solid #E0B04A;box-sizing:border-box"></sc-if><sc-if value="{{au.noPh}}" hint-placeholder-val="{{true}}"><span style="width:64px;height:64px;border-radius:32px;background:{{au.bg}};display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:800;color:#0B2117;border:2px solid #E0B04A">{{au.ini}}</span></sc-if>
+        <button onClick="{{auProf}}" class="tap" aria-label="{{au.name}}" style="border:none;background:none;padding:0;cursor:pointer;border-radius:32px"><sc-if value="{{au.hasPh}}" hint-placeholder-val="{{false}}"><img src="{{au.photo}}" alt="" style="width:64px;height:64px;border-radius:32px;object-fit:cover;border:2px solid #E0B04A;box-sizing:border-box"></sc-if><sc-if value="{{au.noPh}}" hint-placeholder-val="{{true}}"><span style="width:64px;height:64px;border-radius:32px;background:{{au.bg}};display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:800;color:#0B2117;border:2px solid #E0B04A">{{au.ini}}</span></sc-if></button>
         <span style="font-size:17px;font-weight:800">{{au.name}}</span>
         <span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#FFD27A">ID · {{au.code}}</span>
         <button onClick="{{banToggle}}" class="tap {{banCls}}" style="height:34px;padding:0 14px;margin-top:4px;border-radius:10px;border:1px solid {{banBc}};background:transparent;color:{{banC}};font-size:12px;font-weight:800;cursor:pointer">{{banT}}</button>

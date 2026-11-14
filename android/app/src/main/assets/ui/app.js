@@ -440,6 +440,10 @@
         r.banT = au.ban ? '✅ ' + tx.ad_unban : '🚫 ' + tx.ad_ban; r.banC = au.ban ? '#6FDB9C' : '#FFB0A6'; r.banBc = au.ban ? 'rgba(111,219,156,.6)' : 'rgba(255,138,120,.6)';
       }
       const at = s.admT != null && A ? A.tk.find((x) => x.id === s.admT) : null;
+      if (at && at.u) { const ph = (PH[at.u] || {}).d || '';   // 1.31: biletde ýazanyň suraty → basylsa profiline
+        if (!ph && !phAsked[at.u]) { phAsked[at.u] = 1; NB.getPhoto(at.u); }
+        r.at = Object.assign({}, r.at, { photo: ph, hasPh: !!ph, noPh: !ph }); r.atProf = () => this.openProf(at.u); }
+      r.auProf = () => this.openProf(s.admU);
       if (at && at.fb && at.st === 'closed') r.atMsgs = r.atMsgs.concat([{ t: at.fb === '👍' ? tx.fb_aUp : tx.fb_aDown, time: '', cls: 'bub-s', isAi: false }]);
       // ---- 1.16 ----
       const pg = s.page, me1 = INFO.dev, myRole = roleOf(me1);
