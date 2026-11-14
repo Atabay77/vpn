@@ -220,7 +220,7 @@ open class Main : Activity() {
             val upd = Upd.available(Msg.ver(c))
             val q = Upd.query(c)
             return JSONObject()
-                .put("st", when (State.now) { State.ON -> "on"; State.WAIT -> "wait"; State.FAIL -> "fail"; else -> "off" })
+                .put("st", when (State.now) { State.ON -> "on"; State.WAIT -> "wait"; State.FAIL -> "fail"; else -> "off" }).put("ks", State.hold)
                 .put("act", State.active?.key ?: "").put("sel", State.selected(c)?.key ?: "")
                 .put("ms", State.ms).put("left", if (left == null) -1 else left / 1000).put("kexp", if (exp == null) -1 else exp / 1000)
                 .put("dn", dRate).put("up", uRate).put("rxT", rxSum).put("txT", txSum).put("onAt", State.onAt)
@@ -238,7 +238,7 @@ open class Main : Activity() {
                 .put("dl", (Sub.upd["all"] ?: Sub.upd["64"] ?: Sub.upd["32"])?.let { runCatching { Sub.fileUrl(it.second) }.getOrNull() } ?: "")
                 .put("roles", JSONObject().apply { Sub.roles.forEach { (d, rn) -> put(d, JSONArray().put(rn.first).put(rn.second)) } })
                 .put("uban", Lic.banned(c))
-                .put("nkb", Lic.bonus(c))
+                .put("nkb", Lic.bonus(c)).put("kson", Lic.kill(c))
                 .put("disg", runCatching { packageManager.getComponentEnabledSetting(android.content.ComponentName(c, "tm.yol.vpn.Calc")) == android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED }.getOrDefault(false))
                 .put("adm", Msg.admPw(c) != null).put("admMe", Msg.admMe(c) ?: JSONObject()).toString()
         }
@@ -298,7 +298,10 @@ open class Main : Activity() {
         @JavascriptInterface fun dmPage(on: Boolean) { Msg.dmPage = on; if (on) Msg.kick() }
         @JavascriptInterface fun dmSt(peer: String, st: String) = Chat.setSt(this@Main, peer, st)
         @JavascriptInterface fun dmList(): String = Chat.list(this@Main).toString()
-        @JavascriptInterface fun nickBonus() = Lic.setBonus(this@Main)   // 1.24: nik üýtgedildi → mugt wagt 1,5 sagat
+        @JavascriptInterface fun nickBonus() = Lic.setBonus(this@Main)
+        @JavascriptInterface fun killSw(on: Boolean) = Lic.setKill(this@Main, on)   // 1.28
+        @JavascriptInterface fun vpnOff() = ui { startService(Intent(this@Main, Svc::class.java).setAction(Svc.STOP)) }
+        @JavascriptInterface fun vpnSettings() = ui { runCatching { startActivity(Intent(android.provider.Settings.ACTION_VPN_SETTINGS)) } }   // 1.24: nik üýtgedildi → mugt wagt 1,5 sagat
         @JavascriptInterface fun codeOf(dev: String): String = if (Regex("^[0-9a-f]{12}$").matches(dev)) Msg.codeOf(dev) else ""
         @JavascriptInterface fun gsend2(json: String) { runCatching { Chat.gsend(this@Main, JSONObject(json)) } }
         @JavascriptInterface fun img(kind: String, id: String) = Chat.img(kind, id)

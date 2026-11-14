@@ -94,7 +94,7 @@ object Chat {
                 val w = Fs.write("x/$room/i/" + Fs.newId(), Msg.encK("dm|$sec", j.toString()))
                 // garşydaşa bildiriş: ilkinji habarda ýa-da 6 sagatdan soň
                 val rq = rooms(c).optJSONObject(room)?.optLong("rq") ?: 0L
-                if (w && j.optString("sys").isEmpty() && !j.has("ty") && !j.has("rd") && !j.has("re") && System.currentTimeMillis() - rq > 6 * 3600_000L) {
+                if (w && j.optString("sys").isEmpty() && !j.has("ty") && !j.has("rd") && !j.has("re") && !j.has("dl") && !j.has("ed") && System.currentTimeMillis() - rq > 6 * 3600_000L) {
                     Msg.enc(JSONObject().put("f", me).put("n", (nick ?: "").take(32)).toString())?.let { if (Fs.write("r/$peer/i/" + Fs.newId(), it)) upd(c, room) { r2 -> r2.put("rq", System.currentTimeMillis()) } }
                 }
                 w
@@ -130,7 +130,7 @@ object Chat {
             out.put(JSONObject().put("id", id).put("t", Fs.sec(t)).put("f", f).put("x", o.optString("x").take(2000)).put("ph", o.optString("ph")).put("st", o.optString("st").take(16)).put("sys", o.optString("sys"))
                 .put("rp", o.optJSONObject("rp")?.let { rp(it) } ?: JSONObject.NULL)
                 .put("re", o.optString("re").take(40)).put("e", o.optString("e").take(8)).put("off", o.optBoolean("off"))
-                .put("ty", o.optInt("ty")).put("rd", o.optLong("rd")))
+                .put("ty", o.optInt("ty")).put("rd", o.optLong("rd")).put("dl", o.optString("dl").take(40)).put("ed", o.optString("ed").take(40)))
         }
         if (last.isNotEmpty()) upd(c, room) { it.put("t", last).put("p", peer) }
         if (full || out.length() > 0) Msg.events.add(JSONObject().put("k", "dm").put("peer", peer).put("room", room).put("full", full).put("list", out)
@@ -202,8 +202,12 @@ object Chat {
         j.optString("st").takeIf { it.isNotEmpty() }?.let { o.put("st", it.take(16)) }
         j.optJSONObject("rp")?.let { o.put("rp", rp(it)) }
         j.optInt("lv").takeIf { it in 2..10 }?.let { o.put("lv", it) }   // dereje nyşany
+        if (j.has("ow")) o.put("ow", if (j.optInt("ow") == 1) 1 else 0)   // 1.28: eýesi OWNER ýa-da dereje bilen görünýär
+        j.optString("dl").takeIf { it.isNotEmpty() }?.let { o.put("dl", it.take(40)) }   // 1.28: öz habaryny pozmak
+        j.optString("ed").takeIf { it.isNotEmpty() }?.let { o.put("ed", it.take(40)) }   // 1.28: öz habaryny üýtgetmek (täze tekst «t»-de)
+        if (j.optInt("sty") == 1) o.put("sty", 1)   // 1.28: hekaýa (24 sagat)
         j.optString("re").takeIf { it.isNotEmpty() }?.let { o.put("re", it.take(40)).put("e", j.optString("e").take(8)).put("off", j.optBoolean("off")) }   // tepki
-        if (!Fs.on() && o.has("re")) return   // köne ýolda tepki ýok
+        if (!Fs.on() && (o.has("re") || o.has("dl") || o.has("ed") || o.has("sty"))) return   // köne ýolda tepki / pozmak / hekaýa ýok
         if (!Fs.on()) { if (j.optString("t").isNotBlank()) Msg.gsend(c, j.optString("n"), j.optString("t")) else Msg.events.add(JSONObject().put("k", "gfail").put("why", "srv")); return }   // köne ýol (VPS / ntfy)
         Thread {
             var ok = true

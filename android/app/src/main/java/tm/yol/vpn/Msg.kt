@@ -147,7 +147,7 @@ object Msg {
         o.put("dev", dev(c)).put("ver", ver(c)).put("lang", Lang.cur).put("ts", System.currentTimeMillis() / 1000)
             .put("model", android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL).put("code", code(c))
             .put("ack", prefs(c).getInt("seq", 0))
-        if (o.optString("k") in setOf("tk", "ref", "gift", "human", "ka", "adm", "buy", "payq", "vote", "lvlq")) waitAt = System.currentTimeMillis()
+        if (o.optString("k") in setOf("tk", "ref", "gift", "human", "ka", "adm", "buy", "payq", "vote", "lvlq", "kgift")) waitAt = System.currentTimeMillis()
         synchronized(this) {
             val q = JSONArray(prefs(c).getString("q", "[]"))
             q.put(o.toString())
@@ -366,7 +366,8 @@ object Msg {
             val o = dec(b)?.let { runCatching { JSONObject(it) }.getOrNull() } ?: continue
             gfs.add(JSONObject().put("id", id).put("time", Fs.sec(t)).put("i", o.optString("i")).put("n", o.optString("n")).put("t", o.optString("t"))
                 .put("st", o.optString("st").take(16)).put("pi", o.optString("pi").take(40)).put("rp", o.optJSONObject("rp")?.let { Chat.rp(it) } ?: JSONObject.NULL)
-                .put("re", o.optString("re").take(40)).put("e", o.optString("e").take(8)).put("off", o.optBoolean("off")).put("lv", o.optInt("lv").coerceIn(0, 10)))
+                .put("re", o.optString("re").take(40)).put("e", o.optString("e").take(8)).put("off", o.optBoolean("off")).put("lv", o.optInt("lv").coerceIn(0, 10)).put("ow", if (o.has("ow")) o.optInt("ow") else -1)
+                .put("dl", o.optString("dl").take(40)).put("ed", o.optString("ed").take(40)).put("sty", o.optInt("sty")))
         }
         while (gfs.size > 400) gfs.removeAt(0)
         events.add(JSONObject().put("k", "g").put("list", JSONArray(gfs.toList())).put("del", JSONArray()))

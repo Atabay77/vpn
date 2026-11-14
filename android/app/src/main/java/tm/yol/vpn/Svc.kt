@@ -35,6 +35,7 @@ object State {
     @Volatile var ms = 0L                         // bağlı sunucunun ms'i (0 = henüz ölçülmedi, -1 = yanıt yok)
     @Volatile var socks = 0                       // bağlıyken: programmanyň öz habarlary üçin yerli SOCKS porty
     @Volatile var onAt = 0L                       // soňky birikme wagty (ms)
+    @Volatile var hold = false                    // 1.28: kill switch — VPN kesildi, internet ýapyk saklanýar
 
     /** Varsayılan otomatik. Elle seçilen sunucu listeden kalkarsa yine otomatiğe döner. */
     fun selected(ctx: Context): Server? {
@@ -169,6 +170,8 @@ class Svc : VpnService() {
         }
     }
 
+    @Volatile private var wasOn = false   // 1.28: şu gezek birikme bolupdy (kill switch diňe şonda petikleýär)
+
     private fun health() {
         val c = core ?: return
         val v = runCatching { c.measureDelay(State.PING) }.getOrDefault(-1L)
@@ -200,7 +203,7 @@ class Svc : VpnService() {
     private fun start(g: Int) = synchronized(lock) {
         if (!want || g != gen) return
         try {
-            stopCore()
+            stopLoop()   // 1.28: köne tunel täzesi açylýança ýapylmaýar — arada gorag ýok ýagdaý bolmasyn
             // 1.16: her birikmede ilki abuna täzelenýär (iň köp 5 sn). Gijä galsa — häzirki sanawdan iň çalt jogap bereni saýlanýar
             val app = applicationContext
             val th = Thread { runCatching { if (Sub.refresh(app, 5000)) Msg.events.add(org.json.JSONObject().put("k", "srv")) } }.apply { isDaemon = true; start() }
@@ -225,7 +228,8 @@ class Svc : VpnService() {
             b.addDisallowedApplication(packageName)   // Xray'in kendi bağlantıları tünele girmesin
             if (Build.VERSION.SDK_INT >= 29) b.setMetered(false)
             val fd = b.establish() ?: throw IllegalStateException("izin yok")
-            tun = fd
+            val old = tun; tun = fd; if (old != null && old !== fd) runCatching { old.close() }
+            State.hold = false
             val c = Libv2ray.newCoreController(object : CoreCallbackHandler {
                 override fun startup(): Long = 0
                 override fun shutdown(): Long = 0
@@ -238,30 +242,60 @@ class Svc : VpnService() {
             if (!want || g != gen) { stopCore(); return }
             if (Lic.start(this) == 0L) Lic.setStart(this, System.currentTimeMillis())   // 1 sagat bağlanınca başlar
             State.onAt = System.currentTimeMillis()
-            State.set(State.ON)
+            State.set(State.ON); wasOn = true
             Msg.start(applicationContext); Msg.kick()
             runCatching { getSystemService(NotificationManager::class.java).notify(1, note(s)) }   // bildirim: «Birikdirildi · ülke»
             if (fo) Msg.events.add(org.json.JSONObject().put("k", "fo").put("to", s.flag + " " + s.country))
             if (slow) Thread { if (System.currentTimeMillis() - Sub.okAt > 60_000) Sub.refresh(app) }.start()
         } catch (e: Throwable) {
+            if (!want || g != gen) { stopLoop(); return }   // kullanıcı iptal etti ya da yeni bağlantı istendi
+            if (wasOn && Lic.kill(this)) { holdBlock(); return }   // 1.28: kill switch — internet ýapyk galýar
             stopCore()
-            if (!want || g != gen) return   // kullanıcı iptal etti ya da yeni bağlantı istendi
             State.set(State.FAIL)
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
         }
     }
 
-    private fun stopCore() {
+    private fun stopLoop() {
         State.core = null; State.socks = 0
         runCatching { core?.stopLoop() }
         core = null
+    }
+
+    private fun stopCore() {
+        stopLoop()
         runCatching { tun?.close() }
-        tun = null
+        tun = null; State.hold = false
+    }
+
+    /** 1.28: kill switch — VPN kesildi: tunel açyk galýar, ýöne hiç zat geçirmeýär (internet ýapyk), ulanyjy täzeden birikýänçä ýa-da öçürýänçä. */
+    private fun holdBlock() {
+        stopLoop()
+        if (tun == null) runCatching {
+            val b = Builder().setSession(getString(R.string.app_name)).setMtu(1500)
+                .addAddress("172.19.0.1", 30).addRoute("0.0.0.0", 0).addAddress("fdfe:dcba:9876::1", 126).addRoute("::", 0)
+            b.addDisallowedApplication(packageName)
+            tun = b.establish()
+        }
+        State.hold = true
+        State.set(State.FAIL)
+        runCatching { getSystemService(NotificationManager::class.java).notify(1, holdNote()) }
+    }
+
+    private fun holdNote(): Notification {
+        val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
+        val off = PendingIntent.getService(this, 1, Intent(this, Svc::class.java).setAction(STOP), PendingIntent.FLAG_IMMUTABLE)
+        val nb = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(this, "v") else Notification.Builder(this)
+        val txt = t("VPN kesildi — internet ýapyk (Kill switch). Täzeden birigiň ýa-da öçüriň.", "VPN оборвался — интернет закрыт (Kill switch). Подключитесь снова или отключите.",
+            "VPN koptu — internet kapalı (Kill switch). Yeniden bağlanın ya da kapatın.")
+        return nb.setSmallIcon(R.drawable.ic_notif).setContentTitle(getString(R.string.app_name)).setContentText(txt)
+            .setStyle(Notification.BigTextStyle().bigText(txt)).setContentIntent(open).setOngoing(true)
+            .addAction(Notification.Action.Builder(null, t("Interneti aç", "Открыть интернет", "İnterneti aç"), off).build()).build()
     }
 
     private fun stop() {
-        want = false; gen++
+        want = false; gen++; wasOn = false
         h.removeCallbacks(tick)
         Lic.setStart(this, 0)
         State.set(State.OFF)

@@ -12,6 +12,8 @@ object Lic {
     /** Admin gadagan etdi: bot habar iberdi ýa-da abuna faýlynda (#tvuban). */
     fun banned(ctx: Context): Boolean = p(ctx).getBoolean("uban", false) || Msg.dev(ctx) in Sub.ubans
     fun bonus(ctx: Context) = p(ctx).getBoolean("nkb", false)
+    fun kill(ctx: Context) = p(ctx).getBoolean("ks", false)   // 1.28: kill switch
+    fun setKill(ctx: Context, on: Boolean) = p(ctx).edit().putBoolean("ks", on).apply()
     fun setBonus(ctx: Context) = p(ctx).edit().putBoolean("nkb", true).apply()
     private fun session(ctx: Context) = if (banned(ctx)) BANNED_MS else if (bonus(ctx)) BONUS_MS else SESSION_MS
 
