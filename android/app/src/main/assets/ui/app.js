@@ -60,7 +60,8 @@
   const EMOJI = ['😀', '😁', '😂', '🤣', '😊', '🙂', '😉', '😍', '🥰', '😘', '😎', '🤔', '😅', '😴', '😭', '😡', '😱', '🥳', '👍', '👎', '🙏', '👏', '💪', '🤝', '👋', '🔥', '❤️', '💔', '💯', '🎉', '✅', '❌', '⚡', '🚀', '⭐', '🌙', '☀️', '🎮', '📶', '🔒', '💬', '🇹🇲'];
   // tepkiler: {re: habaryň kimligi, e: emoji, off: aýyrmak}; her adamyň bir habara bir tepkisi
   const RX_E = ['❤️', '👍', '😂', '🔥', '😮'];
-  let LRX = [];   // ugradylan, entek serwerden gelmedik Global tepkiler
+  let LRX = [];
+  let LGM = [];   // ugradylan, entek serwerden gelmedik öz Global habarlarym   // ugradylan, entek serwerden gelmedik Global tepkiler
   function rxAgg(rows) {
     const m = {};
     rows.filter((r) => r.re).sort((a, b) => (a.time || a.t || 0) - (b.time || b.t || 0)).forEach((r) => {
@@ -90,6 +91,30 @@
         if (square) { const k = Math.max(max / img.width, max / img.height); c.width = max; c.height = max; c.getContext('2d').drawImage(img, (max - img.width * k) / 2, (max - img.height * k) / 2, img.width * k, img.height * k); }
         else { const k = Math.min(1, max / Math.max(img.width, img.height)); c.width = Math.round(img.width * k); c.height = Math.round(img.height * k); c.getContext('2d').drawImage(img, 0, 0, c.width, c.height); }
         cb(c.toDataURL('image/jpeg', q));
+      };
+      img.onerror = () => cb('');
+      img.src = String(rd.result);
+    };
+    rd.onerror = () => cb('');
+    rd.readAsDataURL(file);
+  }
+  /** Chat suraty: mümkin boldugyça uly we arassa (WebP), emma çäkden (simwol) geçmesin. */
+  function fitShrink(file, max, limit, cb) {
+    const rd = new FileReader();
+    rd.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        let dim = max, out = '';
+        while (dim >= 420 && !out) {
+          const k = Math.min(1, dim / Math.max(img.width, img.height)), c = document.createElement('canvas');
+          c.width = Math.round(img.width * k); c.height = Math.round(img.height * k); c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+          for (let q = 0.9; q >= 0.44 && !out; q -= 0.06) {
+            let d = c.toDataURL('image/webp', q); if (d.indexOf('data:image/webp') !== 0) d = c.toDataURL('image/jpeg', q);
+            if (d.length <= limit) out = d;
+          }
+          dim = Math.round(dim * 0.85);
+        }
+        cb(out);
       };
       img.onerror = () => cb('');
       img.src = String(rd.result);
@@ -248,13 +273,13 @@
       r.cStatus = INFO.ai ? tx.c_aiStatus : tx.c_status; r.cNote = INFO.ai ? tx.c_aiNote : tx.c_note;
       // Global chat (hakyky)
       const bans = INFO.bans || [], me = INFO.dev;
-      const gl = G.filter((m) => !m.re && !gDel[m.id] && bans.indexOf(m.i) < 0), RXG = rxAgg(G.concat(LRX));
+      const gl = G.filter((m) => !m.re && !gDel[m.id] && bans.indexOf(m.i) < 0).concat(LGM), RXG = rxAgg(G.concat(LRX));
       gl.forEach((m) => { if (m.pi && !GI[m.pi]) askImg('g', m.pi); });
       r.gMsgs = gl.map((m) => {
         const mine = m.i === me, nm = mine ? this.meName : m.n || '?';
         const ph = mine ? s.photo : ((PH[m.i] || {}).d || '');
         return { name: nm + (mine ? ' · ' + tx.g_you : ''), ini: ini(nm), bg: mine ? '#E0B04A' : colorOf(m.i), nc: mine ? '#06100B' : colorOf(m.i), photo: ph, hasPh: !!ph, noPh: !ph,
-          t: m.st ? '' : m.t, time: this.hm((m.time || 0) * 1000 || now), gk: m.id, cls: mine ? 'gm-me' : 'gm-o', bcls: mine ? 'gb-me' : 'gb-o', canDel: false, del: null,
+          t: m.st ? '' : m.t, time: this.hm((m.time || 0) * 1000 || now) + (m.pend ? ' ⏳' : ''), gk: m.id, cls: mine ? 'gm-me' : 'gm-o', bcls: mine ? 'gb-me' : 'gb-o', canDel: false, del: null,
           prof: () => this.openProf(m.i), isO: roleOf(m.i) === 'o', isA: roleOf(m.i) === 'a', ncls: roleOf(m.i) === 'o' ? 'goldtxt' : '',
           isSt: !!m.st, st: m.st || '', hasImg: !!(m.pi && GI[m.pi]), img: (m.pi && GI[m.pi]) || '', zoom: () => this.setState({ zoom: GI[m.pi] || '' }),
           hasRp: !!(m.rp && m.rp.n), rpN: m.rp ? m.rp.n : '', rpT: m.rp ? m.rp.t : '',
@@ -553,7 +578,7 @@
       NB.dmSend(dev, JSON.stringify(j), C.meName); tick();
     };
     C.dmSendT = () => { const t = (C.state.dmIn || '').trim(); if (!t || !C.state.dmPeer) return; dmPush(C.state.dmPeer, { x: t }); C.setState({ dmIn: '' }); };
-    C.onDmPhoto = (e) => { const f = fileOf(e), peer = C.state.dmPeer; if (!f || !peer) return; shrink(f, 720, 0.6, (d) => { if (!d) { C.say(C.T()[C.state.lang].ph_big); return; } dmPush(peer, { ph: d }); }); e.target.value = ''; };
+    C.onDmPhoto = (e) => { const f = fileOf(e), peer = C.state.dmPeer; if (!f || !peer) return; fitShrink(f, 1280, 140000, (d) => { if (!d) { C.say(C.T()[C.state.lang].ph_big); return; } dmPush(peer, { ph: d }); }); e.target.value = ''; };
     C.dmRef = (el) => { C.dmEl = el; if (el) setTimeout(() => { el.scrollTop = 1e6; }, 30); };
     // ---- Global chat: link ýok, surat, stiker, sögünç gadaganlygy ----
     C.stToggle = () => C.setState({ stOn: !C.state.stOn });
@@ -567,10 +592,12 @@
     const gSend = (j) => {
       if (isBan() || gBlocked()) return false;
       const o = Object.assign({ n: C.meName, t: '' }, j); if (C.state.gRp) o.rp = C.state.gRp;
-      NB.gsend2(JSON.stringify(o)); C.setState({ gRp: null }); return true;
+      NB.gsend2(JSON.stringify(o)); C.setState({ gRp: null });
+      if (!o.ph && (o.t || o.st)) { LGM.push({ id: 'l' + Date.now(), i: INFO.dev, n: o.n, t: o.t || '', st: o.st || '', rp: o.rp || null, time: Date.now() / 1000, pend: true }); tick(); }
+      return true;
     };
     C.gReact = (key, e) => {
-      if (isBan() || gBlocked()) return;
+      if (/^l\d/.test(key) || isBan() || gBlocked()) return;   // entek gitmedik habara tepki ýok
       const me = INFO.dev, cur = (rxAgg(G.concat(LRX))[key] || {})[me], off = cur === e;
       LRX.push({ re: key, e, off, i: me, time: Date.now() / 1000 });
       NB.gsend2(JSON.stringify({ n: C.meName, t: '', re: key, e, off })); tick();
@@ -592,7 +619,7 @@
     C.onGPhoto = (e) => {
       const f = fileOf(e); if (!f) return; e.target.value = '';
       if (gBlocked()) return;
-      shrink(f, 640, 0.55, (d) => { const tx = C.T()[C.state.lang]; if (!d) { C.say(tx.ph_big); return; } if (gSend({ ph: d })) C.say(tx.g_sending); });
+      fitShrink(f, 1280, 108000, (d) => { const tx = C.T()[C.state.lang]; if (!d) { C.say(tx.ph_big); return; } if (gSend({ ph: d })) C.say(tx.g_sending); });
     };
     // admin: habara surat
     C.onBcImg = (e) => { const f = fileOf(e); if (!f) return; shrink(f, 960, 0.65, (d) => { if (d) C.setState({ bcImg: d }); else C.say(C.T()[C.state.lang].ph_big); }); e.target.value = ''; };
@@ -811,6 +838,7 @@
     } else if (e.k === 'g') {
       G = (e.list || []).sort((a, b) => a.time - b.time).slice(-400);
       LRX = LRX.filter((l) => Date.now() / 1000 - l.time < 90 && !G.some((g) => g.re === l.re && g.i === l.i && g.e === l.e && !!g.off === !!l.off));
+      LGM = LGM.filter((l) => Date.now() / 1000 - l.time < 120 && !G.some((g) => g.i === l.i && (g.t || '') === (l.t || '') && (g.st || '') === (l.st || '') && g.time >= l.time - 30));
       askPhotos();
       (e.del || []).forEach((id) => { gDel[id] = true; });
       INFO = J(NB.info(), INFO);

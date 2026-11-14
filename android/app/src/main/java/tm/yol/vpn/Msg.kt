@@ -168,6 +168,8 @@ object Msg {
     // ---- işçi ----
     private val lock = Object()
     fun kick() { synchronized(lock) { lock.notifyAll() } }
+    /** Global chat-a ýazylandan soň derrew täzeden oka (habar gijä galmasyn). */
+    fun gNow() { gAt = 0L; kick() }
     @Volatile private var gAt = 0L
     @Volatile private var newsAt = 0L
 
@@ -211,7 +213,7 @@ object Msg {
                 else if (visible) (if (waiting) 20_000L else 120_000L) else (if (waiting) 180_000L else 600_000L)
             val adm = admPw(c) != null && Fs.on()   // admin: fonda hem bilet bildirişleri (2 minutda bir)
             if ((visible || on || adm) && now - inAt > (if (adm && !visible) minOf(inEvery, 120_000L) else inEvery)) { inAt = now; runCatching { inbox(c) } }
-            val gEvery = if (watchG) 8_000L else 60_000L
+            val gEvery = if (watchG) (if (Fs.on()) 4_000L else 8_000L) else 60_000L
             if (visible && now - gAt > gEvery) { gAt = now; runCatching { global() } }
             runCatching { Chat.poll(c, visible, dmPage) }
             if (visible || on) runCatching { State.pingExtra(c) }
