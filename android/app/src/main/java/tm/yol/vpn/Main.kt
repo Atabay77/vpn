@@ -126,7 +126,7 @@ open class Main : Activity() {
         if (path.contains("..")) return null
         val mime = when (path.substringAfterLast('.')) {
             "html" -> "text/html"; "js" -> "application/javascript"; "css" -> "text/css"; "png" -> "image/png"
-            "jpg" -> "image/jpeg"; "svg" -> "image/svg+xml"; "woff2" -> "font/woff2"; "json" -> "application/json"; else -> "application/octet-stream"
+            "jpg" -> "image/jpeg"; "svg" -> "image/svg+xml"; "webp" -> "image/webp"; "woff2" -> "font/woff2"; "json" -> "application/json"; else -> "application/octet-stream"
         }
         return runCatching { WebResourceResponse(mime, "utf-8", assets.open("ui/$path")) }.getOrNull()
     }
