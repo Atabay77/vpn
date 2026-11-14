@@ -223,6 +223,7 @@ open class Main : Activity() {
                 .put("st", when (State.now) { State.ON -> "on"; State.WAIT -> "wait"; State.FAIL -> "fail"; else -> "off" }).put("ks", State.hold)
                 .put("act", State.active?.key ?: "").put("sel", State.selected(c)?.key ?: "")
                 .put("ms", State.ms).put("left", if (left == null) -1 else left / 1000).put("kexp", if (exp == null) -1 else exp / 1000)
+                .put("nolim", exp == null && Lic.unlim(c)).put("sess", Sub.sess)
                 .put("dn", dRate).put("up", uRate).put("rxT", rxSum).put("txT", txSum).put("onAt", State.onAt)
                 .put("testing", testing).put("upd", upd?.first ?: "")
                 .put("dl", if (q != null && q.status != DownloadManager.STATUS_SUCCESSFUL && q.status != DownloadManager.STATUS_FAILED) q.pct else -1)

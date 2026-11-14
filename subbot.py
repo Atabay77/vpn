@@ -858,6 +858,15 @@ def app_keys_live(cfg):
     now = time.time()
     return {k: v for k, v in (cfg.get("keys") or {}).items() if not v.get("exp") or v["exp"] > now}
 
+APP_SESS_DEF = 60   # 1.32: mugt birikme wagty (minut); 0 = wagtsyz — eýesi admin panelinden üýtgedýär
+def app_sess(a):
+    v = (a or {}).get("sess")
+    return APP_SESS_DEF if v is None else int(v)
+
+def app_sess_txt(m):
+    if m == 0: return "wagtsyz (çäk ýok)"
+    return (f"{m // 60}" + (",5" if m % 60 == 30 else "") + " sagat") if m % 30 == 0 and m >= 60 else f"{m} minut"
+
 def app_meta(cfg):
     """Programın dosyasına konan gizli satırlar: geçerli keylerin özeti + yayınlanan sürümler."""
     out = []
@@ -868,6 +877,7 @@ def app_meta(cfg):
     for n_ in (cfg.get("news") or [])[:10]:
         out.append(f"#tvn: {n_['id']} {int(n_['ts'])} " + base64.urlsafe_b64encode(json.dumps({"t": n_["t"], "x": n_["x"], **({"img": n_["img"]} if n_.get("img") else {}), **({"btn": n_["btn"]} if n_.get("btn") else {}), **({"poll": n_["poll"]} if n_.get("poll") else {})}, ensure_ascii=False).encode()).decode().rstrip("="))
     if RUN.get("app_on"): out.append(f"#tvon: {int(RUN['app_on'])}")
+    out.append(f"#tvsess: {app_sess(cfg)}")
     try: ai_on = bool(ai_key()) and load_db().get("ai_sup", True)
     except Exception: ai_on = False
     if ai_on: out.append("#tvai: 1")
@@ -1580,7 +1590,10 @@ async def app_ai_reply(app, tid):
     while msgs and msgs[0]["role"] != "user": msgs.pop(0)
     if not msgs or msgs[-1]["role"] != "user": return
     notes = load_db().get("ai_notes", [])   # botuň öz ýeňilikleri programma degişli däl: diňe eýesiniň goşan maglumatlary
-    sys_ = APP_AI_RULES + ("\n\nEÝESINIŇ GOŞAN MAGLUMATLARY (dogry hasapla):\n" + "\n".join(f"- {n_['t']}" for n_ in notes[-AI_NOTES_MAX:]) if notes else "")
+    sm_ = app_sess(a)
+    rules_ = APP_AI_RULES.replace("her birikme 1 sagat dowam edýär (profilde nigini üýtgedenlere 1,5 sagat), soň täzeden birigip bolýar",
+                                  "birikme wagty çäksiz" if sm_ == 0 else f"her birikme {app_sess_txt(sm_)} dowam edýär (profilde nigini üýtgedenlere {app_sess_txt(sm_ + 30)}), soň täzeden birigip bolýar")
+    sys_ = rules_ + ("\n\nEÝESINIŇ GOŞAN MAGLUMATLARY (dogry hasapla):\n" + "\n".join(f"- {n_['t']}" for n_ in notes[-AI_NOTES_MAX:]) if notes else "")
     err = ""
     try:
         raw = None
@@ -2123,6 +2136,7 @@ def app_adm_snap(a, e, dev):
         keep = sorted(users, key=lambda d_: users[d_]["l"], reverse=True)[:300]
         users = {d_: users[d_] for d_ in set(keep) | (need & set(users))}
     out = {"me": {"role": e.get("role"), "perm": "all" if f_ else e.get("perm"), "name": e.get("name") or ""}, "tk": tk_out, "us": users}
+    if f_: out["sess"] = app_sess(a)
     if f_: out["pay"] = {"t": str(a.get("pay_txt") or db.get("pay_info") or "")[:1500], "img": a.get("pay_img") or ""}
     if full:
         mine = None if f_ else f"app:{e.get('name')}"
@@ -2352,6 +2366,13 @@ async def app_adm(app, dev, o):
                 else:
                     msg = "adm:" + pw_
                     await notify_founders(app, f"🔑 Programdan 1 girişlik admin açary döredildi · {APW_PERM.get(perm_)}", silent=True)
+        elif act == "sess" and f_:   # 1.32: mugt birikme wagty — 0 (wagtsyz) ýa-da 15…1440 minut
+            try: m_ = int(r.get("m"))
+            except Exception: m_ = -1
+            if m_ != 0 and not 15 <= m_ <= 1440: err = "wagt nädogry (15 minut … 24 sagat)"
+            else:
+                app_mut(lambda x: x.__setitem__("sess", m_)); RUN["app_dirty"] = True; msg = f"sess:{m_}"
+                await notify_founders(app, f"⏱ Mugt birikme wagty: <b>{app_sess_txt(m_)}</b>", silent=True)
         elif act == "payset" and f_:   # 1.22: «Açar satyn al» sahypasynyň töleg bölümi (tekst + surat)
             t_ = str(r.get("t") or "").strip()[:1500]
             img_ = a.get("pay_img") or ""

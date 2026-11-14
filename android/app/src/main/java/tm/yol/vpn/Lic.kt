@@ -5,8 +5,8 @@ import java.security.MessageDigest
 
 /** Key: botun ürettiği XXXX-XXXX-XXXX. Geçerliyse 1 saatlik oturum sınırı kalkar. Her key diňe 1 telefonda işleýär. */
 object Lic {
-    const val SESSION_MS = 60 * 60 * 1000L
-    const val BONUS_MS = 90 * 60 * 1000L      // 1.24: profilde nigini üýtgeden — 1,5 sagat
+    const val SESSION_MS = 60 * 60 * 1000L    // bot wagt bermese (köne bot)
+    const val BONUS_ADD = 30 * 60 * 1000L     // 1.24: profilde nigini üýtgeden — +30 minut
     const val BANNED_MS = 20 * 60 * 1000L     // gadagan edilen: açar işlemeýär, VPN 20 minut
 
     /** Admin gadagan etdi: bot habar iberdi ýa-da abuna faýlynda (#tvuban). */
@@ -15,7 +15,15 @@ object Lic {
     fun kill(ctx: Context) = p(ctx).getBoolean("ks", false)   // 1.28: kill switch
     fun setKill(ctx: Context, on: Boolean) = p(ctx).edit().putBoolean("ks", on).apply()
     fun setBonus(ctx: Context) = p(ctx).edit().putBoolean("nkb", true).apply()
-    private fun session(ctx: Context) = if (banned(ctx)) BANNED_MS else if (bonus(ctx)) BONUS_MS else SESSION_MS
+    /** 1.32: eýesi admin panelinden wagtsyz goýdy (gadagan edilene degişli däl). */
+    fun unlim(ctx: Context) = !banned(ctx) && Sub.sess == 0
+    /** Bir birikmäniň wagty (ms) ýa-da null = wagtsyz. */
+    fun session(ctx: Context): Long? {
+        if (banned(ctx)) return BANNED_MS
+        if (Sub.sess == 0) return null
+        val base = Sub.sess * 60_000L
+        return if (bonus(ctx)) base + BONUS_ADD else base
+    }
 
     fun norm(k: String) = k.uppercase().filter { it.isLetterOrDigit() }.chunked(4).joinToString("-")
     fun hash(k: String): String = MessageDigest.getInstance("SHA-256")
@@ -55,7 +63,8 @@ object Lic {
     /** Kalan süre (ms) ya da null = sınırsız (key). */
     fun left(ctx: Context): Long? {
         if (exp(ctx) != null) return null
-        val s = start(ctx).takeIf { it > 0 } ?: return session(ctx)
-        return (s + session(ctx) - System.currentTimeMillis()).coerceAtLeast(0)
+        val ses = session(ctx) ?: return null
+        val s = start(ctx).takeIf { it > 0 } ?: return ses
+        return (s + ses - System.currentTimeMillis()).coerceAtLeast(0)
     }
 }

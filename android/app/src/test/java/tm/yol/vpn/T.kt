@@ -45,7 +45,12 @@ trojan://x@1.1.1.1:1#skip
         assertEquals(2, ins.length()); assertEquals("127.0.0.1", ins.getJSONObject(1).getString("listen")); assertEquals(23456, ins.getJSONObject(1).getInt("port"))
         assertEquals("http", ins.getJSONObject(1).getString("protocol"))
         assertEquals(1, JSONObject(Cfg.full(l[0].uri, true)).getJSONArray("inbounds").length())
-        assertEquals(60 * 60 * 1000L, Lic.SESSION_MS); assertEquals(90 * 60 * 1000L, Lic.BONUS_MS)
+        assertEquals(60 * 60 * 1000L, Lic.SESSION_MS); assertEquals(30 * 60 * 1000L, Lic.BONUS_ADD)
+        // 1.32: mugt wagt botdan (#tvsess: minut, 0 = wagtsyz)
+        Sub.meta("#tvsess: 0"); assertEquals(0, Sub.sess)
+        Sub.meta("#tvsess: 180"); assertEquals(180, Sub.sess)
+        Sub.meta("#tvsess: 5"); assertEquals(60, Sub.sess)
+        Sub.meta(""); assertEquals(60, Sub.sess)
         // 1.29: botuň biziň atlarymyz (URL kodlanan)
         val br = Sub.parse("ss://YWVzLTI1Ni1nY206cA==@1.2.3.4:1080#" + java.net.URLEncoder.encode("🇪🇸 Ispaniýa · Türkmen VPN · 4", "UTF-8").replace("+", "%20") +
             "\nss://YWVzLTI1Ni1nY206cA==@1.2.3.9:1080#" + java.net.URLEncoder.encode("🇷🇺 Russiýa · Türkmen VPN · PUBG 1 🎮", "UTF-8").replace("+", "%20"))

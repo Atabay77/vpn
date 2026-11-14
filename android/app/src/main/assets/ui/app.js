@@ -61,6 +61,23 @@
   // 1.28: eýesi hemme ýerde OWNER ýazgysy bilen ýa-da derejesi (nyşan) bilen görünýär — öz saýlawy; başgalary onuň soňky Global habaryndaky «ow» belgisinden bilýär
   const ownOn = (dev) => { if (dev === INFO.dev) return !!LS.get('ownTag', false); let v = null; for (let i = G.length - 1; i >= 0; i--) { const q = G[i]; if (q.i === dev && q.ow != null && q.ow >= 0) { v = q.ow; break; } } return v == null ? true : !!v; };
   const isOwnShown = (dev) => roleOf(dev) === 'o' && ownOn(dev);
+  // 1.32: mugt birikme wagty (minut, 0 = wagtsyz) — eýesi admin panelinden; «1 sagat» ýazgylary şoňa görä
+  const hrsT = (l, m) => { const h = m / 60, w = m % 60 === 0 ? String(h) : m >= 60 && m % 30 === 0 ? Math.floor(h) + ',5' : '';
+    if (!w) return l === 'ru' ? m + ' мин' : l === 'tr' ? m + ' dakika' : m + ' minut';
+    if (l === 'ru') { const n = Math.floor(h); return w + (w.indexOf(',') > 0 ? ' часа' : n % 10 === 1 && n % 100 !== 11 ? ' час' : [2, 3, 4].indexOf(n % 10) >= 0 && !(n % 100 >= 12 && n % 100 <= 14) ? ' часа' : ' часов'); }
+    return w + (l === 'tr' ? ' saat' : ' sagat'); };
+  const sessTx = (l, m) => {
+    if (m === 0) return ({ tk: { nk_bonNo: '✅ Häzir mugt VPN wagtsyz', nk_bonYes: '✅ Häzir mugt VPN wagtsyz', q2: 'Mugt wagt näme?', a2: 'Häzir mugt birikmäniň wagt çägi ýok. Bu soňra üýtgäp biler; açar bilen hemişe çäksiz.', k_text: 'Wagt çägini aýyrmak üçin açaryňyzy ýazyň. Her açar diňe 1 gezek ulanylýar.' },
+      ru: { nk_bonNo: '✅ Сейчас бесплатный VPN без ограничения времени', nk_bonYes: '✅ Сейчас бесплатный VPN без ограничения времени', q2: 'Что значит бесплатное время?', a2: 'Сейчас у бесплатного подключения нет ограничения времени. Это может измениться; с ключом ограничений нет никогда.', k_text: 'Введите ключ, чтобы снять ограничение времени. Каждый ключ работает только 1 раз.' },
+      tr: { nk_bonNo: '✅ Şu an ücretsiz VPN süresiz', nk_bonYes: '✅ Şu an ücretsiz VPN süresiz', q2: 'Ücretsiz süre ne demek?', a2: 'Şu an ücretsiz bağlantıda süre sınırı yok. Bu ileride değişebilir; anahtarla her zaman sınırsız.', k_text: 'Süre sınırını kaldırmak için anahtarınızı girin. Her anahtar yalnız 1 kez kullanılır.' } })[l] || {};
+    const H = hrsT(l, m), B = hrsT(l, m + 30);
+    return ({ tk: { ul_t: 'MUGT WAGT · ' + H.toUpperCase(), nk_bonNo: '💡 Nigiňizi üýtgetseňiz mugt VPN wagty ' + H + ' däl-de ' + B + ' bolýar', nk_bonYes: '✅ Mugt VPN wagtyňyz: ' + B, q2: 'Mugt wagt näme?',
+        a2: 'Mugt birikme ' + H + ' dowam edýär (profilde nigiňizi üýtgetseňiz ' + B + '), soň täzeden birigip bilersiňiz. Açar ýazsaňyz bu çäk aýrylýar.', k_text: 'Wagt çägini aýyrmak üçin açaryňyzy ýazyň. Her açar diňe 1 gezek ulanylýar.' },
+      ru: { ul_t: 'БЕСПЛАТНО · ' + H.toUpperCase(), nk_bonNo: '💡 Смените ник — бесплатное время VPN станет ' + B + ' вместо ' + H, nk_bonYes: '✅ Ваше бесплатное время VPN: ' + B, q2: 'Что значит бесплатное время?',
+        a2: 'Бесплатное подключение длится ' + H + ' (если сменить ник в профиле — ' + B + '), потом можно подключиться снова. С ключом ограничения нет.', k_text: 'Введите ключ, чтобы снять ограничение времени. Каждый ключ работает только 1 раз.' },
+      tr: { ul_t: 'ÜCRETSİZ · ' + H.toLocaleUpperCase('tr'), nk_bonNo: '💡 Takma adınızı değiştirin — ücretsiz VPN süresi ' + H + ' yerine ' + B + ' olur', nk_bonYes: '✅ Ücretsiz VPN süreniz: ' + B, q2: 'Ücretsiz süre ne demek?',
+        a2: 'Ücretsiz bağlantı ' + H + ' sürer (profilde takma adınızı değiştirirseniz ' + B + '), sonra yeniden bağlanabilirsiniz. Anahtar girerseniz sınır kalkar.', k_text: 'Süre sınırını kaldırmak için anahtarınızı girin. Her anahtar yalnız 1 kez kullanılır.' } })[l] || {}; };
+  let SESS = 60;
   const LVB = LS.get('lvb', {}) || {};   // 1.30.2: botdan alnan derejeler {telefon: [dereje, wagt]}
   let lvAskAt = 0;
   const lvOf = (dev, msgLv) => (LVB[dev] ? LVB[dev][0] : msgLv || 0);
@@ -239,6 +256,9 @@
       clearTimeout(this.aiT); this.aiT = setTimeout(() => this.setState({ aiTyping: false }), 90000);
     };
 
+    const T0 = P.T;
+    P.T = function () { const T = T0.call(this); if (SESS !== 60) ['tk', 'ru', 'tr'].forEach((l) => { if (T[l]) Object.assign(T[l], sessTx(l, SESS)); }); return T; };
+
     const rv0 = P.renderVals;
     P.renderVals = function () {
       const r = rv0.call(this), s = this.state, tx = r.tx, on = s.st === 'on', now = Date.now();
@@ -250,8 +270,8 @@
       const keyTxt = s.hasKey ? (kexp === 0 ? '♾' : fmtLeft(keyLeft)) : '—';
       // wagt / açar
       r.timerLbl = s.hasKey ? tx.keyL : tx.left;
-      r.timer = s.hasKey ? keyTxt : two(Math.floor(s.left / 3600)) + ':' + two(Math.floor(s.left % 3600 / 60)) + ':' + two(s.left % 60);
-      r.showUl = on && !s.hasKey;
+      r.timer = s.hasKey ? keyTxt : s.nolim ? '♾' : two(Math.floor(s.left / 3600)) + ':' + two(Math.floor(s.left % 3600 / 60)) + ':' + two(s.left % 60);
+      r.showUl = on && !s.hasKey && !s.nolim;
       r.showUpd = !!s.upd && !s.menu;
       r.updTxt = s.dl >= 0 ? tx.u_dl.replace('{p}', String(s.dl)) : 'Türkmen VPN ' + s.upd;
       r.updBtn = s.dl >= 0 ? '…' : tx.u_btn; r.doUpd = () => NB.update();
@@ -677,6 +697,14 @@
       r.dgOnI = r.dgCls === 'on'; r.dgOffI = !r.dgOnI; r.dgW = String((DGW[s.lang] || DGW.tk)[r.dgOnI ? 1 : 0]);
       // 1.22: derejäni synap görmek (chatda we baş sahypada)
       { const mt = rkT(r.rkmT); r.rkmFr = mt >= 3 ? 'fr' + mt : ''; r.rkmNm = rkNm(mt); r.rkmMe = this.meName || '…'; r.rkmIni = ini(this.meName || '?'); r.rkmBg = '#E0B04A'; r.rkmHasB = mt >= 2; }
+      // 1.32: admin — mugt birikme wagty
+      { const cur = s.seCur != null ? s.seCur : A && A.sess != null ? A.sess : SESS, hT = (m) => (m === 0 ? tx.se_unl : hrsT(s.lang, m));
+        r.seCur = hT(cur);
+        const go = (m) => { act('sess', { m }); this.setState({ seCur: m }); this.say(tx.k_wait); };
+        r.seOpts = [0, 60, 120, 180, 240, 300].map((m) => ({ t: m === 0 ? tx.se_unl : tx.se_h.replace('{n}', String(m / 60)), cls: cur === m ? 'chip-on' : '', p: cur === m ? 'true' : 'false', pick: () => go(m) }));
+        r.seIn = s.seIn || ''; r.onSeIn = (e) => this.setState({ seIn: String(e.target.value || '').slice(0, 6) });
+        r.seSet = () => { const h = parseFloat(String(this.state.seIn || '').replace(',', '.')), m = Math.round(h * 60);
+          if (!(m >= 15 && m <= 1440)) { this.say('⚠️ ' + tx.se_bad); return; } this.setState({ seIn: '' }); go(m); }; }
       // 1.22: admin — «Açar satyn al» sahypasynyň töleg maglumaty
       { const ap = (A && A.pay) || { t: '', img: '' };
         if (ap.img && s.admTab === 'bot') askImg('n', ap.img);
@@ -993,7 +1021,7 @@
       up.st = st; up.ms = n.ms > 0 ? n.ms : 0; up.testing = n.testing; up.ks = !!n.ks;
       up.si = Math.max(0, idx(n.act) >= 0 ? idx(n.act) : (idx(n.sel) >= 0 ? idx(n.sel) : 0));
       if (lastPick === null || lastPick === s.pick) { up.pick = idx(n.sel); lastPick = up.pick; }
-      up.hasKey = n.left < 0; up.left = n.left >= 0 ? n.left : 0; up.kexp = n.kexp; up.upd = n.upd; up.dl = n.dl;
+      up.hasKey = n.left < 0 && !n.nolim; up.nolim = !!n.nolim; if (n.sess != null && n.sess !== SESS) { SESS = +n.sess; up.sessTick = (s.sessTick || 0) + 1; } up.left = n.left >= 0 ? n.left : 0; up.kexp = n.kexp; up.upd = n.upd; up.dl = n.dl;
       up.dn = n.dn / 1024; up.up = n.up / 1024; up.tot = n.rxT / 1024; up.totUp = n.txT / 1024; up.onAt = n.onAt;
       if (st === 'on') {
         up.hist = s.hist.concat([up.dn]).slice(-40);
@@ -1176,6 +1204,7 @@
       else if (d.msg === 'kok') { C.say('✅ ' + tx.bk_saved); up.kdDays = ''; up.kdN = ''; up.kdLb = null; }
       else if (d.msg === 'kdel') C.say('🗑 ' + tx.bk_deleted);
       else if (d.msg === 'ndel') C.say('🗑 ' + tx.n_deleted);
+      else if (d.msg && d.msg.indexOf('sess:') === 0) { const m = +d.msg.slice(5); if (A) A.sess = m; up.seCur = null; C.say(tx.se_ok.replace('{v}', m === 0 ? tx.se_unl : hrsT(s.lang, m))); }
       else if (d.msg === 'payok') { C.say('💳 ' + tx.ps_ok); up.payT = null; up.payImg = ''; up.payNoImg = false; LS.set('payInfo', null); }
       else if (d.msg && d.msg.indexOf('xp:') === 0) { const q = d.msg.split(':'); UPX[q[3]] = { lv: +q[1], xp: +q[2] }; LVB[q[3]] = [+q[1], Date.now()]; LS.set('lvb', LVB); C.say('✅ ' + tx.gv_ok.replace('{l}', q[1]).replace('{x}', q[2])); }
       else if (d.msg && d.msg.indexOf('adm:') === 0) { const k = d.msg.slice(4); NB.copy(k); up.onceK = k; up.onceN = ''; C.say('🔑 ' + tx.oa_ok); act('get'); }
