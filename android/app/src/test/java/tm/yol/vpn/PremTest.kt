@@ -27,6 +27,11 @@ class PremTest {
         assertTrue(Lic.prem(c)); assertTrue(State.allowed(c, prem))                // Premium — hemmesi
         assertEquals(setOf("0123456789ab"), Lic.premDevs())                        // möhleti geçen açar (exp=1) sanalmaýar
         assertEquals("s", Sub.roles["aaaaaaaaaaaa"]?.first); assertEquals("o", Sub.roles["bbbbbbbbbbbb"]?.first)
+        // 1.43.4: sowgat açary (#tvkp-da ýok) — wagt çägi ýok, ýöne Premium däl
+        Sub.meta("#tvkp: -\n#tvfree: 1.1.1.1:443\n#tvk: $h $exp 0123456789ab")
+        assertTrue(Lic.exp(c) != null); assertFalse(Lic.prem(c)); assertFalse(State.allowed(c, prem)); assertTrue(Lic.premDevs().isEmpty())
+        Sub.meta("#tvkp: $h\n#tvfree: 1.1.1.1:443\n#tvk: $h $exp 0123456789ab")
+        assertTrue(Lic.prem(c)); assertTrue(State.allowed(c, prem))
         Lic.save(c, null); Sub.meta("")
     }
 }

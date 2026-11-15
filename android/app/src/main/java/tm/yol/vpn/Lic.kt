@@ -45,12 +45,13 @@ object Lic {
     }
 
     /** 1.43: Premium — geçerli açar (bot Premium beren / satyn alnan / sowgat). Ähli serwerler we wagt çägi ýok. */
-    fun prem(ctx: Context): Boolean = exp(ctx) != null
+    fun prem(ctx: Context): Boolean = exp(ctx) != null && saved(ctx)?.let { k -> Sub.pkeys?.contains(hash(k)) ?: true } == true   // 1.43.4: sowgat açarlary Premium däl
 
     /** 1.43: Premium-ly telefonlar (abuna faýlyndaky açarlardan) — chatda ýalpyldaýan nyşan üçin. */
     fun premDevs(): Set<String> {
         val now = System.currentTimeMillis() / 1000; val out = HashSet<String>()
-        Sub.keys.forEach { (h, e) -> if (e == 0L || e > now) Sub.kdev[h]?.split(',')?.filter { it.length == 12 }?.let { out.addAll(it) } }
+        val pk = Sub.pkeys
+        Sub.keys.forEach { (h, e) -> if ((e == 0L || e > now) && (pk == null || h in pk)) Sub.kdev[h]?.split(',')?.filter { it.length == 12 }?.let { out.addAll(it) } }
         return out
     }
 

@@ -211,7 +211,7 @@ html.ph-s .c-bg{background-image:var(--bgS,url(img/bg0_s.jpg))!important}
   <sc-if value="{{isMain}}" hint-placeholder-val="{{true}}">
     
     <sc-if value="{{premPillOn}}" hint-placeholder-val="{{false}}"><button onClick="{{premOpen}}" class="ppill tap {{premPillCls}}"><b>👑 Premium</b><span>{{premPillS}}</span></button></sc-if><sc-if value="{{preqBtnOn}}" hint-placeholder-val="{{false}}"><button onClick="{{preqOpen}}" class="pqbtn tap" aria-label="{{tx.pr_reqs}}"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"></path></svg><span>{{tx.pr_reqBtn}}</span><sc-if value="{{preqHas}}" hint-placeholder-val="{{false}}"><i>{{preqN}}</i></sc-if></button></sc-if>
-    <div style="position:absolute;left:75px;top:124px;width:240px;height:240px">
+    <div style="position:absolute;left:75px;top:124px;width:240px;height:240px;transform:scale(.84);transform-origin:50% 100%">
       <svg class="{{ringCls}}" width="240" height="240" viewBox="0 0 240 240" aria-hidden="true" style="position:absolute;left:0;top:0">
         <circle cx="120" cy="120" r="104" fill="none" stroke="rgba(224,176,74,.55)" stroke-width="1" stroke-dasharray="2 5"></circle>
         <circle cx="120" cy="120" r="88" fill="none" stroke="rgba(166,30,43,.65)" stroke-width="2"></circle>

@@ -871,9 +871,17 @@ def app_sess_txt(m):
     if m == 0: return "wagtsyz (çäk ýok)"
     return (f"{m // 60}" + (",5" if m % 60 == 30 else "") + " sagat") if m % 30 == 0 and m >= 60 else f"{m} minut"
 
+def app_key_prem(v):
+    """1.43.4: Premium açar — satyn alnan, satyjy / eýesi beren, adminleriň döreden açary. Sowgat açarlary (dost çagyryşy, günlük sowgat,
+    dereje, dostuňdan gün) Premium däl — diňe wagt çägini aýyrýar."""
+    by = str(v.get("by") or "")
+    return bool(v.get("prem")) or not (by in ("ref", "gift", "lvl") or by.startswith("kgift:"))
+
 def app_meta(cfg):
     """Programın dosyasına konan gizli satırlar: geçerli keylerin özeti + yayınlanan sürümler."""
     out = []
+    pk_ = [app_key_hash(k) for k, v in sorted(app_keys_live(cfg).items()) if app_key_prem(v)]
+    out.append("#tvkp: " + (",".join(pk_) or "-"))   # 1.43.4: Premium açarlaryň özetleri
     for k, v in sorted(app_keys_live(cfg).items()):
         n_ = int(v.get("n") or 1); dv_ = app_key_devs(v)
         if n_ <= 1: out.append(f"#tvk: {app_key_hash(k)} {int(v.get('exp') or 0)}" + (f" {dv_[0]}" if dv_ else ""))
@@ -2524,7 +2532,7 @@ def app_adm_snap(a, e, dev):
                  "st": q.get("st"), "to": sln_.get(q.get("to"), "") if q.get("to") else "", "by": q.get("by") or ""} for qid, q in pq_[:60]]
     prem_out = []
     for k_, v in keys_.items():
-        if v.get("exp") and v["exp"] <= now: continue
+        if (v.get("exp") and v["exp"] <= now) or not app_key_prem(v): continue   # 1.43.4: sowgat açarlary Premium däl
         by_ = str(v.get("by") or "")
         if not (f_ or full) and by_ != f"prem:{e.get('name') or 'admin'}": continue
         for dv_ in app_key_devs(v):
