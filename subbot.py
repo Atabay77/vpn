@@ -12,7 +12,7 @@ from telegram.error import BadRequest
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, MessageHandler, InlineQueryHandler, filters, ContextTypes
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseUpload
+from googleapiclient.http import MediaIoBaseUpload, MediaIoBaseDownload
 
 warnings.filterwarnings("ignore")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -1268,7 +1268,36 @@ def app_publish_link(link):
     abi = "64" if re.search(r"arm64|v8a", name, re.I) else "32" if re.search(r"arm32|v7a|armeabi", name, re.I) else "all"
     mutate(lambda d: d.setdefault("app", {}).setdefault("upd", {}).__setitem__(abi, {"ver": mv.group(1), "fid": fid, "ts": int(time.time()), "ext": True}))
     app_sync(True)
+    try: app_dl_mirror()   # 1.37: sahypadaky hemişelik ýükle düwmesi
+    except Exception as e: log.warning("dl mirror: %s", e)
     return mv.group(1)
+
+def app_dl_mirror():
+    """1.37: iň täze APK hemişe şol bir Drive faýlyna göçürilýär (dl_fid) — Google Sites sahypasyndaky «ýükle» düwmesi üýtgemeýär.
+    Gmail APK-a gönükdirilen salgyly hatlary ret edýär, şonuň üçin hatda sahypanyň salgysy iberilýär. Dönüş: dl_fid ýa-da None."""
+    cfg = app_cfg(load_db())
+    u_ = max((cfg.get("upd") or {}).values(), key=lambda x: [int(p_) if p_.isdigit() else 0 for p_ in str(x.get("ver", "0")).split(".")], default=None)
+    if not u_ or not u_.get("fid"): return cfg.get("dl_fid")
+    if cfg.get("dl_fid") and cfg.get("dl_src") == u_["fid"] and cfg.get("dl_ver") == u_.get("ver"): return cfg["dl_fid"]
+    svc = new_service()
+    if not svc: raise RuntimeError("drive-sa.json bulunamadı")
+    dl = cfg.get("dl_fid")
+    if not dl:
+        with db_lock():
+            db = load_db(); dl, from_free = alloc_file(svc, db)
+            if not dl: raise RuntimeError("Boş Drive dosyası yok")
+            if from_free: db["free_files"].remove(dl)
+            db.setdefault("app", {})["dl_fid"] = dl; save_db(db)
+    if not make_public(svc, dl): raise RuntimeError("Drive dosyası herkese açık yapılamadı")
+    buf = io.BytesIO(); dn = MediaIoBaseDownload(buf, svc.files().get_media(fileId=u_["fid"]), chunksize=8 * 1024 * 1024)
+    done = False
+    while not done: _, done = dn.next_chunk(num_retries=3)
+    data = buf.getvalue()
+    if len(data) < 1_000_000: raise RuntimeError(f"APK çok küçük ({len(data)} bayt)")
+    media = MediaIoBaseUpload(io.BytesIO(data), mimetype="application/vnd.android.package-archive", resumable=True, chunksize=4 * 1024 * 1024)
+    svc.files().update(fileId=dl, body={"name": f"TurkmenVPN-{u_.get('ver', '')}.apk"}, media_body=media).execute(num_retries=3)
+    mutate(lambda d: d.setdefault("app", {}).update({"dl_fid": dl, "dl_src": u_["fid"], "dl_ver": u_.get("ver")}))
+    return dl
 
 async def app_loop(app):
     await asyncio.sleep(60)
@@ -3644,17 +3673,19 @@ def mail_tick():
             u_ = max((cfg_.get("upd") or {}).values(), key=lambda x: [int(p_) if p_.isdigit() else 0 for p_ in str(x.get("ver", "0")).split(".")], default=None)
             if not u_ or not u_.get("fid"):
                 events.append(f"⚠️ <b>Mailde indirme linki istendi ama yayında sürüm yok</b>\n<blockquote>{esc(frm)}</blockquote>"); continue
-            link = sub_link(u_["fid"]); MAIL_DL_SENT.append(now)
+            page_ = cfg_.get("dl_page")   # 1.37: Gmail APK salgyly hatlary ret edýär — sahypanyň salgysy
+            link = page_ or sub_link(u_["fid"]); MAIL_DL_SENT.append(now)
             try:
                 mail_send(frm, f"Türkmen VPN {u_.get('ver', '')} · ýükläp almak / indirme linki",
-                          f"Salam!\n\nTürkmen VPN programmasynyň iň täze wersiýasy ({u_.get('ver', '')}) aşakdaky salgyda. "
-                          "VPN-siz açylýar.\n\n"
+                          f"Salam!\n\nTürkmen VPN programmasynyň iň täze wersiýasy ({u_.get('ver', '')}) aşakdaky "
+                          + ("sahypada — «Ýükle / İndir» düwmesine basyň. " if page_ else "salgyda. ") + "VPN-siz açylýar.\n\n"
                           f"{link}\n\n"
                           "Ýükleme «garaşylýar / beklemede» bolup dursa: Play Market-de Chrome-y täzeläň we täzeden basyň.\n"
                           "Ýüklenen faýly açyň we gurnaň. Telefon «näbelli çeşme» diýse, rugsat beriň.\n\n"
                           "Merhaba! Türkmen VPN'in en yeni sürümü yukarıdaki bağlantıda, VPN'siz açılır. İndirilen dosyayı açıp kurun.\n"
                           "İndirme «beklemede» kalırsa: Play Store'dan Chrome'u güncelleyin ve tekrar basın.\n\n"
-                          "Hormat bilen / Saygılarımızla,\nTürkmen VPN", reply=meta, link=link, link_text=f"⬇ Türkmen VPN {u_.get('ver', '')} ýükle / indir")
+                          "Hormat bilen / Saygılarımızla,\nTürkmen VPN", reply=meta, link=link,
+                          link_text=("⬇ Türkmen VPN ýükläp almak sahypasy / indirme sayfası" if page_ else f"⬇ Türkmen VPN {u_.get('ver', '')} ýükle / indir"))
                 ok = True
             except Exception as e: ok = False; log.warning("mail send: %s", e)
             ulog("order", f"📧 Mail ile indirme linki: {frm}" + ("" if ok else " (gönderilemedi)"))
@@ -3712,6 +3743,28 @@ async def mail_loop(app):
                     RUN["mail_err"] = msg; log.warning("mail: %s", e)
                     await notify_founders(app, f"⚠️ <b>Gmail okunamadı</b>\n<blockquote>{esc(msg)}</blockquote>\n<i>Adres / uygulama şifresi doğru mu? /gmail ile kontrol et.</i>")
         await asyncio.sleep(MAIL_EVERY)
+
+async def cmd_dlpage(u: Update, c: ContextTypes.DEFAULT_TYPE):
+    """1.37: /dlpage https://sites.google.com/view/… — hatda APK däl-de şu sahypa iberilýär · /dlpage kapat · /dlpage (durum + sahypa üçin hemişelik APK salgysy)."""
+    uid = u.effective_user.id
+    if uid not in ORIG_ADMINS: return
+    args = c.args or []
+    if args and args[0].lower() in ("kapat", "off", "sil"):
+        mutate(lambda d: d.setdefault("app", {}).pop("dl_page", None)); audit(uid, "dlpage off")
+        await c.bot.send_message(uid, "✅ Sayfa kaldırıldı — maillerde yine doğrudan APK linki gider."); return
+    if args:
+        url_ = args[0].strip()
+        if not re.match(r"^https://(sites\.google\.com|[\w-]+\.github\.io)/\S+$|^https://[\w.-]+\.github\.io/?\S*$", url_):
+            await c.bot.send_message(uid, "⚠️ Biçim: /dlpage https://sites.google.com/view/sayfa-adi"); return
+        mutate(lambda d: d.setdefault("app", {}).__setitem__("dl_page", url_)); audit(uid, "dlpage set")
+    try: dl_ = await asyncio.to_thread(app_dl_mirror); err_ = ""
+    except Exception as e: dl_, err_ = app_cfg(load_db()).get("dl_fid"), str(e)[:150]
+    a_ = app_cfg(load_db())
+    await c.bot.send_message(uid, "📄 <b>İndirme sayfası</b>\n<blockquote>"
+        + f"Sayfa: {esc(a_.get('dl_page') or '— (maillerde doğrudan APK linki gidiyor)')}\n"
+        + (f"Sayfadaki «İndir» düğmesine koyacağın link (her sürümde aynı kalır, sürüm {esc(a_.get('dl_ver') or '?')}):\n<code>{esc(sub_link(dl_))}</code>" if dl_ else "APK linki henüz yok")
+        + (f"\n⚠️ {esc(err_)}" if err_ else "") + "</blockquote>\n<i>Ayarlamak: /dlpage https://sites.google.com/view/… · Kaldırmak: /dlpage kapat</i>",
+        parse_mode="HTML", disable_web_page_preview=True)
 
 async def cmd_gmail(u: Update, c: ContextTypes.DEFAULT_TYPE):
     """Asıl kurucu: /gmail adres uygulama_şifresi kelime · /gmail kapat · /gmail (durum)."""
@@ -9574,6 +9627,7 @@ def main():
     app.add_handler(CommandHandler("unadmin", cmd_unadmin))
     app.add_handler(CommandHandler("acilkod", cmd_acilkod))
     app.add_handler(CommandHandler("gmail", cmd_gmail))
+    app.add_handler(CommandHandler("dlpage", cmd_dlpage))
     app.add_handler(MessageHandler(filters.COMMAND, other_cmd))
     app.add_handler(CallbackQueryHandler(cb))
     app.add_handler(InlineQueryHandler(inline_ad))
