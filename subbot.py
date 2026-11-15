@@ -878,6 +878,7 @@ def app_meta(cfg):
         out.append(f"#tvn: {n_['id']} {int(n_['ts'])} " + base64.urlsafe_b64encode(json.dumps({"t": n_["t"], "x": n_["x"], **({"img": n_["img"]} if n_.get("img") else {}), **({"btn": n_["btn"]} if n_.get("btn") else {}), **({"poll": n_["poll"]} if n_.get("poll") else {})}, ensure_ascii=False).encode()).decode().rstrip("="))
     if RUN.get("app_on"): out.append(f"#tvon: {int(RUN['app_on'])}")
     out.append(f"#tvsess: {app_sess(cfg)}")
+    if cfg.get("fs_fast"): out.append("#tvfast: 1")
     try: ai_on = bool(ai_key()) and load_db().get("ai_sup", True)
     except Exception: ai_on = False
     if ai_on: out.append("#tvai: 1")
@@ -1315,6 +1316,8 @@ def app_view(db):
 APP_MSG_EVERY = 8   # Firestore-da IP çägi ýok; AI jogaby gijä galmasyn
 APP_FS_IDLE = 20    # 1.32.1: soňky 2 minutda habar ýok bolsa Firestore 20 sn-da bir (her boş sorag hem 1 okalyş — mugt gündelik çäk 50 000)
 APP_GMOD_EVERY = 30 # Global chat gözegçiligi 30 sn-da bir
+APP_MSG_FAST = 2    # 1.34: çalt rejim (Firestore tölegli) — 2 sn-da bir, boş wagt hem; gözegçilik 6 sn
+APP_GMOD_FAST = 6
 APP_PRICES = "3 gün — 15 TMT · 7 gün — 30 TMT · 1 aý — 100 TMT"
 APP_PLANS = [(3, 15), (7, 30), (30, 100)]   # 1.19: programda satyn almak: (gün, TMT)
 REF_ABC = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
@@ -2009,7 +2012,7 @@ async def app_msg_loop(app):
                     try:
                         got = await asyncio.to_thread(fs_query, a["fs_proj"], "", "m", a.get("fs_since"), 100)
                         if got: RUN["fs_act"] = now_
-                        RUN["fs_next"] = now_ + (0 if now_ - RUN.get("fs_act", 0) < 120 else APP_FS_IDLE)
+                        RUN["fs_next"] = now_ + (0 if a.get("fs_fast") or now_ - RUN.get("fs_act", 0) < 120 else APP_FS_IDLE)
                         done = []
                         for name, b, t in got:
                             app_mut(lambda a_: a_.__setitem__("fs_since", t)); done.append(name)
@@ -2021,7 +2024,7 @@ async def app_msg_loop(app):
                             except Exception: log.exception("app msg (fs)")
                         if done: await asyncio.to_thread(fs_delete, a["fs_proj"], done)
                         RUN.pop("fs_err", None)
-                        if now_ - RUN.get("gmod_at", 0) >= APP_GMOD_EVERY:
+                        if now_ - RUN.get("gmod_at", 0) >= (APP_GMOD_FAST if a.get("fs_fast") else APP_GMOD_EVERY):
                             RUN["gmod_at"] = now_
                             try: await app_gmod(app)
                             except Exception as e2: log.info("gmod: %s", e2)
@@ -2033,7 +2036,9 @@ async def app_msg_loop(app):
                     except Exception as e: log.info("app sync (msg): %s", e)
         except Exception as e:
             log.info("app msg loop: %s", e)
-        await asyncio.sleep(APP_MSG_EVERY)
+        try: fast_ = bool(app_cfg(load_db()).get("fs_fast"))
+        except Exception: fast_ = False
+        await asyncio.sleep(APP_MSG_FAST if fast_ else APP_MSG_EVERY)
 
 def app_tickets_view(a, closed=False):
     tks = a.get("tickets") or {}
@@ -2144,7 +2149,7 @@ def app_adm_snap(a, e, dev):
         keep = sorted(users, key=lambda d_: users[d_]["l"], reverse=True)[:300]
         users = {d_: users[d_] for d_ in set(keep) | (need & set(users))}
     out = {"me": {"role": e.get("role"), "perm": "all" if f_ else e.get("perm"), "name": e.get("name") or ""}, "tk": tk_out, "us": users}
-    if f_: out["sess"] = app_sess(a)
+    if f_: out["sess"] = app_sess(a); out["fast"] = bool(a.get("fs_fast"))
     if f_: out["pay"] = {"t": str(a.get("pay_txt") or db.get("pay_info") or "")[:1500], "img": a.get("pay_img") or ""}
     if full:
         mine = None if f_ else f"app:{e.get('name')}"
@@ -2374,6 +2379,10 @@ async def app_adm(app, dev, o):
                 else:
                     msg = "adm:" + pw_
                     await notify_founders(app, f"🔑 Programdan 1 girişlik admin açary döredildi · {APW_PERM.get(perm_)}", silent=True)
+        elif act == "fast" and f_:   # 1.34: çalt rejim — Firestore tölegi açylandan soň
+            on_ = bool(r.get("on"))
+            app_mut(lambda x: x.__setitem__("fs_fast", on_)); RUN["app_dirty"] = True; msg = "fast:" + ("1" if on_ else "0")
+            await notify_founders(app, "⚡ Çalt rejim: <b>" + ("açyk" if on_ else "öçük") + "</b>" + (" — Firestore tölegi açyk bolmaly, ýogsa mugt çäk sagat içinde dolar" if on_ else ""), silent=True)
         elif act == "sess" and f_:   # 1.32: mugt birikme wagty — 0 (wagtsyz) ýa-da 15…1440 minut
             try: m_ = int(r.get("m"))
             except Exception: m_ = -1

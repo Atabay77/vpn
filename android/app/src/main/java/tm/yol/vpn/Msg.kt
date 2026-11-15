@@ -172,7 +172,7 @@ object Msg {
     /** 1.33: VPN bagly we öz relay bar bolsa bot habarlary (bilet jogaplary, derejeler, admin) relay arkaly — Firestore-yň gündelik çägi tygşytlanýar.
      *  Global chat, hususy habarlar we VPN-siz ýagdaý Firestore-da galýar. Relay jogap bermese Firestore-a geçilýär. */
     @Volatile private var relayBad = 0L     // relay jogap bermedi: 5 minut Firestore
-    private fun relayNow() = State.now == State.ON && Sub.relay.isNotEmpty() && System.currentTimeMillis() > relayBad
+    private fun relayNow() = !(Sub.fast && Fs.on()) && State.now == State.ON && Sub.relay.isNotEmpty() && System.currentTimeMillis() > relayBad
 
     fun kick() { synchronized(lock) { lock.notifyAll() } }
     /** Global chat-a ýazylandan soň derrew täzeden oka (habar gijä galmasyn). */
@@ -217,16 +217,18 @@ object Msg {
             val waiting = now - waitAt < 40 * 60_000L
             // Firestore: jogap garaşylanda ekranda ilkinji 3 minut 4 sn-da bir, soň 20 sn (her boş sorag hem 1 okalyş)
             val hot = now - waitAt < 3 * 60_000L
-            val inEvery = if (Fs.on() || Sub.relay.isNotEmpty()) (if (visible) (if (hot) 4_000L else if (waiting) 20_000L else 60_000L) else (if (waiting) 60_000L else 300_000L))
+            val fast = Sub.fast && Fs.on()   // 1.34: çalt rejim — eýesi Firestore tölegini açdy
+            val inEvery = if (fast) (if (visible) (if (hot) 1_500L else 5_000L) else 30_000L)
+                else if (Fs.on() || Sub.relay.isNotEmpty()) (if (visible) (if (hot) 4_000L else if (waiting) 20_000L else 60_000L) else (if (waiting) 60_000L else 300_000L))
                 else if (visible) (if (waiting) 20_000L else 120_000L) else (if (waiting) 180_000L else 600_000L)
             val adm = admPw(c) != null && Fs.on()   // admin: fonda hem bilet bildirişleri (2 minutda bir)
-            if ((visible || on || adm) && now - inAt > (if (adm && !visible) minOf(inEvery, 120_000L) else inEvery)) { inAt = now; runCatching { inbox(c) } }
-            val gEvery = if (watchG) (if (Fs.on()) 5_000L else 8_000L) else 120_000L
+            if ((visible || on || adm || fast) && now - inAt > (if (adm && !visible) minOf(inEvery, 120_000L) else inEvery)) { inAt = now; runCatching { inbox(c) } }
+            val gEvery = if (watchG) (if (fast) 1_500L else if (Fs.on()) 5_000L else 8_000L) else if (fast) 20_000L else 120_000L
             if (visible && now - gAt > gEvery) { gAt = now; runCatching { global() } }
             runCatching { Chat.poll(c, visible, dmPage) }
             if (visible || on) runCatching { State.pingExtra(c) }
-            if (visible && Fs.on() && !relayNow() && now - newsAt > 120_000) { newsAt = now; runCatching { newsFs() } }   // VPN bagly: habarlar abuna faýlyndan
-            synchronized(lock) { runCatching { lock.wait(if (watchG || Chat.watch != null || (hot && visible)) 2000L else 5000L) } }
+            if (visible && Fs.on() && !relayNow() && now - newsAt > (if (fast) 60_000L else 120_000L)) { newsAt = now; runCatching { newsFs() } }   // VPN bagly: habarlar abuna faýlyndan
+            synchronized(lock) { runCatching { lock.wait(if (fast && visible) 700L else if (watchG || Chat.watch != null || (hot && visible)) 2000L else 5000L) } }
         }
     }
 
@@ -370,7 +372,7 @@ object Msg {
 
     private fun globalFs() {
         val now = System.currentTimeMillis()
-        val full = gfsT == null || (watchG && now - gfsFull > 900_000)
+        val full = gfsT == null || (watchG && now - gfsFull > (if (Sub.fast) 180_000 else 900_000))
         val got = (if (full) Fs.query("", "g", null, 150, desc = true)?.reversed() else Fs.query("", "g", gfsT, 80)) ?: return   // tepkiler hem setir bolup gelýär
         if (full) { gfs.clear(); gfsFull = now }
         for ((id, b, t) in got) {

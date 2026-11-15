@@ -142,8 +142,9 @@ object Chat {
     fun poll(c: Context, visible: Boolean, dmPage: Boolean) {
         if (!Fs.on() || !visible) return
         val now = System.currentTimeMillis()
-        if (now - wAt > 4_000L) { wAt = now; watch?.let { w -> runCatching { pollRoom(c, room(Msg.dev(c), w), false, w) } } }   // 1.32.1: açyk söhbet 4 sn-da bir
-        if (now - rAt > (if (dmPage) 8_000L else 60_000L)) {
+        val fast = Sub.fast   // 1.34: çalt rejim
+        if (now - wAt > (if (fast) 1_200L else 4_000L)) { wAt = now; watch?.let { w -> runCatching { pollRoom(c, room(Msg.dev(c), w), false, w) } } }   // 1.32.1: açyk söhbet 4 sn-da bir
+        if (now - rAt > (if (fast) (if (dmPage) 3_000L else 10_000L) else if (dmPage) 8_000L else 60_000L)) {
             rAt = now
             runCatching {
                 val pr = p(c); val me = Msg.dev(c)
@@ -160,7 +161,7 @@ object Chat {
                 }
             }
         }
-        if (now - allAt > (if (dmPage) 10_000L else 180_000L)) {
+        if (now - allAt > (if (fast) (if (dmPage) 4_000L else 20_000L) else if (dmPage) 10_000L else 180_000L)) {
             allAt = now
             val all = rooms(c)
             all.keys().forEach { room -> if (all.getJSONObject(room).optString("p") != watch) runCatching { pollRoom(c, room, false) } }

@@ -699,6 +699,11 @@
       r.dgOnI = r.dgCls === 'on'; r.dgOffI = !r.dgOnI; r.dgW = String((DGW[s.lang] || DGW.tk)[r.dgOnI ? 1 : 0]);
       // 1.22: derejäni synap görmek (chatda we baş sahypada)
       { const mt = rkT(r.rkmT); r.rkmFr = mt >= 3 ? 'fr' + mt : ''; r.rkmNm = rkNm(mt); r.rkmMe = this.meName || '…'; r.rkmIni = ini(this.meName || '?'); r.rkmBg = '#E0B04A'; r.rkmHasB = mt >= 2; }
+      // 1.34: admin — çalt rejim (Firestore tölegli)
+      { const on = s.faCur != null ? s.faCur : !!(A && A.fast);
+        r.faSt = on ? tx.fa_on : tx.fa_off; r.faCls = on ? 'chip-on' : ''; r.faBtn = on ? tx.fa_btnOff : tx.fa_btnOn;
+        const go = (v) => { act('fast', { on: v }); this.setState({ faCur: v }); this.say(tx.k_wait); };
+        r.faTog = () => { if (on) go(false); else this.confirm(tx.fa_q, tx.fa_btnOn, () => go(true)); }; }
       // 1.32: admin — mugt birikme wagty
       { const cur = s.seCur != null ? s.seCur : A && A.sess != null ? A.sess : SESS, hT = (m) => (m === 0 ? tx.se_unl : hrsT(s.lang, m));
         r.seCur = hT(cur);
@@ -1206,6 +1211,7 @@
       else if (d.msg === 'kok') { C.say('✅ ' + tx.bk_saved); up.kdDays = ''; up.kdN = ''; up.kdLb = null; }
       else if (d.msg === 'kdel') C.say('🗑 ' + tx.bk_deleted);
       else if (d.msg === 'ndel') C.say('🗑 ' + tx.n_deleted);
+      else if (d.msg && d.msg.indexOf('fast:') === 0) { const v = d.msg.slice(5) === '1'; if (A) A.fast = v; up.faCur = null; C.say(v ? tx.fa_okOn : tx.fa_okOff); }
       else if (d.msg && d.msg.indexOf('sess:') === 0) { const m = +d.msg.slice(5); if (A) A.sess = m; up.seCur = null; C.say(tx.se_ok.replace('{v}', m === 0 ? tx.se_unl : hrsT(s.lang, m))); }
       else if (d.msg === 'payok') { C.say('💳 ' + tx.ps_ok); up.payT = null; up.payImg = ''; up.payNoImg = false; LS.set('payInfo', null); }
       else if (d.msg && d.msg.indexOf('xp:') === 0) { const q = d.msg.split(':'); UPX[q[3]] = { lv: +q[1], xp: +q[2] }; LVB[q[3]] = [+q[1], Date.now()]; LS.set('lvb', LVB); C.say('✅ ' + tx.gv_ok.replace('{l}', q[1]).replace('{x}', q[2])); }
