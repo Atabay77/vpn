@@ -61,6 +61,9 @@
   // 1.28: eýesi hemme ýerde OWNER ýazgysy bilen ýa-da derejesi (nyşan) bilen görünýär — öz saýlawy; başgalary onuň soňky Global habaryndaky «ow» belgisinden bilýär
   const ownOn = (dev) => { if (dev === INFO.dev) return !!LS.get('ownTag', false); let v = null; for (let i = G.length - 1; i >= 0; i--) { const q = G[i]; if (q.i === dev && q.ow != null && q.ow >= 0) { v = q.ow; break; } } return v == null ? true : !!v; };
   const isOwnShown = (dev) => roleOf(dev) === 'o' && ownOn(dev);
+  // 1.43: Premium-ly telefonlar (abuna faýlyndaky açarlardan) — ýalpyldaýan nyşan
+  let PDS = null, PDSsrc = null;
+  const isPrem = (dev) => { if (PDSsrc !== INFO.pdevs) { PDSsrc = INFO.pdevs; PDS = new Set(INFO.pdevs || []); } return PDS.has(dev) && !isOwnShown(dev); };
   // 1.32: mugt birikme wagty (minut, 0 = wagtsyz) — eýesi admin panelinden; «1 sagat» ýazgylary şoňa görä
   const hrsT = (l, m) => { const h = m / 60, w = m % 60 === 0 ? String(h) : m >= 60 && m % 30 === 0 ? Math.floor(h) + ',5' : '';
     if (!w) return l === 'ru' ? m + ' мин' : l === 'tr' ? m + ' dakika' : m + ' minut';
@@ -204,7 +207,7 @@
     SV = r.list.map((s) => {
       const c = CO[cc(s.flag)];
       const num = (String(s.country || '').match(/\s(\d{1,2})$/) || [])[1], sfx = num ? ' ' + num : '';
-      return { id: s.key, f: s.flag, n: c ? { tk: c[2] + sfx, ru: c[3] + sfx, tr: c[4] + sfx } : { tk: s.country, ru: s.country, tr: s.country }, t: s.title || s.country, p: s.proto, lat: c ? c[0] : 50, lon: c ? c[1] : 10, game: s.game };
+      return { id: s.key, f: s.flag, n: c ? { tk: c[2] + sfx, ru: c[3] + sfx, tr: c[4] + sfx } : { tk: s.country, ru: s.country, tr: s.country }, t: s.title || s.country, p: s.proto, lat: c ? c[0] : 50, lon: c ? c[1] : 10, game: s.game, free: s.free !== false, lock: !!s.lock };
     });
     return r.pings;
   }
@@ -330,7 +333,7 @@
         const ph = mine ? s.photo : ((PH[m.i] || {}).d || '');
         return { name: nm + (mine ? ' · ' + tx.g_you : ''), ini: ini(nm), bg: mine ? '#E0B04A' : colorOf(m.i), nc: mine ? '#06100B' : colorOf(m.i), photo: ph, hasPh: !!ph, noPh: !ph,
           t: m.st ? '' : GE.E[m.id] != null ? GE.E[m.id] : m.t, time: (GE.E[m.id] != null ? tx.m_edited + ' ' : '') + this.hm((m.time || 0) * 1000 || now) + (m.pend ? ' ⏳' : ''), gk: m.id, cls: mine ? 'gm-me' : 'gm-o', bcls: mine ? 'gb-me' : 'gb-o', canDel: false, del: null,
-          prof: () => this.openProf(m.i), isO: isOwnShown(m.i), isA: roleOf(m.i) === 'a', ncls: isOwnShown(m.i) ? 'goldtxt' : (lvq ? rkNm(rt) : ''), fr: lvq && rt >= 3 && !isOwnShown(m.i) ? 'fr' + rt : '',
+          prof: () => this.openProf(m.i), isO: isOwnShown(m.i), isA: roleOf(m.i) === 'a', isS: roleOf(m.i) === 's', isP: isPrem(m.i), ncls: isOwnShown(m.i) ? 'goldtxt' : (lvq ? rkNm(rt) : ''), fr: lvq && rt >= 3 && !isOwnShown(m.i) ? 'fr' + rt : '',
           isSt: !!m.st, st: m.st || '', hasImg: !!(m.pi && GI[m.pi]), img: (m.pi && GI[m.pi]) || '', zoom: () => this.setState({ zoom: GI[m.pi] || '' }),
           hasRp: !!(m.rp && m.rp.n), rpN: m.rp ? m.rp.n : '', rpT: m.rp ? m.rp.t : '',
           hasLv: isOwnShown(m.i) ? false : roleOf(m.i) === 'o' ? true : lvq >= 2, lv: String(rt),
@@ -381,7 +384,7 @@
       });
       // 1 girişlik admin açary
       r.onceN = s.onceN || ''; r.onOnceN = (e) => this.setState({ onceN: e.target.value });
-      r.oncePerms = [['tk', tx.oa_tk], ['all', tx.oa_all]].map(([k, t]) => { const on = (s.oncePerm || 'tk') === k; return { t, p: on ? 'true' : 'false', cls: on ? 'chip-on' : '', pick: () => this.setState({ oncePerm: k }) }; });
+      r.oncePerms = [['tk', tx.oa_tk], ['all', tx.oa_all], ['sel', tx.oa_sel]].map(([k, t]) => { const on = (s.oncePerm || 'tk') === k; return { t, p: on ? 'true' : 'false', cls: on ? 'chip-on' : '', pick: () => this.setState({ oncePerm: k }) }; });
       r.mkOnce = () => { const n = (s.onceN || '').replace(/\s+/g, ''); if (n.length < 2) { this.say('⚠️ ' + tx.oa_short); return; } act('mkadm', { perm: s.oncePerm || 'tk', n }); this.say(tx.k_wait); };
       r.hasOnceK = !!s.onceK; r.onceK = s.onceK || ''; r.cpOnceK = () => { NB.copy(s.onceK); this.say('✓ ' + tx.copied); };
       r.keyList = ((A && A.keys) || []).map((k, i) => { const u = k.used ? us[k.used] : null;
@@ -576,7 +579,7 @@
       r.onBcImg = this.onBcImg; r.bcHasImg = !!s.bcImg; r.bcImg = s.bcImg || ''; r.bcImgDel = () => this.setState({ bcImg: '' });
       const ava = (dev) => { const ph = dev === me1 ? s.photo : thumbOf(dev), nm = dev === me1 ? this.meName : nameOf(dev);
         if (!ph && dev !== me1 && !phAsked[dev]) { phAsked[dev] = 1; NB.getPhoto(dev); }
-        return { photo: ph || '', hasPh: !!ph, noPh: !ph, bg: colorOf(dev), ini: ini(nm), name: nm, isO: isOwnShown(dev), isA: roleOf(dev) === 'a', ncls: isOwnShown(dev) ? 'goldtxt' : '' }; };
+        return { photo: ph || '', hasPh: !!ph, noPh: !ph, bg: colorOf(dev), ini: ini(nm), name: nm, isO: isOwnShown(dev), isA: roleOf(dev) === 'a', isS: roleOf(dev) === 's', isP: isPrem(dev), ncls: isOwnShown(dev) ? 'goldtxt' : '' }; };
       // başga adamyň profili
       r.isUprof = pg === 'uprof' && !!s.upDev;
       if (r.isUprof) {
@@ -681,6 +684,64 @@
         mk('vip', tx.p_vip, 'M3 8l4 4 5-7 5 7 4-4-2 11H5z', 'M5 21h14', false, ''));
       // 1.22: tegelek baýdaklar
       ['cur', 'offCard', 'sCur'].forEach((k) => { if (r[k]) r[k] = withFc(r[k]); });
+      // ====== 1.43: Premium — Free / Premium / PUBG, Premium düwmesi, satyn almak, haýyşlar, bermek ======
+      { const PR = !!INFO.prem, PF = !!INFO.pfree, pexp = +INFO.pexp, am2 = admMe(), isF2 = am2.role === 'f', full2 = isF2 || am2.perm === 'all', sel2 = am2.perm === 'sel';
+        const dl = pexp > 0 ? Math.max(1, Math.ceil((pexp - Date.now()) / 86400000)) : 0, dlT = dl + ' ' + tx.pr_days;
+        const nm2 = (d, fb) => { const n = nameOf(d); return n && n !== '?' ? n : (fb || '?'); };
+        const tab = ['free', 'prem', 'pubg'].indexOf(s.svTab) >= 0 ? s.svTab : (PR ? 'prem' : 'free');
+        const ng = SV.filter((v) => !v.game), gg = SV.filter((v) => v.game);
+        const mark = (x, v, premTab) => { const lock = !!(v && v.lock), isFree = !v || v.free !== false;
+          const o = Object.assign(x, { pcls: premTab ? 'sv-prem' : '', tag: lock ? '🔒' : premTab && !isFree ? '👑' : '', tagCls: lock ? 'svlock' : 'svcrown' });
+          if (lock) o.pick = () => { this.say('👑 ' + tx.pr_lock); this.setState({ psh: true }); };
+          return o; };
+        if (Array.isArray(r.srvList)) r.srvList = tab === 'pubg' ? [] : r.srvList.map((x, j) => ({ x, v: ng[j] })).filter((q) => tab === 'prem' || !PF || (q.v && q.v.free)).map((q) => mark(q.x, q.v, tab === 'prem'));
+        if (Array.isArray(r.gList)) r.gList = r.gList.map((x, j) => ({ x, v: gg[j] })).filter((q) => tab !== 'free' || !PF || (q.v && q.v.free)).map((q) => mark(q.x, q.v, tab !== 'free'));
+        if (tab === 'pubg') r.svEmpty = false;
+        r.svTabs = [['free', 'Free', ''], ['prem', '👑 Premium', 'seg-prem'], ['pubg', '👑 PUBG', 'seg-prem']].map((q) => ({ t: q[1], cls: (tab === q[0] ? 'seg-on' : 'seg-off') + ' ' + q[2], p: tab === q[0] ? 'true' : 'false', pick: () => this.setState({ svTab: q[0] }) }));
+        r.svPremBan = !PR && PF && tab !== 'free';
+        r.premOpen = () => { INFO = J(NB.info(), INFO); this.setState({ psh: true, menu: false }); };
+        r.premPillOn = pg === 'main' && (PF || PR); r.premPillCls = PR ? 'ppill-on' : '';
+        r.premPillT = PR ? (pexp === 0 ? 'Premium ♾' : 'Premium · ' + dlT) : tx.pr_buy; r.premPillS = PR ? (pexp === 0 ? '♾' : dlT) : tx.pr_buyS;
+        // Premium sahypasy
+        const plan = s.pplan || 'y';
+        r.pshOn = !!s.psh; r.pshX = () => this.setState({ psh: false }); r.pshIsPrem = PR; r.pshHaveT = PR ? (pexp === 0 ? tx.pr_unl : tx.pr_have.replace('{d}', dlT)) : '';
+        r.pFeat = [['🌍', tx.pr_f1], ['⏱', tx.pr_f2], ['🎮', tx.pr_f3], ['👑', tx.pr_f4]].map((q) => ({ i: q[0], t: q[1] }));
+        r.pPlans = [{ k: 'm', t: tx.pr_m, price: '100', note: tx.pr_mN }, { k: 'y', t: tx.pr_y, price: '700', old: '1200', save: '−42%', badge: tx.pr_best, note: tx.pr_yN }]   // 12 × 100 = 1200 → 700 (hakyky tygşytlylyk)
+          .map((q) => Object.assign(q, { hasOld: !!q.old, hasBadge: !!q.badge, cls: (plan === q.k ? 'pplan-on' : '') + (q.k === 'y' ? ' pplan-y' : ''), p: plan === q.k ? 'true' : 'false', pick: () => this.setState({ pplan: q.k }) }));
+        const RL = INFO.roles || {};
+        r.pSellers = Object.keys(RL).filter((d) => (RL[d][0] === 's' || RL[d][0] === 'o') && d !== me1).sort((a, b) => (RL[a][0] === 'o' ? 1 : 0) - (RL[b][0] === 'o' ? 1 : 0))
+          .map((d) => Object.assign(ava(d), { name: nm2(d, RL[d][1]), isO: RL[d][0] === 'o', isS: RL[d][0] === 's',
+            go: () => { NB.send(JSON.stringify({ k: 'preq', to: d, plan, n: this.meName })); this.setState({ psh: false }); this.say('👑 ' + tx.pr_sent); this.openDm(d); } }));
+        r.pSellEmpty = !r.pSellers.length;
+        // haýyşlar (eýesi / satyjylar)
+        const isSel = roleOf(me1) === 'o' || roleOf(me1) === 's' || isF2 || sel2, AQ = (A && A.preq) || [], byId = {}, rqDone = LS.get('preqDone', {}) || {};
+        (LS.get('preqs', []) || []).forEach((q) => { byId[q.id] = Object.assign({}, q, { at: q.at || this.hm((q.ts || 0) * 1000) }); });
+        AQ.forEach((q) => { byId[q.id] = Object.assign(byId[q.id] || {}, q); });
+        const rq = Object.keys(byId).map((k) => Object.assign(byId[k], rqDone[k] ? { st: 'done' } : {})).sort((a, b) => ((a.st === 'done') - (b.st === 'done')) || ((b.ts || 0) - (a.ts || 0))).slice(0, 60);
+        const newN = rq.filter((q) => q.st !== 'done').length;
+        r.preqBtnOn = pg === 'main' && isSel; r.preqHas = newN > 0; r.preqN = newN > 9 ? '9+' : String(newN);
+        r.preqOpen = () => { this.setState({ rq: true, rqTab: 'req' }); if (this.state.admOn) act('get'); };
+        r.rqOn = !!s.rq; r.rqX = () => this.setState({ rq: false }); r.rqNeedAdm = !s.admOn; r.rqGoAdm = () => this.setState({ rq: false, page: 'admin' });
+        const PL = (A && A.prem) || [], rqT = s.rqTab || 'req';
+        r.rqTabs = [['req', tx.pr_tabReq + ' · ' + newN], ['prem', tx.pr_list + ' · ' + PL.length]].map((q) => ({ t: q[1], p: rqT === q[0] ? 'true' : 'false', cls: rqT === q[0] ? 'chip-on' : '', pick: () => this.setState({ rqTab: q[0] }) }));
+        r.rqIsReq = rqT === 'req'; r.rqIsPrem = rqT === 'prem';
+        r.rqList = rq.map((q) => Object.assign(ava(q.dev), { name: nm2(q.dev, q.n), sub: (q.plan === 'y' ? tx.pr_y : tx.pr_m) + ' · ' + (q.at || '') + (q.to ? ' · → ' + q.to : ''),
+          cls: q.st === 'done' ? 'prq-done' : '', done: q.st === 'done', open: q.st !== 'done', doneT: tx.pr_done + (q.by ? ' · ' + q.by : ''),
+          prof: () => this.setState({ rq: false, page: 'uprof', upDev: q.dev }), write: () => { this.setState({ rq: false }); this.openDm(q.dev); },
+          x: () => { rqDone[q.id] = 1; LS.set('preqDone', rqDone); if (this.state.admOn) act('preqx', { id: q.id }); this.setState({ rqTick: (this.state.rqTick || 0) + 1 }); } }));
+        r.rqEmpty = !r.rqList.length;
+        r.rpList = PL.map((x) => Object.assign(ava(x.dev), { name: nm2(x.dev, x.n), sub: tx.pr_left.replace('{v}', x.left) + (x.by ? ' · ' + tx.pr_by.replace('{v}', x.by) : ''), open: () => this.setState({ rq: false, page: 'uprof', upDev: x.dev }) }));
+        r.rpEmpty = !r.rpList.length;
+        r.admPremOn = !!s.admOn && full2; r.admPremN = String(PL.length); r.admPremOpen = () => this.setState({ rq: true, rqTab: 'prem' });
+        // profilde Premium bermek
+        r.pDays = s.pDays || ''; r.onPDays = (e) => this.setState({ pDays: String(e.target.value || '').replace(/[^0-9]/g, '').slice(0, 4) });
+        if (r.isUprof && r.up && s.upDev) {
+          const d = s.upDev, canP = !!s.admOn && (isF2 || full2 || sel2) && d !== me1, px = PL.find((x) => x.dev === d);
+          const give = (n) => this.confirm(tx.pr_qGive.replace('{n}', r.up.name || '?').replace('{p}', n === 30 ? tx.pr_m : n === 365 ? tx.pr_y : n === 0 ? '♾' : n + ' ' + tx.pr_days), '👑 ' + tx.pr_giveBtn,
+            () => { act('prem', { dev: d, d: n }); this.setState({ pDays: '' }); }, false);
+          Object.assign(r.up, { canPrem: canP, premOwn: canP && isF2, premNow: tx.pr_now.replace('{v}', px ? px.left : isPrem(d) ? '✓' : tx.pr_none),
+            premM: () => give(30), premY: () => give(365), premD: () => { const n = parseInt(this.state.pDays, 10); if (!(n >= 0)) { this.say('⚠️ ' + tx.gv_bad); return; } give(n); } });
+        } else if (r.up) Object.assign(r.up, { canPrem: false, premOwn: false, premNow: '' }); }
       ['srvList', 'gList'].forEach((k) => { if (Array.isArray(r[k])) r[k] = r[k].map(withFc); });
       // 1.23: eýesi serweri basyp saklap 30 sekunt gizleýär (diňe öz ekranynda)
       window.__isOwn = myRole === 'o';
@@ -1237,6 +1298,8 @@
       x[e.f] = [e.n || '', e.t || Date.now() / 1000];
       const ks = Object.keys(SV); if (ks.length > 60) ks.slice(0, ks.length - 60).forEach((k) => delete SV[k]);
       LS.set('stViews', SV); up.gTick = (s.gTick || 0) + 1;
+    } else if (e.k === 'plock') {   // 1.43: Premium serwer saýlandy (Premium ýok)
+      C.say('👑 ' + tx.pr_lock); up.psh = true;
     } else if (e.k === 'img') {
       (e.kind === 'n' ? NI : GI)[e.id] = e.d || '';
       up.gTick = (s.gTick || 0) + 1;
@@ -1273,6 +1336,7 @@
       else if (d.msg && d.msg.indexOf('sess:') === 0) { const m = +d.msg.slice(5); if (A) A.sess = m; up.seCur = null; C.say(tx.se_ok.replace('{v}', m === 0 ? tx.se_unl : hrsT(s.lang, m))); }
       else if (d.msg === 'payok') { C.say('💳 ' + tx.ps_ok); up.payT = null; up.payImg = ''; up.payNoImg = false; LS.set('payInfo', null); }
       else if (d.msg && d.msg.indexOf('xp:') === 0) { const q = d.msg.split(':'); UPX[q[3]] = { lv: +q[1], xp: +q[2] }; LVB[q[3]] = [+q[1], Date.now()]; LS.set('lvb', LVB); C.say('✅ ' + tx.gv_ok.replace('{l}', q[1]).replace('{x}', q[2])); }
+      else if (d.msg && d.msg.indexOf('prem:') === 0) C.say('👑 ' + tx.pr_given);   // 1.43
       else if (d.msg && d.msg.indexOf('adm:') === 0) { const k = d.msg.slice(4); NB.copy(k); up.onceK = k; up.onceN = ''; C.say('🔑 ' + tx.oa_ok); act('get'); }
       else if (d.msg === 'upd') C.say('⚡ ' + tx.ad_updGo);
       else if (d.msg === 'busy') C.say(tx.ad_updBusy);
@@ -1313,6 +1377,15 @@
       else if (m.k === 'lvs') { const tn = Date.now(); Object.keys(m.m || {}).forEach((d) => { LVB[d] = [+m.m[d] || 0, tn]; }); LS.set('lvb', LVB); up.gTick = (s.gTick || 0) + 1; }
       else if (m.k === 'kgift') { if (m.ok) { C.say(tx.gf_ok.replace('{n}', m.to || '?').replace('{d}', String(m.d || 1))); up.gfTo = ''; try { NB.refresh(); } catch (e2) {} } else C.say('⚠️ ' + (tx['gf_e_' + m.why] || tx.gf_e_notfound)); }
       else if (m.k === 'pay') { LS.set('payInfo', { p: m.p, i: m.i, pi: m.pi || '', at: Date.now() }); up.payTick = t; }
+      else if (m.k === 'prem') {   // 1.43: Premium berildi
+        C.party('👑 ' + (m.exp === 0 ? tx.pr_gotU : tx.pr_got.replace('{d}', (m.d === 365 ? tx.pr_y : m.d === 30 ? tx.pr_m : m.d + ' ' + tx.pr_days))));
+        try { NB.refresh(); } catch (e2) {} setTimeout(() => { INFO = J(NB.info(), INFO); C.setState({ payTick: Date.now() }); }, 4000);
+      } else if (m.k === 'preq') {   // 1.43: satyja / eýesine täze haýyş
+        const L = (LS.get('preqs', []) || []).filter((q) => q.id !== m.id); L.unshift({ id: m.id, dev: m.dev, n: m.n, plan: m.plan, ts: m.ts, st: 'new' }); LS.set('preqs', L.slice(0, 60));
+        C.say('👑 ' + tx.pr_newReq.replace('{n}', m.n || '?').replace('{p}', m.plan === 'y' ? tx.pr_y : tx.pr_m)); up.payTick = t;
+      } else if (m.k === 'pgv') {   // 1.43: satyjy Premium berdi (eýesine)
+        C.say('👑 ' + tx.pr_pgv.replace('{by}', m.by || '?').replace('{n}', m.n || '?').replace('{p}', m.d === 365 ? tx.pr_y : m.d === 30 ? tx.pr_m : (m.d || 0) + ' ' + tx.pr_days)); up.payTick = t;
+      }
       else if (m.k === 'buy') {
         const os = LS.get('orders', []) || [];
         if (m.wait && m.oid) { LS.set('orders', [{ id: m.oid, d: m.days, st: 'w' }].concat(os).slice(0, 10)); up.payTick = t; }

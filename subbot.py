@@ -896,7 +896,7 @@ def app_meta(cfg):
             if dv in seen_ or not DEV_RE.match(str(dv)): continue
             seen_.add(dv); u_ = devs_.get(dv) or {}
             nk_ = u_.get("nk") or u_.get("nick") or x.get("name") or ""
-            out.append(f"#tvrole: {dv} {'o' if x.get('role') == 'f' else 'a'} " + base64.urlsafe_b64encode(nk_[:32].encode()).decode().rstrip("="))
+            out.append(f"#tvrole: {dv} {'o' if x.get('role') == 'f' else ('s' if x.get('perm') == 'sel' else 'a')} " + base64.urlsafe_b64encode(nk_[:32].encode()).decode().rstrip("="))   # 1.43: s — Premium satyjy
     rel = app_relay_pub(cfg)   # 1.42: telefonlar öňdäki VPS-e (bellenen bolsa) — maglumat bazada (botuň VPS-i)
     if rel: out.append(f"#tvrel: {rel}")
     if cfg.get("fs_mode") == "vps":   # 1.41: Google ýok — täze programa VPS bazasy (#tvdb), köneler habar serweriniň konularyny ulanýar
@@ -1100,6 +1100,20 @@ def app_clean_codes(codes):
         out.append(c)
     return out
 
+def app_free_pick(codes, base1):
+    """1.43: mugt ulanyjylar üçin: kanaldan («· tm») 1, galany her baýdakdan birinji kodlardan (jemi 3) we 1 PUBG. Dönüş: ["host:port", …]."""
+    ch_ = [c for c in codes if not app_is_game(c) and re.search(r"· tm$", orig_name(c).strip())]
+    pick = ch_[:1]
+    for c in base1:
+        if len(pick) >= 3: break
+        if not app_is_game(c) and not app_is_info(c) and c not in pick and code_key(c) in {code_key(x) for x in codes}: pick.append(c)
+    pick += [c for c in codes if app_is_game(c)][:1]
+    out = []
+    for c in pick:
+        h, p_ = code_hostport(c)
+        if h and p_: out.append(f"{h}:{p_}")
+    return list(dict.fromkeys(out))
+
 def app_x_named(base_codes, a):
     """Goşmaça kodlar programyň sanawyna: ady «🇹🇷 Türkiýe · tm» (şol baýdak öň bar bolsa «Türkiýe 2»), Russiýa — 🎮 oýun bölümi."""
     xs = a.get("xcodes") or {}
@@ -1209,7 +1223,8 @@ def app_sync(force=False):
                 if k not in keys: keys.add(k); codes.append(c)
         last = {hashlib.md5(u.encode()).hexdigest()[:8]: last[hashlib.md5(u.encode()).hexdigest()[:8]]
                 for u in subs if hashlib.md5(u.encode()).hexdigest()[:8] in last}
-        n_raw = len(codes); codes = app_clean_codes(codes); keys = {code_key(c) for c in codes}   # 1.16.11
+        n_raw = len(codes); base1 = app_clean_codes(codes)   # 1.16.11 (her baýdakdan biri — mugt serwerleri saýlamak üçin)
+        codes = [c for c in codes if not app_is_info(c)]; keys = {code_key(c) for c in codes}   # 1.43: Premium — ähli hakyky kodlar (sahypa baýdaklary ýok)
         if n_raw != len(codes): log.info("app: %d maglumat/gaýtalanýan kod aýryldy", n_raw - len(codes))
         try: app_tg_refresh()
         except Exception as e: errs.append(f"Telegram: {str(e)[:60]}")
@@ -1217,8 +1232,9 @@ def app_sync(force=False):
         except Exception as e: log.info("quota: %s", e)
         for c in app_x_named(codes, app_cfg(load_db())):   # 1.16.6: kanal + admin kodlary
             if code_key(c) not in keys: keys.add(code_key(c)); codes.append(c)
+        free_ = app_free_pick(codes, base1)   # 1.43: mugt — 3 serwer (biri kanaldan) + 1 PUBG
         codes = app_brand_names(codes)   # 1.29: abunanyň atlary görünmesin
-        meta = app_meta(cfg)
+        meta = app_meta(cfg) + (["#tvfree: " + ",".join(free_)] if free_ else [])
         dig = hashlib.sha256("\n".join(meta + codes).encode()).hexdigest()[:16]
         svc = new_service()
         if not svc: raise RuntimeError("drive-sa.json bulunamadı")
@@ -1397,8 +1413,8 @@ APP_FS_IDLE = 20    # 1.32.1: soňky 2 minutda habar ýok bolsa Firestore 20 sn-
 APP_GMOD_EVERY = 30 # Global chat gözegçiligi 30 sn-da bir
 APP_MSG_FAST = 2    # 1.34: çalt rejim (Firestore tölegli) — 2 sn-da bir, boş wagt hem; gözegçilik 6 sn
 APP_GMOD_FAST = 6
-APP_PRICES = "3 gün — 15 TMT · 7 gün — 30 TMT · 1 aý — 100 TMT"
-APP_PLANS = [(3, 15), (7, 30), (30, 100)]   # 1.19: programda satyn almak: (gün, TMT)
+APP_PRICES = "Premium: 1 aý — 100 TMT · 1 ýyl — 700 TMT (12 aýlykdan 500 TMT arzan)"
+APP_PLANS = [(30, 100), (365, 700)]   # 1.43: Premium — (gün, TMT)
 REF_ABC = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
 DEV_RE = re.compile(r"^[0-9a-f]{12}$")
 
@@ -1734,6 +1750,41 @@ def app_key_make(days, dev, by, n=1):
     app_mut(lambda a: a.setdefault("keys", {}).__setitem__(k, rec))
     return k, exp
 
+def app_prem_give(dev, days, who):
+    """1.43: Premium = telefona baglanan açar. Bar bolsa möhleti uzaldylýar, ýok bolsa täze açar. Dönüş: (açar, möhlet; 0 = çäksiz)."""
+    now = time.time(); res = {}
+    def f(x):
+        ks = x.setdefault("keys", {}); cur = None
+        for k_, v in ks.items():
+            if app_key_devs(v) == [dev] and int(v.get("n") or 1) == 1 and (not v.get("exp") or v["exp"] > now): cur = k_; break
+        if cur:
+            v = ks[cur]
+            v["exp"] = 0 if (days == 0 or not v.get("exp")) else int(max(v["exp"], now) + days * 86400)
+            v["prem"] = 1; k_, exp = cur, v["exp"]
+        else:
+            k_ = app_key_new(); exp = int(now + days * 86400) if days else 0
+            ks[k_] = {"exp": exp, "ts": int(now), "by": f"prem:{who}", "dev": dev, "prem": 1}
+        for q in (x.get("preq") or {}).values():
+            if q.get("dev") == dev and q.get("st") != "done": q.update({"st": "done", "by": who, "dt": int(now)})
+        x["prem_log"] = ((x.get("prem_log") or []) + [{"dev": dev, "d": days, "by": who, "ts": int(now)}])[-300:]
+        res.update(k=k_, exp=exp)
+    app_mut(f)
+    return res["k"], res["exp"]
+
+def app_founder_devs(a=None):
+    """Eýesiniň (esasy admin) telefonlary."""
+    a = a if a is not None else app_cfg(load_db())
+    return list(dict.fromkeys(d_ for x in (a.get("apw") or {}).values() if x.get("role") == "f" and apw_valid(x)
+                              for d_ in ([x["dev"]] if x.get("dev") else []) + (x.get("hist") or [])[-1:]))
+
+def app_seller_devs(a=None):
+    """1.43: Premium satýanlar (eýesi + «sel» rugsatly adminler): telefon → at."""
+    a = a if a is not None else app_cfg(load_db()); out = {}
+    for x in (a.get("apw") or {}).values():
+        if not apw_valid(x) or not (x.get("role") == "f" or x.get("perm") == "sel"): continue
+        for d_ in ([x["dev"]] if x.get("dev") else []) + (x.get("hist") or []): out.setdefault(d_, x.get("name") or "")
+    return out
+
 def app_who(a, dev):
     u = (a.get("devs") or {}).get(dev) or {}
     return f"{esc(u.get('nick') or '?')} · {esc(u.get('model') or '?')} · v{esc(u.get('ver') or '?')} · {esc(u.get('lang') or '?')}"
@@ -1747,8 +1798,11 @@ Ulanyjynyň dilinde (türkmen, rus ýa-da türk) gysga (1–3 sözlem), dostlukl
 Ulanyjynyň iň soňky habaryna jogap ber. Salamlaşsa ýa-da «sen kim» diýse adaty gürleş, meselem: «Salam! Men Türkmen VPN-iň AI kömekçisi. Size nähili kömek edip bilerin?»
 FAKTLAR:
 - Programma mugt: her birikme 1 sagat dowam edýär (profilde nigini üýtgedenlere 1,5 sagat), soň täzeden birigip bolýar. Açar bilen çäk ýok.
-- Açar bahalary: """ + APP_PRICES + """. Açar satyn almak isleýänden haýsy möhleti isleýändigini sora; töleg maglumatlary we açar şu çata iberiler. Sen özüň açar berme.
-- Her açar diňe 1 telefonda işleýär (ilkinji ýazylan telefona baglanýar).
+- Mugt ulanyjylar: «Free» bölümindäki 3 serwer we 1 PUBG serweri, birikme wagty çäkli.
+- Premium: ähli serwerler («Premium» we «PUBG» bölümleri), wagt çägi ýok, profilde we chatda ýalpyldaýan 👑 Premium nyşany.
+- Premium bahasy: 1 aý — 100 TMT, 1 ýyl — 700 TMT (12 aýlykdan 500 TMT arzan — iň amatlysy ýyllyk). Diňe şu iki möhlet bar.
+- Premium satyn almak: baş sahypanyň ýokarsyndaky «👑 Premium satyn al» düwmesi → möhleti we satyjyny saýla → oňa ýaz. Satyjy tölegden soň Premium-y siziň profiliňize özi berýär. Sen özüň Premium berme we töleg maglumatyny oýlap tapma.
+- Açar hem Premium berýär (möhleti gutarýança). Her açar diňe 1 telefonda işleýär (ilkinji ýazylan telefona baglanýar).
 - Açar ýazmak: Menýu (☰) → iň aşakdaky uly «Açar ýaz» düwmesi.
 - Serwerler: Menýu → Serwerler → «Pingi barla», iň çalt serweri saýla. «Awtomatik» iň çaltyny özi saýlaýar. Russiýa — PUBG oýny üçin.
 - Birikmese: ilki interneti (Wi-Fi / mobil) barla. «Kodlar täzelenýär» diýse 3–5 minut garaş we täzeden synan.
@@ -1949,6 +2003,25 @@ async def app_on_msg(app, fid, o):
     a = app_cfg(load_db())
     if k == "adm": await app_adm(app, dev, o); return
     if k == "pr": await asyncio.to_thread(app_x_report, dev, o.get("p")); return
+    if k == "preq":   # 1.43: «Premium satyn al» — satyja (ýa-da eýesine) haýyş; diňe olar görýär
+        sl_ = app_seller_devs(a); to_ = str(o.get("to") or "")
+        if to_ and to_ not in sl_: return
+        q0 = [q for q in (a.get("preq") or {}).values() if q.get("dev") == dev and now - int(q.get("ts") or 0) < 3600]
+        if len(q0) >= 3: return   # sagatda iň köp 3 haýyş
+        plan_ = "y" if o.get("plan") == "y" else "m"; nk_ = str(o.get("n") or ((a.get("devs") or {}).get(dev) or {}).get("nick") or "?")[:32]
+        qid = format(int(time.time() * 1000), "x")[-9:]
+        def fq(x):
+            qs = x.setdefault("preq", {}); qs[qid] = {"dev": dev, "to": to_, "plan": plan_, "n": nk_, "ts": now, "st": "new"}
+            if len(qs) > 300:
+                for k2 in sorted(qs, key=lambda k3: qs[k3].get("ts", 0))[:len(qs) - 300]: qs.pop(k2, None)
+        app_mut(fq)
+        item = {"k": "preq", "id": qid, "dev": dev, "n": nk_, "plan": plan_, "to": to_, "ts": now}
+        for d_ in dict.fromkeys(([to_] if to_ else list(sl_)) + app_founder_devs(a)):
+            if d_ == dev: continue
+            try: await asyncio.to_thread(app_send, d_, dict(item))
+            except Exception as e: log.info("preq %s: %s", d_, e)
+        await notify_founders(app, f"👑 <b>Premium haýyşy</b> — {esc(nk_)} · {'1 ýyl' if plan_ == 'y' else '1 aý'}" + (f" → {esc(sl_.get(to_) or '?')}" if to_ else ""), silent=True)
+        return
     if dev in (a.get("ubans") or []) and k in ("tk", "human", "fb", "rate", "ref", "gift", "nick"): return   # 1.16.4: gadagan — diňe VPN (20 min)
     if k == "tk":
         text = str(o.get("t") or "").strip()[:1000]
@@ -2357,7 +2430,8 @@ def news_id(news, now=None):
 def apw_new(): return "ADM-" + "-".join("".join(random.SystemRandom().choice(APW_ABC) for _ in range(4)) for _ in range(3))
 def apw_norm(pw): return re.sub(r"\s+", "", str(pw or "")).upper()
 def apw_id(pw): return hashlib.sha256(("tvaid|" + apw_norm(pw)).encode()).hexdigest()[:16]
-APW_PERM = {"all": "ähli rugsatlar (bilet, ulanyjy, açar)", "tk": "diňe biletler"}
+APW_PERM = {"all": "ähli rugsatlar (bilet, ulanyjy, açar)", "tk": "diňe biletler", "sel": "💎 Premium satyjy"}
+SEL_ACTS = {"get", "login", "logout", "prem", "preqx"}   # 1.43: satyjy diňe Premium berip bilýär
 
 def apw_valid(e):
     """Kömekçi adminiň möhleti geçse açar sözi hem işlemeýär."""
@@ -2388,7 +2462,8 @@ def app_adm_snap(a, e, dev):
     db = load_db(); f_ = e.get("role") == "f"; full = f_ or e.get("perm") == "all"
     devs = a.get("devs") or {}; now = time.time()
     today = tm_now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
-    tks = sorted((a.get("tickets") or {}).items(), key=lambda kv: kv[1].get("lt", 0), reverse=True)[:50]
+    sel_ = e.get("perm") == "sel" and not f_   # 1.43: Premium satyjy — biletleri görmeýär
+    tks = [] if sel_ else sorted((a.get("tickets") or {}).items(), key=lambda kv: kv[1].get("lt", 0), reverse=True)[:50]
     tk_out, need = [], set()
     for tid, t in tks:
         lg = t.get("log", [])
@@ -2405,6 +2480,23 @@ def app_adm_snap(a, e, dev):
     inv_n = {}
     for v in (a.get("ref_devs") or {}).values(): inv_n[v] = inv_n.get(v, 0) + 1
     users = {}
+    # 1.43: satyn almak haýyşlary (eýesi — hemmesi, satyjy — özüne / islendik satyja) we Premium alanlar
+    mine_ = set([e.get("dev")] + list(e.get("hist") or [])) - {None}
+    pq_ = [(qid, q) for qid, q in (a.get("preq") or {}).items() if f_ or full or not q.get("to") or q.get("to") in mine_]
+    pq_.sort(key=lambda kv: (kv[1].get("st") == "done", -int(kv[1].get("ts") or 0)))
+    sln_ = app_seller_devs(a)
+    preq_out = [{"id": qid, "dev": q.get("dev"), "n": q.get("n") or "?", "plan": q.get("plan"), "at": app_hm(q.get("ts")), "ts": int(q.get("ts") or 0),
+                 "st": q.get("st"), "to": sln_.get(q.get("to"), "") if q.get("to") else "", "by": q.get("by") or ""} for qid, q in pq_[:60]]
+    prem_out = []
+    for k_, v in keys_.items():
+        if v.get("exp") and v["exp"] <= now: continue
+        by_ = str(v.get("by") or "")
+        if not (f_ or full) and by_ != f"prem:{e.get('name') or 'admin'}": continue
+        for dv_ in app_key_devs(v):
+            prem_out.append({"dev": dv_, "n": ((devs.get(dv_) or {}).get("nick") or "?"), "exp": int(v.get("exp") or 0),
+                             "left": (f"{max(0, int((v['exp'] - now) // 86400))} gün" if v.get("exp") else "çäksiz"), "by": by_.replace("prem:", "").replace("app:", "")})
+    prem_out.sort(key=lambda x: (x["exp"] == 0, x["exp"]))
+    need |= {q["dev"] for q in preq_out if q.get("dev")} | {x["dev"] for x in prem_out[:300]}
     pool = (devs.keys() if full else need)
     for dv in pool:
         u = devs.get(dv)
@@ -2418,7 +2510,8 @@ def app_adm_snap(a, e, dev):
     if full and len(users) > 300:   # köp bolsa: diňe soňky işjeňler + biletdäkiler
         keep = sorted(users, key=lambda d_: users[d_]["l"], reverse=True)[:300]
         users = {d_: users[d_] for d_ in set(keep) | (need & set(users))}
-    out = {"me": {"role": e.get("role"), "perm": "all" if f_ else e.get("perm"), "name": e.get("name") or ""}, "tk": tk_out, "us": users}
+    out = {"me": {"role": e.get("role"), "perm": "all" if f_ else e.get("perm"), "name": e.get("name") or ""}, "tk": tk_out, "us": users,
+           "preq": preq_out, "prem": prem_out[:300], "plans": [list(x_) for x_ in APP_PLANS]}
     if f_: out["sess"] = app_sess(a); out["fast"] = bool(a.get("fs_fast"))
     if f_: out["pay"] = {"t": str(a.get("pay_txt") or db.get("pay_info") or "")[:1500], "img": a.get("pay_img") or ""}
     if full:
@@ -2525,8 +2618,33 @@ async def app_adm(app, dev, o):
     tid = str(int(r.get("tid") or 0))
     t_ = (app_cfg(load_db()).get("tickets") or {}).get(tid)
     who = e.get("name") or "admin"
+    if e.get("perm") == "sel" and not f_ and act not in SEL_ACTS: act = "get"   # 1.43: satyjy bilet / ulanyjy dolandyryp bilmeýär
     try:
-        if act == "reply":
+        if act == "prem":   # 1.43: Premium bermek — eýesi islän möhleti, satyjy / admin diňe 1 aý ýa-da 1 ýyl
+            dv = str(r.get("dev") or "")
+            try: d_ = int(r.get("d") or 0)
+            except Exception: d_ = -1
+            if not (f_ or full or e.get("perm") == "sel"): err = "rugsat ýok"
+            elif not DEV_RE.match(dv) or dv not in (a.get("devs") or {}): err = "ulanyjy tapylmady"
+            elif not ((f_ and 0 <= d_ <= 3650) or d_ in (30, 365)): err = "diňe 1 aý ýa-da 1 ýyl"
+            else:
+                k_, exp_ = await asyncio.to_thread(app_prem_give, dv, d_, who)
+                try: await asyncio.to_thread(app_sync, True)
+                except Exception as e2: RUN["app_err"] = str(e2)[:150]
+                nk_ = ((app_cfg(load_db()).get("devs") or {}).get(dv) or {}).get("nick") or "?"
+                await asyncio.to_thread(app_send, dv, {"k": "prem", "key": k_, "d": d_, "exp": exp_})
+                msg = f"prem:{dv}:{exp_}"
+                if not f_:   # satyjy berdi — eýesine Telegram-da we programda
+                    plan_ = "1 ýyl" if d_ == 365 else "1 aý"
+                    await notify_founders(app, f"👑 <b>{esc(who)}</b> Premium berdi: {esc(nk_)} · {plan_}\n<blockquote>{app_who(app_cfg(load_db()), dv)}</blockquote>")
+                    for fd_ in app_founder_devs():
+                        try: await asyncio.to_thread(app_send, fd_, {"k": "pgv", "n": nk_[:32], "dev": dv, "d": d_, "by": who[:32]})
+                        except Exception as e2: log.info("pgv %s: %s", fd_, e2)
+        elif act == "preqx":   # 1.43: satyn almak haýyşy ýapyldy (satyjy / eýesi)
+            qid = str(r.get("id") or "")
+            app_mut(lambda x: (x.get("preq") or {}).get(qid, {}).update({"st": "done", "by": who, "dt": int(now)}) if qid in (x.get("preq") or {}) else None)
+            msg = "preqx"
+        elif act == "reply":
             txt = str(r.get("t") or "").strip()[:2000]
             if txt and t_: await app_admin_reply(app, tid, txt); msg = "sent"
         elif act in ("close", "reopen") and t_:
@@ -2646,7 +2764,7 @@ async def app_adm(app, dev, o):
             if k_ != aid: app_mut(lambda x: ((x.get("apw") or {}).pop(k_, None) if (x.get("apw") or {}).get(k_, {}).get("once")
                                              else (x.get("apw") or {}).get(k_, {}).__setitem__("dev", None)) if k_ in (x.get("apw") or {}) else None)
         elif act == "mkadm" and f_:   # 1.17: 1 girişlik admin açary (diňe eýesi)
-            perm_ = "all" if r.get("perm") == "all" else "tk"
+            perm_ = r.get("perm") if r.get("perm") in ("all", "sel") else "tk"
             k_ = apw_norm(str(r.get("n") or ""))[:32]
             if len(k_) < 2: err = "açar iň az 2 harp bolmaly"
             else:
@@ -5321,7 +5439,7 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         if a.startswith("apwp:"):
             sid = a.split(":", 1)[1]; e_ = load_db().get("sub_admins", {}).get(sid) or {}
             await safe_edit(q, f"👮 <b>{esc(e_.get('name') or sid)}</b> — näme rugsat berilsin?",
-                            KB([[B("✅ Ähli rugsatlar", f"apwc:{sid}:all", "success")], [B("🎫 Diňe biletler", f"apwc:{sid}:tk", "primary")],
+                            KB([[B("✅ Ähli rugsatlar", f"apwc:{sid}:all", "success")], [B("🎫 Diňe biletler", f"apwc:{sid}:tk", "primary")], [B("💎 Premium satyjy", f"apwc:{sid}:sel")],
                                 [B("◀️ Yza", "apwh")]]),); return
         if a.startswith("apwc:"):
             _, sid, perm_ = a.split(":", 2)

@@ -40,7 +40,7 @@ object State {
     /** Varsayılan otomatik. Elle seçilen sunucu listeden kalkarsa yine otomatiğe döner. */
     fun selected(ctx: Context): Server? {
         val k = ctx.getSharedPreferences("p", 0).getString("sel", AUTO)
-        return if (k == AUTO) null else Sub.list.firstOrNull { it.key == k }
+        return if (k == AUTO) null else Sub.list.firstOrNull { it.key == k }?.takeIf { allowed(ctx, it) }   // 1.43: Premium gutarsa — awtomatik (mugt)
     }
     fun select(ctx: Context, s: Server?) =
         ctx.getSharedPreferences("p", 0).edit().putString("sel", s?.key ?: AUTO).apply()
@@ -49,7 +49,9 @@ object State {
     // ---- ping önbelleği: açılışta ve «Barla»da ölçülür, bağlanırken bekletmez ----
     val pings = ConcurrentHashMap<String, Long>()   // server.key → ms (-1 = yok)
     @Volatile var pingAt = 0L
-    private fun cands() = Sub.list.filter { !it.ru && !it.game }.ifEmpty { Sub.list.filter { !it.ru } }
+    /** 1.43: Premium bolmasa diňe mugt serwerler (#tvfree); sanaw ýok bolsa (köne bot) — hemmesi. */
+    fun allowed(ctx: Context?, s: Server): Boolean = ctx == null || Sub.free.isEmpty() || Lic.prem(ctx) || s.hp in Sub.free
+    private fun cands() = Sub.list.filter { !it.ru && !it.game && allowed(app, it) }.ifEmpty { Sub.list.filter { !it.ru && allowed(app, it) } }
 
     fun ping(s: Server): Long = runCatching { Libv2ray.measureOutboundDelay(Cfg.full(s.uri, false), PING) }
         .getOrDefault(-1L).let { if (it > 0) it else -1L }.also { pings[s.key] = it }

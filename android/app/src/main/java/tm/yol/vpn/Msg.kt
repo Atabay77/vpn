@@ -316,7 +316,8 @@ object Msg {
             if (s in 1..seq) continue      // öň gelen habar (bot gaýtadan iberdi)
             if (s > 0) seq = s
             p.edit().putInt("seq", seq).apply()
-            o.optString("key").takeIf { it.isNotEmpty() }?.let { k -> if (Lic.exp(c) == null || o.optString("k") == "buy" || o.optString("k") == "lvl") Lic.save(c, k) }   // sowgat / çagyryş / satyn alnan açar
+            o.optString("key").takeIf { it.isNotEmpty() }?.let { k -> if (Lic.exp(c) == null || o.optString("k") == "buy" || o.optString("k") == "lvl" || o.optString("k") == "prem") Lic.save(c, k) }   // sowgat / çagyryş / satyn alnan açar / 1.43: Premium
+            if (o.optString("k") == "prem") subDue = true   // 1.43: täze açar abuna faýlynda — derrew täzele
             if (o.optString("k") == "uban") Lic.setBanned(c, o.optBoolean("on"))
             pend(c, JSONObject().put("k", "in").put("m", o))
             if (!visible && o.optString("k") == "tk" && o.optString("who") == "a") Svc.notifyReply(c, o.optString("t"))

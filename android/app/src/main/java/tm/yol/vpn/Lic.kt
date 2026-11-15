@@ -44,6 +44,16 @@ object Lic {
         return if (e == 0L || e * 1000 > System.currentTimeMillis()) e * 1000 else null
     }
 
+    /** 1.43: Premium — geçerli açar (bot Premium beren / satyn alnan / sowgat). Ähli serwerler we wagt çägi ýok. */
+    fun prem(ctx: Context): Boolean = exp(ctx) != null
+
+    /** 1.43: Premium-ly telefonlar (abuna faýlyndaky açarlardan) — chatda ýalpyldaýan nyşan üçin. */
+    fun premDevs(): Set<String> {
+        val now = System.currentTimeMillis() / 1000; val out = HashSet<String>()
+        Sub.keys.forEach { (h, e) -> if (e == 0L || e > now) Sub.kdev[h]?.split(',')?.filter { it.length == 12 }?.let { out.addAll(it) } }
+        return out
+    }
+
     /** Key ýagdaýy: "ok", "used" (başga telefonda), "bad" (ýok / möhleti geçen). */
     fun status(ctx: Context, k: String): String {
         val h = hash(k); val e = Sub.keys[h] ?: return "bad"

@@ -238,6 +238,7 @@ open class Main : Activity() {
             return JSONObject().put("dev", Msg.dev(c)).put("code", Msg.code(c)).put("ver", Msg.ver(c)).put("lang", Lang.cur)
                 .put("snd", Snd.on(c)).put("news", nw).put("ai", Sub.ai).put("online", Sub.online).put("bans", JSONArray(Sub.bans.toList()))
                 .put("key", Lic.saved(c) ?: "").put("model", Build.MANUFACTURER + " " + Build.MODEL).put("relay", Sub.relay.isNotEmpty() || Fs.on()).put("fs", Fs.on()).put("fsb", if (Fs.vps()) Sub.fsBase else Sub.fsProj)
+                .put("prem", Lic.prem(c)).put("pexp", Lic.exp(c) ?: -1L).put("pdevs", JSONArray(Lic.premDevs().toList())).put("pfree", Sub.free.isNotEmpty())
                 .put("dl", (Sub.upd["all"] ?: Sub.upd["64"] ?: Sub.upd["32"])?.let { runCatching { Sub.fileUrl(it.second) }.getOrNull() } ?: "")
                 .put("roles", JSONObject().apply { Sub.roles.forEach { (d, rn) -> put(d, JSONArray().put(rn.first).put(rn.second)) } })
                 .put("uban", Lic.banned(c))
@@ -248,7 +249,9 @@ open class Main : Activity() {
 
         @JavascriptInterface fun servers(): String {
             val a = JSONArray()
-            Sub.list.forEach { s -> a.put(JSONObject().put("key", s.key).put("flag", s.flag).put("country", s.country).put("title", s.title).put("proto", s.proto).put("game", s.game)) }
+            val c = this@Main
+            Sub.list.forEach { s -> a.put(JSONObject().put("key", s.key).put("flag", s.flag).put("country", s.country).put("title", s.title).put("proto", s.proto).put("game", s.game)
+                .put("free", Sub.free.isEmpty() || s.hp in Sub.free).put("lock", !State.allowed(c, s))) }   // 1.43: mugt / Premium
             val p = JSONObject(); State.pings.forEach { (k, v) -> p.put(k, v) }
             return JSONObject().put("list", a).put("pings", p).toString()
         }
@@ -258,6 +261,7 @@ open class Main : Activity() {
         @JavascriptInterface fun connect() = ui { if (State.now == State.ON || State.now == State.WAIT) startVpn() else this@Main.connect() }
         @JavascriptInterface fun select(key: String) {
             val s = Sub.list.firstOrNull { it.key == key }
+            if (s != null && !State.allowed(this@Main, s)) { Msg.events.add(JSONObject().put("k", "plock")); return }   // 1.43: Premium serwer
             if (State.selected(this@Main)?.key == s?.key) return
             State.select(this@Main, s)
             ui { if (State.now == State.ON || State.now == State.WAIT) startVpn() }
