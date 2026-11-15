@@ -384,7 +384,7 @@ object Msg {
     fun diag(): JSONObject {
         val u = host() + "health"
         fun t(via: Boolean) = runCatching { val c = open(u, via); val code = c.responseCode; c.disconnect(); code }.getOrElse { -1 }
-        if (Fs.on()) return JSONObject().put("fs", Fs.ping())
+        if (Fs.on() && Sub.relay.isEmpty()) return JSONObject().put("fs", Fs.ping())   // 1.40.2: VPS bar bolsa VPS barlanýar (esasy ýol)
         return JSONObject().put("relay", Sub.relay.isNotEmpty()).put("tun", if (State.now == State.ON && State.socks > 0) t(true) else 0).put("direct", t(false))
     }
 
