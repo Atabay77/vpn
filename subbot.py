@@ -196,7 +196,11 @@ def new_service():
     try:
         import httplib2, google_auth_httplib2
         # 30 sn zaman aşımı: takılan bir Drive bağlantısı botu sonsuza kadar bekletmesin
-        http = google_auth_httplib2.AuthorizedHttp(creds, http=httplib2.Http(timeout=30))
+        h_ = httplib2.Http(timeout=30)
+        # Drive parça parça yüklemede «308 Resume Incomplete» döndürür; httplib2 onu yönlendirme sanıp
+        # «Redirected but the response is missing a Location: header» hatası verir (googleapiclient'in build_http'i de böyle yapar)
+        if hasattr(h_, "redirect_codes"): h_.redirect_codes = h_.redirect_codes - {308}
+        http = google_auth_httplib2.AuthorizedHttp(creds, http=h_)
         return build("drive", "v3", http=http, cache_discovery=False)
     except ImportError:
         return build("drive", "v3", credentials=creds, cache_discovery=False)
