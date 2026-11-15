@@ -4947,14 +4947,14 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
             t_ = ("📢 <b>Programdaki reklam</b>\n<blockquote>"
                   + (f"🖼 Resim: {'var' if ad.get('fid') else 'yok'}\n🔗 Link: {esc(ad.get('link') or '—')}\n"
                      f"Durum: {'🟢 gösteriliyor' if ad.get('fid') and ad.get('on', True) else '⚪ kapalı'}" if ad else "Reklam yok.")
-                  + "</blockquote>\n<i>Resim ana ekranda bağlan düğmesinin altında geniş bir şerit olarak görünür (en iyi oran 5:1, ör. 1000×200). Basınca link açılır.</i>")
+                  + "</blockquote>\n<i>Program açılınca resim ekranın ortasında tam genişlikte 10 saniye görünür (her oran olur; en iyisi 16:9 ya da 1:1, ör. 1080×1080). Basınca link açılır, ✕ ile kapanır.</i>")
             rows_ = [[B("🖼 Resim yükle", "app_ad_img"), B("🔗 Link", "app_ad_link")]]
             if ad: rows_.append([B("⏸ Kapat" if ad.get("on", True) else "▶️ Aç", "app_ad_tg"), B("🗑 Sil", "app_ad_rm")])
             rows_.append([B("◀️ Geri", "app_v")])
             await safe_edit(q, t_, KB(rows_)); return
         if a == "app_ad_img":
             STATE[uid] = {"action": "app_ad_img"}
-            t, kb = prompt("🖼 <b>Reklam resmi</b>", "Resmi fotoğraf olarak gönder (en iyi oran 5:1).", "app_ad")
+            t, kb = prompt("🖼 <b>Reklam resmi</b>", "Resmi fotoğraf olarak gönder (en iyisi 16:9 ya da kare 1:1).", "app_ad")
             await safe_edit(q, t, kb); return
         if a == "app_ad_link":
             STATE[uid] = {"action": "app_ad_link"}

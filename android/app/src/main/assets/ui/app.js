@@ -360,9 +360,7 @@
       r.menuItems = r.menuItems.filter((m) => (s.admOn || m.t !== tx.p_admin) && m.t !== tx.p_history).map((m) => (m.t === tx.p_global ? Object.assign({}, m, { badge: INFO.online > 0, bt: '● ' + INFO.online })
         : m.t === tx.p_admin ? Object.assign({}, m, { badge: openN > 0, bt: String(openN) })
         : m.t === tx.p_invite ? Object.assign({}, m, { badge: true, bt: tx.r_freeB, bc: 'mbadge-gold' }) : m));
-      { const at = r.menuItems.findIndex((m) => m.t === tx.p_servers), base = r.menuItems[at] || r.menuItems[0];
-        if (base) r.menuItems.splice(at + 1, 0, Object.assign({}, base, { t: tx.p_buy, i1: 'M3 5h2.5l2.2 10.5h10.6L20.5 8H7', i2: 'M9.5 19.5h.01M17 19.5h.01', badge: false,
-          cls: s.page === 'buy' ? 'mi-on' : '', ic: s.page === 'buy' ? '#6FDB9C' : '#E0B04A', go: () => this.setState({ page: 'buy', menu: false }) })); }
+      // 1.33: «Açar satyn al» aýryldy (eýesiniň islegi)
       if (!full) { r.tabUsCls = 'hid'; r.tabIsUs = false; }
       if (!isF) { r.tabAdCls = 'hid'; r.tabBotCls = 'hid'; r.tabIsAd = false; r.tabIsBot = false; if (s.admTab !== 'tk' && !(full && s.admTab === 'us')) r.tabIsTk = true; }
       { const staff = (d) => d === INFO.dev || !!roleOf(d); r.banCls = isF && !(s.admU && staff(s.admU)) ? '' : 'hid'; r.bcCls = isF ? '' : 'hid'; }   // özüňi / admini gadagan etmek bolmaýar
@@ -494,7 +492,7 @@
         r.lvHow = tx.lv_how; r.hasTop = top.length > 0;
         r.topList = top.map((q, i) => ({ n: (i < 3 ? ['🥇', '🥈', '🥉'][i] : (i + 1) + '.') + ' ' + q[0], c: tx.lv_inv.replace('{n}', String(q[1])), lv: String(rkT(q[2])) })); }
       // 1.19: açar satyn almak
-      r.isBuy = pg === 'buy'; if (r.isBuy) r.pageTitle = tx.p_buy;
+      r.isBuy = false;   // 1.33: «Açar satyn al» aýryldy
       { const pay = LS.get('payInfo', null), plans = (pay && pay.p) || [[3, 15], [7, 30], [30, 100]], sel = s.buyD || plans[1][0];
         if (r.isBuy && (!pay || Date.now() - (pay.at || 0) > 600000) && Date.now() - (this._payQ || 0) > 60000) { this._payQ = Date.now(); NB.send(JSON.stringify({ k: 'payq' })); }
         r.buyPlans = plans.map(([d2, p2]) => ({ t: (d2 === 30 ? tx.bk_month : d2 + ' ' + tx.days), p: p2 + ' TMT', cls: d2 === sel ? 'bp-on' : '', pick: () => this.setState({ buyD: d2 }) }));
@@ -667,7 +665,11 @@
       // ýörite adamlar
       r.isVip = pg === 'vip';
       r.vipRows = Object.keys(INFO.roles || {}).sort((a, b) => (roleOf(a) === 'o' ? 0 : 1) - (roleOf(b) === 'o' ? 0 : 1)).map((d, i) => Object.assign(ava(d), {
-        cls: roleOf(d) === 'o' ? 'vo' : '', role: roleOf(d) === 'o' ? tx.vip_o : tx.vip_a, d: (i * 0.06).toFixed(2), open: () => this.openProf(d) }));
+        cls: roleOf(d) === 'o' ? 'vo' : '', role: roleOf(d) === 'o' ? tx.vip_o : tx.vip_a, d: (i * 0.06).toFixed(2), open: () => this.openProf(d) }, (() => {
+          // 1.33: OWNER ýazgysy öçük bolsa (nyşan saýlanan) — derejäniň nyşany, chatdaky ýaly
+          let lv = 0; if (d === me1) lv = (LS.get('lvl', {}) || {}).lv || 0; else { G.forEach((q) => { if (q.i === d && q.lv) lv = q.lv; }); lv = lvOf(d, lv); }
+          const o = isOwnShown(d), t = rkT(lv); return { hasLv: !o && (roleOf(d) === 'o' || lv >= 2), lv: String(t), ncls: o ? 'goldtxt' : lv ? rkNm(t) : '' }; })()));
+      if (pg === 'vip') lvAsk(Object.keys(INFO.roles || {}));
       // sahypa ady we menýu
       if (pg === 'uprof') r.pageTitle = tx.p_uprof; else if (pg === 'dms') r.pageTitle = tx.p_dms; else if (pg === 'vip') r.pageTitle = tx.p_vip; else if (pg === 'dm') r.pageTitle = r.dp.name;
       const dmUn = Object.keys(DMS).filter((d) => !MUTE[d]).reduce((a, d) => a + (DMS[d].un || 0) + (DMS[d].st === 'in' && !(DMS[d].seen) ? 1 : 0), 0);
@@ -1267,15 +1269,25 @@
   }
 
   function showAd(link) {
+    // 1.33: mahabat — ekranyň ortasynda doly giňlikde kart (öň sag burçda kiçijik penjire başlygyň üstüne düşýärdi)
     if (document.getElementById('tvad')) return;
+    const lang = (window.C && window.C.state.lang) || 'tk', lbl = { tk: 'Mahabat', ru: 'Реклама', tr: 'Reklam' }[lang] || 'Mahabat';
     const w = document.createElement('div'); w.id = 'tvad';
-    w.style.cssText = 'position:fixed;right:10px;top:70px;z-index:99;max-width:62vw;border:2px solid #E0B04A;border-radius:14px;overflow:hidden;background:#081610;box-shadow:0 8px 26px rgba(0,0,0,.6);animation:pop .35s ease';
-    const img = document.createElement('img'); img.src = 'ad.img?' + Date.now(); img.style.cssText = 'display:block;max-width:62vw;max-height:60vh';
-    img.onclick = () => { if (link) NB.open(link); };
-    const x = document.createElement('button'); x.textContent = '✕'; x.setAttribute('aria-label', 'Ýap');
-    x.style.cssText = 'position:absolute;right:4px;top:4px;width:26px;height:26px;border-radius:13px;border:1px solid #E0B04A;background:rgba(10,28,20,.9);color:#fff;font-size:12px';
-    const close = () => w.remove(); x.onclick = close; setTimeout(close, 7000);
-    w.appendChild(img); w.appendChild(x); document.body.appendChild(w);
+    w.style.cssText = 'position:fixed;inset:0;z-index:99;display:flex;align-items:center;justify-content:center;padding:16px;box-sizing:border-box;background:rgba(0,0,0,.55);animation:pop .35s ease';
+    const card = document.createElement('div');
+    card.style.cssText = 'position:relative;width:100%;max-width:520px;border:2px solid #E0B04A;border-radius:18px;overflow:hidden;background:#081610;box-shadow:0 12px 34px rgba(0,0,0,.65)';
+    const img = document.createElement('img'); img.src = 'ad.img?' + Date.now(); img.alt = lbl;
+    img.style.cssText = 'display:block;width:100%;height:auto;max-height:70vh;object-fit:contain;cursor:' + (link ? 'pointer' : 'default');
+    img.onclick = () => { if (link) { NB.open(link); close(); } };
+    img.onerror = () => close();
+    const tag = document.createElement('span'); tag.textContent = lbl;
+    tag.style.cssText = 'position:absolute;left:8px;top:8px;padding:2px 8px;border-radius:8px;background:rgba(10,28,20,.85);color:#FFD27A;font:700 11px Manrope,sans-serif;letter-spacing:.06em';
+    const x = document.createElement('button'); x.textContent = '✕'; x.setAttribute('aria-label', { tk: 'Ýap', ru: 'Закрыть', tr: 'Kapat' }[lang] || 'Ýap');
+    x.style.cssText = 'position:absolute;right:8px;top:8px;width:32px;height:32px;border-radius:16px;border:1px solid #E0B04A;background:rgba(10,28,20,.9);color:#fff;font-size:14px;cursor:pointer';
+    const close = () => { w.remove(); clearTimeout(tm); };
+    x.onclick = close; w.onclick = (e) => { if (e.target === w) close(); };
+    const tm = setTimeout(close, 10000);
+    card.appendChild(img); card.appendChild(tag); card.appendChild(x); w.appendChild(card); document.body.appendChild(w);
   }
 
   /** Telefonyň «Yza» düwmesi. */

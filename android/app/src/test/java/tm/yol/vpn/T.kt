@@ -51,6 +51,9 @@ trojan://x@1.1.1.1:1#skip
         Sub.meta("#tvsess: 180"); assertEquals(180, Sub.sess)
         Sub.meta("#tvsess: 5"); assertEquals(60, Sub.sess)
         Sub.meta(""); assertEquals(60, Sub.sess)
+        // 1.33: mahabat setiri (#tvad: Drive faýly, kodlanan link)
+        Sub.meta("#tvad: FID123 https%3A%2F%2Ft.me%2Fkanal"); assertEquals("FID123" to "https://t.me/kanal", Sub.ad)
+        Sub.meta(""); assertEquals(null, Sub.ad)
         // 1.29: botuň biziň atlarymyz (URL kodlanan)
         val br = Sub.parse("ss://YWVzLTI1Ni1nY206cA==@1.2.3.4:1080#" + java.net.URLEncoder.encode("🇪🇸 Ispaniýa · Türkmen VPN · 4", "UTF-8").replace("+", "%20") +
             "\nss://YWVzLTI1Ni1nY206cA==@1.2.3.9:1080#" + java.net.URLEncoder.encode("🇷🇺 Russiýa · Türkmen VPN · PUBG 1 🎮", "UTF-8").replace("+", "%20"))
