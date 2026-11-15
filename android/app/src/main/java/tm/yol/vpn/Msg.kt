@@ -169,10 +169,8 @@ object Msg {
 
     // ---- işçi ----
     private val lock = Object()
-    /** 1.33: VPN bagly we öz relay bar bolsa bot habarlary (bilet jogaplary, derejeler, admin) relay arkaly — Firestore-yň gündelik çägi tygşytlanýar.
-     *  Global chat, hususy habarlar we VPN-siz ýagdaý Firestore-da galýar. Relay jogap bermese Firestore-a geçilýär. */
-    @Volatile private var relayBad = 0L     // relay jogap bermedi: 5 minut Firestore
-    private fun relayNow() = !(Sub.fast && Fs.on()) && State.now == State.ON && Sub.relay.isNotEmpty() && System.currentTimeMillis() > relayBad
+    /** 1.38.2: hemme zat VPN-li hem VPN-siz Firestore arkaly (eýesiniň islegi). Öz relay (VPS) diňe ätiýaçlyk:
+     *  Firestore jogap bermese (meselem gündelik çäk dolsa) — VPN bagly bolsa relay arkaly işlemegini dowam edýär. */
 
     fun kick() { synchronized(lock) { lock.notifyAll() } }
     /** Global chat-a ýazylandan soň derrew täzeden oka (habar gijä galmasyn). */
@@ -233,7 +231,7 @@ object Msg {
             if (visible && now - gAt > gEvery) { gAt = now; runCatching { global() } }
             runCatching { Chat.poll(c, visible, dmPage) }
             if (visible || on) runCatching { State.pingExtra(c) }
-            if (visible && Fs.on() && !relayNow() && now - newsAt > (if (fast) 60_000L else 120_000L)) { newsAt = now; runCatching { newsFs() } }   // VPN bagly: habarlar abuna faýlyndan
+            if (visible && Fs.on() && now - newsAt > (if (fast) 60_000L else 120_000L)) { newsAt = now; runCatching { newsFs() } }
             synchronized(lock) { runCatching { lock.wait(if (fast && visible) 700L else if (watchG || Chat.watch != null || (hot && visible)) 2000L else 5000L) } }
         }
     }
@@ -243,8 +241,7 @@ object Msg {
         while (true) {
             val first = synchronized(this) { JSONArray(prefs(c).getString("q", "[]")).let { if (it.length() == 0) null else it.getString(0) } } ?: return
             val e = enc(first) ?: return
-            val sent = if (Fs.on() && !relayNow()) Fs.write("m/" + Fs.newId(), e)
-                else post(tp, e) || (Fs.on() && Fs.write("m/" + Fs.newId(), e).also { relayBad = System.currentTimeMillis() + 300_000 })
+            val sent = (Fs.on() && Fs.write("m/" + Fs.newId(), e)) || ((!Fs.on() || Sub.relay.isNotEmpty()) && post(tp, e))   // Firestore ýalňyş — relay ätiýaçlyk
             if (!sent) return
             synchronized(this) {
                 val q = JSONArray(prefs(c).getString("q", "[]")); val rest = JSONArray()
@@ -257,15 +254,13 @@ object Msg {
     private fun inbox(c: Context) {
         val p = prefs(c)
         // Firestore (VPN-siz): d/<telefon>/i — diňe täzeleri (t > soňky)
-        val viaRelay = !Fs.on() || relayNow()
-        val rl = if (viaRelay) topicMe(c)?.let { poll(it, p.getString("inId", null) ?: "12h") } else null
-        if (viaRelay && rl == null && Fs.on()) relayBad = System.currentTimeMillis() + 300_000
-        val useFs = Fs.on() && rl == null   // relay jogap bermese Firestore
-        val list: List<Pair<String, String>> = if (useFs) {
-            val got = Fs.query("d/" + dev(c), "i", p.getString("fsIn", null), 50) ?: return
-            got.map { (_, b, t) -> t to b }
-        } else {
-            (rl ?: return).map { it.optString("id") to it.optString("message") }
+        val fsGot = if (Fs.on()) Fs.query("d/" + dev(c), "i", p.getString("fsIn", null), 50) else null
+        val useFs = fsGot != null
+        val list: List<Pair<String, String>> = if (fsGot != null) fsGot.map { (_, b, t) -> t to b }
+        else {   // Firestore ýok / jogap bermedi — relay (VPN bagly bolsa açylýar)
+            if (Fs.on() && Sub.relay.isEmpty()) return
+            val tp = topicMe(c) ?: return
+            (poll(tp, p.getString("inId", null) ?: "12h") ?: return).map { it.optString("id") to it.optString("message") }
         }
         var seq = p.getInt("seq", 0)
         for ((id, body) in list) {
