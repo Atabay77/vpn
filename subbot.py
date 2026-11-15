@@ -1107,6 +1107,22 @@ def app_clean_codes(codes):
         out.append(c)
     return out
 
+def app_flag_best(codes, hpms=None):
+    """1.43.3: adaty serwerlerde bir baýdakdan diňe bir kod — şol ýurduň iň gowy işleýäni (programlaryň pinginden); Russiýa we PUBG kodlary hemmesi galýar."""
+    hpms = hpms or {}; now = time.time()
+    def score(i_c):
+        i, c = i_c; h, p_ = code_hostport(c); v = hpms.get(f"{h}:{p_}")
+        if v and now - float(v[1]) < 6 * 3600: return (0, int(v[0]), i) if int(v[0]) > 0 else (2, 0, i)
+        return (1, 0, i)
+    best, keep = {}, set()
+    for i, c in enumerate(codes):
+        m = re.search(r"[\U0001F1E6-\U0001F1FF]{2}", orig_name(c))
+        if app_is_game(c) or not m or m.group(0) == "🇷🇺": keep.add(i); continue
+        f_ = m.group(0)
+        if f_ not in best or score((i, c)) < score(best[f_]): best[f_] = (i, c)
+    keep |= {i for i, _ in best.values()}
+    return [c for i, c in enumerate(codes) if i in keep]
+
 def app_free_pick(codes, base1, hpms=None):
     """1.43.2: mugt ulanyjylar üçin (öňki ýaly): her baýdakdan bir kod — şol ýurduň iň gowy işleýäni (programlaryň iberýän pinginden),
     kanaldan («· tm») iň köp 2 we iň gowy işleýän 2 PUBG. Dönüş: ["host:port", …]."""
@@ -1124,7 +1140,7 @@ def app_free_pick(codes, base1, hpms=None):
         if f_ not in best: order.append(f_)
         if f_ not in best or score((i, c)) < score(best[f_]): best[f_] = (i, c)
     pick = [best[f_][1] for f_ in order]
-    pick += [c for _, c in sorted([(i, c) for i, c in enumerate(codes) if not app_is_game(c) and tm_(c)], key=score)[:2]]
+    pick += [c for _, c in sorted([(i, c) for i, c in enumerate(codes) if not app_is_game(c) and tm_(c)], key=score)]
     pick += [c for _, c in sorted([(i, c) for i, c in enumerate(codes) if app_is_game(c)], key=score)[:2]]
     out = []
     for c in pick:
@@ -1250,6 +1266,7 @@ def app_sync(force=False):
         except Exception as e: log.info("quota: %s", e)
         for c in app_x_named(codes, app_cfg(load_db())):   # 1.16.6: kanal + admin kodlary
             if code_key(c) not in keys: keys.add(code_key(c)); codes.append(c)
+        codes = app_flag_best(codes, cfg.get("hp_ms"))   # 1.43.3: bir baýdakdan bir serwer (Russiýa / PUBG — hemmesi)
         free_ = app_free_pick(codes, base1, cfg.get("hp_ms"))   # 1.43.2: mugt — her ýurtdan iň gowy işleýän bir kod + kanal + 2 PUBG
         codes = app_brand_names(codes)   # 1.29: abunanyň atlary görünmesin
         meta = app_meta(cfg) + (["#tvfree: " + ",".join(free_)] if free_ else [])
