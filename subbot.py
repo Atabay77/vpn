@@ -1338,7 +1338,7 @@ def app_view(db):
          "Yeni sürüm: APK dosyalarını bana gönder (adında sürüm ve arm64 / arm32 olsun, ör. TurkmenVPN-1.3-arm64.apk).</i>")
     rows = [[B(f"❌ {i + 1}. {short(src_label(u), 24)}", f"app_rm:{hashlib.md5(u.encode()).hexdigest()[:8]}")] for i, u in enumerate(subs)]
     if len(subs) < APP_MAX_SUBS: rows.append([B("➕ Abonelik ekle", "app_add", "primary")])
-    if subs: rows.append([B("🔄 Şimdi güncelle", "app_now")])
+    if subs: rows.append([B("🔄 Şimdi güncelle", "app_now"), B("📋 Abonelik linkleri", "app_subs")])
     rows.append([B("🔑 Key oluştur", "app_kn"), B(f"🗝 Keyler ({len(app_keys_live(cfg))})", "app_kl")])
     rows.append([B("📦 Yeni sürüm yayınla (Drive linki)", "app_up")])
     rows.append([B("📊 İzleme", "app_st"), B("📢 Reklam", "app_ad")])
@@ -5244,7 +5244,7 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
             await safe_edit(q, "🌐 <b>Global chat</b> (soňky 12 sagat)\n<blockquote>" + ("\n".join(lines) or "Habar ýok.") + "</blockquote>\n<i>🚫 — adamy Global chat-dan gadagan et. Habary pozmak: programda Admin paneline giriň → Global chat → habaryň üstündäki 🗑.</i>", KB(rows)); return
         return
 
-    elif a in ("app_v", "app_add", "app_now", "app_link", "app_kn", "app_kl", "app_up", "app_st", "app_ad", "app_ad_img", "app_ad_link", "app_ad_rm", "app_ad_tg", "app_dl") or a.startswith(("app_rm:", "app_k:", "app_kd:")):
+    elif a in ("app_v", "app_add", "app_now", "app_link", "app_subs", "app_kn", "app_kl", "app_up", "app_st", "app_ad", "app_ad_img", "app_ad_link", "app_ad_rm", "app_ad_tg", "app_dl") or a.startswith(("app_rm:", "app_k:", "app_kd:")):
         if uid not in ORIG_ADMINS:
             await safe_edit(q, "⛔ Erişim yok", back("admin")); return
         if a == "app_st":
@@ -5339,6 +5339,12 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
             try:
                 n, errs = await asyncio.to_thread(app_sync, True); RUN.pop("app_err", None)
             except Exception as e: RUN["app_err"] = str(e)[:150]
+        if a == "app_subs":   # 1.38.1: sunucuların çekildiği abonelikler (tam link)
+            cfg_ = app_cfg(load_db()); subs_ = cfg_.get("subs", [])
+            await c.bot.send_message(uid, "📋 <b>Sunucuların çekildiği abonelikler</b>\n"
+                + ("\n".join(f"{i + 1}. {esc(src_label(u_))}\n<code>{esc(u_)}</code>" for i, u_ in enumerate(subs_)) or "Abonelik yok.")
+                + f"\n\n<i>Toplam {cfg_.get('n', 0)} kod · son yazma {ago(cfg_.get('ts'))}. Bu linkleri kimseyle paylaşma.</i>",
+                parse_mode="HTML", disable_web_page_preview=True)
         if a == "app_link":
             fid = app_cfg(load_db()).get("fid")
             await c.bot.send_message(uid, f"🔗 <b>Programın okuduğu dosya</b>\n<code>{esc(sub_link(fid))}</code>\n<i>Bu linki kimseyle paylaşma; sadece programı yeniden derletirken lazım.</i>", parse_mode="HTML")
