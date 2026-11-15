@@ -137,13 +137,13 @@ object Chat {
             .put("st", rooms(c).optJSONObject(room)?.optString("st") ?: ""))
     }
 
-    private var rAt = 0L; private var allAt = 0L
+    private var rAt = 0L; private var allAt = 0L; private var wAt = 0L
     /** Msg işçisinden: bildirişler we otaglar. */
     fun poll(c: Context, visible: Boolean, dmPage: Boolean) {
         if (!Fs.on() || !visible) return
         val now = System.currentTimeMillis()
-        watch?.let { w -> runCatching { pollRoom(c, room(Msg.dev(c), w), false, w) } }
-        if (now - rAt > (if (dmPage) 8_000L else 30_000L)) {
+        if (now - wAt > 4_000L) { wAt = now; watch?.let { w -> runCatching { pollRoom(c, room(Msg.dev(c), w), false, w) } } }   // 1.32.1: açyk söhbet 4 sn-da bir
+        if (now - rAt > (if (dmPage) 8_000L else 60_000L)) {
             rAt = now
             runCatching {
                 val pr = p(c); val me = Msg.dev(c)
@@ -160,7 +160,7 @@ object Chat {
                 }
             }
         }
-        if (now - allAt > (if (dmPage) 10_000L else 60_000L)) {
+        if (now - allAt > (if (dmPage) 10_000L else 180_000L)) {
             allAt = now
             val all = rooms(c)
             all.keys().forEach { room -> if (all.getJSONObject(room).optString("p") != watch) runCatching { pollRoom(c, room, false) } }

@@ -210,17 +210,18 @@ object Msg {
             // ntfy.sh bir IP-den az soraga rugsat berýär (köp adam bir VPN serweriniň IP-sinden çykýar), şonuň üçin seýrek:
             // jogap garaşylýan bolsa (soňky 40 min) ekranda 20 sn / fonda 3 min, ýogsa ekranda 2 min / fonda 10 min
             val waiting = now - waitAt < 40 * 60_000L
-            // Firestore-da IP çägi ýok: jogap garaşylanda ekranda 4 sn-da bir
-            val inEvery = if (Fs.on()) (if (visible) (if (waiting) 4_000L else 60_000L) else (if (waiting) 60_000L else 300_000L))
+            // Firestore: jogap garaşylanda ekranda ilkinji 3 minut 4 sn-da bir, soň 20 sn (her boş sorag hem 1 okalyş)
+            val hot = now - waitAt < 3 * 60_000L
+            val inEvery = if (Fs.on()) (if (visible) (if (hot) 4_000L else if (waiting) 20_000L else 60_000L) else (if (waiting) 60_000L else 300_000L))
                 else if (visible) (if (waiting) 20_000L else 120_000L) else (if (waiting) 180_000L else 600_000L)
             val adm = admPw(c) != null && Fs.on()   // admin: fonda hem bilet bildirişleri (2 minutda bir)
             if ((visible || on || adm) && now - inAt > (if (adm && !visible) minOf(inEvery, 120_000L) else inEvery)) { inAt = now; runCatching { inbox(c) } }
-            val gEvery = if (watchG) (if (Fs.on()) 4_000L else 8_000L) else 60_000L
+            val gEvery = if (watchG) (if (Fs.on()) 5_000L else 8_000L) else 120_000L
             if (visible && now - gAt > gEvery) { gAt = now; runCatching { global() } }
             runCatching { Chat.poll(c, visible, dmPage) }
             if (visible || on) runCatching { State.pingExtra(c) }
             if (visible && Fs.on() && now - newsAt > 120_000) { newsAt = now; runCatching { newsFs() } }
-            synchronized(lock) { runCatching { lock.wait(if (watchG || Chat.watch != null || (waiting && visible)) 2000L else 5000L) } }
+            synchronized(lock) { runCatching { lock.wait(if (watchG || Chat.watch != null || (hot && visible)) 2000L else 5000L) } }
         }
     }
 
@@ -353,12 +354,13 @@ object Msg {
         out
     }
 
-    // Firestore Global chat: ilki soňky 60, soň diňe täzeler (okalyş az bolsun); 3 minutda bir doly täzelenýär (pozulanlar gitsin)
+    // Firestore Global chat: ilki soňky 150, soň diňe täzeler (okalyş az bolsun). 1.32.1: doly täzelemek diňe chat açyk wagty 15 minutda bir
+    // (öň her 3 minutda 150 okalyş — programma açyk durka hemme sahypada; Firestore-yň mugt gündelik çägi doldy)
     private val gfs = ArrayList<JSONObject>(); @Volatile private var gfsT: String? = null; @Volatile private var gfsFull = 0L
 
     private fun globalFs() {
         val now = System.currentTimeMillis()
-        val full = gfsT == null || now - gfsFull > 180_000
+        val full = gfsT == null || (watchG && now - gfsFull > 900_000)
         val got = (if (full) Fs.query("", "g", null, 150, desc = true)?.reversed() else Fs.query("", "g", gfsT, 80)) ?: return   // tepkiler hem setir bolup gelýär
         if (full) { gfs.clear(); gfsFull = now }
         for ((id, b, t) in got) {

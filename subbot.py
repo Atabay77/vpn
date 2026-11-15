@@ -1313,6 +1313,8 @@ def app_view(db):
 # Program bota ntfy.sh arkaly ýazýar: <konu>m — bota, <konu>d<telefon> — telefona, <konu>g — Global chat.
 # Habarlar şifreli (açar programmanyň Drive faýlynyň kimliginden), program hem şol bir usulda hasaplaýar (Msg.kt).
 APP_MSG_EVERY = 8   # Firestore-da IP çägi ýok; AI jogaby gijä galmasyn
+APP_FS_IDLE = 20    # 1.32.1: soňky 2 minutda habar ýok bolsa Firestore 20 sn-da bir (her boş sorag hem 1 okalyş — mugt gündelik çäk 50 000)
+APP_GMOD_EVERY = 30 # Global chat gözegçiligi 30 sn-da bir
 APP_PRICES = "3 gün — 15 TMT · 7 gün — 30 TMT · 1 aý — 100 TMT"
 APP_PLANS = [(3, 15), (7, 30), (30, 100)]   # 1.19: programda satyn almak: (gün, TMT)
 REF_ABC = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
@@ -2002,9 +2004,12 @@ async def app_msg_loop(app):
                     except Exception: continue
                     try: await app_on_msg(app, fid, o)
                     except Exception: log.exception("app msg")
-                if a.get("fs_ok") and a.get("fs_proj"):
+                now_ = time.time()
+                if a.get("fs_ok") and a.get("fs_proj") and now_ >= RUN.get("fs_next", 0):
                     try:
                         got = await asyncio.to_thread(fs_query, a["fs_proj"], "", "m", a.get("fs_since"), 100)
+                        if got: RUN["fs_act"] = now_
+                        RUN["fs_next"] = now_ + (0 if now_ - RUN.get("fs_act", 0) < 120 else APP_FS_IDLE)
                         done = []
                         for name, b, t in got:
                             app_mut(lambda a_: a_.__setitem__("fs_since", t)); done.append(name)
@@ -2016,9 +2021,12 @@ async def app_msg_loop(app):
                             except Exception: log.exception("app msg (fs)")
                         if done: await asyncio.to_thread(fs_delete, a["fs_proj"], done)
                         RUN.pop("fs_err", None)
-                        try: await app_gmod(app)
-                        except Exception as e2: log.info("gmod: %s", e2)
+                        if now_ - RUN.get("gmod_at", 0) >= APP_GMOD_EVERY:
+                            RUN["gmod_at"] = now_
+                            try: await app_gmod(app)
+                            except Exception as e2: log.info("gmod: %s", e2)
                     except Exception as e:
+                        if "429" in str(e) or "Quota" in str(e): RUN["fs_next"] = now_ + 300   # gündelik çäk doldy: 5 minut garaş
                         if RUN.get("fs_err") != str(e)[:100]: RUN["fs_err"] = str(e)[:100]; log.warning("fs poll: %s", e)
                 if RUN.pop("app_dirty", None):
                     try: await asyncio.to_thread(app_sync, True)
