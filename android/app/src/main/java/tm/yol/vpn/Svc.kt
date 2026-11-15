@@ -150,11 +150,9 @@ class Svc : VpnService() {
     @Volatile private var gen = 0                 // her bağlan/kapat isteğinde artar: eski deneme sonucu yok sayılır
     private val h = Handler(Looper.getMainLooper())
     private var beatAt = 0L
-    // 1.19: awtomatik serwer çalşmak — birikdirilen serwer jogap bermese (yzly-yzyna 3 gezek) başga iň çalt serwere geçilýär
+    // 1.35: awtomatik serwer çalşmak aýryldy (eýesiniň islegi) — birikdirilen serweriň pingi diňe ölçenýär
     @Volatile private var hcBusy = false
     private var hcAt = 0L
-    private var bad = 0
-    @Volatile private var failover = false
     private val tick = object : Runnable {
         override fun run() {
             val now0 = System.currentTimeMillis()
@@ -175,13 +173,7 @@ class Svc : VpnService() {
     private fun health() {
         val c = core ?: return
         val v = runCatching { c.measureDelay(State.PING) }.getOrDefault(-1L)
-        if (v in 1..2999) { bad = 0; State.ms = v; return }
-        if (++bad < 3) return
-        bad = 0
-        if (!State.online(this)) return   // telefonyň interneti ýok — serwer günäkär däl
-        if (!want || State.now != State.ON) return
-        failover = true
-        h.post { if (want) { State.set(State.WAIT); val g = ++gen; Thread { start(g) }.start() } }
+        if (v in 1..2999) State.ms = v
     }
 
     override fun onCreate() { super.onCreate(); State.app = applicationContext; Lang.init(this) }
@@ -212,8 +204,7 @@ class Svc : VpnService() {
             if (Sub.list.isEmpty()) Sub.load(this)
             if (!want || g != gen) return
             State.noPing = false; State.noNet = false; State.ms = 0
-            val fo = failover; failover = false
-            val sel = if (slow || fo) null else State.selected(this)
+            val sel = State.selected(this)   // 1.35: saýlanan serwer — abuna gijä galsa-da başga serwere geçilmeýär
             if (sel != null && !State.online(this)) { State.noNet = true; throw IllegalStateException("internet yok") }
             val s = sel ?: State.best(this) ?: throw IllegalStateException("ping yok")
             if (sel != null) State.ms = State.pings[sel.key]?.takeIf { it > 0 && System.currentTimeMillis() - State.pingAt < 5 * 60_000 } ?: 0L
@@ -245,7 +236,6 @@ class Svc : VpnService() {
             State.set(State.ON); wasOn = true
             Msg.start(applicationContext); Msg.kick()
             runCatching { getSystemService(NotificationManager::class.java).notify(1, note(s)) }   // bildirim: «Birikdirildi · ülke»
-            if (fo) Msg.events.add(org.json.JSONObject().put("k", "fo").put("to", s.flag + " " + s.country))
             if (slow) Thread { if (System.currentTimeMillis() - Sub.okAt > 60_000) Sub.refresh(app) }.start()
         } catch (e: Throwable) {
             if (!want || g != gen) { stopLoop(); return }   // kullanıcı iptal etti ya da yeni bağlantı istendi

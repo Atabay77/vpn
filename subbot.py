@@ -1049,6 +1049,11 @@ TM_CNAME = {"nl": "Niderlandlar", "fi": "Finlýandiýa", "gb": "Beýik Britaniý
             "hk": "Gonkong", "ca": "Kanada", "ir": "Eýran", "md": "Moldowa", "rs": "Serbiýa", "no": "Norwegiýa", "dk": "Daniýa", "be": "Belgiýa", "ie": "Irlandiýa",
             "ge": "Gruziýa", "am": "Ermenistan", "az": "Azerbaýjan", "in": "Hindistan"}
 
+def app_is_game(c):
+    """Oýun (PUBG) kody: adynda 🎮 ýa-da pubg/gaming/oýun/game."""
+    nm = orig_name(c)
+    return "🎮" in nm or bool(re.search(r"pubg|gaming|oýun|game", nm, re.I))
+
 def app_brand_names(codes):
     """1.29: kodlaryň ady abunanyňky däl, biziňki: «🇪🇸 Ispaniýa · Türkmen VPN · 4»; oýun kodlary «🇷🇺 Russiýa · Türkmen VPN · PUBG 1 🎮»."""
     out, n_, g_ = [], 0, 0
@@ -1057,8 +1062,8 @@ def app_brand_names(codes):
         m = re.search(r"[\U0001F1E6-\U0001F1FF]{2}", nm)
         flag = m.group(0) if m else "🌐"
         cc = "".join(chr(ord(ch) - 0x1F1E6 + 97) for ch in flag) if m else ""
-        if "🎮" in nm or re.search(r"pubg|gaming|oýun|game", nm, re.I):
-            g_ += 1; out.append(set_name(c, urllib.parse.quote(f"🇷🇺 Russiýa · Türkmen VPN · PUBG {g_} 🎮"))); continue
+        if app_is_game(c):   # 1.35: hakyky baýdak (öň hemmesi «Russiýa» ýazylýardy)
+            g_ += 1; out.append(set_name(c, urllib.parse.quote(f"{flag} {TM_CNAME.get(cc, cc.upper() or 'Serwer')} · Türkmen VPN · PUBG {g_} 🎮"))); continue
         n_ += 1; out.append(set_name(c, urllib.parse.quote(f"{flag} {TM_CNAME.get(cc, cc.upper() or 'Serwer')} · Türkmen VPN · {n_}")))
     return out
 
@@ -1072,10 +1077,12 @@ def app_is_info(c):
     return bool(APP_INFO_RE.search(orig_name(c)))
 
 def app_clean_codes(codes):
-    """Abunalardan gelen kodlar: maglumat setirleri aýrylýar, her baýdakdan diňe birinji kod galýar."""
+    """Abunalardan gelen kodlar: maglumat setirleri aýrylýar, her baýdakdan diňe birinji kod galýar.
+    1.35: oýun (PUBG) kodlarynyň hemmesi galýar — baýdak çägi diňe adaty serwerlere."""
     out, seen = [], set()
     for c in codes:
         if app_is_info(c): continue
+        if app_is_game(c): out.append(c); continue
         m = re.search(r"[\U0001F1E6-\U0001F1FF]{2}", orig_name(c))
         if m:
             if m.group(0) in seen: continue
