@@ -1062,9 +1062,12 @@ def app_brand_names(codes):
         m = re.search(r"[\U0001F1E6-\U0001F1FF]{2}", nm)
         flag = m.group(0) if m else "🌐"
         cc = "".join(chr(ord(ch) - 0x1F1E6 + 97) for ch in flag) if m else ""
+        cn_ = TM_CNAME.get(cc, cc.upper() or 'Serwer')
+        tm_ = bool(re.search(r"(·|🎮) tm$", nm.strip()))   # 1.36: Telegram kanalyndan alnan kod — ady «tm»
         if app_is_game(c):   # 1.35: hakyky baýdak (öň hemmesi «Russiýa» ýazylýardy)
-            g_ += 1; out.append(set_name(c, urllib.parse.quote(f"{flag} {TM_CNAME.get(cc, cc.upper() or 'Serwer')} · Türkmen VPN · PUBG {g_} 🎮"))); continue
-        n_ += 1; out.append(set_name(c, urllib.parse.quote(f"{flag} {TM_CNAME.get(cc, cc.upper() or 'Serwer')} · Türkmen VPN · {n_}")))
+            g_ += 1; out.append(set_name(c, urllib.parse.quote(f"{flag} {cn_} · {'tm' if tm_ else 'Türkmen VPN'} · PUBG {g_} 🎮"))); continue
+        if tm_: out.append(set_name(c, urllib.parse.quote(f"{flag} {cn_} · tm"))); continue
+        n_ += 1; out.append(set_name(c, urllib.parse.quote(f"{flag} {cn_} · Türkmen VPN · {n_}")))
     return out
 
 # abunadaky «maglumat» setirleri (ulanyjy ady, duýduryş, galan wagt…) serwer däl

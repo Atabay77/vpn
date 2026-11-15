@@ -220,7 +220,7 @@ open class Main : Activity() {
             val upd = Upd.available(Msg.ver(c))
             val q = Upd.query(c)
             return JSONObject()
-                .put("st", when (State.now) { State.ON -> "on"; State.WAIT -> "wait"; State.FAIL -> "fail"; else -> "off" }).put("ks", State.hold)
+                .put("st", when (State.now) { State.ON -> "on"; State.WAIT -> "wait"; State.FAIL -> "fail"; else -> "off" }).put("ks", State.hold).put("dead", State.dead && State.now == State.ON)
                 .put("act", State.active?.key ?: "").put("sel", State.selected(c)?.key ?: "")
                 .put("ms", State.ms).put("left", if (left == null) -1 else left / 1000).put("kexp", if (exp == null) -1 else exp / 1000)
                 .put("nolim", exp == null && Lic.unlim(c)).put("sess", Sub.sess)

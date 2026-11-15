@@ -95,6 +95,7 @@ object State {
         }.start()
     }
 
+    @Volatile var dead = false     // 1.36: bagly serwer jogap bermeýär (2 gezek yzly-yzyna) — baş sahypada gyzyl duýduryş
     @Volatile var noPing = false   // son otomatik denemede hiçbir kod yanıt vermedi
     @Volatile var noNet = false    // telefonun interneti yok / çalışmıyor
 
@@ -153,6 +154,7 @@ class Svc : VpnService() {
     // 1.35: awtomatik serwer çalşmak aýryldy (eýesiniň islegi) — birikdirilen serweriň pingi diňe ölçenýär
     @Volatile private var hcBusy = false
     private var hcAt = 0L
+    private var bad = 0
     private val tick = object : Runnable {
         override fun run() {
             val now0 = System.currentTimeMillis()
@@ -173,7 +175,8 @@ class Svc : VpnService() {
     private fun health() {
         val c = core ?: return
         val v = runCatching { c.measureDelay(State.PING) }.getOrDefault(-1L)
-        if (v in 1..2999) State.ms = v
+        if (v in 1..2999) { State.ms = v; bad = 0; State.dead = false; return }
+        if (++bad >= 2) State.dead = State.online(this)   // telefonyň öz interneti ýok bolsa serwer günäkär däl
     }
 
     override fun onCreate() { super.onCreate(); State.app = applicationContext; Lang.init(this) }
@@ -203,7 +206,7 @@ class Svc : VpnService() {
             val slow = th.isAlive
             if (Sub.list.isEmpty()) Sub.load(this)
             if (!want || g != gen) return
-            State.noPing = false; State.noNet = false; State.ms = 0
+            State.noPing = false; State.noNet = false; State.ms = 0; State.dead = false; bad = 0
             val sel = State.selected(this)   // 1.35: saýlanan serwer — abuna gijä galsa-da başga serwere geçilmeýär
             if (sel != null && !State.online(this)) { State.noNet = true; throw IllegalStateException("internet yok") }
             val s = sel ?: State.best(this) ?: throw IllegalStateException("ping yok")
@@ -285,7 +288,7 @@ class Svc : VpnService() {
     }
 
     private fun stop() {
-        want = false; gen++; wasOn = false
+        want = false; gen++; wasOn = false; State.dead = false
         h.removeCallbacks(tick)
         Lic.setStart(this, 0)
         State.set(State.OFF)

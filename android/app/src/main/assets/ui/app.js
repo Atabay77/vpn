@@ -750,6 +750,10 @@
         r.gEdOn = !!s.gEdit; r.gEdT = s.gIn || ''; r.gEdX = () => this.setState({ gEdit: null, gIn: '' });
         r.dmEdOn = !!s.dmEdit; r.dmEdT = s.dmIn || ''; r.dmEdX = () => this.setState({ dmEdit: null, dmIn: '' }); }
       // 1.28: kill switch
+      // 1.36: bagly serwer jogap bermeýär — gyzyl düwme we duýduryş (ulanyjy näme üçin hiç zat açylmaýanyny görsün)
+      { const dd = !!s.dead && s.st === 'on'; r.deadOn = dd && pg === 'main';
+        if (dd) { r.coreCls = 'core-dead'; r.stCls = 'st-dead'; r.statusText = tx.dead_t; r.hintText = r.deadOn ? '' : tx.dead_h; }
+        r.deadSrv = () => this.setState({ page: 'servers' }); r.deadRe = () => { try { NB.connect(); } catch (e) {} this.setState({ dead: false }); }; }
       { r.ksHold = !!s.ks && pg === 'main'; r.ksRe = () => NB.connect(); r.ksOff = () => { try { NB.vpnOff(); } catch (e) {} };
         if (Array.isArray(r.opts)) { const sn = r.opts.find((o) => o.t === tx.s_snd), kon = !!(s.kson != null ? s.kson : INFO.kson);
           if (sn) { r.opts.push(Object.assign({}, sn, { i1: 'M12 3l7 3v5c0 4.5-3 8.5-7 10-4-1.5-7-5.5-7-10V6z', i2: 'M9 12l2 2 4-4', t: tx.ks_t, s: tx.ks_s, aria: kon ? 'true' : 'false', swCls: kon ? 'sw-on' : '', d: '0.5',
@@ -1025,7 +1029,7 @@
       const st = n.st === 'fail' ? 'off' : n.st;
       if (first) { const p = loadServers(); up.pings = p; }
       const idx = (k) => (k ? SV.findIndex((v) => v.id === k) : -1);
-      up.st = st; up.ms = n.ms > 0 ? n.ms : 0; up.testing = n.testing; up.ks = !!n.ks;
+      up.st = st; up.ms = n.ms > 0 ? n.ms : 0; up.testing = n.testing; up.ks = !!n.ks; up.dead = !!n.dead;
       up.si = Math.max(0, idx(n.act) >= 0 ? idx(n.act) : (idx(n.sel) >= 0 ? idx(n.sel) : 0));
       if (lastPick === null || lastPick === s.pick) { up.pick = idx(n.sel); lastPick = up.pick; }
       up.hasKey = n.left < 0 && !n.nolim; up.nolim = !!n.nolim; if (n.sess != null && n.sess !== SESS) { SESS = +n.sess; up.sessTick = (s.sessTick || 0) + 1; } up.left = n.left >= 0 ? n.left : 0; up.kexp = n.kexp; up.upd = n.upd; up.dl = n.dl;
