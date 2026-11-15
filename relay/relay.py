@@ -16,9 +16,10 @@ PORT = int(os.environ.get("PORT", "8090"))
 DATA = os.environ.get("DATA", "/var/lib/tvrelay")
 TOPIC = re.compile(r"^[a-z0-9]{8,80}$")
 # konunyň görnüşi: tvpn + 16 simwol, soň: m (bota), d (telefona), g (Global chat), p (surat)
-KIND = {"m": (3000, 7 * 86400, 8192), "d": (60, 7 * 86400, 8192), "g": (400, 3 * 86400, 4096), "p": (1, 10 ** 9, 96 * 1024)}
+# 1.40: admin paneli (~60 KB), bilet suratlary we hekaýalar sygar ýaly çäkler ulaldyldy
+KIND = {"m": (3000, 7 * 86400, 192 * 1024), "d": (60, 7 * 86400, 256 * 1024), "g": (600, 2 * 86400, 8192), "p": (1, 10 ** 9, 96 * 1024)}
 OTHER = (100, 86400, 8192)
-RATE_GET, RATE_POST = 900, 300          # bir IP-den minutda (köp adam bir VPN serweriniň IP-sinden gelýär)
+RATE_GET, RATE_POST = 30000, 5000      # bir IP-den minutda (1.40: Türkmenistanda müňlerçe adam operatoryň bir IP-sinden çykýar)
 
 lock = threading.Lock()
 topics = {}                              # konu → [habar]
@@ -76,7 +77,7 @@ class H(BaseHTTPRequestHandler):
 
     def do_GET(self):
         u = urlparse(self.path); parts = u.path.strip("/").split("/")
-        if u.path in ("/", "/health"): return self.send(200, b"ok")
+        if u.path in ("/", "/health"): return self.send(200, b"ok 1.40")   # 1.40: bot wersiýany barlaýar (köne çäkler 8 KB)
         if not rate(self.ip(), "g", RATE_GET): return self.send(429, b"kop")
         if len(parts) != 2 or parts[1] != "json" or not TOPIC.match(parts[0]): return self.send(404, b"yok")
         t = parts[0]; since = (parse_qs(u.query).get("since") or ["12h"])[0]; now = int(time.time())

@@ -243,7 +243,7 @@ object Chat {
                 }
                 if (ok) o.put("vc", ids.joinToString(","))
             }
-            if (ok) ok = Msg.enc(o.toString())?.let { Fs.write("g/" + Fs.newId(), it) } ?: false
+            if (ok) ok = Msg.gPut(o)   // 1.40: VPS + Firestore
             Msg.events.add(if (ok) JSONObject().put("k", "gok") else JSONObject().put("k", "gfail").put("why", if (State.online(c)) "srv" else "net"))
             if (ok) Msg.gNow()
         }.start()

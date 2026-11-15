@@ -99,6 +99,16 @@ object Msg {
         return out
     }
 
+    // ---- 1.40: öz VPS (relay) — VPN-siz açylýan bolsa esasy ýol (okalyş çägi ýok); jogap bermese 2 minut Firestore ----
+    @Volatile private var relBadUntil = 0L
+    fun relOn() = Sub.relay.isNotEmpty() && System.currentTimeMillis() > relBadUntil
+    private fun relFail() { relBadUntil = System.currentTimeMillis() + 120_000L }
+    /** VPS üýtgese köne kursory (r123 — başga serweriň belgisi) taşla. */
+    private fun relCur(c: Context) {
+        val p = prefs(c)
+        if (p.getString("relHost", "") != Sub.relay) { p.edit().putString("relHost", Sub.relay).remove("inId").apply(); gRelId = null }
+    }
+
     // ---- HTTP: birikende tunel içinden, ýogsa göni ----
     private fun open(url: String, viaTunnel: Boolean): HttpURLConnection {
         val port = State.socks
@@ -161,8 +171,19 @@ object Msg {
     /** Global chat-a ýazmak (göni konuna). */
     fun gsend(ctx: Context, nick: String, text: String) {
         val o = JSONObject().put("i", dev(ctx)).put("n", nick.take(32)).put("t", text.take(600))
-        Thread { val e = enc(o.toString()); val tp = topicG(); val ok = e != null && (if (Fs.on()) Fs.write("g/" + Fs.newId(), e) else tp != null && post(tp, e))
+        Thread { val ok = gPut(o)
             if (!ok) events.add(JSONObject().put("k", "gfail")) else { gAt = 0L; kick() } }.start()
+    }
+
+    /** 1.40: Global chat setiri — VPS-e (kimligi bilen) we Firestore-a (köne wersiýalar görsün; «rl» — bot VPS-e gaýtadan goýmasyn).
+     *  Kimlik ikisinde-de birmeňzeş, şonuň üçin jogap / tepki / pozmak hemme ýerde işleýär. Iş akymynda (Thread) çagyrylýar. */
+    fun gPut(o: JSONObject): Boolean {
+        val id = Fs.newId(); val tp = topicG()
+        var rel = false
+        if (relOn() && tp != null) { rel = enc(JSONObject(o.toString()).put("id", id).toString())?.let { post(tp, it) } ?: false; if (!rel) relFail() }
+        val fs = Fs.on() && (enc((if (rel) JSONObject(o.toString()).put("rl", 1) else o).toString())?.let { Fs.write("g/$id", it) } ?: false)
+        if (!rel && !fs && !Fs.on() && tp != null) return enc(o.toString())?.let { post(tp, it) } ?: false   // köne ýol (Firestore ýok)
+        return rel || fs
     }
 
     fun ver(ctx: Context): String = runCatching { ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName }.getOrNull() ?: "0"
@@ -220,7 +241,9 @@ object Msg {
             val hot = now - waitAt < 3 * 60_000L
             val fast = Sub.fast && Fs.on()   // 1.34: çalt rejim — eýesi Firestore tölegini açdy
             val push = Push.ok() && Fs.on() && !fast   // 1.38: bildiriş (FCM) işleýär — bot özi habar berýär, barlag diňe ätiýaçlyk
+            val rel = relOn()   // 1.40: VPS-de okalyş tölegsiz — ýygy barlap bolýar
             val inEvery = if (fast) (if (visible) (if (hot) 1_500L else 5_000L) else 30_000L)
+                else if (rel) (if (visible) (if (hot) 3_000L else if (waiting) 10_000L else 20_000L) else (if (waiting) 60_000L else 300_000L))
                 else if (push) (if (visible) (if (hot) 20_000L else 300_000L) else 1_800_000L)
                 else if (Fs.on() || Sub.relay.isNotEmpty()) (if (visible) (if (hot) 4_000L else if (waiting) 20_000L else 60_000L) else (if (waiting) 60_000L else 300_000L))
                 else if (visible) (if (waiting) 20_000L else 120_000L) else (if (waiting) 180_000L else 600_000L)
@@ -228,7 +251,7 @@ object Msg {
             val ip = inPend; inPend = false
             if (ip || ((visible || on || adm || fast) && now - inAt > (if (adm && !visible && !push) minOf(inEvery, 120_000L) else inEvery))) { inAt = now; runCatching { inbox(c) } }
             // 1.39.1: chat açyk, ýöne soňky 2 minutda täze habar ýok bolsa 12 sn-da bir (her boş sorag hem 1 okalyş)
-            val gEvery = if (watchG) (if (fast) 1_500L else if (Fs.on()) (if (now - gNewAt < 120_000L) 5_000L else 12_000L) else 8_000L) else if (fast) 20_000L else if (push) 300_000L else 120_000L
+            val gEvery = if (watchG) (if (fast) 1_500L else if (rel) 3_000L else if (Fs.on()) (if (now - gNewAt < 120_000L) 5_000L else 12_000L) else 8_000L) else if (fast) 20_000L else if (rel) 30_000L else if (push) 300_000L else 120_000L
             if (visible && now - gAt > gEvery) { gAt = now; runCatching { global() } }
             runCatching { Chat.poll(c, visible, dmPage) }
             if (visible || on) runCatching { State.pingExtra(c) }
@@ -242,7 +265,9 @@ object Msg {
         while (true) {
             val first = synchronized(this) { JSONArray(prefs(c).getString("q", "[]")).let { if (it.length() == 0) null else it.getString(0) } } ?: return
             val e = enc(first) ?: return
-            val sent = (Fs.on() && Fs.write("m/" + Fs.newId(), e)) || ((!Fs.on() || Sub.relay.isNotEmpty()) && post(tp, e))   // Firestore ýalňyş — relay ätiýaçlyk
+            // 1.40: VPS açylsa ilki VPS (bot ony 3 sn-da bir okaýar, Firestore çägine degmeýär), bolmasa Firestore
+            val sent = if (relOn()) (post(tp, e).also { if (!it) relFail() } || (Fs.on() && Fs.write("m/" + Fs.newId(), e)))
+                else (Fs.on() && Fs.write("m/" + Fs.newId(), e)) || ((!Fs.on() || Sub.relay.isNotEmpty()) && post(tp, e))   // Firestore ýalňyş — relay ätiýaçlyk
             if (!sent) return
             synchronized(this) {
                 val q = JSONArray(prefs(c).getString("q", "[]")); val rest = JSONArray()
@@ -253,15 +278,20 @@ object Msg {
     }
 
     private fun inbox(c: Context) {
-        val p = prefs(c)
-        // Firestore (VPN-siz): d/<telefon>/i — diňe täzeleri (t > soňky)
-        val fsGot = if (Fs.on()) Fs.query("d/" + dev(c), "i", p.getString("fsIn", null), 50) else null
-        val useFs = fsGot != null
-        val list: List<Pair<String, String>> = if (fsGot != null) fsGot.map { (_, b, t) -> t to b }
-        else {   // Firestore ýok / jogap bermedi — relay (VPN bagly bolsa açylýar)
-            if (Fs.on() && Sub.relay.isEmpty()) return
-            val tp = topicMe(c) ?: return
-            (poll(tp, p.getString("inId", null) ?: "12h") ?: return).map { it.optString("id") to it.optString("message") }
+        val p = prefs(c); relCur(c)
+        val tp = topicMe(c)
+        var useFs = false
+        // 1.40: VPS açylsa ilki VPS (okalyş çägi ýok); bolmasa Firestore (VPN-siz): d/<telefon>/i — diňe täzeleri (t > soňky)
+        val triedRel = relOn() && tp != null
+        var list: List<Pair<String, String>>? = if (triedRel) poll(tp!!, p.getString("inId", null) ?: "12h")?.map { it.optString("id") to it.optString("message") } else null
+        if (triedRel && list == null) relFail()
+        if (list == null) {
+            val fsGot = if (Fs.on()) Fs.query("d/" + dev(c), "i", p.getString("fsIn", null), 50) else null
+            if (fsGot != null) { useFs = true; list = fsGot.map { (_, b, t) -> t to b } }
+            else {   // Firestore ýok / jogap bermedi — relay (VPN bagly bolsa açylýar)
+                if ((Fs.on() && Sub.relay.isEmpty()) || tp == null || triedRel) return
+                list = (poll(tp, p.getString("inId", null) ?: "12h") ?: return).map { it.optString("id") to it.optString("message") }
+            }
         }
         var seq = p.getInt("seq", 0)
         for ((id, body) in list) {
@@ -381,15 +411,16 @@ object Msg {
         if (gfsLoaded) return; gfsLoaded = true
         runCatching {
             val o = JSONObject(gfsFile()?.takeIf { it.exists() }?.readText() ?: return)
-            if (System.currentTimeMillis() - o.optLong("full") > 6 * 3600_000L) return   // gaty köne — täzeden doly al
+            if (System.currentTimeMillis() - o.optLong("at", o.optLong("full")) > 6 * 3600_000L) return   // gaty köne — täzeden doly al
             val a = o.getJSONArray("l"); for (i in 0 until a.length()) gfs.add(a.getJSONObject(i))
             gfsT = o.optString("t").ifEmpty { null }; gfsFull = o.optLong("full")
+            if (o.optString("rh") == Sub.relay) gRelId = o.optString("r").ifEmpty { null }
         }.onFailure { gfs.clear(); gfsT = null; gfsFull = 0L }
     }
 
     private fun gfsSave() = runCatching {
         val a = JSONArray(); gfs.takeLast(200).forEach { a.put(it) }
-        gfsFile()?.writeText(JSONObject().put("t", gfsT ?: "").put("full", gfsFull).put("l", a).toString())
+        gfsFile()?.writeText(JSONObject().put("t", gfsT ?: "").put("full", gfsFull).put("r", gRelId ?: "").put("rh", Sub.relay).put("at", System.currentTimeMillis()).put("l", a).toString())
     }
 
     private fun globalFs() {
@@ -401,10 +432,8 @@ object Msg {
         for ((id, b, t) in got) {
             gfsT = t
             val o = dec(b)?.let { runCatching { JSONObject(it) }.getOrNull() } ?: continue
-            gfs.add(JSONObject().put("id", id).put("time", Fs.sec(t)).put("i", o.optString("i")).put("n", o.optString("n")).put("t", o.optString("t"))
-                .put("st", o.optString("st").take(16)).put("pi", o.optString("pi").take(40)).put("vc", o.optString("vc").take(700)).put("vs", o.optInt("vs")).put("rp", o.optJSONObject("rp")?.let { Chat.rp(it) } ?: JSONObject.NULL)
-                .put("re", o.optString("re").take(40)).put("e", o.optString("e").take(8)).put("off", o.optBoolean("off")).put("lv", o.optInt("lv").coerceIn(0, 10)).put("ow", if (o.has("ow")) o.optInt("ow") else -1)
-                .put("dl", o.optString("dl").take(40)).put("ed", o.optString("ed").take(40)).put("sty", o.optInt("sty")))
+            if (!full && gfs.any { it.optString("id") == id }) continue   // VPS-den eýýäm geldi
+            gfs.add(gRow(id, Fs.sec(t), o))
         }
         while (gfs.size > 400) gfs.removeAt(0)
         if (got.isNotEmpty()) { if (!full) gNewAt = now; gfsSave() }
@@ -412,7 +441,37 @@ object Msg {
         events.add(JSONObject().put("k", "g").put("list", JSONArray(gfs.toList())).put("del", JSONArray()))
     }
 
+    private fun gRow(id: String, time: Long, o: JSONObject): JSONObject = JSONObject().put("id", id).put("time", time).put("i", o.optString("i")).put("n", o.optString("n")).put("t", o.optString("t"))
+        .put("st", o.optString("st").take(16)).put("pi", o.optString("pi").take(40)).put("vc", o.optString("vc").take(700)).put("vs", o.optInt("vs")).put("rp", o.optJSONObject("rp")?.let { Chat.rp(it) } ?: JSONObject.NULL)
+        .put("re", o.optString("re").take(40)).put("e", o.optString("e").take(8)).put("off", o.optBoolean("off")).put("lv", o.optInt("lv").coerceIn(0, 10)).put("ow", if (o.has("ow")) o.optInt("ow") else -1)
+        .put("dl", o.optString("dl").take(40)).put("ed", o.optString("ed").take(40)).put("sty", o.optInt("sty"))
+
+    /** 1.40: Global chat VPS-den (soňky kursordan täzeler; köne wersiýalaryň Firestore habarlaryny bot VPS-e geçirýär).
+     *  «del» — bot pozan habar. Dönüş: false — VPS jogap bermedi (Firestore-a geç). */
+    @Volatile private var gRelId: String? = null
+    private fun globalRel(): Boolean {
+        gfsLoad(); app?.let { relCur(it) }
+        val tp = topicG() ?: return false
+        val got = poll(tp, gRelId ?: "24h") ?: run { relFail(); return false }
+        val now = System.currentTimeMillis()
+        val ids = gfs.mapTo(HashSet()) { it.optString("id") }
+        val del = JSONArray(); var added = false
+        for (m in got) {
+            gRelId = m.optString("id")
+            val o = dec(m.optString("message"))?.let { runCatching { JSONObject(it) }.getOrNull() } ?: continue
+            if (o.has("del")) { val d = o.optString("del"); del.put(d); gfs.removeAll { it.optString("id") == d }; continue }
+            val id = o.optString("id").ifEmpty { m.optString("id") }
+            if (!ids.add(id)) continue
+            gfs.add(gRow(id, o.optLong("ts").takeIf { it > 0 } ?: m.optLong("time"), o)); added = true
+        }
+        if (added) { gfs.sortBy { it.optLong("time") }; while (gfs.size > 400) gfs.removeAt(0); gNewAt = now }
+        if (got.isNotEmpty()) gfsSave()
+        events.add(JSONObject().put("k", "g").put("list", JSONArray(gfs.toList())).put("del", del))
+        return true
+    }
+
     private fun global() {
+        if (relOn() && globalRel()) return
         if (Fs.on()) { globalFs(); return }
         val tp = topicG() ?: return
         val list = poll(tp, "12h") ?: return

@@ -2061,6 +2061,21 @@ def gmod_ai(texts):
         except Exception as e: log.info("gmod ai %s: %s", mdl, e)
     return set()
 
+def fs_epoch(t):
+    """Firestore wagty (RFC3339) → sekunt."""
+    try: return int(datetime.datetime.strptime(str(t)[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=datetime.timezone.utc).timestamp())
+    except Exception: return int(time.time())
+
+def app_g_bridge(fid, rows, dels):
+    """1.40: Firestore Global chat setirlerini VPS-e (birmeňzeş kimlik bilen) we pozulanlary «del» bilen. Dönüş: iberilen sany."""
+    tp, n = app_topic(fid) + "g", 0
+    for name, o, t in rows:
+        gid = str(name).split("/")[-1]
+        ntfy_pub(tp, app_enc(fid, json.dumps(dict(o, id=gid, ts=fs_epoch(t)), ensure_ascii=False))); n += 1
+    for name in dels:
+        ntfy_pub(tp, app_enc(fid, json.dumps({"del": str(name).split("/")[-1]}))); n += 1
+    return n
+
 async def app_gmod(app):
     """Global chat: link we sögünç pozulýar; yzly-yzyna 3 gezek sögen 10 minut ýazyp bilmeýär."""
     a = app_cfg(load_db()); fid = a.get("fid")
@@ -2069,13 +2084,13 @@ async def app_gmod(app):
     if not got: return
     now = time.time(); mutes = dict(a.get("gmutes") or {}); strikes = dict(a.get("gstrikes") or {})
     staff = {dv for x in (a.get("apw") or {}).values() if apw_valid(x) for dv in (x.get("hist") or []) + ([x["dev"]] if x.get("dev") else [])}
-    rows, last, junk = [], a.get("gmod_since"), []
+    rows, last, junk, tmap = [], a.get("gmod_since"), [], {}
     for name, b, t in got:
         last = t
         try: o = json.loads(app_dec(fid, b) or "null")
         except Exception: o = None
         if not isinstance(o, dict): junk.append((name, "", "junk")); continue   # açylmaýan (programdan däl) ýazgy
-        rows.append((name, o))
+        rows.append((name, o)); tmap[name] = t
     # 1.39: hekaýa 24 sagatdan soň görünmeýär — 25 sagatdan soň özi we suraty / wideo bölekleri pozulýar (Firestore ýeri dolmasyn)
     gx_ = []
     for name, o in rows:
@@ -2106,6 +2121,10 @@ async def app_gmod(app):
             else: notes.append((dv, {"k": "gwarn", "n": strikes[dv]}))
         elif name not in why_ and str(o.get("t") or "").strip(): strikes.pop(dv, None)
     if dele: await asyncio.to_thread(fs_delete, a["fs_proj"], [n_ for n_, _, _ in dele])
+    # 1.40: VPS — köne wersiýalaryň habarlary VPS-e geçirilýär (täze wersiýa ony ýazanda «rl» goýýar), pozulanlar VPS-den hem aýrylýar
+    if app_relay():
+        try: await asyncio.to_thread(app_g_bridge, fid, [(n_, o_, tmap.get(n_)) for n_, o_ in rows if n_ not in why_ and not o_.get("rl")], [n_ for n_, _, _ in dele])
+        except Exception as e: log.info("g bridge: %s", e)
     mutes = {d_: u_ for d_, u_ in mutes.items() if float(u_) > now}
     app_mut(lambda x: x.update({"gmod_since": last, "gmutes": mutes, "gstrikes": strikes}))
     for dv, m_ in notes:
@@ -2166,9 +2185,9 @@ async def app_msg_loop(app):
                     except Exception as e: log.info("app sync (msg): %s", e)
         except Exception as e:
             log.info("app msg loop: %s", e)
-        try: fast_ = bool(app_cfg(load_db()).get("fs_fast"))
-        except Exception: fast_ = False
-        await asyncio.sleep(APP_MSG_FAST if fast_ else APP_MSG_EVERY)
+        try: fast_ = bool(app_cfg(load_db()).get("fs_fast")); rel_ = bool(app_relay())
+        except Exception: fast_ = rel_ = False
+        await asyncio.sleep(APP_MSG_FAST if fast_ else 3 if rel_ else APP_MSG_EVERY)   # 1.40: VPS-de okalyş tölegsiz — 3 sn
 
 def app_tickets_view(a, closed=False):
     tks = a.get("tickets") or {}
@@ -2330,11 +2349,13 @@ def app_adm_out(dev, pw, resp):
     if pw: o["x"] = app_enc("adm|" + apw_norm(pw), json.dumps(resp, ensure_ascii=False))
     else: o.update(resp)
     body = app_enc(fid, json.dumps(o, ensure_ascii=False))
+    sent = False
     if a.get("fs_ok") and a.get("fs_proj"):
-        try: fs_write(a["fs_proj"], f"d/{dev}/i/adm", body, create=False); return
+        try: fs_write(a["fs_proj"], f"d/{dev}/i/adm", body, create=False); sent = True
         except Exception as e: log.info("adm out fs %s: %s", dev, e)
-    try: ntfy_pub(app_topic(fid) + "d" + dev, body)
-    except Exception as e: log.info("adm out %s: %s", dev, e)
+    if app_relay() or not sent:   # 1.40: VPS-e hem (Firestore okalyş çägi dolsa-da admin paneli işlesin)
+        try: ntfy_pub(app_topic(fid) + "d" + dev, body)
+        except Exception as e: log.info("adm out %s: %s", dev, e)
 
 APW_FAIL = {}   # dev -> [nädogry synanyşyk sany, gulp wagty]
 
@@ -2482,8 +2503,12 @@ async def app_adm(app, dev, o):
         elif act == "gdel" and full:   # 1.39: doly hukukly adminler hem (hekaýalar we habarlar)
             gid = re.sub(r"^g/", "", str(r.get("id") or ""))
             if re.fullmatch(r"[\w\-]{1,60}", gid):
-                if a.get("fs_ok") and a.get("fs_proj"): await asyncio.to_thread(fs_delete, a["fs_proj"], ["g/" + gid])
-                elif a.get("fid"): await asyncio.to_thread(ntfy_pub, app_topic(a["fid"]) + "g", app_enc(a["fid"], json.dumps({"del": gid})))
+                if a.get("fs_ok") and a.get("fs_proj"):
+                    try: await asyncio.to_thread(fs_delete, a["fs_proj"], ["g/" + gid])
+                    except Exception as e2: log.info("gdel fs: %s", e2)
+                if a.get("fid") and (app_relay() or not (a.get("fs_ok") and a.get("fs_proj"))):   # 1.40: VPS-däki nusgasy hem
+                    try: await asyncio.to_thread(ntfy_pub, app_topic(a["fid"]) + "g", app_enc(a["fid"], json.dumps({"del": gid})))
+                    except Exception as e2: log.info("gdel relay: %s", e2)
         elif act == "ban" and f_:   # 1.16.4: doly gadaganlyk — ýazyp bilmeýär, VPN diňe 20 minut
             dv = str(r.get("dev") or "")
             staff_ = {d_ for x_ in (a.get("apw") or {}).values() for d_ in (x_.get("hist") or []) + ([x_["dev"]] if x_.get("dev") else [])}
@@ -4144,8 +4169,11 @@ async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
                 STATE[uid] = st; await u.message.reply_text("⚠️ Salga şeýle bolmaly: http://1.2.3.4:8090", reply_markup=back("app_v")); return
             def chk():
                 with urllib.request.urlopen(urllib.request.Request(url_ + "/health", headers={"User-Agent": "subbot"}), timeout=12) as r_: return r_.read(20)
-            try: ok_ = (await asyncio.to_thread(chk)).startswith(b"ok")
-            except Exception as e: ok_ = False; err_ = str(e)[:120]
+            try: hb_ = await asyncio.to_thread(chk); ok_ = hb_.startswith(b"ok")
+            except Exception as e: hb_ = b""; ok_ = False; err_ = str(e)[:120]
+            if ok_ and hb_.strip() == b"ok":   # 1.40: köne habar serweri (8 KB çäk) — admin paneli sygmaýar
+                STATE[uid] = st
+                await u.message.reply_text("⚠️ VPS-däki habar serweri köne wersiýa. VPS-de gurnamak buýrugyny täzeden işlediň, soň salgyny ýene iberiň:\n<code>curl -fsSL https://raw.githubusercontent.com/Atabay77/vpn/claude/inceleme-aagn5q/relay/kur.sh | sh</code>", parse_mode="HTML", reply_markup=back("app_v")); return
             if not ok_:
                 STATE[uid] = st
                 await u.message.reply_text(f"❌ Serwer jogap bermedi: <code>{esc(url_)}/health</code>\n<i>VPS-de habar serweriniň gurnalandygyny we portuň açykdygyny barlaň.</i>", parse_mode="HTML", reply_markup=back("app_v")); return
