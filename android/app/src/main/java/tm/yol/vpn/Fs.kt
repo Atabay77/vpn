@@ -13,13 +13,16 @@ import java.net.URLEncoder
  * Habarlar ýene programmanyň öz açary bilen şifrli (Msg.enc).
  */
 object Fs {
-    fun on() = Sub.fsProj.isNotEmpty() && Sub.fsKey.isNotEmpty()
-    private fun root() = "projects/${Sub.fsProj}/databases/${Sub.fsDb}/documents"
+    /** 1.41: #tvdb bar bolsa — Google däl, öz VPS (relay.py-daky Firestore meňzeşi, okalyş çägi ýok). */
+    fun vps() = Sub.fsBase.isNotEmpty()
+    fun on() = vps() || (Sub.fsProj.isNotEmpty() && Sub.fsKey.isNotEmpty())
+    private fun root() = if (vps()) "projects/tv/databases/(default)/documents" else "projects/${Sub.fsProj}/databases/${Sub.fsDb}/documents"
     @Volatile var api = "https://firestore.googleapis.com"   // synag üçin üýtgedip bolýar
-    private fun base() = "$api/v1/" + root()
+    private fun base() = (if (vps()) Sub.fsBase else api) + "/v1/" + root()
+    private fun key() = if (vps()) "vps" else Sub.fsKey
 
     private fun req(method: String, url: String, body: JSONObject?): String? = runCatching {
-        val u = url + (if (url.contains('?')) "&" else "?") + "key=" + URLEncoder.encode(Sub.fsKey, "UTF-8")
+        val u = url + (if (url.contains('?')) "&" else "?") + "key=" + URLEncoder.encode(key(), "UTF-8")
         val c = URL(u).openConnection() as HttpURLConnection
         c.connectTimeout = 8000; c.readTimeout = 15000; c.requestMethod = method
         if (body != null) { c.doOutput = true; c.setRequestProperty("Content-Type", "application/json; charset=utf-8"); c.outputStream.use { it.write(body.toString().toByteArray()) } }
@@ -66,7 +69,7 @@ object Fs {
 
     /** Barlag: Firestore açylýarmy (ýok resminama → 404 hem «açylýar» diýmek). */
     fun ping(): Int = runCatching {
-        val c = URL(base() + "/p/x?key=" + URLEncoder.encode(Sub.fsKey, "UTF-8")).openConnection() as HttpURLConnection
+        val c = URL(base() + "/p/x?key=" + URLEncoder.encode(key(), "UTF-8")).openConnection() as HttpURLConnection
         c.connectTimeout = 8000; c.readTimeout = 8000
         val code = c.responseCode; c.disconnect(); code
     }.getOrDefault(-1)

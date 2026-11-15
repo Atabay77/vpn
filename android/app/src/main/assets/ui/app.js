@@ -1135,7 +1135,8 @@
   /** Öz suratyň: kiçeldip serwere (hemmeler görsün). */
   let sentPh = null, phWait = 0;
   function syncPhoto(C) {
-    const d = C.state.photo || '', bg = C.state.pbg || '', key = 'v2|' + d.length + d.slice(-40) + '|' + bg.length + bg.slice(-40) + '|' + C.meName;
+    // 1.41: baza (Google / VPS) üýtgese profil (surat, DM açary) täze bazada gaýtadan goýulýar
+    const d = C.state.photo || '', bg = C.state.pbg || '', key = 'v3|' + (INFO.fsb || '') + '|' + d.length + d.slice(-40) + '|' + bg.length + bg.slice(-40) + '|' + C.meName;
     if (sentPh === null) { sentPh = LS.get('profSent', ''); }
     if (key === sentPh || Date.now() < phWait) return;
     sentPh = key; LS.set('profSent', key);

@@ -44,6 +44,7 @@ object Sub {
     @Volatile var bans: Set<String> = emptySet()                        // Global chat-da gadagan edilen telefonlar
     @Volatile var relay = ""                                            // öz habar serweri (VPS); boş bolsa ntfy.sh
     @Volatile var fsProj = ""; @Volatile var fsKey = ""; @Volatile var fsDb = "(default)"                 // Google Firestore (VPN-siz açylýar)
+    @Volatile var fsBase = ""                                           // 1.41: Firestore ýerine öz VPS (#tvdb) — Google ulanylmaýar
 
     private fun body(text: String) = text.trim().let { t ->
         if (t.contains("://") || t.startsWith("#")) t else runCatching {
@@ -54,7 +55,7 @@ object Sub {
     /** Botun yazdığı gizli satırlar: «#tvk: özet bitiş» ve «#tvu64: sürüm dosya». */
     fun meta(text: String) {
         val k = HashMap<String, Long>(); val u = HashMap<String, Pair<String, String>>(); var a: Pair<String, String>? = null
-        val kd = HashMap<String, String>(); val kn2 = HashMap<String, Int>(); val rl = HashMap<String, Pair<String, String>>(); val ub = HashSet<String>(); val nw = ArrayList<Triple<String, Long, String>>(); var on = 0; var se = 60; var fa = false; var fc = ""; var aiOn = false; val bn = HashSet<String>(); var rel = ""; var fp = ""; var fk = ""; var fd = "(default)"
+        val kd = HashMap<String, String>(); val kn2 = HashMap<String, Int>(); val rl = HashMap<String, Pair<String, String>>(); val ub = HashSet<String>(); val nw = ArrayList<Triple<String, Long, String>>(); var on = 0; var se = 60; var fa = false; var fc = ""; var aiOn = false; val bn = HashSet<String>(); var rel = ""; var fp = ""; var fk = ""; var fd = "(default)"; var fb = ""
         for (l in body(text).lineSequence()) {
             val p = l.trim().split(Regex("\\s+"))
             if (p.size >= 3 && p[0] == "#tvk:") p[2].toLongOrNull()?.let { k[p[1]] = it; if (p.size >= 4 && p[3] != "-") kd[p[1]] = p[3]; if (p.size >= 5) p[4].toIntOrNull()?.let { n -> kn2[p[1]] = n } }
@@ -72,10 +73,11 @@ object Sub {
             if (p.size >= 2 && p[0] == "#tvban:") bn.addAll(p[1].split(',').filter { it.isNotBlank() })
             if (p.size >= 3 && p[0] == "#tvfs:" && Regex("^[a-z0-9\\-]{4,40}$").matches(p[1]) && Regex("^AIza[\\w\\-]{30,}$").matches(p[2])) { fp = p[1]; fk = p[2]; if (p.size >= 4 && Regex("^[a-z0-9\\-()]{1,63}$").matches(p[3])) fd = p[3] }
             if (p.size >= 2 && p[0] == "#tvrel:" && Regex("^https?://[\\w.:\\-]+/?$").matches(p[1])) rel = p[1].trimEnd('/')
+            if (p.size >= 2 && p[0] == "#tvdb:" && Regex("^https?://[\\w.:\\-]+/?$").matches(p[1])) fb = p[1].trimEnd('/')
             if (p.size >= 3 && p[0].startsWith("#tvu") && p[0].endsWith(":")) u[p[0].removePrefix("#tvu").removeSuffix(":")] = p[1] to p[2]
             if (p.size >= 2 && p[0] == "#tvad:") a = p[1] to Cfg.dec(p.getOrElse(2) { "" })
         }
-        keys = k; upd = u; ad = a; kdev = kd; kn = kn2; roles = rl; ubans = ub; news = newsFs ?: nw; online = on; sess = se; fast = fa; fcmApp = fc; ai = aiOn; bans = bn; relay = rel; fsProj = fp; fsKey = fk; fsDb = fd
+        keys = k; upd = u; ad = a; kdev = kd; kn = kn2; roles = rl; ubans = ub; news = newsFs ?: nw; online = on; sess = se; fast = fa; fcmApp = fc; ai = aiOn; bans = bn; relay = rel; fsProj = fp; fsKey = fk; fsDb = fd; fsBase = fb
     }
 
     /** Abonelik metnini sunucu listesine çevirir (desteklenmeyen satırlar atlanır). */

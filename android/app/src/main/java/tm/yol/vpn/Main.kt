@@ -237,7 +237,7 @@ open class Main : Activity() {
             val nw = JSONArray(); Sub.news.forEach { (id, ts, j) -> nw.put(JSONObject().put("id", id).put("ts", ts).put("j", j)) }
             return JSONObject().put("dev", Msg.dev(c)).put("code", Msg.code(c)).put("ver", Msg.ver(c)).put("lang", Lang.cur)
                 .put("snd", Snd.on(c)).put("news", nw).put("ai", Sub.ai).put("online", Sub.online).put("bans", JSONArray(Sub.bans.toList()))
-                .put("key", Lic.saved(c) ?: "").put("model", Build.MANUFACTURER + " " + Build.MODEL).put("relay", Sub.relay.isNotEmpty() || Fs.on()).put("fs", Fs.on())
+                .put("key", Lic.saved(c) ?: "").put("model", Build.MANUFACTURER + " " + Build.MODEL).put("relay", Sub.relay.isNotEmpty() || Fs.on()).put("fs", Fs.on()).put("fsb", if (Fs.vps()) Sub.fsBase else Sub.fsProj)
                 .put("dl", (Sub.upd["all"] ?: Sub.upd["64"] ?: Sub.upd["32"])?.let { runCatching { Sub.fileUrl(it.second) }.getOrNull() } ?: "")
                 .put("roles", JSONObject().apply { Sub.roles.forEach { (d, rn) -> put(d, JSONArray().put(rn.first).put(rn.second)) } })
                 .put("uban", Lic.banned(c))

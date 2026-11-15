@@ -899,7 +899,9 @@ def app_meta(cfg):
             out.append(f"#tvrole: {dv} {'o' if x.get('role') == 'f' else 'a'} " + base64.urlsafe_b64encode(nk_[:32].encode()).decode().rstrip("="))
     rel = (os.environ.get("RELAY_URL") or cfg.get("relay") or "").strip().rstrip("/")
     if rel: out.append(f"#tvrel: {rel}")
-    if cfg.get("fs_proj") and cfg.get("fs_key") and cfg.get("fs_ok"): out.append(f"#tvfs: {cfg['fs_proj']} {cfg['fs_key']}" + (f" {cfg['fs_db']}" if cfg.get("fs_db") and cfg["fs_db"] != "(default)" else ""))
+    if cfg.get("fs_mode") == "vps":   # 1.41: Google ýok — täze programa VPS bazasy (#tvdb), köneler habar serweriniň konularyny ulanýar
+        if rel and cfg.get("fs_ok"): out.append(f"#tvdb: {rel}")
+    elif cfg.get("fs_proj") and cfg.get("fs_key") and cfg.get("fs_ok"): out.append(f"#tvfs: {cfg['fs_proj']} {cfg['fs_key']}" + (f" {cfg['fs_db']}" if cfg.get("fs_db") and cfg["fs_db"] != "(default)" else ""))
     for abi, u in sorted((cfg.get("upd") or {}).items()):
         if u.get("fid") and u.get("ver"): out.append(f"#tvu{abi}: {u['ver']} {u['fid']}")
     ad = cfg.get("ad") or {}
@@ -1314,9 +1316,29 @@ def app_g_expire():
     app_mut(lambda a_: a_.__setitem__("g_exp", [x for x in (a_.get("g_exp") or []) if x and x[0] > now]))
     return len(paths)
 
+async def app_fs_auto():
+    """1.41: VPS tertibi — bir gezek geçiş (eýesiniň islegi: Google Firestore aýrylýar) we taýýar bolmasa 5 minutda bir gaýtadan barlag."""
+    a = app_cfg(load_db()); fs_mode_sync(a)
+    rel = (os.environ.get("RELAY_URL") or a.get("relay") or "").strip()
+    if not a.get("fs_mode") and rel:
+        app_mut(lambda x: x.update({"fs_google_ok": bool(x.get("fs_ok")), "fs_ok": False}))
+        res = await asyncio.to_thread(fs_vps_on); log.info("fs: VPS tertibi — %s", res)
+        try: await asyncio.to_thread(app_sync, True)
+        except Exception as e: log.info("app sync (fs vps): %s", e)
+    elif a.get("fs_mode") == "vps" and rel and not a.get("fs_ok") and time.time() - float(a.get("fs_vchk") or 0) > 300:
+        res = await asyncio.to_thread(fs_vps_on)
+        if app_cfg(load_db()).get("fs_ok"):
+            log.info("fs: VPS taýýar"); 
+            try: await asyncio.to_thread(app_sync, True)
+            except Exception as e: log.info("app sync (fs vps): %s", e)
+
 async def app_loop(app):
+    try: await app_fs_auto()
+    except Exception as e: log.info("fs auto: %s", e)
     await asyncio.sleep(60)
     while True:
+        try: await app_fs_auto()
+        except Exception as e: log.info("fs auto: %s", e)
         try: await asyncio.to_thread(app_g_expire)
         except Exception as e: log.info("g expire: %s", e)
         if app_cfg(load_db()).get("fid"):
@@ -1359,7 +1381,8 @@ def app_view(db):
     rows.append([B("📰 Programa habar", "anews"), B("🌐 Global chat", "agc")])
     rows.append([B(f"🔐 Programma adminleri ({len(cfg.get('apw') or {})})", "apw")])
     rel_ = (os.environ.get("RELAY_URL") or cfg.get("relay") or "")
-    rows.append([B("📡 Habar serweri: " + ("VPS ✅" if rel_ else "ntfy.sh"), "arelay"), B("🔥 Firestore (VPN-siz)" + (" ✅" if cfg.get("fs_ok") else ""), "afs")])
+    fsl_ = ("🖥 Baza: VPS" if cfg.get("fs_mode") == "vps" else "🔥 Firestore (VPN-siz)") + (" ✅" if cfg.get("fs_ok") else (" ❌" if cfg.get("fs_mode") == "vps" else ""))
+    rows.append([B("📡 Habar serweri: " + ("VPS ✅" if rel_ else "ntfy.sh"), "arelay"), B(fsl_, "afs")])
     if (cfg.get("upd") or {}): rows.append([B("⬇️ VPN'siz indirme linki", "app_dl")])
     if cfg.get("fid"): rows.append([B("🔗 Programın dosya linki", "app_link")])
     rows.append([B("◀️ Admin", "admin")])
@@ -1466,13 +1489,25 @@ def fs_db():
         except Exception: FS_DB["id"] = "(default)"
     return FS_DB["id"]
 
-def fs_base(proj): return f"https://firestore.googleapis.com/v1/projects/{proj}/databases/{fs_db()}/documents"
+# 1.41: «VPS» tertibi — Google Firestore ýok, şol bir REST öz VPS-de (relay.py-daky meňzeş); bot öz açary bilen
+FSV = {"url": "", "key": ""}
+def fs_mode_sync(a=None):
+    """FSV-ni sazlamalardan täzeleýär (her soragda bazany okamazlyk üçin)."""
+    a = a if a is not None else app_cfg(load_db())
+    rel = (os.environ.get("RELAY_URL") or a.get("relay") or "").strip().rstrip("/")
+    FSV["url"] = rel if a.get("fs_mode") == "vps" and rel else ""
+    FSV["key"] = a.get("fs_vkey") or ""
+    return FSV["url"]
+
+def fs_base(proj):
+    if FSV["url"]: return f"{FSV['url']}/v1/projects/{proj or 'tv'}/databases/(default)/documents"
+    return f"https://firestore.googleapis.com/v1/projects/{proj}/databases/{fs_db()}/documents"
 
 def fs_req(method, url, body=None, key=None):
     """Firestore REST. key berilse API açary (programyň ýoly), ýogsa hyzmat hasaby."""
     h = {"Content-Type": "application/json", "User-Agent": "subbot"}
     if key: url += ("&" if "?" in url else "?") + "key=" + urllib.parse.quote(key)
-    else: h["Authorization"] = "Bearer " + fs_token()
+    else: h["Authorization"] = "Bearer " + (FSV["key"] if FSV["url"] else fs_token())
     req = urllib.request.Request(url, data=json.dumps(body).encode() if body is not None else None, method=method, headers=h)
     try:
         with urllib.request.urlopen(req, timeout=20) as r: t = r.read().decode("utf-8", "ignore")
@@ -1507,8 +1542,37 @@ def fs_query(proj, parent, coll, after=None, limit=100, desc=False, key=None):
         out.append((d["name"].split("/documents/", 1)[1], (f.get("b") or {}).get("stringValue", ""), (f.get("t") or {}).get("timestampValue", "")))
     return out
 
+def fs_check_vps(proj):
+    """1.41: VPS tertibi — habar serweriniň Firestore meňzeşi, bot açary, programyň ýoly we düzgünler."""
+    res = []
+    try:
+        with urllib.request.urlopen(urllib.request.Request(FSV["url"] + "/health", headers={"User-Agent": "subbot"}), timeout=12) as r_: hb = r_.read(40)
+        ok_ = b" fs" in hb
+        res.append(("VPS habar serweri (1.41+)", ok_, "" if ok_ else "köne wersiýa — VPS-de gurnamak buýrugyny täzeden işlediň"))
+    except Exception as e: res.append(("VPS habar serweri (1.41+)", False, str(e)[:120]))
+    if not res[-1][1]: return res
+    try: fs_write(proj, "z/bot", "v1.test", create=False); fs_delete(proj, ["z/bot"]); res.append(("Bot açary", True, ""))
+    except Exception as e: res.append(("Bot açary", False, str(e)[:160] + " (VPS-de: rm /var/lib/tvrelay/botkey; systemctl restart tvrelay)")); return res
+    try: fs_write(proj, "m/test" + format(int(time.time()), "x"), "v1.test", key="vps"); res.append(("Programyň ýoly", True, ""))
+    except Exception as e: res.append(("Programyň ýoly", False, str(e)[:160]))
+    try: fs_write(proj, "m/bad" + format(int(time.time()), "x"), "x" * 20, key="vps"); res.append(("Düzgünler gorag", False, "düzgünler gaty açyk"))
+    except Exception: res.append(("Düzgünler gorag", True, ""))
+    return res
+
+def fs_vps_on(app_=None):
+    """1.41: VPS tertibine geç (açar ýok bolsa döredilýär) we barla. Dönüş: barlag netijesi."""
+    import secrets as _sec
+    app_mut(lambda x: x.update({"fs_mode": "vps", "fs_vkey": x.get("fs_vkey") or _sec.token_urlsafe(30)}))
+    fs_mode_sync()
+    if not FSV["url"]: app_mut(lambda x: x.update({"fs_ok": False})); return [("VPS habar serweri", False, "📡 Habar serweri bellenmedik")]
+    a = app_cfg(load_db()); res = fs_check_vps(a.get("fs_proj") or "tv")
+    ok_all = len(res) >= 4 and all(r[1] for r in res)
+    app_mut(lambda x: x.update({"fs_ok": ok_all, "fs_proj": x.get("fs_proj") or "tv", "fs_vchk": time.time()}))
+    return res
+
 def fs_check(proj, key):
     """Gurnalyşy ädim-ädim barlaýar. Dönüş: [(ädim, ok, bellik)]."""
+    if FSV["url"]: return fs_check_vps(proj)
     res = []
     try: fs_token(); res.append(("Hyzmat hasaby (drive-sa.json)", True, ""))
     except Exception as e: res.append(("Hyzmat hasaby (drive-sa.json)", False, str(e)[:120])); return res
@@ -3037,6 +3101,8 @@ async def check_restart_loop(app):
         await notify_founders(app, f"🔁 <b>Bot 10 dakikada {recent} kez yeniden açıldı</b>\n<i>Son 1 saatte {len(starts)} açılış. Çökme sebebi:</i>\n<pre>{esc(info)}</pre>")
 
 async def post_init(app):
+    try: fs_mode_sync()   # 1.41: baza VPS-de bolsa ilkinji soraglardan öň
+    except Exception as e: log.info("fs mode: %s", e)
     await asyncio.to_thread(migrate_announce)
     try: await check_restart_loop(app)
     except Exception: log.exception("restart loop check")
@@ -4201,7 +4267,9 @@ async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
             if not ok_:
                 STATE[uid] = st
                 await u.message.reply_text(f"❌ Serwer jogap bermedi: <code>{esc(url_)}/health</code>\n<i>VPS-de habar serweriniň gurnalandygyny we portuň açykdygyny barlaň.</i>", parse_mode="HTML", reply_markup=back("app_v")); return
-            app_mut(lambda x: (x.__setitem__("relay", url_), x.pop("msg_since", None)))
+            app_mut(lambda x: (x.__setitem__("relay", url_), x.pop("msg_since", None), x.__setitem__("fs_vchk", 0) if x.get("fs_mode") == "vps" else None))
+            fs_mode_sync()
+            if app_cfg(load_db()).get("fs_mode") == "vps": await asyncio.to_thread(fs_vps_on)   # 1.41: täze VPS-de baza
             try: await asyncio.to_thread(app_sync, True); RUN.pop("app_err", None)
             except Exception as e: RUN["app_err"] = str(e)[:150]
             t_, kb_ = app_view(load_db())
@@ -5207,7 +5275,7 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
             await safe_edit(q, f"✅ <b>Täze açar söz — {esc(e_.get('name') or sid)}</b> ({APW_PERM[perm_]}):\n<code>{pw_}</code>\n<i>Şuny şol admine iberiň.</i>\n\n" + t_, kb_); return
         await safe_edit(q, *apw_view(app_cfg(load_db()))); return
 
-    elif a in ("atk_list", "atk_closed", "arates", "anews", "anews_new", "agc", "arelay", "arelay_off", "afs", "afs_key", "afs_chk", "afs_off", "afs_rules") or a.startswith(("atk:", "atr:", "atc:", "ato:", "atp:", "anews_del:", "agd:", "agb:")):
+    elif a in ("atk_list", "atk_closed", "arates", "anews", "anews_new", "agc", "arelay", "arelay_off", "afs", "afs_key", "afs_chk", "afs_off", "afs_rules", "afs_vps", "afs_google") or a.startswith(("atk:", "atr:", "atc:", "ato:", "atp:", "anews_del:", "agd:", "agb:")):
         if uid not in ORIG_ADMINS:
             await safe_edit(q, "⛔ Erişim yok", back("admin")); return
         a_ = app_cfg(load_db())
@@ -5228,6 +5296,29 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
                 await asyncio.to_thread(app_send, t_["dev"], {"k": "tkst", "st": st_, "tid": int(tid)})
             await safe_edit(q, *app_ticket_view(app_cfg(load_db()), tid)); return
         if a == "arates": await safe_edit(q, *app_rates_view(a_)); return
+        if a in ("afs_vps", "afs_google"):   # 1.41: baza VPS-de ýa-da Google Firestore-da
+            if a == "afs_vps":
+                await safe_edit(q, "⏳ VPS barlanýar…", None)
+                await asyncio.to_thread(fs_vps_on)
+            else:
+                app_mut(lambda x: x.update({"fs_mode": "google", "fs_ok": False})); fs_mode_sync()
+            try: await asyncio.to_thread(app_sync, True)
+            except Exception as e: RUN["app_err"] = str(e)[:150]
+            a_ = app_cfg(load_db()); a = "afs"
+        if a in ("afs", "afs_chk") and a_.get("fs_mode") == "vps":
+            fs_mode_sync(a_)
+            txt_ = ("🖥 <b>Baza: öz VPS-iňiz</b>\n<blockquote>Google Firestore ulanylmaýar. Bilet, admin paneli, Global chat, hususy habarlar, suratlar we hekaýalar "
+                    f"habar serweriňizde saklanýar: <code>{esc(FSV['url'] or '—')}</code>. Okalyş çägi ýok.</blockquote>\n")
+            if a == "afs_chk" or not a_.get("fs_ok"):
+                await safe_edit(q, txt_ + "⏳ Barlanýar…", None)
+                res = await asyncio.to_thread(fs_vps_on)
+                try: await asyncio.to_thread(app_sync, True)
+                except Exception as e: RUN["app_err"] = str(e)[:150]
+                txt_ += "\n".join(("✅ " if r[1] else "❌ ") + esc(r[0]) + (f" — <code>{esc(r[2])}</code>" if r[2] else "") for r in res) + "\n"
+                a_ = app_cfg(load_db())
+            txt_ += ("\n<b>✅ Taýýar.</b> Programlar (1.41+) abuna faýlyny täzeländen soň VPS-e geçýär." if a_.get("fs_ok") else
+                     "\n❌ Entek taýýar däl: VPS-de gurnamak buýrugyny täzeden işlediň, soň «🔄 Barla».\n<code>curl -fsSL https://raw.githubusercontent.com/Atabay77/vpn/claude/inceleme-aagn5q/relay/kur.sh | sh</code>")
+            await safe_edit(q, txt_, KB([[B("🔄 Barla", "afs_chk")], [B("☁️ Google Firestore-a geç", "afs_google")], [B("◀️ Programma", "app_v")]])); return
         if a in ("afs", "afs_chk"):
             proj = a_.get("fs_proj") or fs_sa_project()
             txt_ = ("🔥 <b>Firestore — programa VPN-siz habar</b>\n<blockquote>Türkmenistanda <code>firestore.googleapis.com</code> VPN-siz açylýar. "
@@ -5253,7 +5344,8 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
                      [B("2️⃣ Düzgünler (Rules)", url="https://console.cloud.google.com/firestore/databases/" + ("-default-" if (a_.get("fs_db") or "(default)") == "(default)" else urllib.parse.quote(a_.get("fs_db"))) + "/security/rules" + pq)],
                      [B("3️⃣ IAM: rol goş", url="https://console.cloud.google.com/iam-admin/iam" + pq)],
                      [B("4️⃣ API açary döret", url="https://console.cloud.google.com/apis/credentials" + pq)]]
-            await safe_edit(q, txt_, KB(links + [[B("🔑 API açary", "afs_key", "primary"), B("📋 Düzgünler", "afs_rules")], [B("🔄 Barla", "afs_chk")] + ([B("↩️ Öçür", "afs_off", "danger")] if a_.get("fs_ok") else []), [B("◀️ Programma", "app_v")]])); return
+            vb_ = [[B("🖥 Bazany VPS-e geçir (Google-syz)", "afs_vps", "primary")]] if (os.environ.get("RELAY_URL") or a_.get("relay")) else []
+            await safe_edit(q, txt_, KB(links + [[B("🔑 API açary", "afs_key", "primary"), B("📋 Düzgünler", "afs_rules")], [B("🔄 Barla", "afs_chk")] + ([B("↩️ Öçür", "afs_off", "danger")] if a_.get("fs_ok") else [])] + vb_ + [[B("◀️ Programma", "app_v")]])); return
         if a == "afs_rules":
             await safe_edit(q, "📋 <b>Firestore düzgünleri</b> — Rules bölümine doly göçürip goýuň (tekste basyň — göçürilýär):\n<pre>" + esc(FS_RULES) + "</pre>\n"
                             f"Hyzmat hasabynyň e-poçtasy (IAM-da şoňa «Cloud Datastore User» roly):\n<code>{esc(fs_sa_email())}</code>", back("afs")); return
@@ -5273,7 +5365,8 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
             if a_.get("relay"): kb_ = KB(kb_.inline_keyboard + ((B("↩️ ntfy.sh-a gaýt", "arelay_off"),),))
             await safe_edit(q, t_, kb_); return
         if a == "arelay_off":
-            app_mut(lambda x: (x.pop("relay", None), x.pop("msg_since", None)))
+            app_mut(lambda x: (x.pop("relay", None), x.pop("msg_since", None), x.__setitem__("fs_ok", False) if x.get("fs_mode") == "vps" else None))   # 1.41: VPS bazasy hem ýok
+            fs_mode_sync()
             try: await asyncio.to_thread(app_sync, True)
             except Exception as e: RUN["app_err"] = str(e)[:150]
             await safe_edit(q, *app_view(load_db())); return

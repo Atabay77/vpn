@@ -102,7 +102,15 @@ object Msg {
     // ---- 1.40: öz VPS (relay) — VPN-siz açylýan bolsa esasy ýol (okalyş çägi ýok); jogap bermese 2 minut Firestore ----
     @Volatile private var relBadUntil = 0L
     fun relOn() = Sub.relay.isNotEmpty() && System.currentTimeMillis() > relBadUntil
-    private fun relFail() { relBadUntil = System.currentTimeMillis() + 120_000L }
+    private fun relFail() { relBadUntil = System.currentTimeMillis() + 120_000L; subDue = true }
+    // 1.41: abuna faýly (VPS salgysy, baza) — bot üýtgedende programma köne salgyda galmasyn: ekranda 5 minutda bir, VPS jogap bermese 1 minutda
+    @Volatile private var subDue = false
+    @Volatile private var subTry = 0L
+    private fun subCheck(c: Context, now: Long) {
+        if (!visible || now - subTry < 60_000L || !(subDue || now - Sub.okAt > 300_000L)) return
+        subTry = now; subDue = false
+        Thread { runCatching { if (Sub.refresh(c, 8000)) events.add(JSONObject().put("k", "srv")) } }.apply { isDaemon = true }.start()
+    }
     /** VPS üýtgese köne kursory (r123 — başga serweriň belgisi) taşla. */
     private fun relCur(c: Context) {
         val p = prefs(c)
@@ -236,6 +244,7 @@ object Msg {
             val c = app ?: break
             runCatching { flush(c) }
             val now = System.currentTimeMillis()
+            subCheck(c, now)
             val on = State.now == State.ON
             // ntfy.sh bir IP-den az soraga rugsat berýär (köp adam bir VPN serweriniň IP-sinden çykýar), şonuň üçin seýrek:
             // jogap garaşylýan bolsa (soňky 40 min) ekranda 20 sn / fonda 3 min, ýogsa ekranda 2 min / fonda 10 min
