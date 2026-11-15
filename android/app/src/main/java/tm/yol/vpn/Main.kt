@@ -312,7 +312,7 @@ open class Main : Activity() {
         @JavascriptInterface fun stView(owner: String, sid: String, nick: String) = Chat.stView(this@Main, owner, sid, nick)
         @JavascriptInterface fun adm(json: String) { runCatching { Msg.adm(this@Main, JSONObject(json)) } }
         @JavascriptInterface fun gsend(nick: String, text: String) = Msg.gsend(this@Main, nick, text)
-        @JavascriptInterface fun gwatch(on: Boolean) { Msg.watchG = on; if (on) Msg.kick() }
+        @JavascriptInterface fun gwatch(on: Boolean) { Msg.watchG = on; if (on) { Msg.gNewAt = System.currentTimeMillis(); Msg.gNow() } }   // 1.39.1: açylanda derrew, soň 5 sn
         @JavascriptInterface fun photo(d: String) = Msg.photo(this@Main, d)
         @JavascriptInterface fun getPhoto(dev: String) = Msg.getPhoto(dev)
         @JavascriptInterface fun diag() = Thread { push(JSONObject().put("k", "diag").put("r", Msg.diag())) }.start()

@@ -227,7 +227,8 @@ object Msg {
             val adm = admPw(c) != null && Fs.on()   // admin: fonda hem bilet bildirişleri (2 minutda bir)
             val ip = inPend; inPend = false
             if (ip || ((visible || on || adm || fast) && now - inAt > (if (adm && !visible && !push) minOf(inEvery, 120_000L) else inEvery))) { inAt = now; runCatching { inbox(c) } }
-            val gEvery = if (watchG) (if (fast) 1_500L else if (Fs.on()) 5_000L else 8_000L) else if (fast) 20_000L else if (push) 300_000L else 120_000L
+            // 1.39.1: chat açyk, ýöne soňky 2 minutda täze habar ýok bolsa 12 sn-da bir (her boş sorag hem 1 okalyş)
+            val gEvery = if (watchG) (if (fast) 1_500L else if (Fs.on()) (if (now - gNewAt < 120_000L) 5_000L else 12_000L) else 8_000L) else if (fast) 20_000L else if (push) 300_000L else 120_000L
             if (visible && now - gAt > gEvery) { gAt = now; runCatching { global() } }
             runCatching { Chat.poll(c, visible, dmPage) }
             if (visible || on) runCatching { State.pingExtra(c) }
@@ -369,11 +370,32 @@ object Msg {
 
     // Firestore Global chat: ilki soňky 150, soň diňe täzeler (okalyş az bolsun). 1.32.1: doly täzelemek diňe chat açyk wagty 15 minutda bir
     // (öň her 3 minutda 150 okalyş — programma açyk durka hemme sahypada; Firestore-yň mugt gündelik çägi doldy)
+    // 1.39.1: soňky setirler telefonda saklanýar — programma her açylanda 150 okalyş däl, diňe täzeler (mugt gündelik çäk dolýardy);
+    // doly täzelemek (bot pozan habarlar üçin) chat açyk wagty 60 minutda bir
     private val gfs = ArrayList<JSONObject>(); @Volatile private var gfsT: String? = null; @Volatile private var gfsFull = 0L
+    @Volatile private var gfsLoaded = false; @Volatile var gNewAt = 0L
+
+    private fun gfsFile(): java.io.File? = app?.filesDir?.let { java.io.File(it, "gfs.json") }
+
+    private fun gfsLoad() {
+        if (gfsLoaded) return; gfsLoaded = true
+        runCatching {
+            val o = JSONObject(gfsFile()?.takeIf { it.exists() }?.readText() ?: return)
+            if (System.currentTimeMillis() - o.optLong("full") > 6 * 3600_000L) return   // gaty köne — täzeden doly al
+            val a = o.getJSONArray("l"); for (i in 0 until a.length()) gfs.add(a.getJSONObject(i))
+            gfsT = o.optString("t").ifEmpty { null }; gfsFull = o.optLong("full")
+        }.onFailure { gfs.clear(); gfsT = null; gfsFull = 0L }
+    }
+
+    private fun gfsSave() = runCatching {
+        val a = JSONArray(); gfs.takeLast(200).forEach { a.put(it) }
+        gfsFile()?.writeText(JSONObject().put("t", gfsT ?: "").put("full", gfsFull).put("l", a).toString())
+    }
 
     private fun globalFs() {
+        gfsLoad()
         val now = System.currentTimeMillis()
-        val full = gfsT == null || (watchG && now - gfsFull > (if (Sub.fast) 180_000 else 900_000))
+        val full = gfsT == null || (watchG && now - gfsFull > (if (Sub.fast) 180_000 else 3_600_000))
         val got = (if (full) Fs.query("", "g", null, 150, desc = true)?.reversed() else Fs.query("", "g", gfsT, 80)) ?: return   // tepkiler hem setir bolup gelýär
         if (full) { gfs.clear(); gfsFull = now }
         for ((id, b, t) in got) {
@@ -385,6 +407,8 @@ object Msg {
                 .put("dl", o.optString("dl").take(40)).put("ed", o.optString("ed").take(40)).put("sty", o.optInt("sty")))
         }
         while (gfs.size > 400) gfs.removeAt(0)
+        if (got.isNotEmpty()) { if (!full) gNewAt = now; gfsSave() }
+        if (!full && got.size >= 80) gAt = 0L   // köp täze setir galdy (programma uzak ýapyk durdy) — derrew dowamy
         events.add(JSONObject().put("k", "g").put("list", JSONArray(gfs.toList())).put("del", JSONArray()))
     }
 
