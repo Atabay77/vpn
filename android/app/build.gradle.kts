@@ -31,8 +31,8 @@ android {
         applicationId = "tm.yol.vpn"
         minSdk = 24
         targetSdk = 35
-        versionCode = 72
-        versionName = "1.37.0"
+        versionCode = 73
+        versionName = "1.38.0"
         externalNativeBuild { cmake { arguments += "-DSEC_DIR=${secDir.absolutePath}" } }
     }
 
@@ -77,6 +77,9 @@ android {
 
 dependencies {
     implementation(fileTree("libs") { include("*.aar", "*.jar") })
+    // 1.38: FCM — bot täze habar bolanda telefona özi bildirýär (Firestore-y ýygy-ýygydan barlamak gerek däl). google-services.json ýok: sazlamalar abuna faýlyndan
+    implementation(platform("com.google.firebase:firebase-bom:33.7.0"))
+    implementation("com.google.firebase:firebase-messaging")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
     testImplementation("org.robolectric:robolectric:4.14.1")

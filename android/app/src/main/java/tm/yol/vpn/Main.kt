@@ -109,6 +109,7 @@ open class Main : Activity() {
             // 1.13-den täzelenenler: ýatda saklanan açar heniz telefona baglanmadyk bolsa bota habar (1 açar = 1 telefon)
             Lic.saved(this)?.let { k -> val h = Lic.hash(k); if (ok && Sub.keys.containsKey(h) && Msg.dev(this) !in Lic.devs(h) && Lic.exp(this) != null) Msg.send(this, JSONObject().put("k", "ka").put("h", h)) }
             Stats.beat(this, false)
+            Push.init(this)   // 1.38: FCM bildirişleri
             Reach.maybe(this)   // 1.37: VPN-siz haýsy hyzmatlar açylýar (günde bir gezek, arka fonda)
             loadAd()
             if (State.pings.isEmpty()) { State.warm(); push(JSONObject().put("k", "srv")); State.report(this) }

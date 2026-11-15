@@ -56,6 +56,9 @@ trojan://x@1.1.1.1:1#skip
         Sub.meta(""); assertEquals(null, Sub.ad)
         // 1.34: çalt rejim
         Sub.meta("#tvfast: 1"); assertEquals(true, Sub.fast); Sub.meta(""); assertEquals(false, Sub.fast)
+        // 1.38: FCM programma kimligi abuna faýlyndan
+        Sub.meta("#tvfcm: 1:351476140662:android:145cad3e7702f27f9a2d57"); assertEquals("1:351476140662:android:145cad3e7702f27f9a2d57", Sub.fcmApp)
+        Sub.meta("#tvfcm: garbage"); assertEquals("", Sub.fcmApp)
         // 1.36: kanaldan alnan kod — ady «tm»
         assertEquals(Triple("🇩🇪", "Germaniýa", "tm"), Sub.splitName("🇩🇪 Germaniýa · tm"))
         // 1.37: elýeterlilik barlagy — ýalňyşlyk görnüşleri

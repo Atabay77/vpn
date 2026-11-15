@@ -92,6 +92,10 @@ object Chat {
                 if (r == null || r.optString("st").isEmpty()) upd(c, room) { it.put("p", peer).put("st", "out") }
                 j.put("f", me).put("ts", System.currentTimeMillis() / 1000)
                 val w = Fs.write("x/$room/i/" + Fs.newId(), Msg.encK("dm|$sec", j.toString()))
+                // 1.38: garşydaşyň telefonyna bot arkaly bildiriş (FCM) — ol Firestore-y ýygy barlamasyn; 20 sn-da iň köp bir gezek
+                if (w && j.optString("sys").isEmpty() && !j.has("ty") && !j.has("rd") && System.currentTimeMillis() - (dmpAt[peer] ?: 0L) > 20_000L) {
+                    dmpAt[peer] = System.currentTimeMillis(); Msg.send(c, JSONObject().put("k", "dmp").put("to", peer))
+                }
                 // garşydaşa bildiriş: ilkinji habarda ýa-da 6 sagatdan soň
                 val rq = rooms(c).optJSONObject(room)?.optLong("rq") ?: 0L
                 if (w && j.optString("sys").isEmpty() && !j.has("ty") && !j.has("rd") && !j.has("re") && !j.has("dl") && !j.has("ed") && System.currentTimeMillis() - rq > 6 * 3600_000L) {
@@ -138,13 +142,19 @@ object Chat {
     }
 
     private var rAt = 0L; private var allAt = 0L; private var wAt = 0L
+    private val dmpAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    @Volatile private var pushPend = false
+    /** 1.38: FCM bildirişi — täze hususy habar: ähli otaglar we haýyşlar şol bada (programma fonda bolsa-da bir gezek). */
+    fun pushDm() { rAt = 0L; allAt = 0L; pushPend = true; Msg.kick() }
     /** Msg işçisinden: bildirişler we otaglar. */
     fun poll(c: Context, visible: Boolean, dmPage: Boolean) {
-        if (!Fs.on() || !visible) return
+        val pend = pushPend; pushPend = false
+        if (!Fs.on() || (!visible && !pend)) return
         val now = System.currentTimeMillis()
+        val push = Push.ok() && !Sub.fast   // 1.38: bildiriş işleýär — ätiýaçlyk barlag seýrek
         val fast = Sub.fast   // 1.34: çalt rejim
         if (now - wAt > (if (fast) 1_200L else 4_000L)) { wAt = now; watch?.let { w -> runCatching { pollRoom(c, room(Msg.dev(c), w), false, w) } } }   // 1.32.1: açyk söhbet 4 sn-da bir
-        if (now - rAt > (if (fast) (if (dmPage) 3_000L else 10_000L) else if (dmPage) 8_000L else 60_000L)) {
+        if (now - rAt > (if (fast) (if (dmPage) 3_000L else 10_000L) else if (push) (if (dmPage) 30_000L else 300_000L) else if (dmPage) 8_000L else 60_000L)) {
             rAt = now
             runCatching {
                 val pr = p(c); val me = Msg.dev(c)
@@ -161,7 +171,7 @@ object Chat {
                 }
             }
         }
-        if (now - allAt > (if (fast) (if (dmPage) 4_000L else 20_000L) else if (dmPage) 10_000L else 180_000L)) {
+        if (now - allAt > (if (fast) (if (dmPage) 4_000L else 20_000L) else if (push) (if (dmPage) 30_000L else 600_000L) else if (dmPage) 10_000L else 180_000L)) {
             allAt = now
             val all = rooms(c)
             all.keys().forEach { room -> if (all.getJSONObject(room).optString("p") != watch) runCatching { pollRoom(c, room, false) } }

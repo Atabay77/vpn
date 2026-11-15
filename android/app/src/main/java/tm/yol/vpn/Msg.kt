@@ -197,6 +197,9 @@ object Msg {
         if (changed) events.add(JSONObject().put("k", "srv"))
     }
     @Volatile private var inAt = 0L
+    @Volatile private var inPend = false
+    /** 1.38: FCM bildirişi — botdan täze habar: gelen gutyny şol bada barla (programma fonda bolsa-da bir gezek). */
+    fun pushIn() { inAt = 0L; inPend = true; kick() }
     @Volatile private var waitAt = 0L        // soňky soragyň wagty: jogap garaşylýan wagty ýygy barlanýar
 
     fun start(ctx: Context) {
@@ -218,12 +221,15 @@ object Msg {
             // Firestore: jogap garaşylanda ekranda ilkinji 3 minut 4 sn-da bir, soň 20 sn (her boş sorag hem 1 okalyş)
             val hot = now - waitAt < 3 * 60_000L
             val fast = Sub.fast && Fs.on()   // 1.34: çalt rejim — eýesi Firestore tölegini açdy
+            val push = Push.ok() && Fs.on() && !fast   // 1.38: bildiriş (FCM) işleýär — bot özi habar berýär, barlag diňe ätiýaçlyk
             val inEvery = if (fast) (if (visible) (if (hot) 1_500L else 5_000L) else 30_000L)
+                else if (push) (if (visible) (if (hot) 20_000L else 300_000L) else 1_800_000L)
                 else if (Fs.on() || Sub.relay.isNotEmpty()) (if (visible) (if (hot) 4_000L else if (waiting) 20_000L else 60_000L) else (if (waiting) 60_000L else 300_000L))
                 else if (visible) (if (waiting) 20_000L else 120_000L) else (if (waiting) 180_000L else 600_000L)
             val adm = admPw(c) != null && Fs.on()   // admin: fonda hem bilet bildirişleri (2 minutda bir)
-            if ((visible || on || adm || fast) && now - inAt > (if (adm && !visible) minOf(inEvery, 120_000L) else inEvery)) { inAt = now; runCatching { inbox(c) } }
-            val gEvery = if (watchG) (if (fast) 1_500L else if (Fs.on()) 5_000L else 8_000L) else if (fast) 20_000L else 120_000L
+            val ip = inPend; inPend = false
+            if (ip || ((visible || on || adm || fast) && now - inAt > (if (adm && !visible && !push) minOf(inEvery, 120_000L) else inEvery))) { inAt = now; runCatching { inbox(c) } }
+            val gEvery = if (watchG) (if (fast) 1_500L else if (Fs.on()) 5_000L else 8_000L) else if (fast) 20_000L else if (push) 300_000L else 120_000L
             if (visible && now - gAt > gEvery) { gAt = now; runCatching { global() } }
             runCatching { Chat.poll(c, visible, dmPage) }
             if (visible || on) runCatching { State.pingExtra(c) }

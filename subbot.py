@@ -883,6 +883,7 @@ def app_meta(cfg):
     if RUN.get("app_on"): out.append(f"#tvon: {int(RUN['app_on'])}")
     out.append(f"#tvsess: {app_sess(cfg)}")
     if cfg.get("fs_fast"): out.append("#tvfast: 1")
+    if cfg.get("fcm_app"): out.append(f"#tvfcm: {cfg['fcm_app']}")
     try: ai_on = bool(ai_key()) and load_db().get("ai_sup", True)
     except Exception: ai_on = False
     if ai_on: out.append("#tvai: 1")
@@ -1540,6 +1541,45 @@ def app_mut(fn):
     """db["app"] içinde değişiklik (kilitli)."""
     return mutate(lambda d: fn(d.setdefault("app", {})))
 
+# ───── 1.38: FCM — telefona «täze zat bar» bildirişi (programma Firestore-y ýygy barlamasyn) ─────
+_FCM_TOK = {"tok": None, "exp": 0}
+FCM_POOL = None
+def fcm_token():
+    if _FCM_TOK["tok"] and time.time() < _FCM_TOK["exp"] - 120: return _FCM_TOK["tok"]
+    import google_auth_httplib2, httplib2
+    cr = service_account.Credentials.from_service_account_file(SA_FILE, scopes=["https://www.googleapis.com/auth/firebase.messaging"])
+    cr.refresh(google_auth_httplib2.Request(httplib2.Http(timeout=20)))
+    _FCM_TOK.update(tok=cr.token, exp=time.time() + 3000)
+    return cr.token
+
+def fcm_push(dev, data):
+    """Bir telefona maglumat bildirişi (data). Belgi ýok bolsa False; belgi köne bolsa pozulýar."""
+    a = app_cfg(load_db()); tok = (a.get("fcm") or {}).get(dev); proj = a.get("fs_proj")
+    if not tok or not proj or not a.get("fcm_app"): return False
+    body = json.dumps({"message": {"token": tok, "data": {k: str(v) for k, v in data.items()}, "android": {"priority": "high", "ttl": "3600s"}}}).encode()
+    req = urllib.request.Request(f"https://fcm.googleapis.com/v1/projects/{proj}/messages:send", data=body, method="POST",
+                                 headers={"Authorization": "Bearer " + fcm_token(), "Content-Type": "application/json"})
+    st = RUN.setdefault("fcm_st", {"ok": 0, "bad": 0, "err": ""})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r: ok = r.status < 300
+        st["ok"] += 1; return ok
+    except urllib.error.HTTPError as e:
+        txt = e.read().decode("utf-8", "ignore")[:300]; st["bad"] += 1; st["err"] = f"{e.code}: {txt[:160]}"
+        if e.code == 404 or "UNREGISTERED" in txt or ("INVALID_ARGUMENT" in txt and "token" in txt.lower()):
+            app_mut(lambda x: (x.get("fcm") or {}).pop(dev, None))
+        return False
+    except Exception as e:
+        st["bad"] += 1; st["err"] = str(e)[:160]; return False
+
+def fcm_bg(dev, data):
+    """Botuň işini saklamazdan arka fonda iberýär."""
+    global FCM_POOL
+    if not (app_cfg(load_db()).get("fcm") or {}).get(dev): return
+    if FCM_POOL is None:
+        import concurrent.futures
+        FCM_POOL = concurrent.futures.ThreadPoolExecutor(4)
+    FCM_POOL.submit(lambda: fcm_push(dev, data))
+
 def app_send(dev, o):
     """Telefona habar (sıra numarasıyla; program kaçırırsa bir sonraki mesajında yeniden gönderilir)."""
     def f(a):
@@ -1557,6 +1597,7 @@ def app_send(dev, o):
             try:
                 fs_write(a_["fs_proj"], f"d/{dev}/i/{o['seq']:010d}", body)
                 if o["seq"] > 30: fs_delete(a_["fs_proj"], [f"d/{dev}/i/{o['seq'] - 30:010d}"])
+                fcm_bg(dev, {"k": "in"})   # 1.38: telefona «gelen gutyňy barla»
             except Exception as e: log.info("fs send %s: %s", dev, e)
 
 def app_resend(fid, dev, ack):
@@ -1871,6 +1912,15 @@ async def app_on_msg(app, fid, o):
         await asyncio.to_thread(app_lvl_check, dev, True)
         a_ = app_cfg(load_db())   # 1.31: hepdelik ýaryş aýryldy
         await asyncio.to_thread(app_send, dev, {"k": "top", "l": app_top(a_)})
+    elif k == "fcm":   # 1.38: telefonyň bildiriş belgisi
+        t_ = str(o.get("t") or "")
+        if re.match(r"^[\w:\-]{60,400}$", t_):
+            app_mut(lambda a__: a__.setdefault("fcm", {}).__setitem__(dev, t_))
+            fcm_bg(dev, {"k": "hi"})   # synag: bildirişler gelýärmi
+    elif k == "dmp":   # 1.38: hususy habar iberildi — garşydaşa bildiriş
+        to_ = str(o.get("to") or "")
+        if DEV_RE.match(to_) and to_ != dev and time.time() - RUN.setdefault("dmp_at", {}).get(dev + to_, 0) > 15:
+            RUN["dmp_at"][dev + to_] = time.time(); fcm_bg(to_, {"k": "dm"})
     elif k == "reach":   # 1.37: telefonyň operatoryndan (VPN-siz) haýsy hyzmatlar açylýar
         rr_ = o.get("r") if isinstance(o.get("r"), dict) else {}
         clean_ = {}
@@ -3907,6 +3957,27 @@ def reach_report(days=7):
         lines.append(f"{ic} <b>{esc(k)}</b> {ok}/{n}" + (f" · {med} ms" if ok else "") + (f" · ❌ {REACH_ERR.get(e_, e_)}" if e_ and ok < n else "") + (f"\n   <i>{po}</i>" if len(per) > 1 else ""))
     head = f"📡 <b>Erişim testi (VPN'siz)</b> — son {days} gün, {len(rows)} telefon\n<i>Operatörler: " + ", ".join(f"{esc(o_)} ({n_})" for o_, n_ in sorted(ops.items(), key=lambda z: -z[1])[:5]) + "</i>"
     return head + "\n<blockquote expandable>" + "\n".join(lines) + "</blockquote>"
+
+async def cmd_fcm(u: Update, c: ContextTypes.DEFAULT_TYPE):
+    """1.38: /fcm 1:…:android:… — FCM bildirişlerini aç · /fcm kapat · /fcm (ýagdaý)."""
+    uid = u.effective_user.id
+    if uid not in ORIG_ADMINS: return
+    args = c.args or []
+    if args and args[0].lower() in ("kapat", "off", "sil"):
+        app_mut(lambda a_: a_.pop("fcm_app", None)); RUN["app_dirty"] = True; audit(uid, "fcm off")
+    elif args:
+        if not re.match(r"^1:\d{6,20}:android:[0-9a-f]{8,40}$", args[0]):
+            await c.bot.send_message(uid, "⚠️ Biçim: /fcm 1:351476140662:android:…"); return
+        app_mut(lambda a_: a_.__setitem__("fcm_app", args[0])); RUN["app_dirty"] = True; audit(uid, "fcm on")
+    a_ = app_cfg(load_db()); st = RUN.get("fcm_st", {"ok": 0, "bad": 0, "err": ""})
+    try: await asyncio.to_thread(fcm_token); tk_ = "✅ alındı"
+    except Exception as e: tk_ = f"❌ {esc(str(e)[:150])}"
+    await c.bot.send_message(uid, "🔔 <b>FCM bildirimleri</b>\n<blockquote>"
+        + f"Uygulama kimliği: {esc(a_.get('fcm_app') or '— (kapalı)')}\n"
+        + f"Kayıtlı telefon: {len(a_.get('fcm') or {})}\n"
+        + f"Botun FCM izni: {tk_}\n"
+        + f"Gönderilen: ✅ {st['ok']} · ❌ {st['bad']}" + (f"\nSon hata: <code>{esc(st['err'])}</code>" if st.get("err") else "")
+        + "</blockquote>\n<i>Telefonlar yeni sürüme geçip abonelik dosyasını yenileyince kaydolur.</i>", parse_mode="HTML")
 
 async def cmd_reach(u: Update, c: ContextTypes.DEFAULT_TYPE):
     uid = u.effective_user.id
@@ -9812,6 +9883,7 @@ def main():
     app.add_handler(CommandHandler("mailretry", cmd_mailretry))
     app.add_handler(CommandHandler("gmailalt", cmd_gmailalt))
     app.add_handler(CommandHandler("reach", cmd_reach))
+    app.add_handler(CommandHandler("fcm", cmd_fcm))
     app.add_handler(MessageHandler(filters.COMMAND, other_cmd))
     app.add_handler(CallbackQueryHandler(cb))
     app.add_handler(InlineQueryHandler(inline_ad))
