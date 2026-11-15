@@ -22,6 +22,7 @@ OTHER = (100, 86400, 8192)
 RATE_GET, RATE_POST = 30000, 5000      # bir IP-den minutda (1.40: Türkmenistanda müňlerçe adam operatoryň bir IP-sinden çykýar)
 
 lock = threading.Lock()
+cond = threading.Condition(lock)         # 1.40.1: garaşýan soraglar (täze habar gelen badyna jogap)
 topics = {}                              # konu → [habar]
 seq = [0]
 hits = {}                                # (ip, kind) → [minut, sany]
@@ -77,18 +78,25 @@ class H(BaseHTTPRequestHandler):
 
     def do_GET(self):
         u = urlparse(self.path); parts = u.path.strip("/").split("/")
-        if u.path in ("/", "/health"): return self.send(200, b"ok 1.40")   # 1.40: bot wersiýany barlaýar (köne çäkler 8 KB)
+        if u.path in ("/", "/health"): return self.send(200, b"ok 1.40.1")   # 1.40: bot wersiýany barlaýar (köne çäkler 8 KB)
         if not rate(self.ip(), "g", RATE_GET): return self.send(429, b"kop")
         if len(parts) != 2 or parts[1] != "json" or not TOPIC.match(parts[0]): return self.send(404, b"yok")
-        t = parts[0]; since = (parse_qs(u.query).get("since") or ["12h"])[0]; now = int(time.time())
-        with lock:
-            prune(t, now); L = list(topics.get(t, []))
-        if since == "all": out = L
-        elif re.fullmatch(r"r\d+", since): n = int(since[1:]); out = [m for m in L if int(m["id"][1:]) > n]
-        else:
-            mm = re.fullmatch(r"(\d+)([smhd])", since)
-            sec = int(mm.group(1)) * {"s": 1, "m": 60, "h": 3600, "d": 86400}[mm.group(2)] if mm else 43200
-            out = [m for m in L if now - m["time"] <= sec]
+        q = parse_qs(u.query); t = parts[0]; since = (q.get("since") or ["12h"])[0]; now = int(time.time())
+        # 1.40.1: «wait=N» (≤30 sn) — täze habar ýok bolsa şonça garaşýar, gelen badyna berýär (gijikme ýok, sorag az)
+        w = (q.get("wait") or ["0"])[0]; wait = min(30, int(w)) if w.isdigit() else 0
+        end = time.time() + wait
+        with cond:
+            while True:
+                prune(t, int(time.time())); L = list(topics.get(t, []))
+                if since == "all": out = L
+                elif re.fullmatch(r"r\d+", since): n = int(since[1:]); out = [m for m in L if int(m["id"][1:]) > n]
+                else:
+                    mm = re.fullmatch(r"(\d+)([smhd])", since)
+                    sec = int(mm.group(1)) * {"s": 1, "m": 60, "h": 3600, "d": 86400}[mm.group(2)] if mm else 43200
+                    out = [m for m in L if now - m["time"] <= sec]
+                left = end - time.time()
+                if out or left <= 0 or not re.fullmatch(r"r\d+", since): break
+                cond.wait(left)
         body = "".join(json.dumps(dict(m, event="message", topic=t)) + "\n" for m in out).encode()
         self.send(200, body, "application/x-ndjson")
 
@@ -107,10 +115,13 @@ class H(BaseHTTPRequestHandler):
             seq[0] += 1
             m = {"id": "r%d" % seq[0], "time": now, "message": body}
             topics.setdefault(t, []).append(m); prune(t, now); save(t)
+            cond.notify_all()
         self.send(200, json.dumps(m).encode(), "application/json")
 
 
 if __name__ == "__main__":
     load()
     print("tvrelay %d portda" % PORT, flush=True)
-    ThreadingHTTPServer(("0.0.0.0", PORT), H).serve_forever()
+    ThreadingHTTPServer.request_queue_size = 1024   # köp telefon birden birikýär (garaşýan soraglar)
+    srv = ThreadingHTTPServer(("0.0.0.0", PORT), H); srv.daemon_threads = True
+    srv.serve_forever()

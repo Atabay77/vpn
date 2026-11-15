@@ -1416,9 +1416,10 @@ def app_relay():
 
 def ntfy_base(): return app_relay() or "https://ntfy.sh"
 
-def ntfy_poll(topic, since):
-    url = f"{ntfy_base()}/{topic}/json?poll=1&since={urllib.parse.quote(str(since))}"
-    with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "subbot"}), timeout=20) as r:
+def ntfy_poll(topic, since, wait=0):
+    """wait — 1.40.1: öz VPS-de täze habar gelýänçä garaşmak (sekunt)."""
+    url = f"{ntfy_base()}/{topic}/json?poll=1&since={urllib.parse.quote(str(since))}" + (f"&wait={int(wait)}" if wait else "")
+    with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "subbot"}), timeout=20 + wait) as r:
         out = []
         for l in r.read().decode("utf-8", "ignore").splitlines():
             try: j = json.loads(l)
@@ -2147,7 +2148,7 @@ async def app_msg_loop(app):
         try:
             a = app_cfg(load_db()); fid = a.get("fid")
             if fid:
-                got = await asyncio.to_thread(ntfy_poll, app_topic(fid) + "m", a.get("msg_since") or "2h")
+                got = [] if app_relay() else await asyncio.to_thread(ntfy_poll, app_topic(fid) + "m", a.get("msg_since") or "2h")   # 1.40.1: VPS — app_relay_loop
                 for j in got:
                     app_mut(lambda a_: a_.__setitem__("msg_since", j.get("id")))
                     pt = app_dec(fid, j.get("message", ""))
@@ -2188,6 +2189,28 @@ async def app_msg_loop(app):
         try: fast_ = bool(app_cfg(load_db()).get("fs_fast")); rel_ = bool(app_relay())
         except Exception: fast_ = rel_ = False
         await asyncio.sleep(APP_MSG_FAST if fast_ else 3 if rel_ else APP_MSG_EVERY)   # 1.40: VPS-de okalyş tölegsiz — 3 sn
+
+async def app_relay_loop(app):
+    """1.40.1: öz VPS — programdan gelen habarlar garaşýan sorag bilen (habar gelen badyna, 3 sn gijikme ýok)."""
+    await asyncio.sleep(15)
+    while True:
+        try:
+            a = app_cfg(load_db()); fid = a.get("fid")
+            if not (fid and app_relay()): await asyncio.sleep(5); continue
+            t0_ = time.time()
+            got = await asyncio.to_thread(ntfy_poll, app_topic(fid) + "m", a.get("msg_since") or "2h", 25)
+            if not got and time.time() - t0_ < 1: await asyncio.sleep(2)   # köne habar serweri garaşmaýar — aýlaw gyzmasyn
+            for j in got:
+                app_mut(lambda a_: a_.__setitem__("msg_since", j.get("id")))
+                pt = app_dec(fid, j.get("message", ""))
+                if not pt: continue
+                try: o = json.loads(pt)
+                except Exception: continue
+                try: await app_on_msg(app, fid, o)
+                except Exception: log.exception("app msg (relay)")
+        except Exception as e:
+            if RUN.get("rel_err") != str(e)[:100]: RUN["rel_err"] = str(e)[:100]; log.info("relay loop: %s", e)
+            await asyncio.sleep(3)
 
 def app_tickets_view(a, closed=False):
     tks = a.get("tickets") or {}
@@ -3044,6 +3067,7 @@ async def post_init(app):
     app.bot_data["mail"] = asyncio.create_task(mail_loop(app))
     app.bot_data["appsync"] = asyncio.create_task(app_loop(app))
     app.bot_data["appmsg"] = asyncio.create_task(app_msg_loop(app))
+    app.bot_data["apprel"] = asyncio.create_task(app_relay_loop(app))
     try: ADMINS.update(int(k) for k in load_db().get("temp_admins", {}))   # acil yetkililer yeniden başlatmada kalır
     except Exception: pass
     if ADMINS: asyncio.create_task(pad_old_photos(app))

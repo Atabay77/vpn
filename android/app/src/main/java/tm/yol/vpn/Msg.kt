@@ -135,10 +135,11 @@ object Msg {
     }
 
     /** Konudaky habarlar (since: habar kimligi ýa-da «12h»). */
-    private fun poll(topic: String, since: String): List<JSONObject>? {
+    private fun poll(topic: String, since: String, wait: Int = 0): List<JSONObject>? {
         for (t in tries()) {
             val r = runCatching {
-                val c = open(host() + topic + "/json?poll=1&since=" + since, t)
+                val c = open(host() + topic + "/json?poll=1&since=" + since + (if (wait > 0) "&wait=$wait" else ""), t)
+                if (wait > 0) c.readTimeout = (wait + 15) * 1000   // 1.40.1: VPS täze habar gelýänçä garaşýar
                 val txt = c.inputStream.use { it.readBytes() }.toString(Charsets.UTF_8); c.disconnect()
                 txt.lineSequence().filter { it.isNotBlank() }.mapNotNull { runCatching { JSONObject(it) }.getOrNull() }
                     .filter { it.optString("event") == "message" }.toList()
@@ -226,6 +227,8 @@ object Msg {
         if (started) return
         started = true
         Thread({ loop() }, "msg").apply { isDaemon = true }.start()
+        Thread({ relInLoop() }, "relin").apply { isDaemon = true }.start()
+        Thread({ relGLoop() }, "relg").apply { isDaemon = true }.start()
     }
 
     private fun loop() {
@@ -249,10 +252,10 @@ object Msg {
                 else if (visible) (if (waiting) 20_000L else 120_000L) else (if (waiting) 180_000L else 600_000L)
             val adm = admPw(c) != null && Fs.on()   // admin: fonda hem bilet bildirişleri (2 minutda bir)
             val ip = inPend; inPend = false
-            if (ip || ((visible || on || adm || fast) && now - inAt > (if (adm && !visible && !push) minOf(inEvery, 120_000L) else inEvery))) { inAt = now; runCatching { inbox(c) } }
+            if (!rel && (ip || ((visible || on || adm || fast) && now - inAt > (if (adm && !visible && !push) minOf(inEvery, 120_000L) else inEvery)))) { inAt = now; runCatching { inbox(c) } }   // 1.40.1: VPS — relInLoop
             // 1.39.1: chat açyk, ýöne soňky 2 minutda täze habar ýok bolsa 12 sn-da bir (her boş sorag hem 1 okalyş)
             val gEvery = if (watchG) (if (fast) 1_500L else if (rel) 3_000L else if (Fs.on()) (if (now - gNewAt < 120_000L) 5_000L else 12_000L) else 8_000L) else if (fast) 20_000L else if (rel) 30_000L else if (push) 300_000L else 120_000L
-            if (visible && now - gAt > gEvery) { gAt = now; runCatching { global() } }
+            if (visible && !(rel && watchG) && now - gAt > gEvery) { gAt = now; runCatching { global() } }   // 1.40.1: chat açyk + VPS — relGLoop
             runCatching { Chat.poll(c, visible, dmPage) }
             if (visible || on) runCatching { State.pingExtra(c) }
             if (visible && Fs.on() && now - newsAt > (if (fast) 60_000L else 120_000L)) { newsAt = now; runCatching { newsFs() } }
@@ -277,13 +280,15 @@ object Msg {
         }
     }
 
-    private fun inbox(c: Context) {
+    private val inLock = Object()
+    private fun inbox(c: Context, wait: Int = 0) = synchronized(inLock) { inbox0(c, wait) }
+    private fun inbox0(c: Context, wait: Int) {
         val p = prefs(c); relCur(c)
         val tp = topicMe(c)
         var useFs = false
         // 1.40: VPS açylsa ilki VPS (okalyş çägi ýok); bolmasa Firestore (VPN-siz): d/<telefon>/i — diňe täzeleri (t > soňky)
         val triedRel = relOn() && tp != null
-        var list: List<Pair<String, String>>? = if (triedRel) poll(tp!!, p.getString("inId", null) ?: "12h")?.map { it.optString("id") to it.optString("message") } else null
+        var list: List<Pair<String, String>>? = if (triedRel) poll(tp!!, p.getString("inId", null) ?: "12h", if (p.getString("inId", null) != null) wait else 0)?.map { it.optString("id") to it.optString("message") } else null
         if (triedRel && list == null) relFail()
         if (list == null) {
             val fsGot = if (Fs.on()) Fs.query("d/" + dev(c), "i", p.getString("fsIn", null), 50) else null
@@ -449,10 +454,15 @@ object Msg {
     /** 1.40: Global chat VPS-den (soňky kursordan täzeler; köne wersiýalaryň Firestore habarlaryny bot VPS-e geçirýär).
      *  «del» — bot pozan habar. Dönüş: false — VPS jogap bermedi (Firestore-a geç). */
     @Volatile private var gRelId: String? = null
-    private fun globalRel(): Boolean {
-        gfsLoad(); app?.let { relCur(it) }
+    private val gLock = Object()
+    private fun globalRel(wait: Int = 0): Boolean {
+        synchronized(gLock) { gfsLoad(); app?.let { relCur(it) } }
         val tp = topicG() ?: return false
-        val got = poll(tp, gRelId ?: "24h") ?: run { relFail(); return false }
+        val cur = gRelId
+        val got = poll(tp, cur ?: "24h", if (cur != null) wait else 0) ?: run { relFail(); return false }
+        synchronized(gLock) { return globalRel2(got) }
+    }
+    private fun globalRel2(got: List<JSONObject>): Boolean {
         val now = System.currentTimeMillis()
         val ids = gfs.mapTo(HashSet()) { it.optString("id") }
         val del = JSONArray(); var added = false
@@ -470,9 +480,30 @@ object Msg {
         return true
     }
 
+    /** 1.40.1: VPS — garaşýan soraglar: täze habar gelen badyna (gijikme ýok). Ýalňyşlykda relFail → köne ýol (Firestore). */
+    private fun relInLoop() {
+        while (true) {
+            val c = app
+            val on = State.now == State.ON
+            if (c == null || !relOn() || !(visible || on || admPw(c) != null)) { runCatching { Thread.sleep(2000) }; continue }
+            val t0 = System.currentTimeMillis()
+            runCatching { inbox(c, 25) }
+            if (System.currentTimeMillis() - t0 < 500) runCatching { Thread.sleep(1000) }   // ýalňyşlyk / köne serwer — aýlaw gyzmasyn
+        }
+    }
+
+    private fun relGLoop() {
+        while (true) {
+            if (!(relOn() && visible && watchG)) { runCatching { Thread.sleep(700) }; continue }
+            val t0 = System.currentTimeMillis()
+            runCatching { globalRel(25) }
+            if (System.currentTimeMillis() - t0 < 300) runCatching { Thread.sleep(500) }
+        }
+    }
+
     private fun global() {
         if (relOn() && globalRel()) return
-        if (Fs.on()) { globalFs(); return }
+        synchronized(gLock) { if (Fs.on()) { globalFs(); return } }
         val tp = topicG() ?: return
         val list = poll(tp, "12h") ?: return
         val arr = JSONArray(); val del = JSONArray()
