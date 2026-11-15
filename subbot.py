@@ -1871,6 +1871,20 @@ async def app_on_msg(app, fid, o):
         await asyncio.to_thread(app_lvl_check, dev, True)
         a_ = app_cfg(load_db())   # 1.31: hepdelik ýaryş aýryldy
         await asyncio.to_thread(app_send, dev, {"k": "top", "l": app_top(a_)})
+    elif k == "reach":   # 1.37: telefonyň operatoryndan (VPN-siz) haýsy hyzmatlar açylýar
+        rr_ = o.get("r") if isinstance(o.get("r"), dict) else {}
+        clean_ = {}
+        for kk_, vv_ in list(rr_.items())[:60]:
+            if not re.match(r"^[a-z0-9_]{1,16}$", str(kk_)): continue
+            if isinstance(vv_, int) and 0 < vv_ < 60000: clean_[kk_] = vv_
+            elif vv_ in ("dns", "to", "ssl", "ref", "rst", "err"): clean_[kk_] = vv_
+        if clean_:
+            def f_(a__):
+                rc = a__.setdefault("reach", {})
+                rc[dev] = {"t": int(time.time()), "op": str(o.get("op") or "?")[:24], "net": str(o.get("net") or "?")[:8], "vpn": bool(o.get("vpn")), "r": clean_}
+                if len(rc) > 600:
+                    for d_ in sorted(rc, key=lambda x: rc[x].get("t", 0))[:len(rc) - 600]: rc.pop(d_, None)
+            app_mut(f_)
     elif k == "lvof":   # 1.30.2: başga ulanyjylaryň derejesi (Global chatda / profilde nyşan üçin)
         ds_ = [str(x_) for x_ in (o.get("d") or []) if DEV_RE.match(str(x_))][:60]
         a_ = app_cfg(load_db()); dv_ = a_.get("devs") or {}
@@ -3862,6 +3876,42 @@ async def cmd_dlpage(u: Update, c: ContextTypes.DEFAULT_TYPE):
         + (f"Sayfadaki «İndir» düğmesine koyacağın link (her sürümde aynı kalır, sürüm {esc(a_.get('dl_ver') or '?')}):\n<code>{esc(sub_link(dl_))}</code>" if dl_ else "APK linki henüz yok")
         + (f"\n⚠️ {esc(err_)}" if err_ else "") + "</blockquote>\n<i>Ayarlamak: /dlpage https://sites.google.com/view/… · Kaldırmak: /dlpage kapat</i>",
         parse_mode="HTML", disable_web_page_preview=True)
+
+REACH_ERR = {"dns": "DNS", "to": "zaman aşımı", "ssl": "SSL kesildi", "ref": "reddedildi", "rst": "bağlantı koptu", "err": "hata"}
+
+def reach_report(days=7):
+    """1.37: /reach — hyzmat → näçe telefonda açyldy, orta ms, operatorlara görä, iň köp ýalňyşlyk."""
+    rc = (app_cfg(load_db()).get("reach") or {}); now = time.time()
+    rows = [v for v in rc.values() if now - v.get("t", 0) < days * 86400]
+    if not rows: return "📡 <b>Erişim testi</b>\n<blockquote>Henüz sonuç yok. Yeni sürümü kuran telefonlar günde bir kez test edip gönderir.</blockquote>"
+    ops = {}
+    for v in rows: ops[v.get("op", "?")] = ops.get(v.get("op", "?"), 0) + 1
+    keys = sorted({k for v in rows for k in v.get("r", {})})
+    stat = []
+    for k in keys:
+        vals = [(v.get("op", "?"), v["r"][k]) for v in rows if k in v.get("r", {})]
+        oks = sorted(x for _, x in vals if isinstance(x, int)); n = len(vals)
+        errs = {}
+        for _, x in vals:
+            if not isinstance(x, int): errs[x] = errs.get(x, 0) + 1
+        per = {}
+        for op_, x in vals:
+            a_, b_ = per.get(op_, (0, 0)); per[op_] = (a_ + (1 if isinstance(x, int) else 0), b_ + 1)
+        stat.append((len(oks) / n if n else 0, k, len(oks), n, oks[len(oks) // 2] if oks else 0, errs, per))
+    stat.sort(key=lambda x: (-x[0], x[4] or 99999))
+    lines = []
+    for ratio, k, ok, n, med, errs, per in stat:
+        ic = "🟢" if ratio >= 0.9 else "🟡" if ratio >= 0.5 else "🔴"
+        e_ = max(errs, key=errs.get) if errs else ""
+        po = " · ".join(f"{esc(o_[:10])} {a_}/{b_}" for o_, (a_, b_) in sorted(per.items(), key=lambda z: -z[1][1])[:3])
+        lines.append(f"{ic} <b>{esc(k)}</b> {ok}/{n}" + (f" · {med} ms" if ok else "") + (f" · ❌ {REACH_ERR.get(e_, e_)}" if e_ and ok < n else "") + (f"\n   <i>{po}</i>" if len(per) > 1 else ""))
+    head = f"📡 <b>Erişim testi (VPN'siz)</b> — son {days} gün, {len(rows)} telefon\n<i>Operatörler: " + ", ".join(f"{esc(o_)} ({n_})" for o_, n_ in sorted(ops.items(), key=lambda z: -z[1])[:5]) + "</i>"
+    return head + "\n<blockquote expandable>" + "\n".join(lines) + "</blockquote>"
+
+async def cmd_reach(u: Update, c: ContextTypes.DEFAULT_TYPE):
+    uid = u.effective_user.id
+    if uid not in ORIG_ADMINS: return
+    await c.bot.send_message(uid, html_cut(reach_report()), parse_mode="HTML")
 
 async def cmd_gmailalt(u: Update, c: ContextTypes.DEFAULT_TYPE):
     """1.37: ýedek iberiji Gmail · /gmailalt ekle adres uygulama_şifresi · /gmailalt sil adres · /gmailalt (sanaw)."""
@@ -9761,6 +9811,7 @@ def main():
     app.add_handler(CommandHandler("dlpage", cmd_dlpage))
     app.add_handler(CommandHandler("mailretry", cmd_mailretry))
     app.add_handler(CommandHandler("gmailalt", cmd_gmailalt))
+    app.add_handler(CommandHandler("reach", cmd_reach))
     app.add_handler(MessageHandler(filters.COMMAND, other_cmd))
     app.add_handler(CallbackQueryHandler(cb))
     app.add_handler(InlineQueryHandler(inline_ad))

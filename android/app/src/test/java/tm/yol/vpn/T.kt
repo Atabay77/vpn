@@ -58,6 +58,10 @@ trojan://x@1.1.1.1:1#skip
         Sub.meta("#tvfast: 1"); assertEquals(true, Sub.fast); Sub.meta(""); assertEquals(false, Sub.fast)
         // 1.36: kanaldan alnan kod — ady «tm»
         assertEquals(Triple("🇩🇪", "Germaniýa", "tm"), Sub.splitName("🇩🇪 Germaniýa · tm"))
+        // 1.37: elýeterlilik barlagy — ýalňyşlyk görnüşleri
+        assertEquals("ref", Reach.probe("http://127.0.0.1:1/"))
+        assertEquals("dns", Reach.probe("http://no-such-host.invalid/"))   // https bu sandbox-da proxy arkaly gidýär
+        assertTrue(Reach.targets().any { it.first == "fs" } && Reach.targets().size >= 30)
         // 1.29: botuň biziň atlarymyz (URL kodlanan)
         val br = Sub.parse("ss://YWVzLTI1Ni1nY206cA==@1.2.3.4:1080#" + java.net.URLEncoder.encode("🇪🇸 Ispaniýa · Türkmen VPN · 4", "UTF-8").replace("+", "%20") +
             "\nss://YWVzLTI1Ni1nY206cA==@1.2.3.9:1080#" + java.net.URLEncoder.encode("🇷🇺 Russiýa · Türkmen VPN · PUBG 1 🎮", "UTF-8").replace("+", "%20"))
