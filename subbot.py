@@ -3478,6 +3478,13 @@ MAIL_SENT = []   # son 1 saatte maille verilen kodların zamanı
 
 def mail_cfg(): return os.environ.get("GMAIL_USER", ""), os.environ.get("GMAIL_PASS", ""), os.environ.get("GMAIL_KEY", "")
 
+def mail_alts():
+    """1.37: ýedek iberiji Gmail hasaplary [(adres, programma açary)] — esasy hasabyň gündelik çägi dolanda hatlar şolardan gidýär."""
+    try: return [(str(a), str(p)) for a, p in json.loads(os.environ.get("GMAIL_ALT", "") or "[]") if a and p]
+    except Exception: return []
+
+MAIL_LIM_H = 3   # gündelik çäge ýeten hasap 3 sagat ulanylmaýar (soň gaýtadan synanyşylýar)
+
 def _mail_text(m):
     """Konu + mesajın kendi yazısı (alıntı / önceki mail hariç)."""
     from email.header import decode_header, make_header
@@ -3647,8 +3654,23 @@ def mail_send(to, subject, text, reply=None, link=None, link_text=None):
             'Düğme açılmazsa: aşağıdaki bağlantıyı kopyalayıp Chrome\'da açın.</span><br>'
             f'<span style="font-family:monospace;font-size:12px;word-break:break-all;color:#12784A">{_h.escape(link)}</span>')
     msg.attach(MIMEText(f'<div style="font-family:Arial,sans-serif;font-size:15px;line-height:1.5;color:#222">{body}</div>', "html", "utf-8"))
-    with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=30) as s_:
-        s_.login(me, pw); s_.sendmail(me, [to], msg.as_string())
+    # 1.37: esasy hasap gündelik çäge ýetse ýa-da girip bilmese — ýedek hasaplar (jogap ýene esasy salga gelýär: Reply-To)
+    lim = RUN.setdefault("mail_lim", {}); last_e = None
+    for addr, apw in [(me, pw)] + mail_alts():
+        if time.time() - lim.get(addr.lower(), 0) < MAIL_LIM_H * 3600: continue
+        if addr.lower() != me.lower():
+            msg.replace_header("From", formataddr(("Türkmen VPN", addr)))
+            if "Reply-To" in msg: msg.replace_header("Reply-To", me)
+            else: msg["Reply-To"] = me
+        try:
+            with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=30) as s_:
+                s_.login(addr, apw); s_.sendmail(addr, [to], msg.as_string())
+            return addr
+        except smtplib.SMTPAuthenticationError as e: last_e = e; lim[addr.lower()] = time.time()
+        except (smtplib.SMTPDataError, smtplib.SMTPSenderRefused, smtplib.SMTPRecipientsRefused) as e:
+            if "5.4.5" in str(e) or "limit" in str(e).lower(): last_e = e; lim[addr.lower()] = time.time(); continue
+            raise
+    raise last_e or RuntimeError("Gönderecek Gmail hesabı yok (hepsi limitte)")
 
 def mail_tick():
     """Bloklayan iş: istekleri okur, kod oluşturur, maille gönderir. Dönüş: kurucuya gidecek olaylar."""
@@ -3840,6 +3862,40 @@ async def cmd_dlpage(u: Update, c: ContextTypes.DEFAULT_TYPE):
         + (f"Sayfadaki «İndir» düğmesine koyacağın link (her sürümde aynı kalır, sürüm {esc(a_.get('dl_ver') or '?')}):\n<code>{esc(sub_link(dl_))}</code>" if dl_ else "APK linki henüz yok")
         + (f"\n⚠️ {esc(err_)}" if err_ else "") + "</blockquote>\n<i>Ayarlamak: /dlpage https://sites.google.com/view/… · Kaldırmak: /dlpage kapat</i>",
         parse_mode="HTML", disable_web_page_preview=True)
+
+async def cmd_gmailalt(u: Update, c: ContextTypes.DEFAULT_TYPE):
+    """1.37: ýedek iberiji Gmail · /gmailalt ekle adres uygulama_şifresi · /gmailalt sil adres · /gmailalt (sanaw)."""
+    uid = u.effective_user.id
+    if uid not in ORIG_ADMINS: return
+    args = c.args or []
+    if args: await _del_msg(u.message)   # şifre sohbette kalmasın
+    alts = mail_alts()
+    if len(args) >= 3 and args[0].lower() in ("ekle", "add"):
+        me_ = args[1].strip(); pw_ = "".join(args[2:])
+        if not re.match(r"^[\w.+-]+@gmail\.com$", me_, re.I) or len(pw_) < 12:
+            await c.bot.send_message(uid, "⚠️ Biçim: /gmailalt ekle adres@gmail.com uygulama_şifresi"); return
+        if me_.lower() == mail_cfg()[0].lower():
+            await c.bot.send_message(uid, "⚠️ Bu zaten ana hesap."); return
+        try:
+            import smtplib
+            def t_():
+                with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=30) as s_: s_.login(me_, pw_)
+            await asyncio.to_thread(t_); st_ = "✅ Giriş başarılı"
+        except Exception as e:
+            await c.bot.send_message(uid, f"❌ {esc(me_)} ile giriş olmadı: <code>{esc(str(e)[:150])}</code>\n<i>2 adımlı doğrulama açık mı, uygulama şifresi doğru mu?</i>", parse_mode="HTML"); return
+        alts = [x for x in alts if x[0].lower() != me_.lower()] + [(me_, pw_)]
+        await asyncio.to_thread(set_env, "GMAIL_ALT", json.dumps(alts, separators=(",", ":"))); os.environ["GMAIL_ALT"] = json.dumps(alts, separators=(",", ":")); RUN.get("mail_lim", {}).pop(me_.lower(), None)
+        audit(uid, "gmailalt add")
+        await c.bot.send_message(uid, f"{st_} — yedek gönderici eklendi: {esc(me_)}", parse_mode="HTML")
+    elif len(args) >= 2 and args[0].lower() in ("sil", "kaldir", "kaldır", "del"):
+        alts = [x for x in alts if x[0].lower() != args[1].strip().lower()]
+        await asyncio.to_thread(set_env, "GMAIL_ALT", json.dumps(alts, separators=(",", ":"))); os.environ["GMAIL_ALT"] = json.dumps(alts, separators=(",", ":")); audit(uid, "gmailalt del")
+    lim = RUN.get("mail_lim", {}); now_ = time.time()
+    def st(a): return "⏸ limitte" if now_ - lim.get(a.lower(), 0) < MAIL_LIM_H * 3600 else "🟢 hazır"
+    await c.bot.send_message(uid, "📧 <b>Gönderici hesaplar</b> (sırayla denenir)\n<blockquote>"
+        + f"1. {esc(mail_cfg()[0] or '—')} · ana · {st(mail_cfg()[0] or '-')}\n"
+        + "\n".join(f"{i + 2}. {esc(a)} · yedek · {st(a)}" for i, (a, _) in enumerate(mail_alts()))
+        + "</blockquote>\n<i>Ekle: /gmailalt ekle adres@gmail.com uygulama_şifresi · Sil: /gmailalt sil adres</i>", parse_mode="HTML")
 
 async def cmd_gmail(u: Update, c: ContextTypes.DEFAULT_TYPE):
     """Asıl kurucu: /gmail adres uygulama_şifresi kelime · /gmail kapat · /gmail (durum)."""
@@ -9704,6 +9760,7 @@ def main():
     app.add_handler(CommandHandler("gmail", cmd_gmail))
     app.add_handler(CommandHandler("dlpage", cmd_dlpage))
     app.add_handler(CommandHandler("mailretry", cmd_mailretry))
+    app.add_handler(CommandHandler("gmailalt", cmd_gmailalt))
     app.add_handler(MessageHandler(filters.COMMAND, other_cmd))
     app.add_handler(CallbackQueryHandler(cb))
     app.add_handler(InlineQueryHandler(inline_ad))
