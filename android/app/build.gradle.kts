@@ -31,8 +31,8 @@ android {
         applicationId = "tm.yol.vpn"
         minSdk = 24
         targetSdk = 35
-        versionCode = 73
-        versionName = "1.38.0"
+        versionCode = 74
+        versionName = "1.38.1"
         externalNativeBuild { cmake { arguments += "-DSEC_DIR=${secDir.absolutePath}" } }
     }
 

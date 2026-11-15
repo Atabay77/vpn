@@ -1917,6 +1917,9 @@ async def app_on_msg(app, fid, o):
         if re.match(r"^[\w:\-]{60,400}$", t_):
             app_mut(lambda a__: a__.setdefault("fcm", {}).__setitem__(dev, t_))
             fcm_bg(dev, {"k": "hi"})   # synag: bildirişler gelýärmi
+    elif k == "fcmerr":   # 1.38.1: telefon bildiriş belgisini alyp bilmedi — sebäbi /fcm-de
+        e_ = str(o.get("e") or "")[:300]; g_ = str(o.get("gms") or "")[:40]
+        app_mut(lambda a__: a__.__setitem__("fcm_perr", ([x for x in a__.get("fcm_perr", []) if x.get("dev") != dev] + [{"dev": dev, "e": e_, "gms": g_, "ver": str(o.get("ver") or "")[:12], "t": int(time.time())}])[-20:]))
     elif k == "dmp":   # 1.38: hususy habar iberildi — garşydaşa bildiriş
         to_ = str(o.get("to") or "")
         if DEV_RE.match(to_) and to_ != dev and time.time() - RUN.setdefault("dmp_at", {}).get(dev + to_, 0) > 15:
@@ -3977,6 +3980,7 @@ async def cmd_fcm(u: Update, c: ContextTypes.DEFAULT_TYPE):
         + f"Kayıtlı telefon: {len(a_.get('fcm') or {})}\n"
         + f"Botun FCM izni: {tk_}\n"
         + f"Gönderilen: ✅ {st['ok']} · ❌ {st['bad']}" + (f"\nSon hata: <code>{esc(st['err'])}</code>" if st.get("err") else "")
+        + "".join(f"\n📱 Telefon hatası ({ago(x['t'])}, v{esc(x.get('ver', ''))}, Play hizmetleri {esc(x.get('gms') or '?')}): <code>{esc(x['e'][:200])}</code>" for x in (a_.get("fcm_perr") or [])[-3:])
         + "</blockquote>\n<i>Telefonlar yeni sürüme geçip abonelik dosyasını yenileyince kaydolur.</i>", parse_mode="HTML")
 
 async def cmd_reach(u: Update, c: ContextTypes.DEFAULT_TYPE):

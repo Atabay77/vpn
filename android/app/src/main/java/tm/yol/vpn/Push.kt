@@ -20,14 +20,24 @@ object Push {
     /** Bildirişler hakykatdan gelýär (soňky 24 sagatda biri geldi) — diňe şonda barlaglar seýrekleşýär. */
     fun ok() = ready && System.currentTimeMillis() - lastAt < 24 * 3600_000L
 
-    private fun start(c: Context, app: String, key: String, proj: String): Boolean = runCatching {
+    @Volatile private var lastErr = ""
+    private fun start(c: Context, app: String, key: String, proj: String): Boolean = try {
         if (FirebaseApp.getApps(c).isEmpty()) {
             FirebaseApp.initializeApp(c, FirebaseOptions.Builder()
                 .setApplicationId(app).setApiKey(key).setProjectId(proj)
                 .setGcmSenderId(app.split(':').getOrElse(1) { "" }).build())
         }
         true
-    }.getOrDefault(false)
+    } catch (e: Throwable) { lastErr = "init: $e"; false }
+
+    /** 1.38.1: belgi alynmasa sebäbi bota (6 sagatda iň köp bir gezek) — /fcm-de görünýär. */
+    private fun fail(c: Context, why: String) {
+        val p = c.getSharedPreferences("p", 0)
+        if (System.currentTimeMillis() - p.getLong("fcmErrAt", 0) < 6 * 3600_000L) return
+        p.edit().putLong("fcmErrAt", System.currentTimeMillis()).apply()
+        val gms = runCatching { c.packageManager.getPackageInfo("com.google.android.gms", 0).versionName ?: "?" }.getOrDefault("yok")
+        Msg.send(c, JSONObject().put("k", "fcmerr").put("e", why.take(300)).put("gms", gms.take(40)))
+    }
 
     /** Programma işe başlanda: öň saklanan sazlamalar bilen (abuna faýly entek okalmadyk bolsa-da). */
     fun initSaved(ctx: Context) {
@@ -42,8 +52,13 @@ object Push {
         if (ready || Sub.fcmApp.isEmpty() || Sub.fsKey.isEmpty() || Sub.fsProj.isEmpty()) return
         val c = ctx.applicationContext
         c.getSharedPreferences("p", 0).edit().putString("fcmApp", Sub.fcmApp).putString("fcmKey", Sub.fsKey).putString("fcmProj", Sub.fsProj).apply()
-        if (!start(c, Sub.fcmApp, Sub.fsKey, Sub.fsProj)) return
-        runCatching { FirebaseMessaging.getInstance().token.addOnSuccessListener { t -> if (!t.isNullOrEmpty()) { ready = true; report(c, t) } } }
+        if (!start(c, Sub.fcmApp, Sub.fsKey, Sub.fsProj)) { fail(c, lastErr); return }
+        try {
+            FirebaseMessaging.getInstance().token
+                .addOnSuccessListener { t -> if (!t.isNullOrEmpty()) { ready = true; report(c, t) } else fail(c, "boş belgi") }
+                .addOnFailureListener { e -> fail(c, "token: $e") }
+        } catch (e: Throwable) { fail(c, "token: $e") }
+        Thread { runCatching { Thread.sleep(120_000); if (!ready) fail(c, "2 minutda belgi gelmedi") } }.apply { isDaemon = true }.start()
     }
 
     /** Täze belgi bota (diňe üýtgände). */
