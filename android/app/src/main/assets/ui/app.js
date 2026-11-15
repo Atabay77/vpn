@@ -692,14 +692,14 @@
         const ng = SV.filter((v) => !v.game), gg = SV.filter((v) => v.game);
         const mark = (x, v, premTab) => { const lock = !!(v && v.lock), isFree = !v || v.free !== false;
           const o = Object.assign(x, { pcls: premTab ? 'sv-prem' : '', tag: lock ? '🔒' : premTab && !isFree ? '👑' : '', tagCls: lock ? 'svlock' : 'svcrown' });
-          if (lock) o.pick = () => { this.say('👑 ' + tx.pr_lock); this.setState({ psh: true }); };
+          if (lock) o.pick = () => { this.say('👑 ' + tx.pr_lock); this.setState({ psh: true, pstep: 1 }); };
           return o; };
         if (Array.isArray(r.srvList)) r.srvList = tab === 'pubg' ? [] : r.srvList.map((x, j) => ({ x, v: ng[j] })).filter((q) => tab === 'prem' || !PF || (q.v && q.v.free)).map((q) => mark(q.x, q.v, tab === 'prem'));
         if (Array.isArray(r.gList)) r.gList = r.gList.map((x, j) => ({ x, v: gg[j] })).filter((q) => tab !== 'free' || !PF || (q.v && q.v.free)).map((q) => mark(q.x, q.v, tab !== 'free'));
         if (tab === 'pubg') r.svEmpty = false;
         r.svTabs = [['free', 'Free', ''], ['prem', '👑 Premium', 'seg-prem'], ['pubg', '👑 PUBG', 'seg-prem']].map((q) => ({ t: q[1], cls: (tab === q[0] ? 'seg-on' : 'seg-off') + ' ' + q[2], p: tab === q[0] ? 'true' : 'false', pick: () => this.setState({ svTab: q[0] }) }));
         r.svPremBan = !PR && PF && tab !== 'free';
-        r.premOpen = () => { INFO = J(NB.info(), INFO); this.setState({ psh: true, menu: false }); };
+        r.premOpen = () => { INFO = J(NB.info(), INFO); this.setState({ psh: true, pstep: 1, menu: false }); };
         r.premPillOn = pg === 'main' && (PF || PR); r.premPillCls = PR ? 'ppill-on' : '';
         r.premPillT = PR ? (pexp === 0 ? 'Premium ♾' : 'Premium · ' + dlT) : tx.pr_buy; r.premPillS = PR ? (pexp === 0 ? '♾' : dlT) : tx.pr_buyS;
         // Premium sahypasy
@@ -713,6 +713,11 @@
           .map((d) => Object.assign(ava(d), { name: nm2(d, RL[d][1]), isO: RL[d][0] === 'o', isS: RL[d][0] === 's',
             go: () => { NB.send(JSON.stringify({ k: 'preq', to: d, plan, n: this.meName })); this.setState({ psh: false }); this.say('👑 ' + tx.pr_sent); this.openDm(d); } }));
         r.pSellEmpty = !r.pSellers.length;
+        // 1.43: ilki tarif → «Satyn al», soň satyjylar
+        const pq = r.pPlans.find((q) => q.k === plan) || r.pPlans[1];
+        r.pStep1 = (s.pstep || 1) === 1; r.pStep2 = !r.pStep1; r.pBuyT = pq.price + ' TMT';
+        r.pPickT = '👑 Premium · ' + pq.t + ' · ' + pq.price + ' TMT';
+        r.pBuy = () => this.setState({ pstep: 2 }); r.pBack = () => this.setState({ pstep: 1 });
         // haýyşlar (eýesi / satyjylar)
         const isSel = roleOf(me1) === 'o' || roleOf(me1) === 's' || isF2 || sel2, AQ = (A && A.preq) || [], byId = {}, rqDone = LS.get('preqDone', {}) || {};
         (LS.get('preqs', []) || []).forEach((q) => { byId[q.id] = Object.assign({}, q, { at: q.at || this.hm((q.ts || 0) * 1000) }); });
@@ -1299,7 +1304,7 @@
       const ks = Object.keys(SV); if (ks.length > 60) ks.slice(0, ks.length - 60).forEach((k) => delete SV[k]);
       LS.set('stViews', SV); up.gTick = (s.gTick || 0) + 1;
     } else if (e.k === 'plock') {   // 1.43: Premium serwer saýlandy (Premium ýok)
-      C.say('👑 ' + tx.pr_lock); up.psh = true;
+      C.say('👑 ' + tx.pr_lock); up.psh = true; up.pstep = 1;
     } else if (e.k === 'img') {
       (e.kind === 'n' ? NI : GI)[e.id] = e.d || '';
       up.gTick = (s.gTick || 0) + 1;
