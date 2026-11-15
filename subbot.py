@@ -1304,9 +1304,21 @@ def app_dl_mirror():
     mutate(lambda d: d.setdefault("app", {}).update({"dl_fid": dl, "dl_src": u_["fid"], "dl_ver": u_.get("ver")}))
     return dl
 
+def app_g_expire():
+    """1.39: wagty geçen hekaýalary (g/ + gi/ surat we wideo bölekleri) Firestore-dan pozýar. Dönüş: pozulan sany."""
+    a = app_cfg(load_db()); ex = a.get("g_exp") or []; now = time.time()
+    due = [x for x in ex if x and x[0] <= now]
+    if not due or not (a.get("fs_ok") and a.get("fs_proj")): return 0
+    paths = [p for x in due for p in x[1:]]
+    for i in range(0, len(paths), 100): fs_delete(a["fs_proj"], paths[i:i + 100])
+    app_mut(lambda a_: a_.__setitem__("g_exp", [x for x in (a_.get("g_exp") or []) if x and x[0] > now]))
+    return len(paths)
+
 async def app_loop(app):
     await asyncio.sleep(60)
     while True:
+        try: await asyncio.to_thread(app_g_expire)
+        except Exception as e: log.info("g expire: %s", e)
         if app_cfg(load_db()).get("fid"):
             try: RUN["app_on"] = (await asyncio.to_thread(app_stats, app_cfg(load_db())["fid"])).get("on", 0)
             except Exception as e: log.info("app stats: %s", e)
@@ -2064,6 +2076,14 @@ async def app_gmod(app):
         except Exception: o = None
         if not isinstance(o, dict): junk.append((name, "", "junk")); continue   # açylmaýan (programdan däl) ýazgy
         rows.append((name, o))
+    # 1.39: hekaýa 24 sagatdan soň görünmeýär — 25 sagatdan soň özi we suraty / wideo bölekleri pozulýar (Firestore ýeri dolmasyn)
+    gx_ = []
+    for name, o in rows:
+        if o.get("sty"):
+            ids_ = ["g/" + str(name).split("/")[-1]] + (["gi/" + str(o["pi"])] if re.fullmatch(r"[\w\-]{4,40}", str(o.get("pi") or "")) else [])
+            ids_ += ["gi/" + x_ for x_ in str(o.get("vc") or "").split(",") if re.fullmatch(r"[\w\-]{4,40}", x_)][:14]
+            gx_.append([int(now + 25 * 3600)] + ids_)
+    if gx_: app_mut(lambda a_: a_.__setitem__("g_exp", (a_.get("g_exp") or []) + gx_))
     dele, ask = list(junk), []
     for i, (name, o) in enumerate(rows):
         dv, txt = str(o.get("i") or ""), str(o.get("t") or "")
@@ -2459,7 +2479,7 @@ async def app_adm(app, dev, o):
                     try: await asyncio.to_thread(app_tg_refresh, True); await asyncio.to_thread(app_sync, True)
                     except Exception as e2: err = str(e2)[:120]
             msg = act
-        elif act == "gdel" and f_:
+        elif act == "gdel" and full:   # 1.39: doly hukukly adminler hem (hekaýalar we habarlar)
             gid = re.sub(r"^g/", "", str(r.get("id") or ""))
             if re.fullmatch(r"[\w\-]{1,60}", gid):
                 if a.get("fs_ok") and a.get("fs_proj"): await asyncio.to_thread(fs_delete, a["fs_proj"], ["g/" + gid])

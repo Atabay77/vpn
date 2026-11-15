@@ -163,6 +163,7 @@ object Chat {
                     pr.edit().putString("rIn", t).apply()
                     val o = Msg.dec(b)?.let { runCatching { JSONObject(it) }.getOrNull() } ?: continue
                     val f = o.optString("f"); if (!DEV.matches(f) || f == me) continue
+                    if (o.has("sv")) { Msg.events.add(JSONObject().put("k", "stv").put("sv", o.optString("sv").take(40)).put("f", f).put("n", o.optString("n").take(32)).put("t", Fs.sec(t))); continue }   // 1.39: hekaýamy gördi
                     val room = room(me, f); val cur = rooms(c).optJSONObject(room)
                     if (cur?.optString("st") == "blk") continue
                     upd(c, room) { it.put("p", f).put("n", o.optString("n").take(32)); if (it.optString("st").isEmpty()) it.put("st", "in") }
@@ -216,7 +217,7 @@ object Chat {
         if (j.has("ow")) o.put("ow", if (j.optInt("ow") == 1) 1 else 0)   // 1.28: eýesi OWNER ýa-da dereje bilen görünýär
         j.optString("dl").takeIf { it.isNotEmpty() }?.let { o.put("dl", it.take(40)) }   // 1.28: öz habaryny pozmak
         j.optString("ed").takeIf { it.isNotEmpty() }?.let { o.put("ed", it.take(40)) }   // 1.28: öz habaryny üýtgetmek (täze tekst «t»-de)
-        if (j.optInt("sty") == 1) o.put("sty", 1)   // 1.28: hekaýa (24 sagat)
+        if (j.optInt("sty") == 1) o.put("sty", 1).put("vs", 1)   // 1.28: hekaýa (24 sagat); 1.39: «vs» — kim gördi ýazgysy goldanýar
         j.optString("re").takeIf { it.isNotEmpty() }?.let { o.put("re", it.take(40)).put("e", j.optString("e").take(8)).put("off", j.optBoolean("off")) }   // tepki
         if (!Fs.on() && (o.has("re") || o.has("dl") || o.has("ed") || o.has("sty"))) return   // köne ýolda tepki / pozmak / hekaýa ýok
         if (!Fs.on()) { if (j.optString("t").isNotBlank()) Msg.gsend(c, j.optString("n"), j.optString("t")) else Msg.events.add(JSONObject().put("k", "gfail").put("why", "srv")); return }   // köne ýol (VPS / ntfy)
@@ -228,10 +229,45 @@ object Chat {
                 ok = ph.length <= 110_000 && (Msg.enc(JSONObject().put("ph", ph).toString())?.let { Fs.write("gi/$pid", it) } ?: false)
                 if (ok) o.put("pi", pid)
             }
+            // 1.39: gysga wideo (diňe hekaýa) — 100 KB bölekler gi/-e, sanawy «vc»
+            val vd = j.optString("vd")
+            if (ok && vd.isNotEmpty() && o.has("sty")) {
+                val parts = vd.chunked(100_000)
+                ok = parts.size <= 14
+                val ids = ArrayList<String>()
+                for (pt in parts) {
+                    if (!ok) break
+                    val id = Fs.newId()
+                    ok = Msg.enc(JSONObject().put("v", pt).toString())?.let { Fs.write("gi/$id", it) } ?: false
+                    ids.add(id)
+                }
+                if (ok) o.put("vc", ids.joinToString(","))
+            }
             if (ok) ok = Msg.enc(o.toString())?.let { Fs.write("g/" + Fs.newId(), it) } ?: false
             Msg.events.add(if (ok) JSONObject().put("k", "gok") else JSONObject().put("k", "gfail").put("why", if (State.online(c)) "srv" else "net"))
             if (ok) Msg.gNow()
         }.start()
+    }
+
+    /** 1.39: hekaýanyň wideosy — bölekleri ýygnap «data:video/…» berýär. */
+    fun vid(id: String, vc: String) {
+        val ids = vc.split(',').filter { Regex("^[\\w-]{4,40}$").matches(it) }.take(14)
+        if (ids.isEmpty() || !Fs.on()) return
+        Thread {
+            val sb = StringBuilder()
+            for (p in ids) {
+                val v = Fs.get("gi/$p")?.first?.let { Msg.dec(it) }?.let { runCatching { JSONObject(it).optString("v") }.getOrNull() }
+                if (v == null) { sb.setLength(0); break }
+                sb.append(v)
+            }
+            Msg.events.add(JSONObject().put("k", "vid").put("id", id).put("d", sb.toString()))
+        }.start()
+    }
+
+    /** 1.39: hekaýany gördüm — eýesine (r/<eýesi>/i, hususy habar haýyşlarynyň gutusy) «sv» ýazgysy. */
+    fun stView(c: Context, owner: String, sid: String, nick: String) {
+        if (!DEV.matches(owner) || owner == Msg.dev(c) || !Regex("^[\\w-]{4,40}$").matches(sid) || !Fs.on()) return
+        Thread { Msg.enc(JSONObject().put("sv", sid).put("f", Msg.dev(c)).put("n", nick.take(32)).toString())?.let { Fs.write("r/$owner/i/" + Fs.newId(), it) } }.start()
     }
 
     /** Global chat suraty ýa-da habaryň suraty (n/<id>). */

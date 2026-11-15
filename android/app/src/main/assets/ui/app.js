@@ -90,7 +90,8 @@
     if (c.length !== 2) return ''; const k = String.fromCharCode(c[0] - 0x1F1E6 + 97, c[1] - 0x1F1E6 + 97); return FLAGS.has(k) ? k : ''; };
   const withFc = (o) => { if (!o) return o; const fc = fcc(o.f); return Object.assign({}, o, { fc, hasFc: !!fc, noFc: !fc }); };
   const dmPrev = (m, tx, me) => (m.f === me ? '↩ ' : '') + (m.ph ? '📷 ' + tx.dm_photo : m.st ? m.st : m.sys === 'acc' ? tx.dm_acced : m.x || '');
-  const GI = {}, NI = {}, imgAsked = {};   // Global chat / habar suratlary
+  const GI = {}, NI = {}, imgAsked = {};
+  const VI = {}, vidAsked = {};   // 1.39: hekaýa wideolary (id → data:video)   // Global chat / habar suratlary
   const EMOJI = ['😀', '😁', '😂', '🤣', '😊', '🙂', '😉', '😍', '🥰', '😘', '😎', '🤔', '😅', '😴', '😭', '😡', '😱', '🥳', '👍', '👎', '🙏', '👏', '💪', '🤝', '👋', '🔥', '❤️', '💔', '💯', '🎉', '✅', '❌', '⚡', '🚀', '⭐', '🌙', '☀️', '🎮', '📶', '🔒', '💬', '🇹🇲'];
   // tepkiler: {re: habaryň kimligi, e: emoji, off: aýyrmak}; her adamyň bir habara bir tepkisi
   const RX_E = ['❤️', '👍', '😂', '🔥', '😮'];
@@ -734,15 +735,27 @@
         r.stMe = ava(me1); r.stMeCls = ''; r.stMeHas = !!by[me1]; r.stMeRing = by[me1] ? (isSeen(me1) ? 'seen' : 'new') : ''; r.stMeOpen = () => this.svOpen(me1, 0); r.onStory = this.onStory;
         const V = s.sv, cur = V && by[V.d] && by[V.d][V.i];
         r.svOn = !!cur;
-        if (cur) { askImg('g', cur.pi); const im = GI[cur.pi] || '', ag = tn - (cur.time || tn);
-          r.svImg = im; r.svHasImg = !!im; r.svNoImg = !im; r.svName = V.d === me1 ? this.meName : (nameOf(V.d) || cur.n || '?');
+        if (cur) { askImg('g', cur.pi); const isV = !!cur.vc, vd = isV ? VI[cur.id] || '' : '';
+          if (isV && !vd && !vidAsked[cur.id]) { vidAsked[cur.id] = 1; try { NB.vid(cur.id, cur.vc); } catch (e) {} }
+          const im = isV ? (vd ? GI[cur.pi] || 'x' : '') : GI[cur.pi] || '', ag = tn - (cur.time || tn);
+          r.svIsVid = isV && !!vd; r.svVid = vd; r.svImg = isV ? '' : im; r.svHasImg = !isV && !!im; r.svNoImg = !im; r.svName = V.d === me1 ? this.meName : (nameOf(V.d) || cur.n || '?');
           r.svAgo = ag < 3600 ? Math.max(1, Math.floor(ag / 60)) + ' min' : tx.wk_h.replace('{h}', String(Math.floor(ag / 3600)));
           r.svBars = by[V.d].map((m, i) => ({ cls: i < V.i ? 'done' : i === V.i && im ? 'cur' : '' }));
           if (im && !seen[cur.pi]) { seen[cur.pi] = 1; LS.set('stSeen', seen); }
-          if (im && this._svKey !== cur.id) { this._svKey = cur.id; clearTimeout(this._svT); this._svT = setTimeout(() => this.svNext(), 6000); }
-          r.svCanDel = V.d === me1 || !!(s.admOn && isF);
+          if (im && this._svKey !== cur.id) { this._svKey = cur.id; clearTimeout(this._svT); this._svT = setTimeout(() => this.svNext(), isV ? 17000 : 6000);
+            if (isV) setTimeout(() => { const el = document.querySelector('.svw video'); if (el && !el._tv) { el._tv = 1; el.onended = () => this.svNext(); try { el.play(); } catch (e) {} } }, 60);
+            // 1.39: kim gördi — eýesine bir gezek habar (diňe täze wersiýada goýlan hekaýalar)
+            const sent = LS.get('stSent', {}) || {};
+            if (V.d !== me1 && cur.vs && !sent[cur.id]) { sent[cur.id] = Date.now(); const ks = Object.keys(sent); if (ks.length > 300) ks.sort((a, b) => sent[a] - sent[b]).slice(0, ks.length - 300).forEach((k) => delete sent[k]); LS.set('stSent', sent); try { NB.stView(V.d, cur.id, this.meName || ''); } catch (e) {} } }
+          // 1.39: öz hekaýam — näçe adam we kimler gördi
+          const SV = LS.get('stViews', {}) || {}, vw = V.d === me1 ? SV[cur.id] || {} : {};
+          r.svMine = V.d === me1; r.svViews = String(Object.keys(vw).length); r.svvOpen = () => { clearTimeout(this._svT); this.setState({ svv: cur.id }); };
+          r.svvOn = s.svv === cur.id; r.svvX = () => { this.setState({ svv: null }); this._svT = setTimeout(() => this.svNext(), 4000); };
+          r.svvList = Object.keys(vw).sort((a, b) => vw[b][1] - vw[a][1]).map((d) => Object.assign(ava(d), { name: nameOf(d) || vw[d][0] || '?', ago: this.hm(vw[d][1] * 1000) }));
+          r.svvEmpty = !r.svvList.length;
+          r.svCanDel = V.d === me1 || !!(s.admOn && full);   // 1.39: doly hukukly adminler hem pozup bilýär
           r.svDel = () => this.confirm(tx.m_delQ, '🗑 ' + tx.m_del, () => { if (V.d === me1) this.gSendX({ dl: cur.id }); else { act('gdel', { id: cur.id }); gDel[cur.id] = true; } this.setState({ sv: null }); this.say('🗑 ' + tx.sty_del); });
-        } else { if (this._svKey) { clearTimeout(this._svT); this._svKey = null; } Object.assign(r, { svImg: '', svHasImg: false, svNoImg: true, svName: '', svAgo: '', svBars: [], svCanDel: false, svDel: null }); }
+        } else { if (this._svKey) { clearTimeout(this._svT); this._svKey = null; } Object.assign(r, { svImg: '', svHasImg: false, svNoImg: true, svIsVid: false, svVid: '', svName: '', svAgo: '', svBars: [], svCanDel: false, svDel: null, svMine: false, svViews: '0', svvOn: false, svvList: [], svvEmpty: true, svvOpen: null, svvX: null }); }
         r.svX = () => this.setState({ sv: null }); r.svNext = this.svNext; r.svPrev = this.svPrev; }
       // 1.28: öz habaryň menýusy we üýtgedilýän habar
       { const M = s.ma; r.maOn = !!M; r.maT = M ? M.t : ''; r.maHasT = !!(M && M.t); r.maCanEd = !!(M && M.t);
@@ -904,9 +917,41 @@
     C.rpX = () => C.setState({ gRp: null, dmRp: null });
     C.pickSticker = (em) => { C.setState({ stOn: false }); if (C.state.page === 'dm' && C.state.dmPeer) dmPush(C.state.dmPeer, { st: em }); else gSend({ st: em }); };
     C.gSendX = (j) => gSend(j);
+    // 1.39: gysga wideo — programmanyň içinde kiçeldilýär (15 sn, ≤480 px, ~380 kbit/s WebM)
+    const vidShrink = (file, cb) => {
+      const url = URL.createObjectURL(file), v = document.createElement('video');
+      let done = false; const fin = (o, why) => { if (done) return; done = true; URL.revokeObjectURL(url); cb(o, why); };
+      v.src = url; v.playsInline = true; v.preload = 'auto';
+      v.onerror = () => fin(null, 'bad');
+      v.onloadedmetadata = () => {
+        const sc = Math.min(1, 480 / Math.max(v.videoWidth || 480, v.videoHeight || 480)), w = Math.max(2, Math.round((v.videoWidth || 480) * sc / 2) * 2), h = Math.max(2, Math.round((v.videoHeight || 480) * sc / 2) * 2);
+        const cv = document.createElement('canvas'); cv.width = w; cv.height = h; const x = cv.getContext('2d');
+        const mt = ['video/webm;codecs=vp8,opus', 'video/webm;codecs=vp8', 'video/webm'].find((t) => window.MediaRecorder && MediaRecorder.isTypeSupported(t));
+        if (!mt || !cv.captureStream) { fin(null, 'nosup'); return; }
+        const st = cv.captureStream(24); let ac = null;
+        try { ac = new (window.AudioContext || window.webkitAudioContext)(); const src = ac.createMediaElementSource(v), dst = ac.createMediaStreamDestination(); src.connect(dst); dst.stream.getAudioTracks().forEach((t) => st.addTrack(t)); } catch (e2) { v.muted = true; }
+        const rec = new MediaRecorder(st, { mimeType: mt, videoBitsPerSecond: 380000, audioBitsPerSecond: 32000 }), ch = [];
+        let poster = '', raf = 0;
+        rec.ondataavailable = (ev) => { if (ev.data && ev.data.size) ch.push(ev.data); };
+        rec.onstop = () => { try { if (ac) ac.close(); } catch (e3) {} const b = new Blob(ch, { type: 'video/webm' });
+          if (b.size > 1300000) { fin(null, 'big'); return; } if (!poster) poster = cv.toDataURL('image/jpeg', 0.6);
+          const fr = new FileReader(); fr.onload = () => fin({ vd: fr.result, ph: poster.length <= 108000 ? poster : cv.toDataURL('image/jpeg', 0.4) }); fr.readAsDataURL(b); };
+        const stop = () => { cancelAnimationFrame(raf); try { v.pause(); } catch (e4) {} if (rec.state !== 'inactive') rec.stop(); };
+        const draw = () => { x.drawImage(v, 0, 0, w, h); if (!poster && v.currentTime > 0.3) poster = cv.toDataURL('image/jpeg', 0.6); if (v.currentTime >= 15 || v.ended) { stop(); return; } raf = requestAnimationFrame(draw); };
+        v.onended = stop; rec.start(1000);
+        v.play().then(() => { raf = requestAnimationFrame(draw); }).catch(() => { stop(); fin(null, 'play'); });
+      };
+    };
     C.onStory = (e) => {   // 1.28: hekaýa (24 sagat)
       const f = fileOf(e); if (!f) return; e.target.value = '';
       if (gBlocked()) return;
+      if (/^video\//.test(f.type || '')) {   // 1.39: wideo hekaýa
+        const tx = C.T()[C.state.lang]; if (C._vidBusy) return; C._vidBusy = true; C.say('🎬 ' + tx.sty_vprep);
+        vidShrink(f, (o, why) => { C._vidBusy = false; const tx2 = C.T()[C.state.lang];
+          if (!o) { C.say('⚠️ ' + (why === 'big' ? tx2.sty_vbig : tx2.sty_vbad)); return; }
+          if (gSend({ sty: 1, ph: o.ph, vd: o.vd, t: '' })) C.say('✨ ' + tx2.sty_ok); });
+        return;
+      }
       fitShrink(f, 1280, 108000, (d) => { const tx = C.T()[C.state.lang]; if (!d) { C.say(tx.ph_big); return; } if (gSend({ sty: 1, ph: d, t: '' })) C.say('✨ ' + tx.sty_ok); });
     };
     C.svOpen = (dev, i) => C.setState({ sv: { d: dev, i: i || 0 } });
@@ -1183,6 +1228,14 @@
       C.say('⚠️ ' + (e.why === 'nokey' ? tx.dm_noKey : tx.dm_fail));
     } else if (e.k === 'dmkey') {
       const x = DMS[e.peer]; if (x) { x.msgs = x.msgs.concat([{ id: 'k' + t, f: '', t: t / 1000, sys: 'key' }]); up.dmTick = (s.dmTick || 0) + 1; }
+    } else if (e.k === 'vid') {   // 1.39
+      if (e.d) VI[e.id] = e.d; else delete vidAsked[e.id];
+      up.gTick = (s.gTick || 0) + 1;
+    } else if (e.k === 'stv') {   // 1.39: hekaýamy kim gördi
+      const SV = LS.get('stViews', {}) || {}, x = SV[e.sv] || (SV[e.sv] = {});
+      x[e.f] = [e.n || '', e.t || Date.now() / 1000];
+      const ks = Object.keys(SV); if (ks.length > 60) ks.slice(0, ks.length - 60).forEach((k) => delete SV[k]);
+      LS.set('stViews', SV); up.gTick = (s.gTick || 0) + 1;
     } else if (e.k === 'img') {
       (e.kind === 'n' ? NI : GI)[e.id] = e.d || '';
       up.gTick = (s.gTick || 0) + 1;

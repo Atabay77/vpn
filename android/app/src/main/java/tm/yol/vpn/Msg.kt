@@ -380,7 +380,7 @@ object Msg {
             gfsT = t
             val o = dec(b)?.let { runCatching { JSONObject(it) }.getOrNull() } ?: continue
             gfs.add(JSONObject().put("id", id).put("time", Fs.sec(t)).put("i", o.optString("i")).put("n", o.optString("n")).put("t", o.optString("t"))
-                .put("st", o.optString("st").take(16)).put("pi", o.optString("pi").take(40)).put("rp", o.optJSONObject("rp")?.let { Chat.rp(it) } ?: JSONObject.NULL)
+                .put("st", o.optString("st").take(16)).put("pi", o.optString("pi").take(40)).put("vc", o.optString("vc").take(700)).put("vs", o.optInt("vs")).put("rp", o.optJSONObject("rp")?.let { Chat.rp(it) } ?: JSONObject.NULL)
                 .put("re", o.optString("re").take(40)).put("e", o.optString("e").take(8)).put("off", o.optBoolean("off")).put("lv", o.optInt("lv").coerceIn(0, 10)).put("ow", if (o.has("ow")) o.optInt("ow") else -1)
                 .put("dl", o.optString("dl").take(40)).put("ed", o.optString("ed").take(40)).put("sty", o.optInt("sty")))
         }

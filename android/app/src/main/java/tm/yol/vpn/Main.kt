@@ -80,7 +80,7 @@ open class Main : Activity() {
         setContentView(root)
         with(web.settings) {
             javaScriptEnabled = true; domStorageEnabled = true; allowFileAccess = false; allowContentAccess = false
-            mediaPlaybackRequiresUserGesture = true; textZoom = 100; setSupportZoom(false)
+            mediaPlaybackRequiresUserGesture = false; textZoom = 100; setSupportZoom(false)
         }
         web.addJavascriptInterface(Bridge(), "NB")
         web.webViewClient = object : WebViewClient() {
@@ -308,6 +308,8 @@ open class Main : Activity() {
         @JavascriptInterface fun codeOf(dev: String): String = if (Regex("^[0-9a-f]{12}$").matches(dev)) Msg.codeOf(dev) else ""
         @JavascriptInterface fun gsend2(json: String) { runCatching { Chat.gsend(this@Main, JSONObject(json)) } }
         @JavascriptInterface fun img(kind: String, id: String) = Chat.img(kind, id)
+        @JavascriptInterface fun vid(id: String, vc: String) = Chat.vid(id, vc)   // 1.39: hekaýa wideosy
+        @JavascriptInterface fun stView(owner: String, sid: String, nick: String) = Chat.stView(this@Main, owner, sid, nick)
         @JavascriptInterface fun adm(json: String) { runCatching { Msg.adm(this@Main, JSONObject(json)) } }
         @JavascriptInterface fun gsend(nick: String, text: String) = Msg.gsend(this@Main, nick, text)
         @JavascriptInterface fun gwatch(on: Boolean) { Msg.watchG = on; if (on) Msg.kick() }
