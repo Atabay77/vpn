@@ -3690,10 +3690,16 @@ def mail_tick():
                           "İndirme «beklemede» kalırsa: Play Store'dan Chrome'u güncelleyin ve tekrar basın.\n\n"
                           "Hormat bilen / Saygılarımızla,\nTürkmen VPN", reply=meta, link=link,
                           link_text=("⬇ Türkmen VPN ýükläp almak sahypasy / indirme sayfası" if page_ else f"⬇ Türkmen VPN {u_.get('ver', '')} ýükle / indir"))
-                ok = True
-            except Exception as e: ok = False; log.warning("mail send: %s", e)
+                ok = True; err_ = ""
+            except Exception as e: ok = False; err_ = str(e)[:160]; log.warning("mail send: %s", e)
+            def fl_(d):   # 1.37: gönderilemeyenler saklanır — /mailretry ile sonra yeniden gönderilir
+                f_ = [x for x in d.get("mail_fail", []) if x.get("to") != frm and now - x.get("ts", 0) < 7 * 86400]
+                if not ok: f_.append({"to": frm, "ts": int(now), "meta": meta if isinstance(meta, dict) else None})
+                d["mail_fail"] = f_[-300:]
+            mutate(fl_)
             ulog("order", f"📧 Mail ile indirme linki: {frm}" + ("" if ok else " (gönderilemedi)"))
-            events.append(f"⬇️ <b>Mail ile Türkmen VPN linki</b>\n<blockquote>{esc(frm)} · {esc(u_.get('ver', ''))}\n{'✅ gönderildi' if ok else '⚠️ gönderilemedi'}</blockquote>")
+            events.append(f"⬇️ <b>Mail ile Türkmen VPN linki</b>\n<blockquote>{esc(frm)} · {esc(u_.get('ver', ''))}\n"
+                          + ("✅ gönderildi" if ok else f"⚠️ gönderilemedi: <code>{esc(err_)}</code>\n<i>Kaydedildi — /mailretry ile yeniden gönderilir</i>") + "</blockquote>")
             continue
         MAIL_SENT[:] = [t for t in MAIL_SENT if now - t < 3600]
         if len(MAIL_SENT) >= MAIL_MAX_HOUR:
@@ -3747,6 +3753,59 @@ async def mail_loop(app):
                     RUN["mail_err"] = msg; log.warning("mail: %s", e)
                     await notify_founders(app, f"⚠️ <b>Gmail okunamadı</b>\n<blockquote>{esc(msg)}</blockquote>\n<i>Adres / uygulama şifresi doğru mu? /gmail ile kontrol et.</i>")
         await asyncio.sleep(MAIL_EVERY)
+
+def mail_fail_seed(extra=(), hours=48):
+    """1.37: bu düzeltmeden önce gönderilemeyenler de log'dan toplanır; elle verilen adresler (geri dönen mailler) eklenir."""
+    last = {}
+    try:
+        with open(USERS_LOG, encoding="utf-8", errors="ignore") as f:
+            for l in f:
+                try: o = json.loads(l)
+                except Exception: continue
+                x = str(o.get("x", ""))
+                if o.get("k") != "order" or not x.startswith("📧 Mail ile indirme linki: ") or time.time() - float(o.get("t", 0)) > hours * 3600: continue
+                to_ = x.split(": ", 1)[1].replace(" (gönderilemedi)", "").strip()
+                last[to_.lower()] = (to_, "(gönderilemedi)" in x)
+    except FileNotFoundError: pass
+    adds = [v[0] for v in last.values() if v[1]] + [e for e in extra if re.match(r"^[\w.+-]+@[\w-]+\.[\w.-]+$", e)]
+    def f(d):
+        cur = d.get("mail_fail", []); have = {x.get("to", "").lower() for x in cur}
+        for e in adds:
+            if e.lower() not in have: cur.append({"to": e, "ts": int(time.time()), "meta": None}); have.add(e.lower())
+        d["mail_fail"] = cur[-300:]
+    mutate(f)
+
+def mail_dl_retry(limit=40):
+    """1.37: gönderilemeyen indirme maillerini yeniden gönderir (ilk hata — durur). Dönüş: (gönderilen, kalan, son hata)."""
+    d0 = load_db(); fails = list(d0.get("mail_fail", [])); cfg_ = app_cfg(d0)
+    u_ = max((cfg_.get("upd") or {}).values(), key=lambda x: [int(p_) if p_.isdigit() else 0 for p_ in str(x.get("ver", "0")).split(".")], default=None)
+    if not fails or not u_ or not u_.get("fid"): return 0, len(fails), ""
+    page_ = cfg_.get("dl_page"); link = page_ or sub_link(u_["fid"]); sent, err_ = [], ""
+    for it in fails[:limit]:
+        try:
+            mail_send(it["to"], f"Türkmen VPN {u_.get('ver', '')} · ýükläp almak / indirme linki",
+                      f"Salam!\n\nGijä galanymyz üçin bagyşlaň. Türkmen VPN programmasynyň iň täze wersiýasy ({u_.get('ver', '')}) aşakdaky "
+                      + ("sahypada — «Ýükle / İndir» düwmesine basyň. " if page_ else "salgyda. ") + "VPN-siz açylýar.\n\n"
+                      f"{link}\n\n"
+                      "Merhaba! Gecikme için özür dileriz. Türkmen VPN'in en yeni sürümü yukarıdaki bağlantıda, VPN'siz açılır.\n\n"
+                      "Hormat bilen / Saygılarımızla,\nTürkmen VPN", reply=it.get("meta"), link=link,
+                      link_text=("⬇ Türkmen VPN ýükläp almak sahypasy / indirme sayfası" if page_ else f"⬇ Türkmen VPN {u_.get('ver', '')} ýükle / indir"))
+            sent.append(it["to"]); time.sleep(2)
+        except Exception as e: err_ = str(e)[:160]; break
+    mutate(lambda d: d.__setitem__("mail_fail", [x for x in d.get("mail_fail", []) if x.get("to") not in sent]))
+    return len(sent), len(fails) - len(sent), err_
+
+async def cmd_mailretry(u: Update, c: ContextTypes.DEFAULT_TYPE):
+    """1.37: /mailretry [adres …] — gönderilemeyen (ve elle verilen) adreslere indirme maili yeniden gider."""
+    uid = u.effective_user.id
+    if uid not in ORIG_ADMINS: return
+    await asyncio.to_thread(mail_fail_seed, tuple(c.args or ()))   # /mailretry a@gmail.com b@gmail.com — geri dönen mailler de
+    n0 = len(load_db().get("mail_fail", []))
+    if not n0: await c.bot.send_message(uid, "✅ Bekleyen mail yok."); return
+    await c.bot.send_message(uid, f"⏳ {n0} kişiye yeniden gönderiliyor…")
+    n, left, err_ = await asyncio.to_thread(mail_dl_retry)
+    await c.bot.send_message(uid, f"📧 <b>Yeniden gönderim</b>\n<blockquote>✅ Gönderildi: {n}\n⏳ Kalan: {left}" + (f"\n⚠️ Durdu: <code>{esc(err_)}</code>" if err_ else "") + "</blockquote>"
+                             + ("\n<i>Kalanlar için biraz sonra tekrar /mailretry yaz.</i>" if left else ""), parse_mode="HTML")
 
 async def cmd_dlpage(u: Update, c: ContextTypes.DEFAULT_TYPE):
     """1.37: /dlpage https://sites.google.com/view/… — hatda APK däl-de şu sahypa iberilýär · /dlpage kapat · /dlpage (durum + sahypa üçin hemişelik APK salgysy)."""
@@ -9632,6 +9691,7 @@ def main():
     app.add_handler(CommandHandler("acilkod", cmd_acilkod))
     app.add_handler(CommandHandler("gmail", cmd_gmail))
     app.add_handler(CommandHandler("dlpage", cmd_dlpage))
+    app.add_handler(CommandHandler("mailretry", cmd_mailretry))
     app.add_handler(MessageHandler(filters.COMMAND, other_cmd))
     app.add_handler(CallbackQueryHandler(cb))
     app.add_handler(InlineQueryHandler(inline_ad))
