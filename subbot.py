@@ -1042,6 +1042,13 @@ def app_x_report(dev, pr):
                 else:
                     v["bad"] = int(v.get("bad") or 0) + 1
                     if v.get("src") != "tg" and v["bad"] >= APP_X_DEAD and k not in gone: gone.append(k)   # admin kody: yzly-yzyna 3 gezek ms ýok — aýrylýar (kanal kody täze kod gelýänçä durýar)
+        hm = x.setdefault("hp_ms", {})   # 1.43.2: ähli kodlaryň soňky pingi (mugt serwerleri işleýänlerden saýlamak üçin)
+        for hp, ms in list(pr.items())[:80]:
+            try: hm[str(hp)[:80]] = [int(ms), now]
+            except Exception: pass
+        for hp in [h_ for h_, v in hm.items() if now - int(v[1]) > 3 * 86400]: hm.pop(hp, None)
+        if len(hm) > 600:
+            for hp in sorted(hm, key=lambda h_: hm[h_][1])[:len(hm) - 600]: hm.pop(hp, None)
         for k in gone:
             xs.pop(k, None); x.setdefault("xdead", {})[k] = now
         dd = x.get("xdead") or {}
@@ -1100,14 +1107,25 @@ def app_clean_codes(codes):
         out.append(c)
     return out
 
-def app_free_pick(codes, base1):
-    """1.43: mugt ulanyjylar üçin: kanaldan («· tm») 1, galany her baýdakdan birinji kodlardan (jemi 3) we 1 PUBG. Dönüş: ["host:port", …]."""
-    ch_ = [c for c in codes if not app_is_game(c) and re.search(r"· tm$", orig_name(c).strip())]
-    pick = ch_[:1]
-    for c in base1:
-        if len(pick) >= 3: break
-        if not app_is_game(c) and not app_is_info(c) and c not in pick and code_key(c) in {code_key(x) for x in codes}: pick.append(c)
-    pick += [c for c in codes if app_is_game(c)][:1]
+def app_free_pick(codes, base1, hpms=None):
+    """1.43.2: mugt ulanyjylar üçin (öňki ýaly): her baýdakdan bir kod — şol ýurduň iň gowy işleýäni (programlaryň iberýän pinginden),
+    kanaldan («· tm») iň köp 2 we iň gowy işleýän 2 PUBG. Dönüş: ["host:port", …]."""
+    hpms = hpms or {}; now = time.time()
+    def hp_(c): h, p_ = code_hostport(c); return f"{h}:{p_}" if h and p_ else ""
+    def score(i_c):   # (0, ms) — soňky 6 sagatda işledi; (1, …) — maglumat ýok; (2, …) — soňky gezek jogap bermedi
+        i, c = i_c; v = hpms.get(hp_(c))
+        if v and now - float(v[1]) < 6 * 3600: return (0, int(v[0]), i) if int(v[0]) > 0 else (2, 0, i)
+        return (1, 0, i)
+    tm_ = lambda c: bool(re.search(r"· tm$", orig_name(c).strip()))
+    reg = [(i, c) for i, c in enumerate(codes) if not app_is_game(c) and not app_is_info(c) and not tm_(c)]
+    best, order = {}, []
+    for i, c in reg:
+        m = re.search(r"[\U0001F1E6-\U0001F1FF]{2}", orig_name(c)); f_ = m.group(0) if m else "🌐" + str(i)
+        if f_ not in best: order.append(f_)
+        if f_ not in best or score((i, c)) < score(best[f_]): best[f_] = (i, c)
+    pick = [best[f_][1] for f_ in order]
+    pick += [c for _, c in sorted([(i, c) for i, c in enumerate(codes) if not app_is_game(c) and tm_(c)], key=score)[:2]]
+    pick += [c for _, c in sorted([(i, c) for i, c in enumerate(codes) if app_is_game(c)], key=score)[:2]]
     out = []
     for c in pick:
         h, p_ = code_hostport(c)
@@ -1232,7 +1250,7 @@ def app_sync(force=False):
         except Exception as e: log.info("quota: %s", e)
         for c in app_x_named(codes, app_cfg(load_db())):   # 1.16.6: kanal + admin kodlary
             if code_key(c) not in keys: keys.add(code_key(c)); codes.append(c)
-        free_ = app_free_pick(codes, base1)   # 1.43: mugt — 3 serwer (biri kanaldan) + 1 PUBG
+        free_ = app_free_pick(codes, base1, cfg.get("hp_ms"))   # 1.43.2: mugt — her ýurtdan iň gowy işleýän bir kod + kanal + 2 PUBG
         codes = app_brand_names(codes)   # 1.29: abunanyň atlary görünmesin
         meta = app_meta(cfg) + (["#tvfree: " + ",".join(free_)] if free_ else [])
         dig = hashlib.sha256("\n".join(meta + codes).encode()).hexdigest()[:16]
