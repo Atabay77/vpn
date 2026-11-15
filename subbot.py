@@ -897,7 +897,7 @@ def app_meta(cfg):
             seen_.add(dv); u_ = devs_.get(dv) or {}
             nk_ = u_.get("nk") or u_.get("nick") or x.get("name") or ""
             out.append(f"#tvrole: {dv} {'o' if x.get('role') == 'f' else 'a'} " + base64.urlsafe_b64encode(nk_[:32].encode()).decode().rstrip("="))
-    rel = (os.environ.get("RELAY_URL") or cfg.get("relay") or "").strip().rstrip("/")
+    rel = app_relay_pub(cfg)   # 1.42: telefonlar öňdäki VPS-e (bellenen bolsa) — maglumat bazada (botuň VPS-i)
     if rel: out.append(f"#tvrel: {rel}")
     if cfg.get("fs_mode") == "vps":   # 1.41: Google ýok — täze programa VPS bazasy (#tvdb), köneler habar serweriniň konularyny ulanýar
         if rel and cfg.get("fs_ok"): out.append(f"#tvdb: {rel}")
@@ -1439,6 +1439,40 @@ def app_relay():
 
 def ntfy_base(): return app_relay() or "https://ntfy.sh"
 
+def app_relay_pub(cfg=None):
+    """1.42: telefonlaryň birikýän salgysy — «öňdäki VPS» (her gün çalşyp bolýar); bellenmedik bolsa bazanyň özi."""
+    cfg = cfg if cfg is not None else app_cfg(load_db())
+    return ((cfg.get("relay_pub") or "").strip().rstrip("/")) or (os.environ.get("RELAY_URL") or cfg.get("relay") or "").strip().rstrip("/")
+
+def relay_health(url):
+    """1.42: «ok 1.42 fs <kimlik>» → (ok, wersiýa, fs bar, bazanyň kimligi)."""
+    with urllib.request.urlopen(urllib.request.Request(url.rstrip("/") + "/health", headers={"User-Agent": "subbot"}), timeout=12) as r_: hb = r_.read(60).decode("utf-8", "ignore").split()
+    return (bool(hb) and hb[0] == "ok", hb[1] if len(hb) > 1 else "", "fs" in hb[2:3], hb[3] if len(hb) > 3 else "")
+
+def relay_url_norm(t):
+    """«1.2.3.4» / «1.2.3.4:8090» / «http://1.2.3.4:8090/» → «http://1.2.3.4:8090»."""
+    t = t.strip().rstrip("/")
+    if not re.match(r"^https?://", t): t = "http://" + t
+    if not re.search(r":\d{2,5}$", t): t += ":8090"
+    return t if re.fullmatch(r"https?://[\w.\-]+:\d{2,5}", t) else ""
+
+RELAY_KUR = "curl -fsSL https://raw.githubusercontent.com/Atabay77/vpn/claude/inceleme-aagn5q/relay/kur.sh"
+
+def app_relay_view(a):
+    """1.42: 📡 Habar serweri — baza (botuň VPS-i) we öňdäki VPS (her gün çalşyp bolýar)."""
+    st_ = (os.environ.get("RELAY_URL") or a.get("relay") or "").strip().rstrip("/"); pub_ = (a.get("relay_pub") or "").strip()
+    up_ = re.sub(r"^https?://", "", st_) or "BAZA_IP:8090"
+    t = ("📡 <b>Habar serweri</b>\n<blockquote>"
+         f"🗄 <b>Baza</b> (hemme zat şu ýerde saklanýar): <code>{esc(st_ or '—')}</code>\n"
+         f"🌐 <b>Öňdäki VPS</b> (telefonlar şuňa birikýär): <code>{esc(pub_ or ('— (göni baza)' if st_ else '—'))}</code></blockquote>\n"
+         "<b>Öňdäki VPS-i çalyşmak</b> (her gün bolsa-da — maglumat bazada galýar):\n"
+         f"1) Täze VPS-de: <code>{RELAY_KUR} | UPSTREAM={esc(up_)} sh</code>\n"
+         "2) «🌐 Öňdäki VPS-i çalyş» → täze salgy (ýa-da diňe IP).")
+    rows = [[B("🌐 Öňdäki VPS-i çalyş", "arelay_pub", "primary")], [B("🗄 Baza (botuň VPS-i)", "arelay_st")]]
+    if st_: rows.append([B("↩️ ntfy.sh-a gaýt", "arelay_off", "danger")])
+    rows.append([B("◀️ Programma", "app_v")])
+    return t, KB(rows)
+
 def ntfy_poll(topic, since, wait=0):
     """wait — 1.40.1: öz VPS-de täze habar gelýänçä garaşmak (sekunt)."""
     url = f"{ntfy_base()}/{topic}/json?poll=1&since={urllib.parse.quote(str(since))}" + (f"&wait={int(wait)}" if wait else "")
@@ -1553,9 +1587,9 @@ def fs_check_vps(proj):
     if not res[-1][1]: return res
     try: fs_write(proj, "z/bot", "v1.test", create=False); fs_delete(proj, ["z/bot"]); res.append(("Bot açary", True, ""))
     except Exception as e: res.append(("Bot açary", False, str(e)[:160] + " (VPS-de: rm /var/lib/tvrelay/botkey; systemctl restart tvrelay)")); return res
-    try: fs_write(proj, "m/test" + format(int(time.time()), "x"), "v1.test", key="vps"); res.append(("Programyň ýoly", True, ""))
+    try: fs_write(proj, "m/test" + uuid.uuid4().hex[:12], "v1.test", key="vps"); res.append(("Programyň ýoly", True, ""))
     except Exception as e: res.append(("Programyň ýoly", False, str(e)[:160]))
-    try: fs_write(proj, "m/bad" + format(int(time.time()), "x"), "x" * 20, key="vps"); res.append(("Düzgünler gorag", False, "düzgünler gaty açyk"))
+    try: fs_write(proj, "m/bad" + uuid.uuid4().hex[:12], "x" * 20, key="vps"); res.append(("Düzgünler gorag", False, "düzgünler gaty açyk"))
     except Exception: res.append(("Düzgünler gorag", True, ""))
     return res
 
@@ -4253,27 +4287,50 @@ async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
                                        + ("\n\n✅ Taýýar — programlar VPN-siz habarlaşar." if ok_all else "\n\n«🔥 Firestore» bölüminde gurnamak ädimlerine serediň."),
                                        parse_mode="HTML", reply_markup=back("afs"))
 
-        elif act == "arelay":
-            url_ = txt.strip().rstrip("/")
-            if not re.fullmatch(r"https?://[\w.\-]+(:\d{2,5})?", url_):
-                STATE[uid] = st; await u.message.reply_text("⚠️ Salga şeýle bolmaly: http://1.2.3.4:8090", reply_markup=back("app_v")); return
-            def chk():
-                with urllib.request.urlopen(urllib.request.Request(url_ + "/health", headers={"User-Agent": "subbot"}), timeout=12) as r_: return r_.read(20)
-            try: hb_ = await asyncio.to_thread(chk); ok_ = hb_.startswith(b"ok")
-            except Exception as e: hb_ = b""; ok_ = False; err_ = str(e)[:120]
-            if ok_ and hb_.strip() == b"ok":   # 1.40: köne habar serweri (8 KB çäk) — admin paneli sygmaýar
+        elif act == "arelay":   # 1.42: baza (botuň VPS-i) — hemme zat şu ýerde saklanýar
+            url_ = relay_url_norm(txt)
+            if not url_:
+                STATE[uid] = st; await u.message.reply_text("⚠️ Salga şeýle bolmaly: http://1.2.3.4:8090 (ýa-da diňe 1.2.3.4)", reply_markup=back("arelay")); return
+            try: hok_, hv_, hfs_, hsid_ = await asyncio.to_thread(relay_health, url_)
+            except Exception: hok_ = hfs_ = False; hsid_ = ""
+            if not hok_:
                 STATE[uid] = st
-                await u.message.reply_text("⚠️ VPS-däki habar serweri köne wersiýa. VPS-de gurnamak buýrugyny täzeden işlediň, soň salgyny ýene iberiň:\n<code>curl -fsSL https://raw.githubusercontent.com/Atabay77/vpn/claude/inceleme-aagn5q/relay/kur.sh | sh</code>", parse_mode="HTML", reply_markup=back("app_v")); return
-            if not ok_:
+                await u.message.reply_text(f"❌ Serwer jogap bermedi: <code>{esc(url_)}/health</code>\n<i>VPS-de habar serweriniň gurnalandygyny we portuň açykdygyny barlaň.</i>", parse_mode="HTML", reply_markup=back("arelay")); return
+            if not (hfs_ and hsid_):   # köne wersiýa (8 KB çäk / Firestore meňzeşi ýok / kimlik ýok)
                 STATE[uid] = st
-                await u.message.reply_text(f"❌ Serwer jogap bermedi: <code>{esc(url_)}/health</code>\n<i>VPS-de habar serweriniň gurnalandygyny we portuň açykdygyny barlaň.</i>", parse_mode="HTML", reply_markup=back("app_v")); return
-            app_mut(lambda x: (x.__setitem__("relay", url_), x.pop("msg_since", None), x.__setitem__("fs_vchk", 0) if x.get("fs_mode") == "vps" else None))
+                await u.message.reply_text(f"⚠️ VPS-däki habar serweri köne wersiýa. VPS-de gurnamak buýrugyny täzeden işlediň, soň salgyny ýene iberiň:\n<code>{RELAY_KUR} | sh</code>", parse_mode="HTML", reply_markup=back("arelay")); return
+            prev_ = (app_cfg(load_db()).get("relay") or "").strip().rstrip("/")
+            app_mut(lambda x: (x.pop("relay_pub", None) if prev_ != url_ else None,   # öňdäki VPS köne bazany geçirýär — täzeden bellemeli
+                               x.__setitem__("relay", url_), x.pop("msg_since", None), x.__setitem__("fs_vchk", 0) if x.get("fs_mode") == "vps" else None))
             fs_mode_sync()
             if app_cfg(load_db()).get("fs_mode") == "vps": await asyncio.to_thread(fs_vps_on)   # 1.41: täze VPS-de baza
             try: await asyncio.to_thread(app_sync, True); RUN.pop("app_err", None)
             except Exception as e: RUN["app_err"] = str(e)[:150]
-            t_, kb_ = app_view(load_db())
-            await u.message.reply_text("✅ Habar serweri işleýär we bellendi. Programlar ony abuna faýlyndan alarlar (10 minudyň içinde).\n\n" + t_, parse_mode="HTML", reply_markup=kb_)
+            t_, kb_ = app_relay_view(app_cfg(load_db()))
+            await u.message.reply_text("✅ Baza bellendi (hemme zat şu VPS-de saklanýar). Indi «🌐 Öňdäki VPS» belläň — telefonlar şoňa birikýär.\n\n" + t_, parse_mode="HTML", reply_markup=kb_)
+
+        elif act == "arelay_pub":   # 1.42: öňdäki VPS (her gün çalşyp bolýar)
+            url_ = relay_url_norm(txt); a0_ = app_cfg(load_db()); st_url = (os.environ.get("RELAY_URL") or a0_.get("relay") or "").strip().rstrip("/")
+            if not url_:
+                STATE[uid] = st; await u.message.reply_text("⚠️ Salga şeýle bolmaly: http://1.2.3.4:8090 (ýa-da diňe 1.2.3.4)", reply_markup=back("arelay")); return
+            if not st_url:
+                await u.message.reply_text("⚠️ Ilki «🗄 Baza» belläň (botuň VPS-i).", reply_markup=back("arelay")); return
+            up_ = re.sub(r"^https?://", "", st_url)
+            try: fok_, _, _, fsid_ = await asyncio.to_thread(relay_health, url_)
+            except Exception: fok_, fsid_ = False, ""
+            try: sok_, _, _, ssid_ = await asyncio.to_thread(relay_health, st_url)
+            except Exception: sok_, ssid_ = False, ""
+            if not sok_:
+                await u.message.reply_text(f"❌ Baza jogap bermeýär: <code>{esc(st_url)}</code>", parse_mode="HTML", reply_markup=back("arelay")); return
+            if not fok_ or not fsid_ or fsid_ != ssid_:
+                STATE[uid] = st
+                await u.message.reply_text(("❌ Öňdäki VPS jogap bermedi" if not fok_ else "⚠️ Bu VPS bazaňyzy geçirmeýär (özbaşdak serwer)") + f": <code>{esc(url_)}</code>\n"
+                                           f"Täze VPS-de şu buýrugy işlediň, soň salgyny ýene iberiň:\n<code>{RELAY_KUR} | UPSTREAM={esc(up_)} sh</code>", parse_mode="HTML", reply_markup=back("arelay")); return
+            app_mut(lambda x: x.__setitem__("relay_pub", url_))
+            try: await asyncio.to_thread(app_sync, True); RUN.pop("app_err", None)
+            except Exception as e: RUN["app_err"] = str(e)[:150]
+            t_, kb_ = app_relay_view(app_cfg(load_db()))
+            await u.message.reply_text("✅ Öňdäki VPS bellendi. Telefonlar (1.41+) 5 minudyň içinde geçýär, köne wersiýalar programmany açanda / birikende. Köne öňdäki VPS-i 10 minutdan soň öçürip bilersiňiz.\n\n" + t_, parse_mode="HTML", reply_markup=kb_)
 
         elif act == "anews":
             ls_ = [x for x in txt.splitlines()]
@@ -5275,7 +5332,7 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
             await safe_edit(q, f"✅ <b>Täze açar söz — {esc(e_.get('name') or sid)}</b> ({APW_PERM[perm_]}):\n<code>{pw_}</code>\n<i>Şuny şol admine iberiň.</i>\n\n" + t_, kb_); return
         await safe_edit(q, *apw_view(app_cfg(load_db()))); return
 
-    elif a in ("atk_list", "atk_closed", "arates", "anews", "anews_new", "agc", "arelay", "arelay_off", "afs", "afs_key", "afs_chk", "afs_off", "afs_rules", "afs_vps", "afs_google") or a.startswith(("atk:", "atr:", "atc:", "ato:", "atp:", "anews_del:", "agd:", "agb:")):
+    elif a in ("atk_list", "atk_closed", "arates", "anews", "anews_new", "agc", "arelay", "arelay_st", "arelay_pub", "arelay_off", "afs", "afs_key", "afs_chk", "afs_off", "afs_rules", "afs_vps", "afs_google") or a.startswith(("atk:", "atr:", "atc:", "ato:", "atp:", "anews_del:", "agd:", "agb:")):
         if uid not in ORIG_ADMINS:
             await safe_edit(q, "⛔ Erişim yok", back("admin")); return
         a_ = app_cfg(load_db())
@@ -5358,14 +5415,19 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
             try: await asyncio.to_thread(app_sync, True)
             except Exception as e: RUN["app_err"] = str(e)[:150]
             await safe_edit(q, *app_view(load_db())); return
-        if a == "arelay":
-            STATE[uid] = {"action": "arelay"}; cur_ = a_.get("relay") or "ntfy.sh"
-            t_, kb_ = prompt("📡 <b>Habar serweri (VPS)</b>", f"Häzir: <code>{esc(cur_)}</code>\n\nVPS-de gurnalan habar serweriniň salgysyny iberiň, meselem:\n<code>http://1.2.3.4:8090</code>\n"
-                             "(Gurnamak: VPS-e girip şu buýrugy ýazyň:\n<code>curl -fsSL https://raw.githubusercontent.com/Atabay77/vpn/claude/inceleme-aagn5q/relay/kur.sh | sh</code>)", "app_v")
-            if a_.get("relay"): kb_ = KB(kb_.inline_keyboard + ((B("↩️ ntfy.sh-a gaýt", "arelay_off"),),))
-            await safe_edit(q, t_, kb_); return
+        if a == "arelay": await safe_edit(q, *app_relay_view(a_)); return
+        if a == "arelay_st":
+            STATE[uid] = {"action": "arelay"}
+            await safe_edit(q, *prompt("🗄 <b>Baza — botuň VPS-i</b>", "Hemme zat (bilet, chat, hususy habarlar, suratlar) şu VPS-de saklanýar. Ilki şol VPS-de:\n"
+                                       f"<code>{RELAY_KUR} | sh</code>\nsoň salgysyny iberiň (meselem <code>http://1.2.3.4:8090</code> ýa-da diňe IP).", "arelay")); return
+        if a == "arelay_pub":
+            st_url = (os.environ.get("RELAY_URL") or a_.get("relay") or "").strip().rstrip("/")
+            if not st_url: await safe_edit(q, "⚠️ Ilki «🗄 Baza» belläň (botuň VPS-i).", back("arelay")); return
+            STATE[uid] = {"action": "arelay_pub"}
+            await safe_edit(q, *prompt("🌐 <b>Öňdäki VPS-i çalyş</b>", "Türkmenistandan VPN-siz açylýan täze VPS-de şu buýrugy işlediň:\n"
+                                       f"<code>{RELAY_KUR} | UPSTREAM={esc(re.sub(r'^https?://', '', st_url))} sh</code>\nsoň onuň salgysyny (ýa-da diňe IP) iberiň.", "arelay")); return
         if a == "arelay_off":
-            app_mut(lambda x: (x.pop("relay", None), x.pop("msg_since", None), x.__setitem__("fs_ok", False) if x.get("fs_mode") == "vps" else None))   # 1.41: VPS bazasy hem ýok
+            app_mut(lambda x: (x.pop("relay", None), x.pop("relay_pub", None), x.pop("msg_since", None), x.__setitem__("fs_ok", False) if x.get("fs_mode") == "vps" else None))   # 1.41: VPS bazasy hem ýok
             fs_mode_sync()
             try: await asyncio.to_thread(app_sync, True)
             except Exception as e: RUN["app_err"] = str(e)[:150]

@@ -7,10 +7,13 @@
   /v1/projects/*/databases/*/documents — 1.41: Google Firestore-yň REST meňzeşi (GET, :commit, :runQuery).
                                          Program we bot Firestore ýerine şu VPS-i ulanýar (okalyş çägi ýok).
 
+1.42: UPSTREAM=IP:PORT bilen işledilse — «öňdäki VPS»: özünde hiç zat saklamaýar, ähli birikmeleri
+baza VPS-e (botuň VPS-i) geçirýär. Öňdäki VPS-i her gün çalşyp bolýar — maglumat bazada galýar.
+
 Habarlary okap bilmeýär: program we bot öz açarlary bilen şifrleýär. Diňe saklaýar we berýär.
 Diňe Python 3 (goşmaça kitaphana gerek däl).
 """
-import bisect, calendar, json, os, re, threading, time
+import bisect, calendar, json, os, re, secrets, socket, threading, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
@@ -21,7 +24,8 @@ TOPIC = re.compile(r"^[a-z0-9]{8,80}$")
 # 1.40: admin paneli (~60 KB), bilet suratlary we hekaýalar sygar ýaly çäkler ulaldyldy
 KIND = {"m": (3000, 7 * 86400, 192 * 1024), "d": (60, 7 * 86400, 256 * 1024), "g": (600, 2 * 86400, 8192), "p": (1, 10 ** 9, 96 * 1024)}
 OTHER = (100, 86400, 8192)
-RATE_GET, RATE_POST = 30000, 5000      # bir IP-den minutda (1.40: Türkmenistanda müňlerçe adam operatoryň bir IP-sinden çykýar)
+# bir IP-den minutda (1.40: Türkmenistanda müňlerçe adam operatoryň bir IP-sinden çykýar; 1.42: öňdäki VPS-den hemmeler bir IP bolup gelýär)
+RATE_GET, RATE_POST = 300000, 60000
 
 lock = threading.Lock()
 cond = threading.Condition(lock)         # 1.40.1: garaşýan soraglar (täze habar gelen badyna jogap)
@@ -29,6 +33,16 @@ topics = {}                              # konu → [habar]
 seq = [0]
 hits = {}                                # (ip, kind) → [minut, sany]
 os.makedirs(DATA, exist_ok=True)
+SIDFILE = os.path.join(DATA, "sid")
+
+
+def sid():
+    """1.42: bazanyň kimligi — bot öňdäki VPS-iň şu baza geçirýändigini barlaýar."""
+    try: return open(SIDFILE).read().strip()
+    except FileNotFoundError:
+        v = secrets.token_hex(6)
+        with open(SIDFILE, "w") as f: f.write(v)
+        return v
 
 
 def kind_of(t):
@@ -297,6 +311,9 @@ def fs_handle(h, method, path, body):
     return fs_err(404, "NOT_FOUND", "yok")
 
 
+SID = ""
+
+
 class H(BaseHTTPRequestHandler):
     server_version = "tvrelay/1"
     def log_message(self, *a): pass
@@ -321,7 +338,7 @@ class H(BaseHTTPRequestHandler):
 
     def do_GET(self):
         u = urlparse(self.path); parts = u.path.strip("/").split("/")
-        if u.path in ("/", "/health"): return self.send(200, b"ok 1.41 fs")   # 1.40: bot wersiýany barlaýar; 1.41: «fs» — Firestore meňzeşi bar
+        if u.path in ("/", "/health"): return self.send(200, ("ok 1.42 fs " + SID).encode())   # 1.40: wersiýa; 1.41: «fs» — Firestore meňzeşi; 1.42: bazanyň kimligi
         if u.path.startswith("/v1/"): return self.fs("GET")
         if not rate(self.ip(), "g", RATE_GET): return self.send(429, b"kop")
         if len(parts) != 2 or parts[1] != "json" or not TOPIC.match(parts[0]): return self.send(404, b"yok")
@@ -364,7 +381,57 @@ class H(BaseHTTPRequestHandler):
         self.send(200, json.dumps(m).encode(), "application/json")
 
 
-if __name__ == "__main__":
+# ───────────── 1.42: öňdäki VPS — TCP geçiriji (garaşýan soraglar, uly suratlar — hemmesi şol durşuna) ─────────────
+def fwd_pipe(a, b, st):
+    try:
+        while True:
+            d = a.recv(65536)
+            if not d: break
+            b.sendall(d)
+    except Exception: pass
+    try: b.shutdown(socket.SHUT_WR)      # ýarym ýapmak: beýleki ugur jogaby gutarýança dowam edýär
+    except Exception: pass
+    with st[0]:
+        st[1] -= 1; last = st[1] == 0
+    if last:
+        for x in (a, b):
+            try: x.close()
+            except Exception: pass
+
+
+def fwd_conn(c, host, port):
+    try:
+        u = socket.create_connection((host, port), timeout=10)
+    except Exception:
+        try: c.close()
+        except Exception: pass
+        return
+    for x in (c, u):
+        x.settimeout(300)                # 5 minut hiç zat gelmese — ýapylýar (ölen birikmeler galmasyn)
+        try: x.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        except Exception: pass
+    st = [threading.Lock(), 2]
+    threading.Thread(target=fwd_pipe, args=(c, u, st), daemon=True).start()
+    fwd_pipe(u, c, st)
+
+
+def fwd_main(up):
+    host, _, port = up.replace("http://", "").strip("/").rpartition(":")
+    host, port = (host or up), int(port or 8090)
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind(("0.0.0.0", PORT)); srv.listen(1024)
+    print("tvrelay öňdäki VPS: %d → %s:%d" % (PORT, host, port), flush=True)
+    while True:
+        try: c, _ = srv.accept()
+        except Exception: continue
+        threading.Thread(target=fwd_conn, args=(c, host, port), daemon=True).start()
+
+
+if __name__ == "__main__" and os.environ.get("UPSTREAM"):
+    fwd_main(os.environ["UPSTREAM"])
+elif __name__ == "__main__":
+    SID = sid()
     load(); fs_load()
     threading.Thread(target=fs_pruner, daemon=True).start()
     print("tvrelay %d portda" % PORT, flush=True)

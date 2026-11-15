@@ -25,7 +25,7 @@ class FsVpsTest {
         val pr = pb.start()
         try {
             var up = false
-            for (i in 0 until 50) { up = runCatching { URL("http://127.0.0.1:$port/health").readText().startsWith("ok 1.41") }.getOrDefault(false); if (up) break; Thread.sleep(100) }
+            for (i in 0 until 50) { up = runCatching { URL("http://127.0.0.1:$port/health").readText().let { it.startsWith("ok ") && it.contains(" fs") } }.getOrDefault(false); if (up) break; Thread.sleep(100) }
             assertTrue("relay başlamady", up)
             Sub.meta("#tvdb: http://127.0.0.1:$port\n#tvrel: http://127.0.0.1:$port\nss://x@1.1.1.1:1#a")
             assertTrue(Fs.vps()); assertTrue(Fs.on())

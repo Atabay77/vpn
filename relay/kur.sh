@@ -1,8 +1,12 @@
 #!/bin/sh
 # Türkmen VPN habar serweri: VPS-de bir buýruk bilen gurmak / täzelemek
-#   curl -fsSL https://raw.githubusercontent.com/Atabay77/vpn/claude/inceleme-aagn5q/relay/kur.sh | sh
+#   Baza (botuň VPS-i — hemme zat şu ýerde saklanýar):
+#     curl -fsSL https://raw.githubusercontent.com/Atabay77/vpn/claude/inceleme-aagn5q/relay/kur.sh | sh
+#   Öňdäki VPS (Türkmenistandan VPN-siz açylýan, her gün çalşyp bolýar — hiç zat saklamaýar, bazany geçirýär):
+#     curl -fsSL https://raw.githubusercontent.com/Atabay77/vpn/claude/inceleme-aagn5q/relay/kur.sh | UPSTREAM=1.2.3.4:8090 sh
 set -e
 PORT=${PORT:-8090}
+UPSTREAM=${UPSTREAM:-}
 command -v python3 >/dev/null 2>&1 || { (apt-get update -y && apt-get install -y python3) || yum install -y python3 || dnf install -y python3; }
 mkdir -p /opt/tvrelay /var/lib/tvrelay
 curl -fsSL https://raw.githubusercontent.com/Atabay77/vpn/claude/inceleme-aagn5q/relay/relay.py -o /opt/tvrelay/relay.py
@@ -14,6 +18,7 @@ After=network.target
 [Service]
 Environment=PORT=$PORT
 Environment=DATA=/var/lib/tvrelay
+Environment=UPSTREAM=$UPSTREAM
 ExecStart=/usr/bin/env python3 /opt/tvrelay/relay.py
 Restart=always
 RestartSec=3
@@ -28,11 +33,18 @@ systemctl restart tvrelay
 (command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --permanent --add-port=$PORT/tcp >/dev/null 2>&1 && firewall-cmd --reload >/dev/null 2>&1) || true
 iptables -C INPUT -p tcp --dport $PORT -j ACCEPT 2>/dev/null || iptables -I INPUT -p tcp --dport $PORT -j ACCEPT 2>/dev/null || true
 sleep 2
-if curl -fsS http://127.0.0.1:$PORT/health >/dev/null; then
+if curl -fsS -m 15 http://127.0.0.1:$PORT/health >/dev/null; then
   IP=$(curl -fsS -4 https://api.ipify.org 2>/dev/null || hostname -I | awk '{print $1}')
   echo ""
-  echo "✅ Habar serweri işleýär."
-  echo "Bota şu salgyny ýazyň:  http://$IP:$PORT"
+  if [ -n "$UPSTREAM" ]; then
+    echo "✅ Öňdäki VPS taýýar — hemme zat bazanyňyza ($UPSTREAM) geçirilýär."
+    echo "Botda: 📡 Habar serweri → 🌐 Öňdäki VPS → şu salgyny ýazyň:  http://$IP:$PORT"
+  else
+    echo "✅ Baza serweri işleýär (hemme zat şu VPS-de saklanýar)."
+    echo "Botda: 📡 Habar serweri → 🗄 Baza → şu salgyny ýazyň:  http://$IP:$PORT"
+  fi
+elif [ -n "$UPSTREAM" ]; then
+  echo "❌ Öňdäki VPS bazanyňyza ($UPSTREAM) birigip bilmedi — bazanyň işleýändigini we portuň açykdygyny barlaň."; journalctl -u tvrelay -n 5 --no-pager
 else
   echo "❌ Başlamady:"; journalctl -u tvrelay -n 20 --no-pager
 fi
