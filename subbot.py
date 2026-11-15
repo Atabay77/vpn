@@ -3740,6 +3740,17 @@ def mail_tick():
                       + (f"📱 {MAIL_DEVICES} cihaz sınırlı" if lim_ok else "⚠️ Cihaz sınırı uygulanamadı (Happ API ücretli planda çalışır) → normal link gitti" if lock else "🔓 Normal link (lock yazılmadı)") + "</blockquote>")
     return events
 
+MAIL_RETRY_EVERY = 3600   # 1.37: gönderilemeyen indirme mailleri sagatda bir awtomatik gaýtadan
+
+async def mail_retry_tick(app):
+    """Bekleýän (gönderilemedik) indirme mailleri bar bolsa sagatda bir synanyşýar; gidenleri eýesine habar berýär."""
+    if not load_db().get("mail_fail") or time.time() - RUN.get("mr_at", 0) < MAIL_RETRY_EVERY: return
+    RUN["mr_at"] = time.time()
+    try:
+        n_, left_, err_ = await asyncio.to_thread(mail_dl_retry, 20)
+        if n_: await notify_founders(app, f"📧 <b>Bekleyen indirme mailleri gönderildi</b>\n<blockquote>✅ {n_} kişi · ⏳ kalan {left_}</blockquote>", silent=True)
+    except Exception as e: log.info("mail retry: %s", e)
+
 async def mail_loop(app):
     await asyncio.sleep(30)
     while True:
@@ -3747,6 +3758,7 @@ async def mail_loop(app):
             try:
                 for ev in await asyncio.to_thread(mail_tick): await notify_founders(app, ev)
                 RUN.pop("mail_err", None)
+                await mail_retry_tick(app)
             except Exception as e:
                 msg = str(e)[:150]
                 if RUN.get("mail_err") != msg:
