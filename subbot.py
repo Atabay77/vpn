@@ -1258,7 +1258,17 @@ HUNT_EVERY = 1800          # her 30 minutda
 HUNT_MAX_TEST = 600        # bir gezekde iň köp täze kod barlanýar
 HUNT_KEEP = 150            # programa iň köp (Premium)
 HUNT_FREE = 5              # mugt bölüme iň köp
-HUNT_BAD_TTL = 12 * 3600   # işlemedik kod 12 sagat gaýtadan barlanmaýar
+HUNT_BAD_FILE = os.path.join(os.path.dirname(DB_FILE) or ".", "hunt_bad.txt")   # 1.46.2: bir gezek işlemedik kod — hiç gaýtadan barlanmaýar (aýratyn faýl)
+
+def hunt_bad_load():
+    try:
+        with open(HUNT_BAD_FILE, encoding="utf-8") as f: return {l.strip() for l in f if l.strip()}
+    except Exception: return set()
+
+def hunt_bad_add(hps):
+    hps = [h for h in hps if h]
+    if not hps: return
+    with open(HUNT_BAD_FILE, "a", encoding="utf-8") as f: f.write("".join(h + "\n" for h in hps))
 HUNT_URL = os.environ.get("HUNT_URL", "https://www.gstatic.com/generate_204")
 HUNT_GH_Q = ["v2ray config", "vless sub", "hysteria2 config", "free v2ray", "v2ray subscription", "shadowsocks free", "vless reality free", "proxy collector"]
 HUNT_LOCK = threading.Lock()
@@ -1460,7 +1470,7 @@ def hunt_run(force_gh=False):
             try: found += [(c, "url") for c in hunt_url_codes(u)]
             except Exception: errs += 1
         # 2) täze kodlar (host:port boýunça bir gezek), howuzdakylar gaýtadan barlanýar
-        pool = dict(a.get("hunt") or {}); bad = {k: v for k, v in (a.get("hunt_bad") or {}).items() if now - float(v) < HUNT_BAD_TTL}
+        pool = dict(a.get("hunt") or {}); bad = hunt_bad_load() | set((a.get("hunt_bad") or {}).keys()); bad_new = []
         have = {app_x_hp(x) for v in (a.get("last") or {}).values() for x in v} | {app_x_hp(v["c"]) for v in (a.get("xcodes") or {}).values()}   # abunada / kanalda / elle — eýýäm programda
         new_ = {}
         for c, src in found:
@@ -1479,16 +1489,18 @@ def hunt_run(force_gh=False):
             hp = app_x_hp(c); old = pool.get(hp) or {}
             if c in ok and not tm_bad(hp):
                 npool[hp] = {"c": c, "ms": ok[c], "ok": int(now), "ts": int(old.get("ts") or now), "src": old.get("src") or (new_.get(hp) or ("", ""))[1]}
-            else: bad[hp] = int(now)
+            else: bad_new.append(hp)
         tmk = lambda hp: (0, int(hm[hp][0])) if hp in hm and int(hm[hp][0]) > 0 and now - float(hm[hp][1]) < 6 * 3600 else (1, npool[hp]["ms"])
         keep = sorted(npool, key=tmk)[:HUNT_KEEP]
         npool = {hp: npool[hp] for hp in keep}; st["n"] = len(npool)
         nrefs = [r for r in sorted(refs) if r not in {x.lower() for x in tg_}][:20]
         def fw(x):
-            x["hunt"] = npool; x["hunt_bad"] = dict(list(bad.items())[-5000:]); x["hunt_st"] = st
+            x["hunt"] = npool; x.pop("hunt_bad", None); x["hunt_st"] = st
             x["hunt_tgd"] = list(dict.fromkeys(list(x.get("hunt_tgd") or []) + pg_ + nrefs))[-150:]
             if probe_ is not None: x["hunt_probe"] = dict(list(probe_.items())[-3000:])
             if gh_ is not None: x["hunt_ghd"] = gh_; x["hunt_gh_at"] = int(now)
+        hunt_bad_add(list(dict.fromkeys(bad_new + [h for h in (a.get("hunt_bad") or {}) if h not in hunt_bad_load()])))
+        st["bad"] = len(bad) + len(bad_new)
         app_mut(fw); RUN["app_dirty"] = True
         vlog(f"🔎 Kod awy: {st['found']} kod tapyldy, {st['tested']} barlandy, {st['ok']} işleýär → programda {st['n']}")
         return st
@@ -6091,9 +6103,21 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         if uid not in ORIG_ADMINS:
             await safe_edit(q, "⛔ Erişim yok", back("admin")); return
         if a.startswith("app_hunt"):   # 1.46: kod avı
-            if a == "app_hunt_run": RUN["hunt_now"] = True; RUN["hunt_gh"] = True
+            if a == "app_hunt_run":
+                if HUNT_LOCK.locked(): await safe_edit(q, "⏳ <b>Tarama zaten sürüyor</b> — bitince sonuç mesajı gelecek.", KB([[B("🔎 Kod avı", "app_hunt")]])); return
+                async def _hunt_now(chat_):
+                    st_ = await asyncio.to_thread(hunt_run, True)
+                    if st_.get("err") == "busy": return
+                    t_ = ("⚠️ Kod avı: Xray kurulu değil" if st_.get("err") else
+                          f"🔎 <b>Kod avı bitti</b>\n<blockquote>{st_.get('src', 0)} kaynak · {st_.get('found', 0)} kod bulundu · {st_.get('uniq', 0)} yeni\n"
+                          f"{st_.get('tested', 0)} test edildi · <b>{st_.get('ok', 0)} çalışıyor</b>\nProgramda: <b>{st_.get('n', 0)}</b> kod · daha önce çalışmayan {st_.get('bad', 0)} kod atlandı</blockquote>")
+                    try: await c.bot.send_message(chat_, t_, parse_mode="HTML", reply_markup=KB([[B("🔎 Kod avı", "app_hunt")]]))
+                    except Exception as e2: log.info("hunt msg: %s", e2)
+                asyncio.create_task(_hunt_now(uid))
+                await safe_edit(q, "⏳ <b>Tarama başladı</b>\n<i>Kanallar, GitHub ve tahmin edilen kanal adları taranıyor, kodlar Xray ile test ediliyor. Bitince (5–15 dk) sonuç mesajı gelecek.</i>",
+                                KB([[B("🔎 Kod avı", "app_hunt")]])); return
             elif a == "app_hunt_tog": mutate(lambda d: d.setdefault("app", {}).__setitem__("hunt_on", not d.get("app", {}).get("hunt_on", True))); RUN["app_dirty"] = True
-            elif a == "app_hunt_clr": mutate(lambda d: [d.setdefault("app", {}).pop(k_, None) for k_ in ("hunt", "hunt_bad", "hunt_tgd", "hunt_ghd")]); RUN["app_dirty"] = True
+            elif a == "app_hunt_clr": mutate(lambda d: [d.setdefault("app", {}).pop(k_, None) for k_ in ("hunt", "hunt_tgd", "hunt_ghd")]); RUN["app_dirty"] = True
             elif a == "app_hunt_add":
                 STATE[uid] = {"action": "hunt_add"}
                 t, kb = prompt("➕ <b>Kod avı · kaynak ekle</b>", "Telegram kanalı (ör. <code>supervpntm</code> ya da <code>t.me/kanal</code>) veya kod listesi linki "
@@ -6103,6 +6127,7 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
             src_ = [f"📡 {esc(c_)}" for c_ in (a_.get("hunt_tg") or [])] + [f"🔗 {esc(short(u_, 50))}" for u_ in (a_.get("hunt_url") or [])]
             t_ = ("🔎 <b>Kod avı</b>\n<blockquote>"
                   + ("🟢 Açık" if on_ else "🔴 Kapalı") + (" · ⚠️ <b>Xray kurulu değil</b>" if not xray_bin() else "") + "\n"
+                  + ("⏳ <b>Tarama sürüyor…</b>\n" if HUNT_LOCK.locked() else "")
                   + (f"Son tarama: {datetime.datetime.fromtimestamp(st_['at']).strftime('%d.%m %H:%M')} · {st_.get('found', 0)} kod bulundu, {st_.get('tested', 0)} test, {st_.get('ok', 0)} çalışıyor\n" if st_.get("at") else "Henüz tarama yok\n")
                   + f"Programda: <b>{len(a_.get('hunt') or {})}</b> kod (Free'de en fazla {HUNT_FREE}, Premium'da en fazla {HUNT_KEEP})\n"
                   + f"Kaynaklar: {len(a_.get('tgsrc') or APP_TG_DEFAULT) + len(a_.get('hunt_tg') or [])} kanal + {len(a_.get('hunt_tgd') or [])} bulunan kanal · {len(a_.get('hunt_url') or [])} link + {len(a_.get('hunt_ghd') or [])} GitHub</blockquote>"
