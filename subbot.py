@@ -1288,7 +1288,7 @@ def app_sync(force=False):
         except Exception as e: log.info("quota: %s", e)
         for c in app_x_named(codes, app_cfg(load_db())):   # 1.16.6: kanal + admin kodlary
             if code_key(c) not in keys: keys.add(code_key(c)); codes.append(c)
-        codes = app_flag_best(codes, cfg.get("hp_ms"))   # 1.43.3: bir baýdakdan bir serwer (Russiýa / PUBG — hemmesi)
+        # 1.44.3: Premium — abunalardaky ähli hakyky kodlar (bir baýdakdan bir serwer çägi aýryldy)
         free_ = app_free_pick(codes, base1, cfg.get("hp_ms"))   # 1.43.2: mugt — her ýurtdan iň gowy işleýän bir kod + kanal + 2 PUBG
         codes = app_brand_names(codes)   # 1.29: abunanyň atlary görünmesin
         meta = app_meta(cfg) + (["#tvfree: " + ",".join(free_)] if free_ else [])
