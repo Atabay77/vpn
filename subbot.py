@@ -1260,7 +1260,7 @@ HUNT_KEEP = 150            # programa iň köp (Premium)
 HUNT_FREE = 5              # mugt bölüme iň köp
 HUNT_BAD_TTL = 12 * 3600   # işlemedik kod 12 sagat gaýtadan barlanmaýar
 HUNT_URL = os.environ.get("HUNT_URL", "https://www.gstatic.com/generate_204")
-HUNT_GH_Q = ["v2ray config", "vless sub", "hysteria2 config", "free v2ray"]
+HUNT_GH_Q = ["v2ray config", "vless sub", "hysteria2 config", "free v2ray", "v2ray subscription", "shadowsocks free", "vless reality free", "proxy collector"]
 HUNT_LOCK = threading.Lock()
 import subprocess, tempfile
 
@@ -1360,17 +1360,52 @@ def hunt_test(codes, threads=25, batch=40, port0=21000, timeout=8):
         run_batch(codes[k:k + batch], port0 + (k // batch % 10) * batch)
     return res
 
-def hunt_tg(ch):
-    """Kanalyň web sahypasyndaky ÄHLI kodlar (diňe iň täzeleri däl) we beýleki kanallara salgylar."""
-    req = urllib.request.Request(f"https://t.me/s/{urllib.parse.quote(ch)}", headers={"User-Agent": "Mozilla/5.0"})
-    with urllib.request.urlopen(req, timeout=20) as r: page = r.read().decode("utf-8", "ignore")
+def hunt_tg(ch, pages=3):
+    """Kanalyň web sahypasyndaky ÄHLI kodlar (iň köp 3 sahypa — köne ýazgylar hem) we beýleki kanallara salgylar."""
+    page, before = "", ""
+    for _ in range(pages):
+        req = urllib.request.Request(f"https://t.me/s/{urllib.parse.quote(ch)}" + (f"?before={before}" if before else ""), headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=20) as r: pg = r.read().decode("utf-8", "ignore")
+        page += pg
+        ids = [int(x) for x in re.findall(r'data-post="[^"/]+/(\d+)"', pg)]
+        if not ids or min(ids) <= 1: break
+        before = str(min(ids))
     page = re.sub(r"<br\s*/?>", "\n", page)
     codes = []
     for m in TG_CODE_RE.finditer(page):
         c = html.unescape(re.sub(r"<[^>]+>", "", m.group(0))).strip().rstrip(".,;)")
         if "…" not in c and "..." not in c and c.lower().startswith(APP_X_PROTOS) and code_hostport(c)[0]: codes.append(c)
     refs = {x.lower() for x in re.findall(r"t\.me/(?:s/)?([A-Za-z][A-Za-z0-9_]{4,31})\b", page)} - {ch.lower(), "share", "joinchat", "addstickers", "proxy", "iv", "s"}
-    return codes[-300:], sorted(refs)[:40]
+    return codes[-600:], sorted(refs)[:40]
+
+HUNT_WORDS_A = ["", "tm", "tkm", "turkmen", "turkmenistan", "free", "fast", "best", "super", "mega", "top", "my", "new"]
+HUNT_WORDS_B = ["vpn", "v2ray", "v2rayng", "ss", "shadowsocks", "hy2", "hysteria", "hysteria2", "vless", "proxy", "config", "configs", "kod", "kodlar", "key", "keys", "net", "server"]
+HUNT_WORDS_C = ["", "tm", "tkm", "_tm", "_tkm", "free", "fast", "vpn", "1", "2", "_free", "_vpn", "pro", "plus", "turkmen"]
+
+def hunt_guess_names():
+    """vpntkm, tkmvpn, tmfast, fastvpn, tm_v2ray… ýaly mümkin kanal atlary."""
+    out = set()
+    for a_ in HUNT_WORDS_A:
+        for b_ in HUNT_WORDS_B:
+            for c_ in HUNT_WORDS_C:
+                for n_ in (a_ + b_ + c_, (a_ + "_" + b_ + c_) if a_ else ""):
+                    if 5 <= len(n_) <= 32 and re.fullmatch(r"[a-z][a-z0-9_]*[a-z0-9]", n_) and "__" not in n_: out.add(n_)
+    out.update(["tmfast", "fastvpn", "vpntkm", "tkmvpn", "tmvpn", "vpntm", "tm_vpn", "vpn_tm", "tkm_vpn", "vpn_tkm"])
+    tmk = lambda x: any(k in x for k in ("tkm", "turkmen")) or x.startswith("tm") or x.endswith("tm")
+    return sorted(out, key=lambda x: (not tmk(x), "vpn" not in x, len(x), x))   # türkmen + vpn öňde
+
+def hunt_probe(a, n=150):
+    """Çaklanan atlardan n sanysyny barlaýar (her at 7 günde bir). Kod paýlaşýanlary gaýtarýar."""
+    tried = dict(a.get("hunt_probe") or {}); now = time.time(); got = []
+    todo = [x for x in hunt_guess_names() if now - float(tried.get(x) or 0) > 7 * 86400][:n]
+    def one(nm):
+        try: cs, _ = hunt_tg(nm, pages=1); return nm, len(cs)
+        except Exception: return nm, 0
+    with ThreadPoolExecutor(6) as ex:
+        for nm, k in ex.map(one, todo):
+            tried[nm] = int(now)
+            if k: got.append(nm)
+    return got, tried
 
 def hunt_url_codes(url):
     """GitHub / başga ýerdäki tekst ýa-da base64 abuna faýly."""
@@ -1396,7 +1431,7 @@ def hunt_github():
                         re.search(r"(sub|mix|all|config|vless|hy2|hysteria|ss|v2ray)", nm) and not nm.endswith((".md", ".py", ".js", ".json", ".yml", ".yaml", ".png", ".jpg", ".html")):
                     out.append(f_["download_url"])
         time.sleep(7)   # gözleg API: minutda 10
-    return list(dict.fromkeys(out))[:30]
+    return list(dict.fromkeys(out))[:50]
 
 def hunt_run(force_gh=False):
     """Bir aýlaw: ýygna → barla → howuz (a["hunt"]) täzelenýär. Dönüş: ýagdaý sözlügi."""
@@ -1404,23 +1439,29 @@ def hunt_run(force_gh=False):
     try:
         a = app_cfg(load_db()); now = time.time(); st = {"at": int(now)}
         if not xray_bin(): st["err"] = "xray yok"; app_mut(lambda x: x.__setitem__("hunt_st", st)); return st
+        pg_, probe_ = [], None
         # 1) çeşmeler
-        tg_ = list(dict.fromkeys([c for c in (a.get("tgsrc") or APP_TG_DEFAULT)] + list(a.get("hunt_tg") or []) + list(a.get("hunt_tgd") or [])))
-        urls_ = list(dict.fromkeys(list(a.get("hunt_url") or []) + list(a.get("hunt_ghd") or [])))
-        found, refs, errs = [], set(), 0
-        for ch in tg_[:60]:
-            try: cs, rf = hunt_tg(ch); found += [(c, "tg:" + ch) for c in cs]; refs.update(rf)
-            except Exception: errs += 1
-        for u in urls_[:40]:
-            try: found += [(c, "url") for c in hunt_url_codes(u)]
-            except Exception: errs += 1
         gh_ = None
-        if force_gh or now - float(a.get("hunt_gh_at") or 0) > 6 * 3600:
+        if force_gh or now - float(a.get("hunt_gh_at") or 0) > 6 * 3600 or not a.get("hunt_ghd"):
             try: gh_ = hunt_github()
             except Exception as e: log.info("hunt gh: %s", e)
+        try: pg_, probe_ = hunt_probe(a)   # at çaklap täze kanallar
+        except Exception as e: pg_, probe_ = [], None; log.info("hunt probe: %s", e)
+        tg_ = list(dict.fromkeys([c for c in (a.get("tgsrc") or APP_TG_DEFAULT)] + list(a.get("hunt_tg") or []) + list(a.get("hunt_tgd") or []) + pg_))
+        urls_ = list(dict.fromkeys(list(a.get("hunt_url") or []) + list(gh_ if gh_ is not None else (a.get("hunt_ghd") or []))))
+        found, refs, errs = [], set(), 0
+        def tg1(ch):
+            try: cs, rf = hunt_tg(ch); return ch, cs, rf, 0
+            except Exception: return ch, [], [], 1
+        with ThreadPoolExecutor(4) as ex:
+            for ch, cs, rf, e_ in ex.map(tg1, tg_[:120]):
+                found += [(c, "tg:" + ch) for c in cs]; refs.update(rf); errs += e_
+        for u in urls_[:60]:
+            try: found += [(c, "url") for c in hunt_url_codes(u)]
+            except Exception: errs += 1
         # 2) täze kodlar (host:port boýunça bir gezek), howuzdakylar gaýtadan barlanýar
         pool = dict(a.get("hunt") or {}); bad = {k: v for k, v in (a.get("hunt_bad") or {}).items() if now - float(v) < HUNT_BAD_TTL}
-        have = {app_x_hp(x) for v in (a.get("last") or {}).values() for x in v}   # abunalarda eýýäm bar
+        have = {app_x_hp(x) for v in (a.get("last") or {}).values() for x in v} | {app_x_hp(v["c"]) for v in (a.get("xcodes") or {}).values()}   # abunada / kanalda / elle — eýýäm programda
         new_ = {}
         for c, src in found:
             hp = app_x_hp(c)
@@ -1445,7 +1486,8 @@ def hunt_run(force_gh=False):
         nrefs = [r for r in sorted(refs) if r not in {x.lower() for x in tg_}][:20]
         def fw(x):
             x["hunt"] = npool; x["hunt_bad"] = dict(list(bad.items())[-5000:]); x["hunt_st"] = st
-            x["hunt_tgd"] = list(dict.fromkeys(list(x.get("hunt_tgd") or []) + nrefs))[-40:]
+            x["hunt_tgd"] = list(dict.fromkeys(list(x.get("hunt_tgd") or []) + pg_ + nrefs))[-150:]
+            if probe_ is not None: x["hunt_probe"] = dict(list(probe_.items())[-3000:])
             if gh_ is not None: x["hunt_ghd"] = gh_; x["hunt_gh_at"] = int(now)
         app_mut(fw); RUN["app_dirty"] = True
         vlog(f"🔎 Kod awy: {st['found']} kod tapyldy, {st['tested']} barlandy, {st['ok']} işleýär → programda {st['n']}")
