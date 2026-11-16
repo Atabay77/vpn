@@ -963,7 +963,7 @@ def app_left(exp):
 # bir koddan yzly-yzyna 3 gezek jogap gelmese (we soňky 6 sagatda hiç kim işledip bilmese) — kod pozulýar.
 APP_X_PROTOS = ("vless://", "ss://", "hysteria2://", "hy2://")   # programyň goldaýan kodlary
 APP_TG_DEFAULT = ["supervpntm"]
-APP_TG_EVERY, APP_TG_MAX, APP_X_DEAD = 600, 20, 3
+APP_TG_EVERY, APP_TG_MAX, APP_X_DEAD = 60, 20, 3   # 1.44.2: kanal her minutda barlanýar (täze kod — derrew programa)
 TG_CODE_RE = re.compile(r"(?:vless|ss|hysteria2|hy2)://[^\s<>\"']+", re.I)
 
 APP_TG_BATCH = 90 * 60   # iň soňky kod bilen şu wagtyň içinde goýlan kodlar alynýar (öňküler eýýäm bloklanan)
@@ -1131,29 +1131,44 @@ def app_flag_best(codes, hpms=None):
     return [c for i, c in enumerate(codes) if i in keep]
 
 def app_free_pick(codes, base1, hpms=None):
-    """1.43.2: mugt ulanyjylar üçin (öňki ýaly): her baýdakdan bir kod — şol ýurduň iň gowy işleýäni (programlaryň iberýän pinginden),
-    kanaldan («· tm») iň köp 2 we iň gowy işleýän 2 PUBG. Dönüş: ["host:port", …]."""
+    """1.44.2: mugt — 4 serwer: 3 sany «· VIP» (ýetmese abunadan), 1 kanal («· tm») we 1 PUBG.
+    Diňe işleýänler saýlanýar: soňky 6 sagatda işlän öňde, pingi belli däl soňra; soňky barlagda jogap bermedik — başga ýok bolsa.
+    Dönüş: ["host:port", …]."""
     hpms = hpms or {}; now = time.time()
     def hp_(c): h, p_ = code_hostport(c); return f"{h}:{p_}" if h and p_ else ""
     def score(i_c):   # (0, ms) — soňky 6 sagatda işledi; (1, …) — maglumat ýok; (2, …) — soňky gezek jogap bermedi
         i, c = i_c; v = hpms.get(hp_(c))
         if v and now - float(v[1]) < 6 * 3600: return (0, int(v[0]), i) if int(v[0]) > 0 else (2, 0, i)
         return (1, 0, i)
-    tm_ = lambda c: bool(re.search(r"· tm$", orig_name(c).strip()))
-    reg = [(i, c) for i, c in enumerate(codes) if not app_is_game(c) and not app_is_info(c) and not tm_(c)]
-    best, order = {}, []
-    for i, c in reg:
-        m = re.search(r"[\U0001F1E6-\U0001F1FF]{2}", orig_name(c)); f_ = m.group(0) if m else "🌐" + str(i)
-        if f_ not in best: order.append(f_)
-        if f_ not in best or score((i, c)) < score(best[f_]): best[f_] = (i, c)
-    pick = [best[f_][1] for f_ in order]
-    pick += [c for _, c in sorted([(i, c) for i, c in enumerate(codes) if not app_is_game(c) and tm_(c)], key=score)]
-    pick += [c for _, c in sorted([(i, c) for i, c in enumerate(codes) if app_is_game(c)], key=score)[:2]]
+    tail = lambda c, t: bool(re.search(r"· " + t + r"$", orig_name(c).strip()))
+    ix = [(i, c) for i, c in enumerate(codes) if hp_(c) and not app_is_info(c)]
+    reg = [x for x in ix if not app_is_game(x[1])]
+    vip = [x for x in reg if tail(x[1], "VIP")]
+    tm = [x for x in reg if tail(x[1], "tm")]
+    sub = [x for x in reg if not tail(x[1], "VIP") and not tail(x[1], "tm")]
+    game = [x for x in ix if app_is_game(x[1])]
+    def tiers(*groups):   # her topar — ilki işleýänleri, soň ölüleri
+        srt = [sorted(g, key=score) for g in groups]
+        return [x for g in srt for x in g if score(x)[0] < 2] + [x for g in srt for x in g if score(x)[0] >= 2]
     out = []
-    for c in pick:
-        h, p_ = code_hostport(c)
-        if h and p_: out.append(f"{h}:{p_}")
-    return list(dict.fromkeys(out))
+    def take(cands, n):
+        k = 0
+        for _, c in cands:
+            if k >= n: break
+            h = hp_(c)
+            if h in out: continue
+            out.append(h); k += 1
+        return k
+    take(tiers(vip, sub), 3)                       # 3 VIP (ýetmese abunadan, işleýäni)
+    alive = lambda lst: [x for x in lst if score(x)[0] < 2]
+    if not take(alive(tiers(tm)), 1) and not take(alive(tiers(vip, sub)), 1):   # 1 kanal; işleýän kanal kody ýok bolsa — başga işleýän
+        take(tiers(tm, vip, sub), 1)
+    take(tiers(game), 1)                           # 1 PUBG
+    all_hps = {hp_(c) for c in codes if hp_(c)}
+    if len(all_hps) >= 2:
+        while out and not (all_hps - set(out)):    # Premium-da hemişe mugtdan köp serwer bolsun
+            out.pop()
+    return out
 
 def app_x_named(base_codes, a):
     """Goşmaça kodlar programyň sanawyna: ady «🇹🇷 Türkiýe · tm» (şol baýdak öň bar bolsa «Türkiýe 2»), Russiýa — 🎮 oýun bölümi."""
@@ -1389,6 +1404,16 @@ async def app_fs_auto():
             log.info("fs: VPS taýýar"); 
             try: await asyncio.to_thread(app_sync, True)
             except Exception as e: log.info("app sync (fs vps): %s", e)
+
+async def app_tg_loop():
+    """1.44.2: Telegram kanaly her minutda; täze kod çyksa programyň sanawy derrew täzelenýär (10 minut garaşylmaýar)."""
+    await asyncio.sleep(20)
+    while True:
+        try:
+            await asyncio.to_thread(app_tg_refresh)
+            if RUN.pop("app_dirty", None): await asyncio.to_thread(app_sync, True)
+        except Exception as e: log.info("tg loop: %s", e)
+        await asyncio.sleep(APP_TG_EVERY)
 
 async def app_loop(app):
     try: await app_fs_auto()
@@ -1840,7 +1865,7 @@ Ulanyjynyň dilinde (türkmen, rus ýa-da türk) gysga (1–3 sözlem), dostlukl
 Ulanyjynyň iň soňky habaryna jogap ber. Salamlaşsa ýa-da «sen kim» diýse adaty gürleş, meselem: «Salam! Men Türkmen VPN-iň AI kömekçisi. Size nähili kömek edip bilerin?»
 FAKTLAR:
 - Programma mugt: her birikme 1 sagat dowam edýär (profilde nigini üýtgedenlere 1,5 sagat), soň täzeden birigip bolýar. Premium bilen çäk ýok.
-- Mugt ulanyjylar: «Free» bölümindäki serwerler we 2 PUBG serweri, birikme wagty çäkli.
+- Mugt ulanyjylar: «Free» bölümindäki 4 serwer we 1 PUBG serweri, birikme wagty çäkli.
 - Premium: ähli serwerler («Premium» we «PUBG» bölümleri), wagt çägi ýok, profilde we chatda ýalpyldaýan 👑 Premium nyşany.
 - Premium bahasy: 1 aý — 100 TMT, 1 ýyl — 700 TMT (12 aýlykdan 500 TMT arzan — iň amatlysy ýyllyk). Diňe şu iki möhlet bar.
 - Premium satyn almak: baş sahypanyň ýokarsyndaky «👑 Premium satyn al» düwmesi → möhleti we satyjyny saýla → oňa ýaz. Satyjy tölegden soň Premium-y siziň profiliňize özi berýär. Sen özüň Premium berme we töleg maglumatyny oýlap tapma.
@@ -3358,6 +3383,7 @@ async def post_init(app):
     app.bot_data["px"] = asyncio.create_task(proxy_loop(app))
     app.bot_data["mail"] = asyncio.create_task(mail_loop(app))
     app.bot_data["appsync"] = asyncio.create_task(app_loop(app))
+    app.bot_data["apptg"] = asyncio.create_task(app_tg_loop())
     app.bot_data["appmsg"] = asyncio.create_task(app_msg_loop(app))
     app.bot_data["apprel"] = asyncio.create_task(app_relay_loop(app))
     try: ADMINS.update(int(k) for k in load_db().get("temp_admins", {}))   # acil yetkililer yeniden başlatmada kalır
