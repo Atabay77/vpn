@@ -74,7 +74,7 @@ object Cfg {
                 when (sec) {
                     "tls" -> st.put("tlsSettings", JSONObject().put("serverName", l.q["sni"] ?: l.host)
                         .put("fingerprint", l.q["fp"] ?: "chrome").also { t ->
-                            l.q["alpn"]?.let { a -> t.put("alpn", JSONArray(a.split(','))) }
+                            l.q["alpn"]?.let { a -> t.put("alpn", JSONArray(a.split(',').map { it.trim() }.filter { it.isNotEmpty() })) }   // 1.44.2: «h3, http/1.1» — boşluk aýrylýar
                             l.q["pcs"]?.let { t.put("pinnedPeerCertSha256", it) }
                         })
                     "reality" -> st.put("realitySettings", JSONObject().put("serverName", l.q["sni"] ?: "")
@@ -87,6 +87,12 @@ object Cfg {
                     "xhttp" -> st.put("xhttpSettings", JSONObject().put("path", l.q["path"] ?: "/")
                         .put("host", l.q["host"] ?: "").put("mode", l.q["mode"] ?: "auto"))
                     "httpupgrade" -> st.put("httpupgradeSettings", JSONObject().put("path", l.q["path"] ?: "/").put("host", l.q["host"] ?: ""))
+                }
+                // 1.44.2: TLS ClientHello bölekleýin (DPI-den geçmek üçin) — «fm» (finalmask) ýa-da köne «fragment=uzynlyk,wagt,paketler»
+                l.q["fm"]?.let { f -> runCatching { st.put("finalmask", JSONObject(f)) } }
+                if (l.q["fm"] == null) l.q["fragment"]?.split(',')?.map { it.trim() }?.takeIf { it.size >= 3 && it[0].isNotEmpty() }?.let { fr ->
+                    st.put("finalmask", JSONObject().put("tcp", JSONArray().put(JSONObject().put("type", "fragment")
+                        .put("settings", JSONObject().put("length", fr[0]).put("delay", fr[1]).put("packets", fr[2])))))
                 }
                 o.put("streamSettings", st)
             }
