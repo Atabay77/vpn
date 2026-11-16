@@ -722,7 +722,7 @@
         r.svPremBan = !PR && PF && tab !== 'free';
         r.premOpen = () => { INFO = J(NB.info(), INFO); this.setState({ psh: true, pstep: 1, menu: false }); };
         r.premPillOn = pg === 'main' && (PF || PR); r.premPillCls = PR ? 'ppill-on' : '';
-        r.premPillT = PR ? (pexp === 0 ? 'Premium ♾' : 'Premium · ' + dlT) : tx.pr_buy; r.premPillS = PR ? (pexp === 0 ? '♾' : dlT) : tx.pr_buyS;
+        r.premPillT = PR ? (pexp === 0 ? 'Premium ♾' : 'Premium · ' + dlT) : tx.pr_buy; r.premPillS = PR ? (pexp === 0 ? '♾' : dlT) : '';   // 1.44: «satyn al» ýazgysy aýryldy
         // Premium sahypasy
         const plan = s.pplan || 'y';
         r.pshOn = !!s.psh; r.pshX = () => this.setState({ psh: false }); r.pshIsPrem = PR; r.pshHaveT = PR ? (pexp === 0 ? tx.pr_unl : tx.pr_have.replace('{d}', dlT)) : '';
