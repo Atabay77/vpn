@@ -13,6 +13,16 @@ class H(http.server.SimpleHTTPRequestHandler):
     def do_GET(s):
         p = urllib.parse.urlparse(s.path).path
         if p == UP: return s.send(200, PAGE, "text/html; charset=utf-8")
+        if p == "/":   # ýükläp almak sahypasy (Gmail APK salgyly hatlary ret edýär — hatda şu sahypa)
+            fs = sorted((x for x in os.listdir(D) if x.endswith(".apk")), key=lambda x: os.path.getmtime(os.path.join(D, x)), reverse=True)
+            if not fs: return s.send(404, b"entek APK yok")
+            n = urllib.parse.quote(fs[0])
+            b = ("<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'><title>Turkmen VPN</title>"
+                 "<body style='margin:0;font-family:sans-serif;background:#0B1A2E;color:#F3E7D0;display:flex;align-items:center;justify-content:center;min-height:100vh;text-align:center'>"
+                 "<div style='padding:24px'><h2>Türkmen VPN</h2><p>" + fs[0].replace("<", "") + "</p>"
+                 "<a href='/" + n + "' style='display:inline-block;padding:16px 28px;border-radius:14px;background:#E0B04A;color:#0B2117;font-weight:800;text-decoration:none;font-size:18px'>⬇ Ýükle / İndir</a>"
+                 "<p style='font-size:13px;opacity:.75;margin-top:20px'>Ýüklenen faýly açyň we gurnaň. Telefon «näbelli çeşme» diýse, rugsat beriň.</p></div>").encode()
+            return s.send(200, b, "text/html; charset=utf-8")
         if not p.endswith(".apk"): return s.send(404, b"yok")
         return super().do_GET()
     def do_POST(s):

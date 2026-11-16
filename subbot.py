@@ -4163,12 +4163,10 @@ def mail_tick():
                 if c_.get(day_, 0) >= MAIL_DL_PER_DAY: d["mail_dl_cnt"] = c_; return False
                 c_[day_] = c_.get(day_, 0) + 1; d["mail_dl_cnt"] = c_; return True
             if not mutate(cnt_): continue
-            cfg_ = app_cfg(load_db())
-            u_ = max((cfg_.get("upd") or {}).values(), key=lambda x: [int(p_) if p_.isdigit() else 0 for p_ in str(x.get("ver", "0")).split(".")], default=None)
-            if not u_ or not u_.get("fid"):
+            cfg_ = app_cfg(load_db()); tg_ = app_dl_target(cfg_)   # 1.44.3: Drive ýa-da öz VPS (has täzesi)
+            if not tg_:
                 events.append(f"⚠️ <b>Mailde indirme linki istendi ama yayında sürüm yok</b>\n<blockquote>{esc(frm)}</blockquote>"); continue
-            page_ = cfg_.get("dl_page")   # 1.37: Gmail APK salgyly hatlary ret edýär — sahypanyň salgysy
-            link = page_ or sub_link(u_["fid"]); MAIL_DL_SENT.append(now)
+            u_ = {"ver": tg_[0]}; link = tg_[1]; page_ = tg_[2]; MAIL_DL_SENT.append(now)
             try:
                 mail_send(frm, f"Türkmen VPN {u_.get('ver', '')} · ýükläp almak / indirme linki",
                           f"Salam!\n\nTürkmen VPN programmasynyň iň täze wersiýasy ({u_.get('ver', '')}) aşakdaky "
@@ -4277,12 +4275,24 @@ def mail_fail_seed(extra=(), hours=48):
         d["mail_fail"] = cur[-300:]
     mutate(f)
 
+def app_dl_target(cfg_):
+    """1.44.3: mail üçin iň täze wersiýa: (wersiýa, salgy, sahypamy) ýa-da None. Göni salgy (VPS) has täze bolsa — şonuň sahypasy
+    (Gmail .apk salgyly hatlary ret edýär; apk_srv.py-nyň «/» sahypasy iň täze APK-ny görkezýär)."""
+    vk = lambda v: [int(p_) if p_.isdigit() else 0 for p_ in str(v or "0").split(".")]
+    u_ = max((cfg_.get("upd") or {}).values(), key=lambda x: vk(x.get("ver")), default=None)
+    ul_ = cfg_.get("upd_link") or {}
+    if ul_.get("url") and (not u_ or not u_.get("fid") or vk(ul_.get("ver")) > vk(u_.get("ver"))):
+        m_ = re.match(r"^(https?://[^/]+)/[^/?#]+\.apk$", ul_["url"], re.I)
+        return (ul_.get("ver", ""), m_.group(1) + "/" if m_ else ul_["url"], bool(m_))
+    if not u_ or not u_.get("fid"): return None
+    page_ = cfg_.get("dl_page")
+    return (u_.get("ver", ""), page_ or sub_link(u_["fid"]), bool(page_))
+
 def mail_dl_retry(limit=40):
     """1.37: gönderilemeyen indirme maillerini yeniden gönderir (ilk hata — durur). Dönüş: (gönderilen, kalan, son hata)."""
-    d0 = load_db(); fails = list(d0.get("mail_fail", [])); cfg_ = app_cfg(d0)
-    u_ = max((cfg_.get("upd") or {}).values(), key=lambda x: [int(p_) if p_.isdigit() else 0 for p_ in str(x.get("ver", "0")).split(".")], default=None)
-    if not fails or not u_ or not u_.get("fid"): return 0, len(fails), ""
-    page_ = cfg_.get("dl_page"); link = page_ or sub_link(u_["fid"]); sent, err_ = [], ""
+    d0 = load_db(); fails = list(d0.get("mail_fail", [])); cfg_ = app_cfg(d0); tg_ = app_dl_target(cfg_)
+    if not fails or not tg_: return 0, len(fails), ""
+    u_ = {"ver": tg_[0]}; link = tg_[1]; page_ = tg_[2]; sent, err_ = [], ""
     for it in fails[:limit]:
         try:
             mail_send(it["to"], f"Türkmen VPN {u_.get('ver', '')} · ýükläp almak / indirme linki",
