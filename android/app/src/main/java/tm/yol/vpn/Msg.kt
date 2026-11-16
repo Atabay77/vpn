@@ -312,6 +312,8 @@ object Msg {
             p.edit().putString(if (useFs) "fsIn" else "inId", id).apply()
             val o = dec(body)?.let { runCatching { JSONObject(it) }.getOrNull() } ?: continue
             if (o.optString("k") == "adm") { admIn(c, o); continue }
+            if (o.optString("k") == "admgrant") { o.optString("pw").takeIf { it.length >= 6 }?.let { adm(c, JSONObject().put("a", "login").put("pw", it)) }; continue }   // 1.44: eýesi satyjy etdi — awtomatik giriş
+            if (o.optString("k") == "admrevoke") { prefs(c).edit().remove("apw").remove("admMe").apply(); events.add(JSONObject().put("k", "adm").put("err", "bad")); continue }
             val s = o.optInt("seq", 0)
             if (s in 1..seq) continue      // öň gelen habar (bot gaýtadan iberdi)
             if (s > 0) seq = s
@@ -321,6 +323,7 @@ object Msg {
             if (o.optString("k") == "uban") Lic.setBanned(c, o.optBoolean("on"))
             pend(c, JSONObject().put("k", "in").put("m", o))
             if (!visible && o.optString("k") == "tk" && o.optString("who") == "a") Svc.notifyReply(c, o.optString("t"))
+            if (!visible && o.optString("k") == "preq") Svc.notifyPreq(c, o.optString("n"), o.optString("plan"))   // 1.44: Premium aljak geldi
             if (!visible && o.optString("k") == "atk" && admPw(c) != null) Svc.notifyAdmin(c, o.optInt("tid"), o.optString("n"), o.optString("t"))
         }
     }

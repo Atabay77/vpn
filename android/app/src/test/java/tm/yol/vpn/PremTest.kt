@@ -37,4 +37,22 @@ class PremTest {
         assertTrue(Lic.prem(c)); assertTrue(State.allowed(c, prem))
         Sub.meta("")
     }
+
+    /** 1.44: mugt birikme wagty — admin panelinden (#tvsess), nik bonusy +30 minut, Premium / açar — çäksiz. */
+    @Test fun sessionTime() {
+        val c = RuntimeEnvironment.getApplication()
+        c.getSharedPreferences("p", 0).edit().putString("dev", "0123456789ab").remove("key").remove("nkb").remove("uban").putLong("start", 0).commit()
+        Sub.meta("#tvsess: 120\n#tvfree: 1.1.1.1:443")
+        assertEquals(120, Sub.sess); assertEquals(120 * 60_000L, Lic.session(c)); assertEquals(120 * 60_000L, Lic.left(c))
+        Lic.setBonus(c); assertEquals(150 * 60_000L, Lic.left(c))
+        Lic.setStart(c, System.currentTimeMillis() - 60 * 60_000L)
+        val l = Lic.left(c)!!; assertTrue(l in 89 * 60_000L..90 * 60_000L)                       // 1 sagat geçdi — 1,5 sagat galdy
+        Lic.setStart(c, System.currentTimeMillis() - 200 * 60_000L); assertEquals(0L, Lic.left(c))   // gutardy
+        Sub.meta("#tvsess: 0\n#tvfree: 1.1.1.1:443"); assertEquals(null, Lic.left(c))             // wagtsyz
+        Sub.meta("#tvsess: 5\n#tvfree: 1.1.1.1:443"); assertEquals(60, Sub.sess)                   // nädogry baha kabul edilmeýär
+        Sub.meta("#tvsess: 60\n#tvfree: 1.1.1.1:443\n#tvrole: 0123456789ab o"); assertEquals(null, Lic.left(c))   // eýesi — çäksiz
+        val k = "ABCD-EFGH-JKMN"; val h = Lic.hash(k); Lic.save(c, k)
+        Sub.meta("#tvsess: 60\n#tvkp: -\n#tvk: $h 0 0123456789ab"); assertEquals(null, Lic.left(c))   // sowgat açary — çäksiz
+        Lic.save(c, null); c.getSharedPreferences("p", 0).edit().remove("nkb").putLong("start", 0).commit(); Sub.meta("")
+    }
 }

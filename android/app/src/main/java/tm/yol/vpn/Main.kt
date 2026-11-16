@@ -141,6 +141,7 @@ open class Main : Activity() {
             GO -> if (State.now != State.ON && State.now != State.WAIT) connect()
             CHAT -> push(JSONObject().put("k", "go").put("page", "chat"))
             ADMT -> push(JSONObject().put("k", "go").put("page", "adm_t").put("tid", i.getIntExtra("tid", 0)))
+            PREQ -> push(JSONObject().put("k", "go").put("page", "main").put("rq", true))   // 1.44
         }
     }
 
@@ -294,6 +295,15 @@ open class Main : Activity() {
         }.start()
         @JavascriptInterface fun update() = ui { if (Upd.available(Msg.ver(this@Main)) != null) askUpdate(false) else toast(t("Iň täze wersiýa gurnalan", "Установлена последняя версия", "En yeni sürüm kurulu")) }
         @JavascriptInterface fun tile() = ui { addTile() }
+        /** 1.44: açar sahypasy — häzirki açar we ulanan açarlarym. */
+        @JavascriptInterface fun keyInfo(): String {
+            val c = this@Main; val k = Lic.saved(c); val o = JSONObject()
+            if (k != null) o.put("k", k).put("st", Lic.status(c, k)).put("exp", Sub.keys[Lic.hash(k)] ?: -1L).put("prem", Lic.isPremKey(k))
+            val a = JSONArray(); Lic.hist(c).reversed().forEach { (kk, t) -> a.put(JSONObject().put("k", kk).put("t", t).put("st", Lic.status(c, kk)).put("cur", kk == k).put("prem", Lic.isPremKey(kk))) }
+            return o.put("hist", a).toString()
+        }
+        /** 1.44: açary bu telefondan aýyrmak — bot telefony açardan çözýär (başga telefonda ulanyp bolýar). */
+        @JavascriptInterface fun keyDel() { val c = this@Main; val k = Lic.saved(c) ?: return; Msg.send(c, JSONObject().put("k", "kunbind").put("h", Lic.hash(k))); Lic.save(c, null) }
         @JavascriptInterface fun key(raw: String) = Thread { push(JSONObject().put("k", "key").put("r", checkKey(raw))) }.start()
         @JavascriptInterface fun send(json: String) { runCatching { Msg.send(this@Main, JSONObject(json)) } }
         // 1.16: profil, hususy habarlar, Global chat suraty
@@ -461,6 +471,7 @@ open class Main : Activity() {
         const val INSTALL = "tm.yol.vpn.INSTALL"
         const val CHAT = "tm.yol.vpn.CHAT"
         const val ADMT = "tm.yol.vpn.ADMT"
+        const val PREQ = "tm.yol.vpn.PREQ"
         const val HOST = "tvpn.local"
     }
 }

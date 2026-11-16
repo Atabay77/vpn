@@ -353,6 +353,16 @@ class Svc : VpnService() {
                 .setStyle(Notification.BigTextStyle().bigText(text.take(500))).setContentIntent(open).setAutoCancel(true).build())
         }
 
+        fun notifyPreq(ctx: Context, who: String, plan: String) = runCatching {   // 1.44
+            val nm = ctx.getSystemService(NotificationManager::class.java)
+            if (Build.VERSION.SDK_INT >= 26) nm.createNotificationChannel(NotificationChannel("p", t("Premium aljaklar", "Покупатели Premium", "Premium alıcıları"), NotificationManager.IMPORTANCE_HIGH))
+            val open = PendingIntent.getActivity(ctx, 9, Intent(ctx, MainActivity::class.java).setAction(Main.PREQ), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+            val nb = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(ctx, "p") else Notification.Builder(ctx)
+            val pl = if (plan == "y") t("1 ýyl", "1 год", "1 yıl") else t("1 aý", "1 месяц", "1 ay")
+            nm.notify(300 + (who.hashCode() and 0xff), nb.setSmallIcon(R.drawable.ic_notif).setContentTitle("👑 " + t("Premium aljak", "Хочет Premium", "Premium alıcı") + " · $who")
+                .setContentText(pl).setContentIntent(open).setAutoCancel(true).build())
+        }
+
         fun notifyReply(ctx: Context, text: String) = runCatching {
             val nm = ctx.getSystemService(NotificationManager::class.java)
             if (Build.VERSION.SDK_INT >= 26) nm.createNotificationChannel(NotificationChannel("m", t("Admin jogaby", "Ответ админа", "Yönetici yanıtı"), NotificationManager.IMPORTANCE_DEFAULT))

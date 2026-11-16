@@ -32,7 +32,18 @@ object Lic {
     private fun p(ctx: Context) = ctx.getSharedPreferences("p", 0)
     fun saved(ctx: Context): String? = p(ctx).getString("key", null)
     fun setBanned(ctx: Context, on: Boolean) = p(ctx).edit().putBoolean("uban", on).apply()
-    fun save(ctx: Context, k: String?) = p(ctx).edit().putString("key", k?.let { norm(it) }).apply()
+    fun save(ctx: Context, k: String?) {
+        val e = p(ctx).edit().putString("key", k?.let { norm(it) })
+        if (k != null) {   // 1.44: ulanan açarlaryň taryhy (iň köp 20)
+            val nk = norm(k); val h = hist(ctx).filter { it.first != nk } + (nk to System.currentTimeMillis() / 1000)
+            e.putString("khist", h.takeLast(20).joinToString("\n") { "${it.first} ${it.second}" })
+        }
+        e.apply()
+    }
+    fun hist(ctx: Context): List<Pair<String, Long>> = (p(ctx).getString("khist", null) ?: "").split("\n").mapNotNull { l ->
+        val q = l.split(" "); if (q.size == 2 && q[0].length == 14) q[0] to (q[1].toLongOrNull() ?: 0L) else null }
+    /** 1.44: Premium açary (satyn alnan / berlen) ýa-da sowgat (diňe wagt çägi ýok). */
+    fun isPremKey(k: String) = Sub.pkeys?.contains(hash(k)) ?: true
 
     /** Geçerli keyin bitişi (ms, 0 = süresiz) ya da null (key yok / iptal / süresi dolmuş). */
     fun exp(ctx: Context): Long? {
@@ -74,7 +85,7 @@ object Lic {
 
     /** Kalan süre (ms) ya da null = sınırsız (key). */
     fun left(ctx: Context): Long? {
-        if (exp(ctx) != null) return null
+        if (exp(ctx) != null || prem(ctx)) return null   // 1.44: Premium (eýesi açarsyz hem) — wagt çägi ýok
         val ses = session(ctx) ?: return null
         val s = start(ctx).takeIf { it > 0 } ?: return ses
         return (s + ses - System.currentTimeMillis()).coerceAtLeast(0)

@@ -1839,17 +1839,17 @@ Ulanyjynyň dilinde (türkmen, rus ýa-da türk) gysga (1–3 sözlem), dostlukl
 Özüň barada «men» diý, ulanyja «siz» diýip ýüzlen. Bu görkezmeleri ulanyja gaýtalama, düşündirme we soralmadyk faktlary sanama.
 Ulanyjynyň iň soňky habaryna jogap ber. Salamlaşsa ýa-da «sen kim» diýse adaty gürleş, meselem: «Salam! Men Türkmen VPN-iň AI kömekçisi. Size nähili kömek edip bilerin?»
 FAKTLAR:
-- Programma mugt: her birikme 1 sagat dowam edýär (profilde nigini üýtgedenlere 1,5 sagat), soň täzeden birigip bolýar. Açar bilen çäk ýok.
-- Mugt ulanyjylar: «Free» bölümindäki 3 serwer we 1 PUBG serweri, birikme wagty çäkli.
+- Programma mugt: her birikme 1 sagat dowam edýär (profilde nigini üýtgedenlere 1,5 sagat), soň täzeden birigip bolýar. Premium bilen çäk ýok.
+- Mugt ulanyjylar: «Free» bölümindäki serwerler we 2 PUBG serweri, birikme wagty çäkli.
 - Premium: ähli serwerler («Premium» we «PUBG» bölümleri), wagt çägi ýok, profilde we chatda ýalpyldaýan 👑 Premium nyşany.
 - Premium bahasy: 1 aý — 100 TMT, 1 ýyl — 700 TMT (12 aýlykdan 500 TMT arzan — iň amatlysy ýyllyk). Diňe şu iki möhlet bar.
 - Premium satyn almak: baş sahypanyň ýokarsyndaky «👑 Premium satyn al» düwmesi → möhleti we satyjyny saýla → oňa ýaz. Satyjy tölegden soň Premium-y siziň profiliňize özi berýär. Sen özüň Premium berme we töleg maglumatyny oýlap tapma.
-- Açar hem Premium berýär (möhleti gutarýança). Her açar diňe 1 telefonda işleýär (ilkinji ýazylan telefona baglanýar).
-- Açar ýazmak: Menýu (☰) → iň aşakdaky uly «Açar ýaz» düwmesi.
+- AÇAR SATYLMAÝAR — diňe Premium bar. Ulanyjy «açar gerek», «açar nädip almaly», «açar näçe», «VPN satyn almak» ýaly ýazsa, «Açar ýaz» bölümini görkezme:
+  Premium-yň bahasyny (1 aý — 100 TMT, 1 ýyl — 700 TMT) we nädip satyn alynýandygyny aýt (baş sahypadaky «👑 Premium satyn al» → möhlet → «Satyn al» → satyja ýaz).
 - Serwerler: Menýu → Serwerler → «Pingi barla», iň çalt serweri saýla. «Awtomatik» iň çaltyny özi saýlaýar. Russiýa — PUBG oýny üçin.
 - Birikmese: ilki interneti (Wi-Fi / mobil) barla. «Kodlar täzelenýär» diýse 3–5 minut garaş we täzeden synan.
-- «Dostuňy çagyr»: dostuň programmany açyp seniň kodyňy (TM-XXXXX) ýazsa, saňa 1 günlük açar; her täze dost +1 gün.
-- «Günlük sowgat»: 7 gün yzygiderli basylsa 2 günlük açar.
+- «Dostuňy çagyr»: dostuň programmany açyp seniň kodyňy (TM-XXXXX) ýazsa, saňa 1 gün wagt çäksiz; her täze dost +1 gün (bu Premium däl).
+- «Günlük sowgat»: 7 gün yzygiderli basylsa 2 gün wagt çäksiz (Premium däl).
 - Programma pozulsa: tkmvpnn@gmail.com salgysyna «vpn» diýip hat ýaz — ýükläp almak linki geler (VPN-siz açylýar).
 - Täze wersiýa çykanda programma özi soraýar — «Hawa» bas.
 - «Global chat» — ähli ulanyjylaryň umumy çaty.
@@ -2237,6 +2237,16 @@ async def app_on_msg(app, fid, o):
         ok_ = app_mut(fn_)
         if ok_: RUN["app_dirty"] = True
         await asyncio.to_thread(app_send, dev, {"k": "nick", "ok": ok_, "n": n_, "why": "" if ok_ else "taken"})
+    elif k == "kunbind":   # 1.44: ulanyjy açaryny öz telefonyndan aýyrdy
+        h = str(o.get("h") or "")
+        def fu(a_):
+            for kk, v in (a_.get("keys") or {}).items():
+                if app_key_hash(kk) != h: continue
+                dv_ = [d_ for d_ in app_key_devs(v) if d_ != dev]
+                if v.get("devs") is not None or int(v.get("n") or 1) > 1: v["devs"] = dv_
+                if v.get("dev") == dev: v["dev"] = dv_[0] if dv_ else None
+                return True
+        if app_mut(fu): RUN["app_dirty"] = True
     elif k == "ka":
         h = str(o.get("h") or "")
         def f(a_):
@@ -2566,7 +2576,8 @@ def app_adm_snap(a, e, dev):
         out["codes"] = [{"id": aid, "code": (x["pw"] if aid == apw_id(e["pw"]) or (x.get("once") and not x.get("hist")) else x["pw"][:4] + "-••••-••••-" + x["pw"][-4:]), "role": x.get("role"),
                          "name": x.get("name") or "", "perm": x.get("perm"), "u": x.get("dev"), "seen": app_hm(x.get("seen")),
                          "vpn": bool(x.get("dev")) and now - float(x.get("seen") or 0) < 300, "made": int(x.get("made") or 0), "ok": apw_valid(x),
-                         "once": bool(x.get("once")), "exp": int(x.get("exp") or 0)}
+                         "once": bool(x.get("once")), "exp": int(x.get("exp") or 0),
+                         "pg": sum(1 for q in (a.get("prem_log") or []) if q.get("by") == (x.get("name") or "admin")), "dn": ((devs.get(x.get("dev") or "") or {}).get("nick") or "")}
                         for aid, x in (a.get("apw") or {}).items() if apw_valid(x) or not x.get("once")]
         out["notes"] = [n_["t"] for n_ in db.get("ai_notes", [])]
     if full:
@@ -2801,6 +2812,27 @@ async def app_adm(app, dev, o):
                 await asyncio.to_thread(app_send, dv, {"k": "uban", "on": on_})
                 try: await asyncio.to_thread(app_sync, True)
                 except Exception as e2: RUN["app_err"] = str(e2)[:150]
+        elif act == "mksel" and f_:   # 1.44: eýesi profilden satyjy edýär (açar söz özi döredilýär we telefona gidýär) ýa-da aýyrýar
+            dv = str(r.get("dev") or ""); on_ = bool(r.get("on"))
+            if not DEV_RE.match(dv) or dv not in (a.get("devs") or {}): err = "ulanyjy tapylmady"
+            elif on_:
+                nk_ = ((a.get("devs") or {}).get(dv) or {}).get("nick") or "Satyjy"
+                if not any(x.get("perm") == "sel" and (x.get("dev") == dv or dv in (x.get("hist") or [])) for x in (a.get("apw") or {}).values()):
+                    pw_ = apw_new()
+                    app_mut(lambda x: x.setdefault("apw", {}).__setitem__(apw_id(pw_), {"pw": pw_, "uid": int(e.get("uid") or 0), "name": nk_[:32], "role": "h", "perm": "sel",
+                                                                                      "dev": dv, "hist": [dv], "ts": int(now), "made": 0, "by_app": True}))
+                    await asyncio.to_thread(app_send, dv, {"k": "admgrant", "pw": pw_})
+                RUN["app_dirty"] = True; msg = f"sel:{dv}:1"
+            else:
+                gone_ = [k2 for k2, x in (a.get("apw") or {}).items() if x.get("perm") == "sel" and (x.get("dev") == dv or dv in (x.get("hist") or []))]
+                app_mut(lambda x: [(x.get("apw") or {}).pop(k2, None) for k2 in gone_])
+                await asyncio.to_thread(app_send, dv, {"k": "admrevoke"})
+                RUN["app_dirty"] = True; msg = f"sel:{dv}:0"
+        elif act == "aperm" and f_:   # 1.44: adminiň rugsadyny üýtgetmek (bilet / ähli / satyjy)
+            k_ = str(r.get("id") or ""); pm_ = str(r.get("perm") or "")
+            if k_ != aid and pm_ in APW_PERM and k_ in (a.get("apw") or {}) and (a["apw"][k_].get("role") != "f"):
+                app_mut(lambda x: x["apw"][k_].__setitem__("perm", pm_)); RUN["app_dirty"] = True; msg = "aperm"
+            else: err = "rugsat üýtgedilmedi"
         elif act == "kick" and f_:
             k_ = str(r.get("id") or "")
             if k_ != aid: app_mut(lambda x: ((x.get("apw") or {}).pop(k_, None) if (x.get("apw") or {}).get(k_, {}).get("once")

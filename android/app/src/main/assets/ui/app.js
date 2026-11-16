@@ -70,16 +70,16 @@
     if (l === 'ru') { const n = Math.floor(h); return w + (w.indexOf(',') > 0 ? ' часа' : n % 10 === 1 && n % 100 !== 11 ? ' час' : [2, 3, 4].indexOf(n % 10) >= 0 && !(n % 100 >= 12 && n % 100 <= 14) ? ' часа' : ' часов'); }
     return w + (l === 'tr' ? ' saat' : ' sagat'); };
   const sessTx = (l, m) => {
-    if (m === 0) return ({ tk: { nk_bonNo: '✅ Häzir mugt VPN wagtsyz', nk_bonYes: '✅ Häzir mugt VPN wagtsyz', q2: 'Mugt wagt näme?', a2: 'Häzir mugt birikmäniň wagt çägi ýok. Bu soňra üýtgäp biler; açar bilen hemişe çäksiz.', k_text: 'Wagt çägini aýyrmak üçin açaryňyzy ýazyň. Her açar diňe 1 gezek ulanylýar.' },
-      ru: { nk_bonNo: '✅ Сейчас бесплатный VPN без ограничения времени', nk_bonYes: '✅ Сейчас бесплатный VPN без ограничения времени', q2: 'Что значит бесплатное время?', a2: 'Сейчас у бесплатного подключения нет ограничения времени. Это может измениться; с ключом ограничений нет никогда.', k_text: 'Введите ключ, чтобы снять ограничение времени. Каждый ключ работает только 1 раз.' },
-      tr: { nk_bonNo: '✅ Şu an ücretsiz VPN süresiz', nk_bonYes: '✅ Şu an ücretsiz VPN süresiz', q2: 'Ücretsiz süre ne demek?', a2: 'Şu an ücretsiz bağlantıda süre sınırı yok. Bu ileride değişebilir; anahtarla her zaman sınırsız.', k_text: 'Süre sınırını kaldırmak için anahtarınızı girin. Her anahtar yalnız 1 kez kullanılır.' } })[l] || {};
+    if (m === 0) return ({ tk: { nk_bonNo: '✅ Häzir mugt VPN wagtsyz', nk_bonYes: '✅ Häzir mugt VPN wagtsyz', q2: 'Mugt wagt näme?', a2: 'Häzir mugt birikmäniň wagt çägi ýok. Bu soňra üýtgäp biler; Premium bilen hemişe çäksiz.', k_text: 'Satyjydan alan Premium açaryňyzy şu ýere ýazyň. Premium satyn almak — baş sahypadaky «👑 Premium».' },
+      ru: { nk_bonNo: '✅ Сейчас бесплатный VPN без ограничения времени', nk_bonYes: '✅ Сейчас бесплатный VPN без ограничения времени', q2: 'Что значит бесплатное время?', a2: 'Сейчас у бесплатного подключения нет ограничения времени. Это может измениться; с Premium ограничений нет никогда.', k_text: 'Введите ключ Premium, полученный от продавца. Купить Premium — «👑 Premium» на главной.' },
+      tr: { nk_bonNo: '✅ Şu an ücretsiz VPN süresiz', nk_bonYes: '✅ Şu an ücretsiz VPN süresiz', q2: 'Ücretsiz süre ne demek?', a2: 'Şu an ücretsiz bağlantıda süre sınırı yok. Bu ileride değişebilir; Premium ile her zaman sınırsız.', k_text: 'Satıcıdan aldığınız Premium anahtarını buraya girin. Premium satın almak — ana sayfadaki «👑 Premium».' } })[l] || {};
     const H = hrsT(l, m), B = hrsT(l, m + 30);
     return ({ tk: { ul_t: 'MUGT WAGT · ' + H.toUpperCase(), nk_bonNo: '💡 Nigiňizi üýtgetseňiz mugt VPN wagty ' + H + ' däl-de ' + B + ' bolýar', nk_bonYes: '✅ Mugt VPN wagtyňyz: ' + B, q2: 'Mugt wagt näme?',
-        a2: 'Mugt birikme ' + H + ' dowam edýär (profilde nigiňizi üýtgetseňiz ' + B + '), soň täzeden birigip bilersiňiz. Açar ýazsaňyz bu çäk aýrylýar.', k_text: 'Wagt çägini aýyrmak üçin açaryňyzy ýazyň. Her açar diňe 1 gezek ulanylýar.' },
+        a2: 'Mugt birikme ' + H + ' dowam edýär (profilde nigiňizi üýtgetseňiz ' + B + '), soň täzeden birigip bilersiňiz. Premium bilen bu çäk ýok.', k_text: 'Satyjydan alan Premium açaryňyzy şu ýere ýazyň. Premium satyn almak — baş sahypadaky «👑 Premium».' },
       ru: { ul_t: 'БЕСПЛАТНО · ' + H.toUpperCase(), nk_bonNo: '💡 Смените ник — бесплатное время VPN станет ' + B + ' вместо ' + H, nk_bonYes: '✅ Ваше бесплатное время VPN: ' + B, q2: 'Что значит бесплатное время?',
-        a2: 'Бесплатное подключение длится ' + H + ' (если сменить ник в профиле — ' + B + '), потом можно подключиться снова. С ключом ограничения нет.', k_text: 'Введите ключ, чтобы снять ограничение времени. Каждый ключ работает только 1 раз.' },
+        a2: 'Бесплатное подключение длится ' + H + ' (если сменить ник в профиле — ' + B + '), потом можно подключиться снова. С Premium ограничения нет.', k_text: 'Введите ключ Premium, полученный от продавца. Купить Premium — «👑 Premium» на главной.' },
       tr: { ul_t: 'ÜCRETSİZ · ' + H.toLocaleUpperCase('tr'), nk_bonNo: '💡 Takma adınızı değiştirin — ücretsiz VPN süresi ' + H + ' yerine ' + B + ' olur', nk_bonYes: '✅ Ücretsiz VPN süreniz: ' + B, q2: 'Ücretsiz süre ne demek?',
-        a2: 'Ücretsiz bağlantı ' + H + ' sürer (profilde takma adınızı değiştirirseniz ' + B + '), sonra yeniden bağlanabilirsiniz. Anahtar girerseniz sınır kalkar.', k_text: 'Süre sınırını kaldırmak için anahtarınızı girin. Her anahtar yalnız 1 kez kullanılır.' } })[l] || {}; };
+        a2: 'Ücretsiz bağlantı ' + H + ' sürer (profilde takma adınızı değiştirirseniz ' + B + '), sonra yeniden bağlanabilirsiniz. Premium ile sınır yok.', k_text: 'Satıcıdan aldığınız Premium anahtarını buraya girin. Premium satın almak — ana sayfadaki «👑 Premium».' } })[l] || {}; };
   let SESS = 60;
   const LVB = LS.get('lvb', {}) || {};   // 1.30.2: botdan alnan derejeler {telefon: [dereje, wagt]}
   let lvAskAt = 0;
@@ -276,11 +276,29 @@
       r.timerLbl = s.hasKey ? tx.keyL : tx.left;
       r.timer = s.hasKey ? keyTxt : s.nolim ? '♾' : two(Math.floor(s.left / 3600)) + ':' + two(Math.floor(s.left % 3600 / 60)) + ':' + two(s.left % 60);
       r.showUl = on && !s.hasKey && !s.nolim;
+      // 1.44: nigini üýtgetmedik (mugt, wagt çägi bar) ulanyja — her 6 sagatda bir gezek, açylandan 15 sekunt soň
+      { const nbAt = +(LS.get('nbAt', 0) || 0), want = !INFO.nkb && !s.hasKey && !s.nolim && !INFO.prem && SESS > 0 && Date.now() - nbAt > 6 * 3600000;
+        if (want && !this._nbT) this._nbT = setTimeout(() => this.setState({ nbShow: true }), 15000);
+        r.nbOn = s.page === 'main' && want && !!s.nbShow && !s.menu;
+        r.nbS = tx.nb_s.replace('{a}', hrsT(s.lang, SESS)).replace('{b}', hrsT(s.lang, SESS + 30));
+        const hide = () => { LS.set('nbAt', Date.now()); this.setState({ nbShow: false }); };
+        r.nbGo = () => { hide(); this.setState({ page: 'profile' }); }; r.nbX = hide; }
       r.showUpd = !!s.upd && !s.menu;
       r.updTxt = s.dl >= 0 ? tx.u_dl.replace('{p}', String(s.dl)) : 'Türkmen VPN ' + s.upd;
       r.updBtn = s.dl >= 0 ? '…' : tx.u_btn; r.doUpd = () => NB.update();
       r.showWarn = s.hasKey && kexp > 0 && keyLeft <= 43200 && !s.warnHidden;
       r.warnText = tx.w_text.replace('{t}', fmtLeft(keyLeft));
+      // 1.44: häzirki açar (aýyrmak) we ulanan açarlarym
+      { const KI = s.page === 'key' ? J(typeof NB.keyInfo === 'function' ? NB.keyInfo() : '{}', {}) : {}, dT = (t) => (t > 0 ? new Date(t * 1000).toLocaleDateString('ru-RU') : '');
+        const stOf = (st) => (st === 'ok' ? ['on-g', '🟢 ' + tx.k2_on] : st === 'used' ? ['on-n', tx.k2_used] : ['tk-closed', tx.k2_bad]);
+        const cur = KI.k ? stOf(KI.st) : null, ex = +KI.exp;
+        r.kc = { on: !!KI.k, k: KI.k || '', cls: KI.prem && KI.st === 'ok' ? 'kc-p' : '', stCls: cur ? cur[0] : '', stT: cur ? cur[1] : '',
+          sub: [KI.prem ? tx.k2_prem : tx.k2_gift, ex === 0 ? tx.k2_unl : ex > 0 ? (ex * 1000 > Date.now() ? tx.k2_left.replace('{d}', String(Math.ceil((ex * 1000 - Date.now()) / 86400000))) : dT(ex)) : ''].filter(Boolean).join(' · '),
+          cp: () => { NB.copy(KI.k); this.say('✓ ' + tx.copied); },
+          del: () => this.confirm(tx.k2_q, '🗑 ' + tx.k2_del, () => { NB.keyDel(); this.setState({ hasKey: false, keyMsg: '', kTick: (this.state.kTick || 0) + 1 }); this.say('🗑 ' + tx.k2_ok); }, false) };
+        const H = (KI.hist || []).filter((x) => !x.cur);
+        r.kh = { on: H.length > 0, list: H.map((x) => { const q = stOf(x.st); return { k: x.k, sub: (x.prem ? tx.k2_prem : tx.k2_gift) + ' · ' + tx.k2_at.replace('{t}', dT(x.t)), stCls: q[0], stT: q[1],
+          canUse: x.st === 'ok', use: () => { this.setState({ keyIn: x.k }); setTimeout(() => this.checkKey(), 0); } }; }) }; }
       r.keyCur = !s.hasKey ? tx.k_none : kexp === 0 ? tx.k_unl : tx.k_daysL.replace('{n}', String(Math.ceil(keyLeft / 86400)));
       if (s.keyMsg === 'ok') r.keyMsg = '✓ ' + (kexp === 0 ? tx.k_okU : tx.k_okN.replace('{n}', String(Math.ceil(keyLeft / 86400))));
       if (s.keyMsg === 'wait') { r.keyMsg = tx.k_wait; r.keyMsgCls = 'ok'; }
@@ -380,7 +398,10 @@
           role: (c.role === 'f' ? tx.ad_founder : tx.ad_helper + ' · ' + tx.ad_made.replace('{n}', String(c.made || 0))) + ' · ' + c.name + (c.ok ? '' : ' · ⛔'),
           who: u ? u.name + (mine ? ' · ' + tx.g_you : '') : tx.ad_free, sub: u ? (u.model || '') + ' · ' + tx.ad_seen + ': ' + (mine ? tx.ad_now : c.seen) : tx.ad_freeS,
           stT: !u ? tx.ad_unused : c.vpn || mine ? '🟢 ' + tx.ad_vpnOn : '⚪ ' + tx.ad_vpnOff, stCls: !u ? 'tk-closed' : c.vpn || mine ? 'on-g' : 'on-n', d: (i * 0.05).toFixed(2),
-          canKick: isF && !!c.u && !mine, kick: () => { act('kick', { id: c.id }); c.u = null; this.setState({ admTick: (this.state.admTick || 0) + 1 }); this.say('🔓 ' + tx.ad_kicked); } };
+          canKick: isF && !!c.u && !mine, kick: () => { act('kick', { id: c.id }); c.u = null; this.setState({ admTick: (this.state.admTick || 0) + 1 }); this.say('🔓 ' + tx.ad_kicked); },
+          infoOn: c.role !== 'f' && (c.pg > 0 || !!c.dn), info: [c.dn ? tx.ap_dev.replace('{n}', c.dn) : '', c.pg > 0 ? tx.ap_pg.replace('{n}', String(c.pg)) : ''].filter(Boolean).join(' · '),
+          pmOn: isF && c.role !== 'f', pms: [['tk', tx.ap_tk], ['all', tx.ap_all], ['sel', tx.ap_sel]].map((q) => ({ t: q[1], cls: c.perm === q[0] ? 'chip-on' : '', p: c.perm === q[0] ? 'true' : 'false',
+            pick: () => { if (c.perm === q[0]) return; act('aperm', { id: c.id, perm: q[0] }); c.perm = q[0]; this.setState({ admTick: (this.state.admTick || 0) + 1 }); } })) };
       });
       // 1 girişlik admin açary
       r.onceN = s.onceN || ''; r.onOnceN = (e) => this.setState({ onceN: e.target.value });
@@ -533,13 +554,13 @@
         if (r.isRank && Date.now() - (this._lvQ || 0) > 120000) { this._lvQ = Date.now(); NB.send(JSON.stringify({ k: 'lvlq' })); }
         r.rkRows = RK_L.map((need, i) => { const t = i + 1, got = t <= t0, cur = t === t0;
           return { t: String(t), name: tx['rk_n' + t], ncls: got ? rkNc(t) : '', lk: cur ? 'fx' : got ? 'lite' : 'lock',
-            need: cur ? tx.rk_now2 + ' · ' + tx.rk_pts.replace('{x}', String(xp)) : got ? tx.rk_got : tx.rk_need.replace('{x}', String(need)),
+            need: cur ? tx.rk_curP.replace('{x}', String(need)).replace('{y}', String(xp)) : got ? tx.rk_gotP.replace('{x}', String(need)) : tx.rk_need.replace('{x}', String(need)),
             pk: rkPk(t, tx), st: cur ? tx.rk_now : got ? '✓' : '🔒', stc: cur ? 'cur' : got ? 'ok' : 'lk', cls: cur ? 'rk-cur' : got ? 'rk-got' : 'rk-lk',
             open: () => this.setState({ rkm: { t, up: false } }) }; });
         const M = s.rkm, mt = M ? rkT(M.t) : 1, mgot = mt <= t0;
         r.rkmOn = !!M; r.rkmT = String(mt); r.rkmCls = M && M.up ? 'up' : mgot ? '' : 'lkd';
         r.rkmTitle = M && M.up ? tx.rk_upT : tx.rk_lv.replace('{n}', String(mt)); r.rkmName = tx['rk_n' + mt]; r.rkmNcls = rkNc(mt);
-        r.rkmSub = M && M.up ? (M.days ? tx.rk_upGift.replace('{d}', String(M.days)) : tx.rk_upSub) : mgot ? tx.rk_gotL : tx.rk_wait.replace('{x}', String(RK_L[mt - 1]));
+        r.rkmSub = M && M.up ? (M.days ? tx.rk_upGift.replace('{d}', String(M.days)) : tx.rk_upSub) : mgot ? tx.rk_gotL2.replace('{x}', String(RK_L[mt - 1])) : tx.rk_wait.replace('{x}', String(RK_L[mt - 1]));
         r.rkmPk = rkPk(mt, tx); r.rkmBtn = M && M.up ? tx.rk_ok : tx.close; r.rkmX = () => this.setState({ rkm: null }); }
       // 1.20: gizli nyşan — baş sahypadaky kiçi düwme (Sazlamalardaky bilen birmeňzeş)
       { const dg = !!(s.disg != null ? s.disg : INFO.disg);
@@ -741,12 +762,24 @@
         // profilde Premium bermek
         r.pDays = s.pDays || ''; r.onPDays = (e) => this.setState({ pDays: String(e.target.value || '').replace(/[^0-9]/g, '').slice(0, 4) });
         if (r.isUprof && r.up && s.upDev) {
-          const d = s.upDev, canP = !!s.admOn && (isF2 || full2 || sel2) && d !== me1, px = PL.find((x) => x.dev === d);
+          const myR = roleOf(me1), ownR = isF2 || myR === 'o', staffP = ownR || full2 || sel2 || myR === 's';
+          const d = s.upDev, canP = staffP && (d !== me1 || ownR), actP = canP && !!s.admOn, px = PL.find((x) => x.dev === d);
           const give = (n) => this.confirm(tx.pr_qGive.replace('{n}', r.up.name || '?').replace('{p}', n === 30 ? tx.pr_m : n === 365 ? tx.pr_y : n === 0 ? '♾' : n + ' ' + tx.pr_days), '👑 ' + tx.pr_giveBtn,
             () => { act('prem', { dev: d, d: n }); this.setState({ pDays: '' }); }, false);
-          Object.assign(r.up, { canPrem: canP, premOwn: canP && isF2, premNow: tx.pr_now.replace('{v}', px ? px.left : isPrem(d) ? '✓' : tx.pr_none),
+          const selIs = roleOf(d) === 's', nmU = r.up.name || '?';
+          Object.assign(r.up, { premAct: actP, premNeed: canP && !s.admOn, premGoAdm: () => this.setState({ page: 'admin' }),
+            selOn: actP && isF2 && d !== me1, selCls: selIs ? 'sel-off' : '', selT: selIs ? tx.sl_off : tx.sl_on,
+            selTog: () => this.confirm((selIs ? tx.sl_qOff : tx.sl_qOn).replace('{n}', nmU), selIs ? tx.sl_off : tx.sl_on, () => act('mksel', { dev: d, on: !selIs }), false) });
+          Object.assign(r.up, { canPrem: canP, premOwn: actP && isF2, premNow: tx.pr_now.replace('{v}', px ? px.left : isPrem(d) ? '✓' : tx.pr_none),
             premM: () => give(30), premY: () => give(365), premD: () => { const n = parseInt(this.state.pDays, 10); if (!(n >= 0)) { this.say('⚠️ ' + tx.gv_bad); return; } give(n); } });
-        } else if (r.up) Object.assign(r.up, { canPrem: false, premOwn: false, premNow: '' }); }
+        } else if (r.up) Object.assign(r.up, { canPrem: false, premOwn: false, premNow: '', premAct: false, premNeed: false, selOn: false });
+        // 1.44: öz profilimde Premium bermek (eýesi)
+        { const ownR = isF2 || roleOf(me1) === 'o', px = PL.find((x) => x.dev === me1);
+          const give = (n) => this.confirm(tx.pr_qGive.replace('{n}', this.meName || '?').replace('{p}', n === 30 ? tx.pr_m : n === 365 ? tx.pr_y : n === 0 ? '♾' : n + ' ' + tx.pr_days), '👑 ' + tx.pr_giveBtn,
+            () => { act('prem', { dev: me1, d: n }); this.setState({ pDays: '' }); }, false);
+          r.mp = { on: pg === 'profile' && ownR, act: !!s.admOn, needAdm: !s.admOn, goAdm: () => this.setState({ page: 'admin' }),
+            now: tx.pr_now.replace('{v}', px ? px.left : PR ? (pexp === 0 ? '♾' : dlT) : tx.pr_none),
+            premM: () => give(30), premY: () => give(365), premD: () => { const n = parseInt(this.state.pDays, 10); if (!(n >= 0)) { this.say('⚠️ ' + tx.gv_bad); return; } give(n); } }; } }
       ['srvList', 'gList'].forEach((k) => { if (Array.isArray(r[k])) r[k] = r[k].map(withFc); });
       // 1.23: eýesi serweri basyp saklap 30 sekunt gizleýär (diňe öz ekranynda)
       window.__isOwn = myRole === 'o';
@@ -1165,7 +1198,8 @@
     }
     const evs = J(NB.take(), []);
     for (const e of evs) handle(C, e, up);
-    if (Object.keys(up).length) C.setState(up);
+    const chg = Object.keys(up).some((k) => { const a = up[k], b = s[k]; return a !== b && !(Array.isArray(a) && Array.isArray(b) && !a.length && !b.length); });
+    if (chg || now - (C._rAt || 0) > 5000) { C._rAt = now; C.setState(up); }
     // UI → Kotlin
     const s2 = C.state;
     if (lastPick !== null && s2.pick !== lastPick) { lastPick = s2.pick; const v = SV[s2.pick]; NB.select(v ? v.id : ''); }
@@ -1236,6 +1270,7 @@
       up.keyMsg = e.r; up.keyOk = e.r === 'ok';
     } else if (e.k === 'go') {
       up.page = e.page; up.menu = false; if (e.page === 'chat') up.unreadReply = 0;
+      if (e.rq) { up.rq = true; up.rqTab = 'req'; if (s.admOn) act('get'); }   // 1.44: «Premium aljak» bildirişi
       if (e.page === 'adm_t') { if (e.tid) up.admT = e.tid; if (!s.admOn) up.page = 'main'; admAt = 0; }
     } else if (e.k === 'ad') {
       showAd(e.link);
@@ -1342,6 +1377,8 @@
       else if (d.msg === 'payok') { C.say('💳 ' + tx.ps_ok); up.payT = null; up.payImg = ''; up.payNoImg = false; LS.set('payInfo', null); }
       else if (d.msg && d.msg.indexOf('xp:') === 0) { const q = d.msg.split(':'); UPX[q[3]] = { lv: +q[1], xp: +q[2] }; LVB[q[3]] = [+q[1], Date.now()]; LS.set('lvb', LVB); C.say('✅ ' + tx.gv_ok.replace('{l}', q[1]).replace('{x}', q[2])); }
       else if (d.msg && d.msg.indexOf('prem:') === 0) C.say('👑 ' + tx.pr_given);   // 1.43
+      else if (d.msg === 'aperm') C.say('✅ ' + tx.ap_ok);   // 1.44
+      else if (d.msg && d.msg.indexOf('sel:') === 0) { const q = d.msg.split(':'); C.say(q[2] === '1' ? tx.sl_okOn : '✅ ' + tx.sl_okOff); try { NB.refresh && NB.refresh(); } catch (e2) {} }
       else if (d.msg && d.msg.indexOf('adm:') === 0) { const k = d.msg.slice(4); NB.copy(k); up.onceK = k; up.onceN = ''; C.say('🔑 ' + tx.oa_ok); act('get'); }
       else if (d.msg === 'upd') C.say('⚡ ' + tx.ad_updGo);
       else if (d.msg === 'busy') C.say(tx.ad_updBusy);
