@@ -22,7 +22,7 @@ DATA = os.environ.get("DATA", "/var/lib/tvrelay")
 TOPIC = re.compile(r"^[a-z0-9]{8,80}$")
 # konunyň görnüşi: tvpn + 16 simwol, soň: m (bota), d (telefona), g (Global chat), p (surat)
 # 1.40: admin paneli (~60 KB), bilet suratlary we hekaýalar sygar ýaly çäkler ulaldyldy
-KIND = {"m": (3000, 7 * 86400, 192 * 1024), "d": (60, 7 * 86400, 256 * 1024), "g": (600, 2 * 86400, 8192), "p": (1, 10 ** 9, 96 * 1024)}
+KIND = {"m": (3000, 7 * 86400, 192 * 1024), "d": (60, 7 * 86400, 256 * 1024), "g": (2000, 14 * 86400, 8192), "p": (1, 10 ** 9, 96 * 1024)}
 OTHER = (100, 86400, 8192)
 # bir IP-den minutda (1.40: Türkmenistanda müňlerçe adam operatoryň bir IP-sinden çykýar; 1.42: öňdäki VPS-den hemmeler bir IP bolup gelýär)
 RATE_GET, RATE_POST = 300000, 60000
@@ -98,7 +98,7 @@ RULE1 = {"m": (False, 9000, False), "g": (True, 5000, False), "gi": (True, 16000
          "p": (True, 120000, True), "q": (True, 600000, True), "n": (True, 0, False)}
 RULE3 = {"d": (True, 0, False), "x": (True, 200000, False), "r": (True, 3000, False)}
 # köne resminamalar (gün): Global chat we suratlar 10, bota habarlar 3, telefona 30; DM otaglarynda iň köp 1000 habar
-KEEP_DAYS = {"g": 10, "gi": 10, "m": 3, "d": 30, "r": 30}
+KEEP_DAYS = {"g": 30, "gi": 30, "m": 3, "d": 30, "r": 30}   # 1.43.5: Global chat 30 gün
 ROOM_MAX = 1000
 
 

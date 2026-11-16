@@ -426,7 +426,6 @@ object Msg {
         if (gfsLoaded) return; gfsLoaded = true
         runCatching {
             val o = JSONObject(gfsFile()?.takeIf { it.exists() }?.readText() ?: return)
-            if (System.currentTimeMillis() - o.optLong("at", o.optLong("full")) > 6 * 3600_000L) return   // gaty köne — täzeden doly al
             val a = o.getJSONArray("l"); for (i in 0 until a.length()) gfs.add(a.getJSONObject(i))
             gfsT = o.optString("t").ifEmpty { null }; gfsFull = o.optLong("full")
             if (o.optString("rh") == Sub.relay) gRelId = o.optString("r").ifEmpty { null }
@@ -434,23 +433,25 @@ object Msg {
     }
 
     private fun gfsSave() = runCatching {
-        val a = JSONArray(); gfs.takeLast(200).forEach { a.put(it) }
+        val a = JSONArray(); gfs.takeLast(GMAX).forEach { a.put(it) }
         gfsFile()?.writeText(JSONObject().put("t", gfsT ?: "").put("full", gfsFull).put("r", gRelId ?: "").put("rh", Sub.relay).put("at", System.currentTimeMillis()).put("l", a).toString())
     }
 
     private fun globalFs() {
         gfsLoad()
         val now = System.currentTimeMillis()
-        val full = gfsT == null || (watchG && now - gfsFull > (if (Sub.fast) 180_000 else 3_600_000))
+        val full = gfsT == null || (!Fs.vps() && watchG && now - gfsFull > (if (Sub.fast) 180_000 else 3_600_000))   // 1.43.5: VPS-de çäk ýok — doly täzelemek gerek däl
         val got = (if (full) Fs.query("", "g", null, 150, desc = true)?.reversed() else Fs.query("", "g", gfsT, 80)) ?: return   // tepkiler hem setir bolup gelýär
-        if (full) { gfs.clear(); gfsFull = now }
+        if (full) { if (!Fs.vps()) gfs.clear(); gfsFull = now }   // 1.43.5: VPS-de arassalanmaýar — öňki habarlar ýitmesin
+        val ids = gfs.mapTo(HashSet()) { it.optString("id") }
         for ((id, b, t) in got) {
             gfsT = t
             val o = dec(b)?.let { runCatching { JSONObject(it) }.getOrNull() } ?: continue
-            if (!full && gfs.any { it.optString("id") == id }) continue   // VPS-den eýýäm geldi
+            if (!ids.add(id)) continue   // eýýäm bar (VPS-den geldi)
             gfs.add(gRow(id, Fs.sec(t), o))
         }
-        while (gfs.size > 400) gfs.removeAt(0)
+        gfs.sortBy { it.optLong("time") }
+        while (gfs.size > GMAX) gfs.removeAt(0)
         if (got.isNotEmpty()) { if (!full) gNewAt = now; gfsSave() }
         if (!full && got.size >= 80) gAt = 0L   // köp täze setir galdy (programma uzak ýapyk durdy) — derrew dowamy
         events.add(JSONObject().put("k", "g").put("list", JSONArray(gfs.toList())).put("del", JSONArray()))
@@ -464,12 +465,13 @@ object Msg {
     /** 1.40: Global chat VPS-den (soňky kursordan täzeler; köne wersiýalaryň Firestore habarlaryny bot VPS-e geçirýär).
      *  «del» — bot pozan habar. Dönüş: false — VPS jogap bermedi (Firestore-a geç). */
     @Volatile private var gRelId: String? = null
+    private const val GMAX = 800   // 1.43.5: Global chat-da telefonda saklanýan setirler (öň 400 / 200)
     private val gLock = Object()
     private fun globalRel(wait: Int = 0): Boolean {
         synchronized(gLock) { gfsLoad(); app?.let { relCur(it) } }
         val tp = topicG() ?: return false
         val cur = gRelId
-        val got = poll(tp, cur ?: "24h", if (cur != null) wait else 0) ?: run { relFail(); return false }
+        val got = poll(tp, cur ?: "7d", if (cur != null) wait else 0) ?: run { relFail(); return false }   // 1.43.5: ilkinji gezek soňky 7 gün
         synchronized(gLock) { return globalRel2(got) }
     }
     private fun globalRel2(got: List<JSONObject>): Boolean {
@@ -484,7 +486,7 @@ object Msg {
             if (!ids.add(id)) continue
             gfs.add(gRow(id, o.optLong("ts").takeIf { it > 0 } ?: m.optLong("time"), o)); added = true
         }
-        if (added) { gfs.sortBy { it.optLong("time") }; while (gfs.size > 400) gfs.removeAt(0); gNewAt = now }
+        if (added) { gfs.sortBy { it.optLong("time") }; while (gfs.size > GMAX) gfs.removeAt(0); gNewAt = now }
         if (got.isNotEmpty()) gfsSave()
         events.add(JSONObject().put("k", "g").put("list", JSONArray(gfs.toList())).put("del", del))
         return true

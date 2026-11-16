@@ -328,7 +328,7 @@
       const GE = editsOf(G.concat(LCTL), 'i', 't');
       const gl = G.filter((m) => !m.re && !m.dl && !m.ed && !m.sty && !GE.D[m.id] && !gDel[m.id] && bans.indexOf(m.i) < 0).concat(LGM), RXG = rxAgg(G.concat(LRX));
       gl.forEach((m) => { if (m.pi && !GI[m.pi]) askImg('g', m.pi); });
-      r.gMsgs = gl.map((m) => {
+      r.gMsgs = gl.slice(-300).map((m) => {   // 1.43.5: ekranda soňky 300 habar (telefon haýallamasyn)
         const mine = m.i === me, nm = mine ? this.meName : m.n || '?', lvq = mine ? (LS.get('lvl', {}) || {}).lv || 0 : lvOf(m.i, m.lv), rt = rkT(lvq);
         const ph = mine ? s.photo : ((PH[m.i] || {}).d || '');
         return { name: nm + (mine ? ' · ' + tx.g_you : ''), ini: ini(nm), bg: mine ? '#E0B04A' : colorOf(m.i), nc: mine ? '#06100B' : colorOf(m.i), photo: ph, hasPh: !!ph, noPh: !ph,

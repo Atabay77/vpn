@@ -874,8 +874,7 @@ def app_sess_txt(m):
 def app_key_prem(v):
     """1.43.4: Premium açar — satyn alnan, satyjy / eýesi beren, adminleriň döreden açary. Sowgat açarlary (dost çagyryşy, günlük sowgat,
     dereje, dostuňdan gün) Premium däl — diňe wagt çägini aýyrýar."""
-    by = str(v.get("by") or "")
-    return bool(v.get("prem")) or not (by in ("ref", "gift", "lvl") or by.startswith("kgift:"))
+    return bool(v.get("prem")) or str(v.get("by") or "") == "buy"   # 1.43.5: diňe «Premium ber» / satyn alnan — adaty açarlar Premium däl
 
 def app_meta(cfg):
     """Programın dosyasına konan gizli satırlar: geçerli keylerin özeti + yayınlanan sürümler."""
@@ -1052,7 +1051,7 @@ def app_x_report(dev, pr):
                     if v.get("src") != "tg" and v["bad"] >= APP_X_DEAD and k not in gone: gone.append(k)   # admin kody: yzly-yzyna 3 gezek ms ýok — aýrylýar (kanal kody täze kod gelýänçä durýar)
         hm = x.setdefault("hp_ms", {})   # 1.43.2: ähli kodlaryň soňky pingi (mugt serwerleri işleýänlerden saýlamak üçin)
         for hp, ms in list(pr.items())[:80]:
-            try: hm[str(hp)[:80]] = [int(ms), now]
+            try: old_ = hm.get(str(hp)[:80]) or []; hm[str(hp)[:80]] = [int(ms), now, now if int(ms) > 0 else (old_[2] if len(old_) > 2 else 0)]   # [soňky ms, wagty, soňky işlän wagty]
             except Exception: pass
         for hp in [h_ for h_, v in hm.items() if now - int(v[1]) > 3 * 86400]: hm.pop(hp, None)
         if len(hm) > 600:

@@ -32,6 +32,9 @@ class PremTest {
         assertTrue(Lic.exp(c) != null); assertFalse(Lic.prem(c)); assertFalse(State.allowed(c, prem)); assertTrue(Lic.premDevs().isEmpty())
         Sub.meta("#tvkp: $h\n#tvfree: 1.1.1.1:443\n#tvk: $h $exp 0123456789ab")
         assertTrue(Lic.prem(c)); assertTrue(State.allowed(c, prem))
-        Lic.save(c, null); Sub.meta("")
+        Lic.save(c, null)
+        Sub.meta("#tvkp: -\n#tvfree: 1.1.1.1:443\n#tvrole: 0123456789ab o")   // 1.43.5: eýesi açarsyz hem Premium
+        assertTrue(Lic.prem(c)); assertTrue(State.allowed(c, prem))
+        Sub.meta("")
     }
 }
