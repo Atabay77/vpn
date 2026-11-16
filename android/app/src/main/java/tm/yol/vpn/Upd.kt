@@ -26,9 +26,14 @@ object Upd {
 
     /** Bu telefona uygun, kuruludan yeni sürüm: (sürüm, Drive dosyası) ya da null. */
     fun available(cur: String): Pair<String, String>? {
-        val u = listOfNotNull(Sub.upd[abi()], Sub.upd["all"]).reduceOrNull { x, y -> if (newer(y.first, x.first)) y else x } ?: return null
+        val u = listOfNotNull(Sub.upd[abi()], Sub.upd["all"], Sub.upd["l"]?.takeIf { isLink(it.second) }).reduceOrNull { x, y -> if (newer(y.first, x.first)) y else x } ?: return null
         return if (newer(u.first, cur)) u else null
     }
+
+    /** 1.44.3: täze wersiýa göni salgydan (meselem öz VPS) — «#tvul: wersiýa http://…»; Drive gerek däl. */
+    fun isLink(f: String) = f.startsWith("http://") || f.startsWith("https://")
+    /** 1.44.3: salgydan ýükläp bolmady (salgy işlemeýär) — bu wersiýa üçin VPN-e birikmek gadagan edilmeýär. */
+    @Volatile var linkFail: String? = null
 
     fun newer(a: String, b: String): Boolean {
         val x = a.split('.').map { it.toIntOrNull() ?: 0 }; val y = b.split('.').map { it.toIntOrNull() ?: 0 }
@@ -98,7 +103,8 @@ object Upd {
         for (attempt in 0 until 6) {
             val r = runCatching {
                 val have = if (tmp.exists()) tmp.length() else 0L
-                val c = java.net.URL(Sub.fileUrl(fid)).openConnection() as java.net.HttpURLConnection
+                val c = java.net.URL(if (isLink(fid)) fid else Sub.fileUrl(fid)).openConnection() as java.net.HttpURLConnection
+                c.instanceFollowRedirects = true
                 c.connectTimeout = 15_000; c.readTimeout = 30_000
                 if (have > 0) c.setRequestProperty("Range", "bytes=$have-")
                 val code = c.responseCode
@@ -125,6 +131,7 @@ object Upd {
             if (lastErr == 403 || lastErr == 404) break
             runCatching { Thread.sleep(3000L * (attempt + 1)) }
         }
+        if (isLink(fid)) linkFail = ver
         st = Info(DownloadManager.STATUS_FAILED, lastErr, st.done, st.total)
     }
 

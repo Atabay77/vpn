@@ -911,6 +911,8 @@ def app_meta(cfg):
     elif cfg.get("fs_proj") and cfg.get("fs_key") and cfg.get("fs_ok"): out.append(f"#tvfs: {cfg['fs_proj']} {cfg['fs_key']}" + (f" {cfg['fs_db']}" if cfg.get("fs_db") and cfg["fs_db"] != "(default)" else ""))
     for abi, u in sorted((cfg.get("upd") or {}).items()):
         if u.get("fid") and u.get("ver"): out.append(f"#tvu{abi}: {u['ver']} {u['fid']}")
+    ul_ = cfg.get("upd_link") or {}
+    if ul_.get("ver") and ul_.get("url"): out.append(f"#tvul: {ul_['ver']} {ul_['url']}")   # 1.44.3: göni salgy (köne programmalar okamaýar)
     ad = cfg.get("ad") or {}
     if ad.get("fid") and ad.get("on", True): out.append(f"#tvad: {ad['fid']} {urllib.parse.quote(ad.get('link', ''), safe='')}")
     return out
@@ -1332,7 +1334,18 @@ def app_publish(abi, ver, data):
     return fid
 
 def app_publish_link(link):
-    """Tek APK: kurucu kendi Drive'ına yükleyip linkini verir (boyut sınırı yok, 32/64 ayrımı yok)."""
+    """Tek APK: kurucu kendi Drive'ına yükleyip linkini verir (boyut sınırı yok, 32/64 ayrımı yok).
+    1.44.3: Drive däl göni salgy hem bolýar (meselem öz VPS: «http://IP:8091/TurkmenVPN-1.44.3.apk») — #tvul, programma 1.44.3+ şondan ýükleýär."""
+    t_ = str(link or "").strip()
+    url_ = next((w for w in t_.split() if re.match(r"^https?://\S+$", w)), "")
+    if url_ and not DRIVE_ID_RE.search(url_) and "drive.google." not in url_:
+        fn_ = urllib.parse.unquote(url_.split("?")[0].rstrip("/").rsplit("/", 1)[-1])
+        mv = re.search(r"(?<![\d.])(\d+\.\d+(?:\.\d+)?)(?![\d.])", t_.replace(url_, " ")) or re.search(r"(\d+\.\d+(?:\.\d+)?)", fn_)
+        if not mv: raise RuntimeError("Sürüm bulunamadı — dosya adında olsun (TurkmenVPN-1.44.3.apk) ya da başına yaz: «1.44.3 http://…»")
+        ver_ = mv.group(1)
+        mutate(lambda d: d.setdefault("app", {}).__setitem__("upd_link", {"ver": ver_, "url": url_[:400], "ts": int(time.time())}))
+        app_sync(True)
+        return ver_
     m = DRIVE_ID_RE.search(link) or re.search(r"/d/([\w-]{20,})", link) or re.search(r"[?&]id=([\w-]{20,})", link)
     if not m: raise RuntimeError("Drive linki tanınmadı")
     fid = m.group(1)
@@ -1447,6 +1460,7 @@ def app_view(db):
     st += (f"\n❌ {esc(RUN['app_err'])}" if RUN.get("app_err") else "")
     st += f"\n🔑 Geçerli key: {len(app_keys_live(cfg))}"
     st += "".join(f"\n📦 Yayında ({ {'64': '64 bit', '32': '32 bit'}.get(abi, 'tek APK') }): {esc(u.get('ver', '?'))}" for abi, u in sorted((cfg.get("upd") or {}).items()))
+    if (cfg.get("upd_link") or {}).get("ver"): st += f"\n🔗 Linkten: {esc(cfg['upd_link']['ver'])} — {esc(short(cfg['upd_link']['url'], 60))}"
     t = ("📱 <b>Türkmen VPN programy</b>\n"
          f"<blockquote>{chr(10).join(lines)}{st}</blockquote>\n"
          "<i>Buradaki aboneliklerin bütün kodları birleştirilip programa gider (10 dakikada bir, aynı kodlar bir kez). "
@@ -1457,7 +1471,7 @@ def app_view(db):
     if len(subs) < APP_MAX_SUBS: rows.append([B("➕ Abonelik ekle", "app_add", "primary")])
     if subs: rows.append([B("🔄 Şimdi güncelle", "app_now"), B("📋 Abonelik linkleri", "app_subs")])
     rows.append([B("🔑 Key oluştur", "app_kn"), B(f"🗝 Keyler ({len(app_keys_live(cfg))})", "app_kl")])
-    rows.append([B("📦 Yeni sürüm yayınla (Drive linki)", "app_up")])
+    rows.append([B("📦 Yeni sürüm yayınla (link)", "app_up")])
     rows.append([B("📊 İzleme", "app_st"), B("📢 Reklam", "app_ad")])
     n_open = sum(1 for t in (cfg.get("tickets") or {}).values() if t.get("st") != "closed")
     rows.append([B(f"🎫 Program biletleri ({n_open})", "atk_list"), B("⭐ Bahalar", "arates")])
@@ -4615,6 +4629,10 @@ async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
                 STATE[uid] = st
                 await u.message.reply_text(f"⚠️ {esc(str(e)[:200])}", parse_mode="HTML", reply_markup=back("app_v")); return
             audit(uid, f"app publish link {ver}")
+            if (app_cfg(load_db()).get("upd_link") or {}).get("ver") == ver and not DRIVE_ID_RE.search(txt):
+                await u.message.reply_text(f"✅ <b>Türkmen VPN {esc(ver)}</b> linkten yayında.\n<i>1.44.3 ve sonrası: telefon yeni sürümü bu linkten indirir, indirmeden VPN açılmaz "
+                                           "(link çalışmazsa bağlanmaya izin verir ve linki tarayıcıda açar).\n1.44.2 ve öncesi bu linki görmez — onlara «Programa habar» ile linki gönder.</i>",
+                                           parse_mode="HTML", reply_markup=back("app_v")); return
             await u.message.reply_text(f"✅ <b>Türkmen VPN {esc(ver)}</b> yayında.\n<i>Programı açan herkes üstte «Täze wersiýa» bildirimini görür; güncellemek isteğe bağlı.</i>",
                                        parse_mode="HTML", reply_markup=back("app_v"))
 
@@ -5743,7 +5761,9 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         if a == "app_up":
             STATE[uid] = {"action": "app_up"}
             t, kb = prompt("📦 <b>Yeni sürüm</b>", "1) APK'yı Google Drive'ına yükle (adında sürüm olsun, ör. TurkmenVPN-1.3.apk; adında arm64 varsa sadece 64 bit telefonlara gider, yarı boyut)\n"
-                           "2) Paylaş → «Bağlantıya sahip olan herkes»\n3) Linki buraya gönder (drive.google.com ya da googleapis.com linki olur).", "app_v")
+                           "2) Paylaş → «Bağlantıya sahip olan herkes»\n3) Linki buraya gönder (drive.google.com ya da googleapis.com linki olur).\n\n"
+                           "<b>Drive engellerse:</b> APK'yı kendi VPS'ine koy ve doğrudan linkini gönder, ör. <code>http://1.2.3.4:8091/TurkmenVPN-1.44.3.apk</code> "
+                           "(adında sürüm yoksa başına yaz: <code>1.44.3 http://…</code>). 1.44.3+ programlar oradan indirir.", "app_v")
             await safe_edit(q, t, kb); return
         if a == "app_kn":
             await safe_edit(q, "🔑 <b>Yeni key</b>\n<blockquote>Key kaç gün geçerli olsun? Süre şimdiden başlar.</blockquote>",

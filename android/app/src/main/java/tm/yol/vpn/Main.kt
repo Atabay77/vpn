@@ -240,7 +240,7 @@ open class Main : Activity() {
                 .put("snd", Snd.on(c)).put("news", nw).put("ai", Sub.ai).put("online", Sub.online).put("bans", JSONArray(Sub.bans.toList()))
                 .put("key", Lic.saved(c) ?: "").put("model", Build.MANUFACTURER + " " + Build.MODEL).put("relay", Sub.relay.isNotEmpty() || Fs.on()).put("fs", Fs.on()).put("fsb", if (Fs.vps()) Sub.fsBase else Sub.fsProj)
                 .put("prem", Lic.prem(c)).put("pexp", Lic.exp(c) ?: -1L).put("pdevs", JSONArray(Lic.premDevs().toList())).put("pfree", Sub.free.isNotEmpty())
-                .put("dl", (Sub.upd["all"] ?: Sub.upd["64"] ?: Sub.upd["32"])?.let { runCatching { Sub.fileUrl(it.second) }.getOrNull() } ?: "")
+                .put("dl", Sub.upd["l"]?.second?.takeIf { Upd.isLink(it) } ?: (Sub.upd["all"] ?: Sub.upd["64"] ?: Sub.upd["32"])?.let { runCatching { Sub.fileUrl(it.second) }.getOrNull() } ?: "")   // 1.44.3: salgy bar bolsa şol
                 .put("roles", JSONObject().apply { Sub.roles.forEach { (d, rn) -> put(d, JSONArray().put(rn.first).put(rn.second)) } })
                 .put("uban", Lic.banned(c))
                 .put("nkb", Lic.bonus(c)).put("kson", Lic.kill(c))
@@ -355,7 +355,10 @@ open class Main : Activity() {
     // ---------- bağlan ----------
     private fun connect() {
         if (Upd.busy(this)) { toast(t("Täze wersiýa ýüklenýär, gutarýança garaşyň", "Идёт загрузка новой версии, подождите", "Yeni sürüm iniyor, bitene kadar bekleyin")); return }
-        if (Upd.available(Msg.ver(this)) != null) { askUpdate(true); return }   // zorunlu güncelleme
+        Upd.available(Msg.ver(this))?.let { u ->   // zorunlu güncelleme (1.44.3: salgy işlemese — birikmäge rugsat, programmany ulanyp bolsun)
+            if (!(Upd.isLink(u.second) && Upd.linkFail == u.first)) { askUpdate(true); return }
+            toast(t("Täze wersiýany ýükläp bolmady — häzirki wersiýa bilen birigýär", "Не удалось загрузить новую версию — подключаемся текущей", "Yeni sürüm indirilemedi — mevcut sürümle bağlanılıyor"))
+        }
         val i = VpnService.prepare(this)
         if (i != null) startActivityForResult(i, 1) else startVpn()
     }
@@ -423,7 +426,11 @@ open class Main : Activity() {
             val was = lastDl; lastDl = q.status
             if (was != -1 && q.status == DownloadManager.STATUS_SUCCESSFUL) { installHint(); Upd.install(this) }
             push(JSONObject().put("k", "dl").put("st", q.status))
-            if (q.status == DownloadManager.STATUS_FAILED) { getSharedPreferences("p", 0).edit().remove("dl").apply(); info(Upd.errText(this, q.reason)) }
+            if (q.status == DownloadManager.STATUS_FAILED) {
+                getSharedPreferences("p", 0).edit().remove("dl").apply(); info(Upd.errText(this, q.reason))
+                // 1.44.3: salgydan ýüklenmedi — salgyny brauzerde açýarys (ulanyjy özi ýükläp biler)
+                Upd.available(Msg.ver(this))?.second?.takeIf { Upd.isLink(it) }?.let { url -> runCatching { startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } }
+            }
         }
         if (q.status == DownloadManager.STATUS_PAUSED && !slowShown && System.currentTimeMillis() - getSharedPreferences("p", 0).getLong("dlAt", 0) > 40_000) {
             slowShown = true; info(Upd.errText(this, 0))

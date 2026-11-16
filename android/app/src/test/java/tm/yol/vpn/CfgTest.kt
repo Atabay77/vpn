@@ -24,4 +24,16 @@ class CfgTest {
         System.getenv("CFG_OUT")?.let { java.io.File(it).writeText(Cfg.full(fmLink, false)) }
         assertTrue(JSONObject(Cfg.full(fmLink, false)).has("outbounds"))
     }
+
+    /** 1.44.3: täze wersiýa salgydan (#tvul) — köne Drive setirleri bilen bile, iň täzesi saýlanýar; salgy işlemese birikmek gadagan däl. */
+    @Test fun linkUpdate() {
+        Sub.meta("#tvuall: 1.28.1 1BPHB4lyAUA6QAfpSzddTiS8rVoPpu7OR\n#tvul: 1.44.5 http://203.0.113.5:8091/TurkmenVPN-1.44.5.apk")
+        assertEquals("1.44.5" to "http://203.0.113.5:8091/TurkmenVPN-1.44.5.apk", Upd.available("1.44.3"))
+        assertEquals(null, Upd.available("1.44.5"))
+        Sub.meta("#tvuall: 1.45.0 1BPHB4lyAUA6QAfpSzddTiS8rVoPpu7OR\n#tvul: 1.44.5 http://203.0.113.5:8091/a.apk")
+        assertEquals("1.45.0", Upd.available("1.44.3")?.first)   // Drive-daky has täze
+        Sub.meta("#tvul: 1.44.5 notalink")
+        assertEquals(null, Upd.available("1.44.3"))
+        Sub.meta("")
+    }
 }
