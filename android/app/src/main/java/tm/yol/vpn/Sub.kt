@@ -147,7 +147,25 @@ object Sub {
     }
 
     /** Aboneliği indirir; başarılıysa şifreli önbelleğe yazar. Hata olursa önbellek kullanılır. */
+    @Volatile private var vpsBadUntil = 0L
+    /** 1.45.3: sanaw ilki öz VPS-den (bot n/sub ýazýar — Türkmenistanda VPN-siz çalt); işlemese Google Drive-dan; ikisi hem bolmasa — ýatdaky sanaw. */
+    private fun fromVps(ctx: Context, timeoutMs: Int): Boolean {
+        if (!Fs.vps() || System.currentTimeMillis() < vpsBadUntil) return false
+        val g = runCatching { Fs.get("n/sub", minOf(timeoutMs, 4000)) }.getOrNull()
+        val at = g?.second?.takeIf { it.length >= 19 }?.let { ts -> runCatching { java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", java.util.Locale.US)
+            .apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }.parse(ts.take(19))?.time }.getOrNull() } ?: 0L
+        // bot her 30 minutda täzeden ýazýar — 3 sagatdan köne bolsa (bot VPS-e ýazyp bilmeýär) Drive-dan alynýar
+        val t = if (System.currentTimeMillis() - at > 3 * 3600_000L) null else g?.first?.let { Msg.dec(it) ?: it }   // diňe bot ýazyp bilýär (n/); şifrsiz hem kabul
+        val l = t?.let { parse(it) }.orEmpty()
+        if (t == null || l.isEmpty()) { vpsBadUntil = System.currentTimeMillis() + 120_000L; return false }
+        meta(t); list = l; okAt = System.currentTimeMillis(); src = "vps"
+        runCatching { Box.write(ctx, t) }
+        return true
+    }
+    @Volatile var src = ""   // soňky sanaw nireden: "vps" / "drive"
+
     fun refresh(ctx: Context, timeoutMs: Int = 8000): Boolean {
+        if (fromVps(ctx, timeoutMs)) return true
         val ok = runCatching {
             val c = URL(N.u()).openConnection() as HttpURLConnection
             c.connectTimeout = timeoutMs; c.readTimeout = timeoutMs
@@ -158,7 +176,7 @@ object Sub {
                 val l = parse(t)
                 meta(t)   // key / sürüm / reklam satırları sunucu olmasa da okunur
                 if (l.isEmpty()) return@runCatching false
-                list = l; okAt = System.currentTimeMillis()
+                list = l; okAt = System.currentTimeMillis(); src = "drive"
                 Box.write(ctx, t)
                 true
             } finally { c.disconnect() }

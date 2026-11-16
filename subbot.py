@@ -1299,6 +1299,10 @@ def app_sync(force=False):
                 d0.setdefault("app", {})["fid"] = fid; save_db(d0)
             if not make_public(svc, fid): raise RuntimeError("Drive dosyası herkese açık yapılamadı")
             force = True
+        if cfg.get("fs_ok") and cfg.get("fs_proj") and (force or RUN.get("sub_fs") != dig or time.time() - RUN.get("sub_fs_at", 0) > 1800):   # 1.45.3: sanaw öz VPS-de hem (n/sub) — programma ilki şondan alýar
+            try:
+                fs_write(cfg["fs_proj"], "n/sub", app_enc(fid, build_text("vpn", "", meta + codes).decode("utf-8")), None, False); RUN["sub_fs"] = dig; RUN["sub_fs_at"] = time.time()
+            except Exception as e: log.info("sub fs: %s", e)
         if force or dig != cfg.get("dig"):
             if not sync_file(svc, fid, "vpn", "", meta + codes, exp=False): raise RuntimeError("Drive'a yazılamadı")
         def f(d):

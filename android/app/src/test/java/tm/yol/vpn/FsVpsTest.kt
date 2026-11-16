@@ -49,6 +49,17 @@ class FsVpsTest {
             assertNull(Fs.query("", "m", null, 10))
             assertFalse(Fs.write("d/0123456789ab/i/1", "v1.fake"))
             assertEquals(404, Fs.ping())                               // «açylýar» (ýok resminama)
+            // 1.45.3: sanaw öz VPS-den (bot n/sub ýazýar) — Drive-a garaşylmaýar
+            val subTxt = android.util.Base64.encodeToString("#tvdb: http://127.0.0.1:$port\n#tvfree: 7.7.7.7:443\nss://YWVzLTI1Ni1nY206cHc@7.7.7.7:443#VPS%20serwer".toByteArray(), android.util.Base64.NO_WRAP)
+            val doc = org.json.JSONObject().put("writes", org.json.JSONArray().put(org.json.JSONObject()
+                .put("update", org.json.JSONObject().put("name", "projects/tv/databases/(default)/documents/n/sub").put("fields", org.json.JSONObject().put("b", org.json.JSONObject().put("stringValue", Msg.enc(subTxt) ?: subTxt))))
+                .put("updateTransforms", org.json.JSONArray().put(org.json.JSONObject().put("fieldPath", "t").put("setToServerValue", "REQUEST_TIME")))))
+            val hc = URL("http://127.0.0.1:$port/v1/projects/tv/databases/(default)/documents:commit").openConnection() as java.net.HttpURLConnection
+            hc.requestMethod = "POST"; hc.doOutput = true; hc.setRequestProperty("Authorization", "Bearer testbotkey-0123456789abcdef0123"); hc.setRequestProperty("Content-Type", "application/json")
+            hc.outputStream.use { it.write(doc.toString().toByteArray()) }; assertEquals(200, hc.responseCode); hc.disconnect()
+            val ctx = org.robolectric.RuntimeEnvironment.getApplication()
+            assertTrue(Sub.refresh(ctx, 3000)); assertEquals("vps", Sub.src)
+            assertEquals(listOf("7.7.7.7:443"), Sub.list.map { it.hp }); assertEquals(setOf("7.7.7.7:443"), Sub.free)
         } finally {
             pr.destroy(); pr.waitFor(); data.deleteRecursively(); Sub.meta("")
         }
