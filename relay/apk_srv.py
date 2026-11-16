@@ -24,7 +24,44 @@ class H(http.server.SimpleHTTPRequestHandler):
                  "<p style='font-size:13px;opacity:.75;margin-top:20px'>Ýüklenen faýly açyň we gurnaň. Telefon «näbelli çeşme» diýse, rugsat beriň.</p></div>").encode()
             return s.send(200, b, "text/html; charset=utf-8")
         if not p.endswith(".apk"): return s.send(404, b"yok")
-        return super().do_GET()
+        return s.serve_apk(p, True)
+    def do_HEAD(s):
+        p = urllib.parse.urlparse(s.path).path
+        if not p.endswith(".apk"): return s.send(404, b"")
+        return s.serve_apk(p, False)
+    def serve_apk(s, p, body):
+        """1.45.2: kesilen ýükleme galan ýerinden dowam edýär (Range / If-Range, ETag, Last-Modified) — Chrome we programma."""
+        f = os.path.join(D, os.path.basename(urllib.parse.unquote(p)))
+        if not os.path.isfile(f): return s.send(404, b"yok")
+        st = os.stat(f); size = st.st_size
+        etag = '"%x-%x"' % (size, int(st.st_mtime)); lm = s.date_time_string(int(st.st_mtime))
+        a, b = 0, size - 1; part = False
+        rg = s.headers.get("Range", ""); ir = s.headers.get("If-Range", "")
+        if rg.startswith("bytes=") and (not ir or ir in (etag, lm)):
+            try:
+                x, y = rg[6:].split(",")[0].strip().split("-")
+                if x: a = int(x); b = int(y) if y else size - 1
+                else: a = max(0, size - int(y))   # soňky N baýt
+                b = min(b, size - 1); part = True
+            except Exception: a, b, part = 0, size - 1, False
+            if part and a >= size:
+                s.send_response(416); s.send_header("Content-Range", "bytes */%d" % size); s.send_header("Content-Length", "0"); s.end_headers(); return
+        s.send_response(206 if part else 200)
+        s.send_header("Content-Type", "application/vnd.android.package-archive")
+        s.send_header("Accept-Ranges", "bytes"); s.send_header("ETag", etag); s.send_header("Last-Modified", lm)
+        s.send_header("Content-Disposition", 'attachment; filename="%s"' % os.path.basename(f))
+        s.send_header("Content-Length", str(b - a + 1))
+        if part: s.send_header("Content-Range", "bytes %d-%d/%d" % (a, b, size))
+        s.end_headers()
+        if not body: return
+        with open(f, "rb") as fh:
+            fh.seek(a); left = b - a + 1
+            try:
+                while left > 0:
+                    c = fh.read(min(left, 256 * 1024))
+                    if not c: break
+                    s.wfile.write(c); left -= len(c)
+            except (BrokenPipeError, ConnectionResetError): pass
     def do_POST(s):
         u = urllib.parse.urlparse(s.path)
         if u.path != UP: return s.send(404, b"yok")
