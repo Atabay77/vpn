@@ -1330,6 +1330,28 @@ def app_publish(abi, ver, data):
     app_sync(True)
     return fid
 
+def apk_head_ver(url):
+    """1.45.4: sabit salgy (meselem http://IP:8091/TurkmenVPN.apk) — serwer häzir haýsy faýly berýär: Content-Disposition-dan wersiýa."""
+    try:
+        req = urllib.request.Request(url, method="HEAD", headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=12) as r:
+            cd = r.headers.get("Content-Disposition") or ""
+        m = re.search(r'filename="?([^";]+)', cd)
+        mv = re.search(r"(\d+\.\d+(?:\.\d+)?)", m.group(1)) if m else None
+        return mv.group(1) if mv else None
+    except Exception as e:
+        log.info("apk head %s: %s", url, e); return None
+
+def app_upd_link_check():
+    """1.45.4: VPS-e täze APK goýulsa — sabit salgydaky wersiýa özi täzelenýär (link üýtgemeýär). Dönüş: täze wersiýa ýa-da None."""
+    ul_ = app_cfg(load_db()).get("upd_link") or {}
+    if not ul_.get("url") or not ul_.get("auto"): return None
+    v_ = apk_head_ver(ul_["url"]); vk = lambda v: [int(x) if x.isdigit() else 0 for x in str(v or "0").split(".")]
+    if not v_ or vk(v_) <= vk(ul_.get("ver")): return None
+    mutate(lambda d: d.setdefault("app", {}).setdefault("upd_link", {}).update({"ver": v_, "ts": int(time.time())}))
+    RUN["app_dirty"] = True; vlog(f"📦 VPS-de täze APK: {v_} — programa ýaýradyldy")
+    return v_
+
 def app_publish_link(link):
     """Tek APK: kurucu kendi Drive'ına yükleyip linkini verir (boyut sınırı yok, 32/64 ayrımı yok).
     1.44.3: Drive däl göni salgy hem bolýar (meselem öz VPS: «http://IP:8091/TurkmenVPN-1.44.3.apk») — #tvul, programma 1.44.3+ şondan ýükleýär."""
@@ -1338,9 +1360,13 @@ def app_publish_link(link):
     if url_ and not DRIVE_ID_RE.search(url_) and "drive.google." not in url_:
         fn_ = urllib.parse.unquote(url_.split("?")[0].rstrip("/").rsplit("/", 1)[-1])
         mv = re.search(r"(?<![\d.])(\d+\.\d+(?:\.\d+)?)(?![\d.])", t_.replace(url_, " ")) or re.search(r"(\d+\.\d+(?:\.\d+)?)", fn_)
+        auto_ = False
+        if not mv:   # 1.45.4: sabit salgy — wersiýany serwerden sora
+            hv_ = apk_head_ver(url_)
+            if hv_: mv = re.match(r"(.+)", hv_); auto_ = True
         if not mv: raise RuntimeError("Sürüm bulunamadı — dosya adında olsun (TurkmenVPN-1.44.3.apk) ya da başına yaz: «1.44.3 http://…»")
         ver_ = mv.group(1)
-        mutate(lambda d: d.setdefault("app", {}).__setitem__("upd_link", {"ver": ver_, "url": url_[:400], "ts": int(time.time())}))
+        mutate(lambda d: d.setdefault("app", {}).__setitem__("upd_link", {"ver": ver_, "url": url_[:400], "ts": int(time.time()), "auto": auto_}))
         app_sync(True)
         return ver_
     m = DRIVE_ID_RE.search(link) or re.search(r"/d/([\w-]{20,})", link) or re.search(r"[?&]id=([\w-]{20,})", link)
@@ -1437,9 +1463,11 @@ async def app_loop(app):
         if app_cfg(load_db()).get("fid"):
             try: RUN["app_on"] = (await asyncio.to_thread(app_stats, app_cfg(load_db())["fid"])).get("on", 0)
             except Exception as e: log.info("app stats: %s", e)
+        try: await asyncio.to_thread(app_upd_link_check)   # 1.45.4: VPS-de täze APK barmy
+        except Exception as e: log.info("upd link: %s", e)
         if app_cfg(load_db()).get("fid") or app_cfg(load_db()).get("subs"):
             try:
-                n, errs = await asyncio.to_thread(app_sync)
+                n, errs = await asyncio.to_thread(app_sync, bool(RUN.pop("app_dirty", None)))
                 RUN.pop("app_err", None)
                 for t_ in RUN.pop("quota_tg", []): await notify_founders(app, f"⚠️ <b>Kota dolmak üzere</b>\n<blockquote>{esc(t_)}</blockquote>")
             except Exception as e:
@@ -5828,7 +5856,8 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
             t, kb = prompt("📦 <b>Yeni sürüm</b>", "1) APK'yı Google Drive'ına yükle (adında sürüm olsun, ör. TurkmenVPN-1.3.apk; adında arm64 varsa sadece 64 bit telefonlara gider, yarı boyut)\n"
                            "2) Paylaş → «Bağlantıya sahip olan herkes»\n3) Linki buraya gönder (drive.google.com ya da googleapis.com linki olur).\n\n"
                            "<b>Drive engellerse:</b> APK'yı kendi VPS'ine koy ve doğrudan linkini gönder, ör. <code>http://1.2.3.4:8091/TurkmenVPN-1.44.3.apk</code> "
-                           "(adında sürüm yoksa başına yaz: <code>1.44.3 http://…</code>). 1.44.3+ programlar oradan indirir.", "app_v")
+                           "(adında sürüm yoksa başına yaz: <code>1.44.3 http://…</code>). 1.44.3+ programlar oradan indirir.\n\n"
+                           "<b>Sabit link (önerilen):</b> <code>http://IP:8091/TurkmenVPN.apk</code> — VPS'e yeni APK koyunca bot 10 dakika içinde kendiliğinden yayınlar, linki değiştirmen gerekmez.", "app_v")
             await safe_edit(q, t, kb); return
         if a == "app_kn":
             await safe_edit(q, "🔑 <b>Yeni key</b>\n<blockquote>Key kaç gün geçerli olsun? Süre şimdiden başlar.</blockquote>",

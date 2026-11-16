@@ -3,6 +3,20 @@
 import http.server, os, sys, urllib.parse
 D = os.environ.get("APK_DIR", "/root/apk"); PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8091; UP = "/up"
 os.makedirs(D, exist_ok=True)
+DIRS = [D] + [x for x in os.environ.get("APK_MORE", "/root").split(":") if x and os.path.isdir(x) and os.path.abspath(x) != os.path.abspath(D)]   # 1.45.4: /root-a ýüklenen APK hem
+LATEST = ("/turkmenvpn.apk", "/latest.apk")   # 1.45.4: hemişe iň täze APK (link üýtgemeýär)
+def apks():
+    out = {}
+    for d_ in DIRS:
+        try: names = os.listdir(d_)
+        except Exception: continue
+        for x in names:
+            f = os.path.join(d_, x)
+            if x.lower().endswith(".apk") and os.path.isfile(f) and x not in out: out[x] = f
+    return out
+def newest():
+    a = apks()
+    return max(a.items(), key=lambda kv: os.path.getmtime(kv[1]), default=(None, None))
 PAGE = ("<meta name=viewport content='width=device-width'><h3>APK yukle</h3><input type=file id=f><br><br><button onclick='u()'>Yukle</button><pre id=o></pre>"
         "<script>async function u(){const f=document.getElementById('f').files[0];if(!f)return;const o=document.getElementById('o');o.textContent='yuklenyar...';"
         "const r=await fetch(location.pathname+'?n='+encodeURIComponent(f.name),{method:'POST',body:f});o.textContent=await r.text();}</script>").encode()
@@ -14,9 +28,9 @@ class H(http.server.SimpleHTTPRequestHandler):
         p = urllib.parse.urlparse(s.path).path
         if p == UP: return s.send(200, PAGE, "text/html; charset=utf-8")
         if p == "/":   # ýükläp almak sahypasy (Gmail APK salgyly hatlary ret edýär — hatda şu sahypa)
-            fs = sorted((x for x in os.listdir(D) if x.endswith(".apk")), key=lambda x: os.path.getmtime(os.path.join(D, x)), reverse=True)
-            if not fs: return s.send(404, b"entek APK yok")
-            n = urllib.parse.quote(fs[0])
+            nm_, _ = newest()
+            if not nm_: return s.send(404, b"entek APK yok")
+            fs = [nm_]; n = urllib.parse.quote(nm_)
             b = ("<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'><title>Turkmen VPN</title>"
                  "<body style='margin:0;font-family:sans-serif;background:#0B1A2E;color:#F3E7D0;display:flex;align-items:center;justify-content:center;min-height:100vh;text-align:center'>"
                  "<div style='padding:24px'><h2>Türkmen VPN</h2><p>" + fs[0].replace("<", "") + "</p>"
@@ -31,8 +45,9 @@ class H(http.server.SimpleHTTPRequestHandler):
         return s.serve_apk(p, False)
     def serve_apk(s, p, body):
         """1.45.2: kesilen ýükleme galan ýerinden dowam edýär (Range / If-Range, ETag, Last-Modified) — Chrome we programma."""
-        f = os.path.join(D, os.path.basename(urllib.parse.unquote(p)))
-        if not os.path.isfile(f): return s.send(404, b"yok")
+        if p.lower() in LATEST: f = newest()[1]
+        else: f = apks().get(os.path.basename(urllib.parse.unquote(p)))
+        if not f or not os.path.isfile(f): return s.send(404, b"yok")
         st = os.stat(f); size = st.st_size
         etag = '"%x-%x"' % (size, int(st.st_mtime)); lm = s.date_time_string(int(st.st_mtime))
         a, b = 0, size - 1; part = False
