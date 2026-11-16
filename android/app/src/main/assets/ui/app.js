@@ -126,8 +126,9 @@
   const STICKERS = ['😂', '🤣', '😍', '🥰', '😎', '😭', '😡', '👍', '🙏', '🔥', '❤️', '💯', '🎉', '🤝', '😱', '🤔', '😴', '🥳', '💪', '👑', '🇹🇲', '🚀', '😘', '👋'];
   const LINK_RE = /(https?:\/\/|www\.|t\.me\/|\b[\w-]{2,}\.(com|net|org|ru|tm|me|io|xyz|info|top|site|online|link|app|dev|tk|ly|gg|uz|kz|tr|de|co|su|pro|club|shop|store|live|tv|cc|biz|ua|by)\b)/i;
   const roleOf = (dev) => (((INFO.roles || {})[dev] || [])[0] || '');
+  const SR = {};   // 1.45: gözlegden tapylan nikler
   const nameOf = (dev) => { const r = (INFO.roles || {})[dev], p = P2[dev], d = DMS[dev], g = G.slice().reverse().find((m) => m.i === dev);
-    return (p && p.n) || (r && r[1]) || (d && d.n) || (g && g.n) || '?'; };
+    return (p && p.n) || (r && r[1]) || (d && d.n) || (g && g.n) || SR[dev] || '?'; };
   const thumbOf = (dev) => (P2[dev] && (P2[dev].th || P2[dev].ph)) || ((PH[dev] || {}).d || '');
   const askImg = (kind, id) => { const k = kind + id; if (!id || imgAsked[k]) return; imgAsked[k] = 1; NB.img(kind, id); };
   /** Surat kiçeltmek: iň uly tarapy max piksel, JPEG. */
@@ -770,14 +771,29 @@
           Object.assign(r.up, { premAct: actP, premNeed: canP && !s.admOn, premGoAdm: () => this.setState({ page: 'admin' }),
             selOn: actP && isF2 && d !== me1, selCls: selIs ? 'sel-off' : '', selT: selIs ? tx.sl_off : tx.sl_on,
             selTog: () => this.confirm((selIs ? tx.sl_qOff : tx.sl_qOn).replace('{n}', nmU), selIs ? tx.sl_off : tx.sl_on, () => act('mksel', { dev: d, on: !selIs }), false) });
+          const CD = ((A && A.codes) || []).find((c) => c.u === d && c.role !== 'f'), curP = CD ? CD.perm : '', isOwnD = roleOf(d) === 'o';
+          Object.assign(r.up, { rmOn: actP && isF2 && (!!px || isPrem(d)), rm: () => this.confirm(tx.pr_qRm.replace('{n}', nmU), tx.pr_rm, () => act('punprem', { dev: d }), false),
+            selOn: actP && isF2 && d !== me1 && !isOwnD,
+            roles: [['', tx.rp_none], ['sel', tx.rp_sel], ['chat', tx.rp_chat], ['tk', tx.rp_tk], ['all', tx.rp_all]].map((q) => ({ t: q[1], cls: curP === q[0] ? 'chip-on' : '', p: curP === q[0] ? 'true' : 'false',
+              pick: () => { if (curP === q[0]) return; this.confirm(tx.rp_q.replace('{n}', nmU).replace('{r}', q[1]), '✅ ' + q[1], () => { act('setperm', { dev: d, perm: q[0] }); if (CD) CD.perm = q[0]; }, false); } })) });
           Object.assign(r.up, { canPrem: canP, premOwn: actP && isF2, premNow: tx.pr_now.replace('{v}', px ? px.left : isPrem(d) ? '✓' : tx.pr_none),
             premM: () => give(30), premY: () => give(365), premD: () => { const n = parseInt(this.state.pDays, 10); if (!(n >= 0)) { this.say('⚠️ ' + tx.gv_bad); return; } give(n); } });
-        } else if (r.up) Object.assign(r.up, { canPrem: false, premOwn: false, premNow: '', premAct: false, premNeed: false, selOn: false });
+        } else if (r.up) Object.assign(r.up, { canPrem: false, premOwn: false, premNow: '', premAct: false, premNeed: false, selOn: false, rmOn: false });
+        // 1.45: Global chat — sesini öçürmek (doly admin / chat admin)
+        if (r.isUprof && r.up && s.upDev) { const d = s.upDev, ok = !!s.admOn && (full2 || am2.perm === 'chat') && d !== me1 && !roleOf(d);
+          r.up.muteOn = ok; r.up.mutes = [[10, tx.gm_10], [60, tx.gm_60], [1440, tx.gm_1d], [0, tx.gm_off]].map((q) => ({ t: q[1], go: () => act('gmute', { dev: d, m: q[0] }) })); }
+        else if (r.up) { r.up.muteOn = false; r.up.mutes = []; }
+        // 1.45: ulanyjy gözlemek (admin paneli)
+        r.usQ = s.usQ || ''; r.onUsQ = (e) => this.setState({ usQ: String(e.target.value || '').slice(0, 32) });
+        r.usGo = () => { const q = (this.state.usQ || '').trim(); if (q.length < 2) return; this.setState({ usDone: false, usRes: [] }); act('usearch', { q }); };
+        r.usRes = (s.usRes || []).map((u) => ({ name: u.n || '?', sub: (u.code || '') + (u.seen ? ' · ' + u.seen : ''), open: () => this.setState({ page: 'uprof', upDev: u.dev }) }));
+        r.usNone = !!s.usDone && !r.usRes.length;
         // 1.44: öz profilimde Premium bermek (eýesi)
         { const ownR = isF2 || roleOf(me1) === 'o', px = PL.find((x) => x.dev === me1);
           const give = (n) => this.confirm(tx.pr_qGive.replace('{n}', this.meName || '?').replace('{p}', n === 30 ? tx.pr_m : n === 365 ? tx.pr_y : n === 0 ? '♾' : n + ' ' + tx.pr_days), '👑 ' + tx.pr_giveBtn,
             () => { act('prem', { dev: me1, d: n }); this.setState({ pDays: '' }); }, false);
           r.mp = { on: pg === 'profile' && ownR, act: !!s.admOn, needAdm: !s.admOn, goAdm: () => this.setState({ page: 'admin' }),
+            canRm: !!s.admOn && isF2 && !!px, rm: () => this.confirm(tx.pr_qRm.replace('{n}', this.meName || '?'), tx.pr_rm, () => act('punprem', { dev: me1 }), false),
             now: tx.pr_now.replace('{v}', px ? px.left : PR ? (pexp === 0 ? '♾' : dlT) : tx.pr_none),
             premM: () => give(30), premY: () => give(365), premD: () => { const n = parseInt(this.state.pDays, 10); if (!(n >= 0)) { this.say('⚠️ ' + tx.gv_bad); return; } give(n); } }; } }
       ['srvList', 'gList'].forEach((k) => { if (Array.isArray(r[k])) r[k] = r[k].map(withFc); });
@@ -1357,6 +1373,7 @@
         return;
       }
       const d = e.d || {}; A = d; INFO.admMe = d.me; INFO.adm = true;
+      if (Array.isArray(d.usr)) { d.usr.forEach((u) => { if (u && u.dev) SR[u.dev] = u.n; }); up.usRes = d.usr; up.usDone = true; }   // 1.45
       (d.qal || []).forEach((q) => qAdd(q.id, q.t, q.at));
       if (s.admLogging || !s.admOn) { Object.assign(up, { admOn: true, admAsk: false, admLogging: false, admErr: '', admFails: 0, page: 'admin', admTab: 'tk' }); C.say('🔓 ' + tx.ad_ok); }
       up.admRole = (d.me || {}).role || 'h';
@@ -1378,6 +1395,9 @@
       else if (d.msg && d.msg.indexOf('xp:') === 0) { const q = d.msg.split(':'); UPX[q[3]] = { lv: +q[1], xp: +q[2] }; LVB[q[3]] = [+q[1], Date.now()]; LS.set('lvb', LVB); C.say('✅ ' + tx.gv_ok.replace('{l}', q[1]).replace('{x}', q[2])); }
       else if (d.msg && d.msg.indexOf('prem:') === 0) C.say('👑 ' + tx.pr_given);   // 1.43
       else if (d.msg === 'aperm') C.say('✅ ' + tx.ap_ok);   // 1.44
+      else if (d.msg && d.msg.indexOf('punprem:') === 0) { C.say('✅ ' + tx.pr_rmOk); A.prem = (A.prem || []).filter((x) => x.dev !== (s.upDev || INFO.dev)); }   // 1.45
+      else if (d.msg && d.msg.indexOf('perm:') === 0) C.say('✅ ' + tx.rp_ok);
+      else if (d.msg && d.msg.indexOf('gmute:') === 0) C.say('✅ ' + tx.gm_ok);
       else if (d.msg && d.msg.indexOf('sel:') === 0) { const q = d.msg.split(':'); C.say(q[2] === '1' ? tx.sl_okOn : '✅ ' + tx.sl_okOff); try { NB.refresh && NB.refresh(); } catch (e2) {} }
       else if (d.msg && d.msg.indexOf('adm:') === 0) { const k = d.msg.slice(4); NB.copy(k); up.onceK = k; up.onceN = ''; C.say('🔑 ' + tx.oa_ok); act('get'); }
       else if (d.msg === 'upd') C.say('⚡ ' + tx.ad_updGo);

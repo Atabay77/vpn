@@ -1965,7 +1965,8 @@ async def app_ai_reply(app, tid):
 def app_staff_devs(a=None, tickets=True):
     """Admin paneline giren telefonlar (bilet bildirişleri şolara gidýär)."""
     a = a if a is not None else app_cfg(load_db())
-    return list(dict.fromkeys(x["dev"] for x in (a.get("apw") or {}).values() if x.get("dev") and apw_valid(x) and (tickets or x.get("role") == "f")))
+    return list(dict.fromkeys(x["dev"] for x in (a.get("apw") or {}).values() if x.get("dev") and apw_valid(x) and (tickets or x.get("role") == "f")
+                              and (x.get("role") == "f" or x.get("perm") not in ("sel", "chat"))))   # 1.45: satyjy / chat admin biletleri almaýar
 
 def fs_get(proj, path):
     """Bir resminamanyň «b» meýdany (hyzmat hasaby bilen)."""
@@ -2521,8 +2522,9 @@ def news_id(news, now=None):
 def apw_new(): return "ADM-" + "-".join("".join(random.SystemRandom().choice(APW_ABC) for _ in range(4)) for _ in range(3))
 def apw_norm(pw): return re.sub(r"\s+", "", str(pw or "")).upper()
 def apw_id(pw): return hashlib.sha256(("tvaid|" + apw_norm(pw)).encode()).hexdigest()[:16]
-APW_PERM = {"all": "ähli rugsatlar (bilet, ulanyjy, açar)", "tk": "diňe biletler", "sel": "💎 Premium satyjy"}
-SEL_ACTS = {"get", "login", "logout", "prem", "preqx"}   # 1.43: satyjy diňe Premium berip bilýär
+APW_PERM = {"all": "ähli rugsatlar (bilet, ulanyjy, açar)", "tk": "diňe biletler", "sel": "💎 Premium satyjy", "chat": "💬 chat admin (Global chat)"}
+SEL_ACTS = {"get", "login", "logout", "prem", "preqx", "usearch"}   # 1.43: satyjy diňe Premium berip bilýär
+CHAT_ACTS = {"get", "login", "logout", "gdel", "gmute", "usearch"}   # 1.45: chat admin — diňe Global chat (habar pozmak, sesini öçürmek)
 
 def apw_valid(e):
     """Kömekçi adminiň möhleti geçse açar sözi hem işlemeýär."""
@@ -2553,7 +2555,7 @@ def app_adm_snap(a, e, dev):
     db = load_db(); f_ = e.get("role") == "f"; full = f_ or e.get("perm") == "all"
     devs = a.get("devs") or {}; now = time.time()
     today = tm_now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
-    sel_ = e.get("perm") == "sel" and not f_   # 1.43: Premium satyjy — biletleri görmeýär
+    sel_ = e.get("perm") in ("sel", "chat") and not f_   # 1.43: Premium satyjy (1.45: chat admin hem) — biletleri görmeýär
     tks = [] if sel_ else sorted((a.get("tickets") or {}).items(), key=lambda kv: kv[1].get("lt", 0), reverse=True)[:50]
     tk_out, need = [], set()
     for tid, t in tks:
@@ -2711,7 +2713,20 @@ async def app_adm(app, dev, o):
     t_ = (app_cfg(load_db()).get("tickets") or {}).get(tid)
     who = e.get("name") or "admin"
     if e.get("perm") == "sel" and not f_ and act not in SEL_ACTS: act = "get"   # 1.43: satyjy bilet / ulanyjy dolandyryp bilmeýär
+    if e.get("perm") == "chat" and not f_ and act not in CHAT_ACTS: act = "get"   # 1.45: chat admin
+    usr_ = None
     try:
+        if act == "usearch":   # 1.45: ulanyjy gözlemek — ID (TM-XXXXX) ýa-da nik
+            q_ = re.sub(r"\s+", "", str(r.get("q") or "")).casefold()[:32]; usr_ = []
+            if len(q_) >= 2:
+                cq_ = q_.upper() if q_.upper().startswith("TM-") else "TM-" + q_.upper()
+                for dv_, u_ in sorted((a.get("devs") or {}).items(), key=lambda kv: -float(kv[1].get("l") or 0)):
+                    nk_ = str(u_.get("nick") or "")
+                    if app_ref_code(dv_) == cq_ or dv_ == q_ or q_ in nk_.casefold():
+                        usr_.append({"dev": dv_, "n": nk_ or "?", "code": app_ref_code(dv_), "seen": app_hm(u_.get("l"))})
+                        if len(usr_) >= 30: break
+            msg = "usr"
+
         if act == "prem":   # 1.43: Premium bermek — eýesi islän möhleti, satyjy / admin diňe 1 aý ýa-da 1 ýyl
             dv = str(r.get("dev") or "")
             try: d_ = int(r.get("d") or 0)
@@ -2831,7 +2846,49 @@ async def app_adm(app, dev, o):
                     try: await asyncio.to_thread(app_tg_refresh, True); await asyncio.to_thread(app_sync, True)
                     except Exception as e2: err = str(e2)[:120]
             msg = act
-        elif act == "gdel" and full:   # 1.39: doly hukukly adminler hem (hekaýalar we habarlar)
+        elif act == "gmute" and (full or e.get("perm") == "chat"):   # 1.45: Global chatda sesini öçürmek (m minut, 0 — açmak)
+            dv = str(r.get("dev") or "")
+            try: m_ = max(0, min(10080, int(r.get("m") or 0)))
+            except Exception: m_ = 0
+            if not DEV_RE.match(dv) or dv in {x.get("dev") for x in (a.get("apw") or {}).values()}: err = "bolmaýar"
+            else:
+                until_ = int(now + m_ * 60) if m_ else 0
+                app_mut(lambda x: (x.setdefault("gmutes", {}).__setitem__(dv, until_) if m_ else (x.get("gmutes") or {}).pop(dv, None)))
+                try: await asyncio.to_thread(app_send, dv, {"k": "mute", "until": until_})
+                except Exception as e2: log.info("gmute: %s", e2)
+                msg = f"gmute:{m_}"
+        elif act == "punprem" and f_:   # 1.45: eýesi Premium-y aýyrýar (islendik adamyň, öz hem)
+            dv = str(r.get("dev") or "")
+            gone_ = []
+            def fp_(x):
+                for k_, v_ in list((x.get("keys") or {}).items()):
+                    if dv in app_key_devs(v_) and app_key_prem(v_): x["keys"].pop(k_, None); gone_.append(k_)
+                x["prem_log"] = ((x.get("prem_log") or []) + [{"dev": dv, "d": -1, "by": who, "ts": int(now)}])[-300:]
+            if not DEV_RE.match(dv): err = "ulanyjy tapylmady"
+            else:
+                app_mut(fp_); RUN["app_dirty"] = True
+                try: await asyncio.to_thread(app_send, dv, {"k": "punprem"})
+                except Exception as e2: log.info("punprem: %s", e2)
+                msg = f"punprem:{len(gone_)}"
+        elif act == "setperm" and f_:   # 1.45: profilden rugsat: sel / chat / tk / all ýa-da "" (aýyrmak); açar söz telefona özi gidýär
+            dv = str(r.get("dev") or ""); pm_ = str(r.get("perm") or "")
+            mine_ = lambda x: x.get("role") != "f" and (x.get("dev") == dv or dv in (x.get("hist") or []))
+            if not DEV_RE.match(dv) or dv not in (a.get("devs") or {}) or (pm_ and pm_ not in APW_PERM): err = "ulanyjy tapylmady"
+            elif any(x.get("role") == "f" and (x.get("dev") == dv or dv in (x.get("hist") or [])) for x in (a.get("apw") or {}).values()): err = "esasy admin"
+            else:
+                old_ = [(k2, x) for k2, x in (a.get("apw") or {}).items() if mine_(x)]
+                if pm_ and old_:   # bar — diňe rugsady üýtgeýär (açar söz şol)
+                    app_mut(lambda x: [x["apw"][k2].__setitem__("perm", pm_) for k2, _ in old_])
+                elif pm_:
+                    pw_ = apw_new(); nk_ = ((a.get("devs") or {}).get(dv) or {}).get("nick") or "Admin"
+                    app_mut(lambda x: x.setdefault("apw", {}).__setitem__(apw_id(pw_), {"pw": pw_, "uid": int(e.get("uid") or 0), "name": nk_[:32], "role": "h", "perm": pm_,
+                                                                                      "dev": dv, "hist": [dv], "ts": int(now), "made": 0, "by_app": True}))
+                    await asyncio.to_thread(app_send, dv, {"k": "admgrant", "pw": pw_})
+                else:
+                    app_mut(lambda x: [(x.get("apw") or {}).pop(k2, None) for k2, _ in old_])
+                    await asyncio.to_thread(app_send, dv, {"k": "admrevoke"})
+                RUN["app_dirty"] = True; msg = f"perm:{dv}:{pm_ or '-'}"
+        elif act == "gdel" and (full or e.get("perm") == "chat"):   # 1.39: doly hukukly adminler hem (hekaýalar we habarlar)
             gid = re.sub(r"^g/", "", str(r.get("id") or ""))
             if re.fullmatch(r"[\w\-]{1,60}", gid):
                 if a.get("fs_ok") and a.get("fs_proj"):
@@ -2963,6 +3020,7 @@ async def app_adm(app, dev, o):
         log.exception("app adm %s", act); err = str(e2)[:120]
     snap = app_adm_snap(app_cfg(load_db()), (app_cfg(load_db()).get("apw") or {}).get(aid) or e, dev)
     snap.update({"ok": True, "a": act, "msg": msg, "err": err})
+    if usr_ is not None: snap["usr"] = usr_
     await asyncio.to_thread(app_adm_out, dev, pw, snap)
 
 def apw_view(a):

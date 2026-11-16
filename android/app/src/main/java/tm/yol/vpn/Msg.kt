@@ -319,7 +319,7 @@ object Msg {
             if (s > 0) seq = s
             p.edit().putInt("seq", seq).apply()
             o.optString("key").takeIf { it.isNotEmpty() }?.let { k -> if (Lic.exp(c) == null || o.optString("k") == "buy" || o.optString("k") == "lvl" || o.optString("k") == "prem") Lic.save(c, k) }   // sowgat / çagyryş / satyn alnan açar / 1.43: Premium
-            if (o.optString("k") == "prem") subDue = true   // 1.43: täze açar abuna faýlynda — derrew täzele
+            if (o.optString("k") == "prem" || o.optString("k") == "punprem") subDue = true   // 1.43: täze açar abuna faýlynda — derrew täzele (1.45: Premium aýryldy hem)
             if (o.optString("k") == "uban") Lic.setBanned(c, o.optBoolean("on"))
             pend(c, JSONObject().put("k", "in").put("m", o))
             if (!visible && o.optString("k") == "tk" && o.optString("who") == "a") Svc.notifyReply(c, o.optString("t"))
