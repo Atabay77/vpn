@@ -1367,6 +1367,7 @@ def hunt_test(codes, threads=25, batch=40, port0=21000, timeout=8):
             try: os.remove(path)
             except Exception: pass
     for k in range(0, len(codes), batch):
+        RUN["hunt_prog"] = f"Test: {k}/{len(codes)} · {len(res)} çalışıyor"
         run_batch(codes[k:k + batch], port0 + (k // batch % 10) * batch)
     return res
 
@@ -1375,7 +1376,7 @@ def hunt_tg(ch, pages=3):
     page, before = "", ""
     for _ in range(pages):
         req = urllib.request.Request(f"https://t.me/s/{urllib.parse.quote(ch)}" + (f"?before={before}" if before else ""), headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=20) as r: pg = r.read().decode("utf-8", "ignore")
+        with urllib.request.urlopen(req, timeout=10) as r: pg = r.read().decode("utf-8", "ignore")
         page += pg
         ids = [int(x) for x in re.findall(r'data-post="[^"/]+/(\d+)"', pg)]
         if not ids or min(ids) <= 1: break
@@ -1404,17 +1405,22 @@ def hunt_guess_names():
     tmk = lambda x: any(k in x for k in ("tkm", "turkmen")) or x.startswith("tm") or x.endswith("tm")
     return sorted(out, key=lambda x: (not tmk(x), "vpn" not in x, len(x), x))   # türkmen + vpn öňde
 
-def hunt_probe(a, n=150):
+def hunt_probe(a, n=60):
     """Çaklanan atlardan n sanysyny barlaýar (her at 7 günde bir). Kod paýlaşýanlary gaýtarýar."""
     tried = dict(a.get("hunt_probe") or {}); now = time.time(); got = []
     todo = [x for x in hunt_guess_names() if now - float(tried.get(x) or 0) > 7 * 86400][:n]
+    fails = [0]
     def one(nm):
+        if fails[0] >= 8: return nm, -1   # Telegram haýal / çäk — bu gezek bes
         try: cs, _ = hunt_tg(nm, pages=1); return nm, len(cs)
-        except Exception: return nm, 0
-    with ThreadPoolExecutor(6) as ex:
+        except urllib.error.HTTPError as e:
+            if e.code == 429: fails[0] += 8
+            return nm, 0
+        except Exception: fails[0] += 1; return nm, -1
+    with ThreadPoolExecutor(4) as ex:
         for nm, k in ex.map(one, todo):
-            tried[nm] = int(now)
-            if k: got.append(nm)
+            if k >= 0: tried[nm] = int(now)
+            if k > 0: got.append(nm)
     return got, tried
 
 def hunt_url_codes(url):
@@ -1451,22 +1457,26 @@ def hunt_run(force_gh=False):
         if not xray_bin(): st["err"] = "xray yok"; app_mut(lambda x: x.__setitem__("hunt_st", st)); return st
         pg_, probe_ = [], None
         # 1) çeşmeler
-        gh_ = None
+        gh_ = None; RUN["hunt_prog"] = "GitHub aranıyor…"
         if force_gh or now - float(a.get("hunt_gh_at") or 0) > 6 * 3600 or not a.get("hunt_ghd"):
             try: gh_ = hunt_github()
             except Exception as e: log.info("hunt gh: %s", e)
+        RUN["hunt_prog"] = "Kanal adları deneniyor…"
         try: pg_, probe_ = hunt_probe(a)   # at çaklap täze kanallar
         except Exception as e: pg_, probe_ = [], None; log.info("hunt probe: %s", e)
         tg_ = list(dict.fromkeys([c for c in (a.get("tgsrc") or APP_TG_DEFAULT)] + list(a.get("hunt_tg") or []) + list(a.get("hunt_tgd") or []) + pg_))
         urls_ = list(dict.fromkeys(list(a.get("hunt_url") or []) + list(gh_ if gh_ is not None else (a.get("hunt_ghd") or []))))
         found, refs, errs = [], set(), 0
+        mine_ = {x.lower() for x in list(a.get("tgsrc") or APP_TG_DEFAULT) + list(a.get("hunt_tg") or [])}
         def tg1(ch):
-            try: cs, rf = hunt_tg(ch); return ch, cs, rf, 0
+            try: cs, rf = hunt_tg(ch, pages=3 if ch.lower() in mine_ else 1); return ch, cs, rf, 0
             except Exception: return ch, [], [], 1
         with ThreadPoolExecutor(4) as ex:
-            for ch, cs, rf, e_ in ex.map(tg1, tg_[:120]):
+            for k_, (ch, cs, rf, e_) in enumerate(ex.map(tg1, tg_[:120])):
                 found += [(c, "tg:" + ch) for c in cs]; refs.update(rf); errs += e_
-        for u in urls_[:60]:
+                RUN["hunt_prog"] = f"Kanallar okunuyor: {k_ + 1}/{min(len(tg_), 120)} · {len(found)} kod"
+        for k_, u in enumerate(urls_[:60]):
+            RUN["hunt_prog"] = f"Linkler okunuyor: {k_ + 1}/{min(len(urls_), 60)} · {len(found)} kod"
             try: found += [(c, "url") for c in hunt_url_codes(u)]
             except Exception: errs += 1
         # 2) täze kodlar (host:port boýunça bir gezek), howuzdakylar gaýtadan barlanýar
@@ -1477,6 +1487,7 @@ def hunt_run(force_gh=False):
             hp = app_x_hp(c)
             if hp and hp not in pool and hp not in bad and hp not in have and hp not in new_: new_[hp] = (c, src)
         cand = [v["c"] for v in pool.values()] + [c for c, _ in list(new_.values())[:HUNT_MAX_TEST]]
+        RUN["hunt_prog"] = f"{len(cand)} kod test ediliyor…"
         ok = hunt_test(cand)
         st.update({"found": len(found), "uniq": len(new_), "tested": len(cand), "ok": len(ok), "src": len(tg_) + len(urls_), "errs": errs})
         # 3) Türkmenistandaky telefonlaryň pingi: 24 sagatda hiç işlemedik — aýrylýar
@@ -1504,7 +1515,7 @@ def hunt_run(force_gh=False):
         app_mut(fw); RUN["app_dirty"] = True
         vlog(f"🔎 Kod awy: {st['found']} kod tapyldy, {st['tested']} barlandy, {st['ok']} işleýär → programda {st['n']}")
         return st
-    finally: HUNT_LOCK.release()
+    finally: HUNT_LOCK.release(); RUN.pop("hunt_prog", None)
 
 def hunt_codes(a):
     """Programa goşulýan aw kodlary: «🇩🇪 Germaniýa · aw» (ady boýunça mugt saýlamak üçin)."""
@@ -1527,7 +1538,7 @@ async def hunt_loop(app):
             if a.get("hunt_on", True) and (RUN.pop("hunt_now", None) or time.time() - float((a.get("hunt_st") or {}).get("at") or 0) >= HUNT_EVERY):
                 st = await asyncio.to_thread(hunt_run, bool(RUN.pop("hunt_gh", None)))
                 if st.get("n") is not None: RUN["app_dirty"] = True
-        except Exception as e: log.info("hunt loop: %s", e)
+        except Exception as e: log.exception("hunt loop"); RUN["hunt_err"] = str(e)[:200]
         await asyncio.sleep(60)
 
 
@@ -6106,7 +6117,12 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
             if a == "app_hunt_run":
                 if HUNT_LOCK.locked(): await safe_edit(q, "⏳ <b>Tarama zaten sürüyor</b> — bitince sonuç mesajı gelecek.", KB([[B("🔎 Kod avı", "app_hunt")]])); return
                 async def _hunt_now(chat_):
-                    st_ = await asyncio.to_thread(hunt_run, True)
+                    try: st_ = await asyncio.to_thread(hunt_run, True)
+                    except Exception as e2:
+                        log.exception("hunt run")
+                        try: await c.bot.send_message(chat_, f"❌ <b>Kod avı hata verdi</b>\n<code>{esc(str(e2)[:300])}</code>", parse_mode="HTML")
+                        except Exception: pass
+                        return
                     if st_.get("err") == "busy": return
                     t_ = ("⚠️ Kod avı: Xray kurulu değil" if st_.get("err") else
                           f"🔎 <b>Kod avı bitti</b>\n<blockquote>{st_.get('src', 0)} kaynak · {st_.get('found', 0)} kod bulundu · {st_.get('uniq', 0)} yeni\n"
@@ -6127,7 +6143,7 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
             src_ = [f"📡 {esc(c_)}" for c_ in (a_.get("hunt_tg") or [])] + [f"🔗 {esc(short(u_, 50))}" for u_ in (a_.get("hunt_url") or [])]
             t_ = ("🔎 <b>Kod avı</b>\n<blockquote>"
                   + ("🟢 Açık" if on_ else "🔴 Kapalı") + (" · ⚠️ <b>Xray kurulu değil</b>" if not xray_bin() else "") + "\n"
-                  + ("⏳ <b>Tarama sürüyor…</b>\n" if HUNT_LOCK.locked() else "")
+                  + (f"⏳ <b>Tarama sürüyor:</b> {esc(RUN.get('hunt_prog') or '…')}\n" if HUNT_LOCK.locked() else "")
                   + (f"Son tarama: {datetime.datetime.fromtimestamp(st_['at']).strftime('%d.%m %H:%M')} · {st_.get('found', 0)} kod bulundu, {st_.get('tested', 0)} test, {st_.get('ok', 0)} çalışıyor\n" if st_.get("at") else "Henüz tarama yok\n")
                   + f"Programda: <b>{len(a_.get('hunt') or {})}</b> kod (Free'de en fazla {HUNT_FREE}, Premium'da en fazla {HUNT_KEEP})\n"
                   + f"Kaynaklar: {len(a_.get('tgsrc') or APP_TG_DEFAULT) + len(a_.get('hunt_tg') or [])} kanal + {len(a_.get('hunt_tgd') or [])} bulunan kanal · {len(a_.get('hunt_url') or [])} link + {len(a_.get('hunt_ghd') or [])} GitHub</blockquote>"
