@@ -888,6 +888,8 @@ def app_meta(cfg):
     for n_ in (cfg.get("news") or [])[:10]:
         out.append(f"#tvn: {n_['id']} {int(n_['ts'])} " + base64.urlsafe_b64encode(json.dumps({"t": n_["t"], "x": n_["x"], **({"img": n_["img"]} if n_.get("img") else {}), **({"btn": n_["btn"]} if n_.get("btn") else {}), **({"poll": n_["poll"]} if n_.get("poll") else {})}, ensure_ascii=False).encode()).decode().rstrip("="))
     if RUN.get("app_on"): out.append(f"#tvon: {int(RUN['app_on'])}")
+    if (cfg.get("gpin") or {}).get("id"):   # 1.46.4: Global chatda berkidilen habar
+        g_ = cfg["gpin"]; out.append("#tvpin: " + base64.urlsafe_b64encode(json.dumps({"id": g_["id"], "n": g_.get("n", ""), "t": g_.get("t", "")}, ensure_ascii=False).encode()).decode().rstrip("="))
     out.append(f"#tvsess: {app_sess(cfg)}")
     if cfg.get("fs_fast"): out.append("#tvfast: 1")
     if cfg.get("fcm_app"): out.append(f"#tvfcm: {cfg['fcm_app']}")
@@ -3380,7 +3382,7 @@ def apw_norm(pw): return re.sub(r"\s+", "", str(pw or "")).upper()
 def apw_id(pw): return hashlib.sha256(("tvaid|" + apw_norm(pw)).encode()).hexdigest()[:16]
 APW_PERM = {"all": "ähli rugsatlar (bilet, ulanyjy, açar)", "tk": "diňe biletler", "sel": "💎 Premium satyjy", "chat": "💬 chat admin (Global chat)"}
 SEL_ACTS = {"get", "login", "logout", "prem", "preqx", "usearch"}   # 1.43: satyjy diňe Premium berip bilýär
-CHAT_ACTS = {"get", "login", "logout", "gdel", "gmute", "usearch"}   # 1.45: chat admin — diňe Global chat (habar pozmak, sesini öçürmek)
+CHAT_ACTS = {"get", "login", "logout", "gdel", "gpin", "gmute", "usearch"}   # 1.45: chat admin — diňe Global chat (habar pozmak, sesini öçürmek)
 
 def apw_valid(e):
     """Kömekçi adminiň möhleti geçse açar sözi hem işlemeýär."""
@@ -3744,6 +3746,13 @@ async def app_adm(app, dev, o):
                     app_mut(lambda x: [(x.get("apw") or {}).pop(k2, None) for k2, _ in old_])
                     await asyncio.to_thread(app_send, dv, {"k": "admrevoke"})
                 RUN["app_dirty"] = True; msg = f"perm:{dv}:{pm_ or '-'}"
+        elif act == "gpin" and (full or e.get("perm") == "chat"):   # 1.46.4: Global chatda habary berkitmek (id boş — aýyrmak)
+            gid = re.sub(r"^g/", "", str(r.get("id") or ""))
+            if gid and not re.fullmatch(r"[\w\-]{1,60}", gid): err = "habar tapylmady"
+            else:
+                pin_ = {"id": gid, "n": str(r.get("n") or "")[:32], "t": str(r.get("t") or "")[:200], "ts": int(now)} if gid else None
+                app_mut(lambda x: x.__setitem__("gpin", pin_) if pin_ else x.pop("gpin", None)); RUN["app_dirty"] = True
+                msg = "gpin:" + ("1" if gid else "0")
         elif act == "gdel" and (full or e.get("perm") == "chat"):   # 1.39: doly hukukly adminler hem (hekaýalar we habarlar)
             gid = re.sub(r"^g/", "", str(r.get("id") or ""))
             if re.fullmatch(r"[\w\-]{1,60}", gid):

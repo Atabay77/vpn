@@ -100,7 +100,7 @@ open class Main : Activity() {
         }
         Sub.load(this)
         runCatching { Upd.clean(this, Msg.ver(this)) }   // gurnalan wersiýanyň (ýa-da könäniň) ýüklemesi galmasyn
-        if (b == null && State.now != State.ON && State.now != State.WAIT) State.select(this, null)
+        if (b == null && State.now != State.ON && State.now != State.WAIT) State.select(this, null, State.selKey(this) == "auto:p")
         if (Build.VERSION.SDK_INT >= 33) requestPermissions(arrayOf("android.permission.POST_NOTIFICATIONS"), 2)
         web.loadUrl("https://$HOST/index.html" + (if (intent?.action == CHAT) "#chat" else ""))
         Thread {
@@ -224,7 +224,7 @@ open class Main : Activity() {
             val q = Upd.query(c)
             return JSONObject()
                 .put("st", when (State.now) { State.ON -> "on"; State.WAIT -> "wait"; State.FAIL -> "fail"; else -> "off" }).put("ks", State.hold).put("dead", State.dead && State.now == State.ON)
-                .put("act", State.active?.key ?: "").put("sel", State.selected(c)?.key ?: "")
+                .put("act", State.active?.key ?: "").put("sel", State.selected(c)?.key ?: "").put("selp", State.selKey(c) == "auto:p")
                 .put("ms", State.ms).put("left", if (left == null) -1 else left / 1000).put("kexp", if (exp == null) -1 else exp / 1000)
                 .put("nolim", exp == null && Lic.unlim(c)).put("sess", Sub.sess)
                 .put("dn", dRate).put("up", uRate).put("rxT", rxSum).put("txT", txSum).put("onAt", State.onAt)
@@ -242,7 +242,7 @@ open class Main : Activity() {
                 .put("prem", Lic.prem(c)).put("pexp", Lic.exp(c) ?: -1L).put("pdevs", JSONArray(Lic.premDevs().toList())).put("pfree", Sub.free.isNotEmpty())
                 .put("dl", Sub.upd["l"]?.second?.takeIf { Upd.isLink(it) } ?: (Sub.upd["all"] ?: Sub.upd["64"] ?: Sub.upd["32"])?.let { runCatching { Sub.fileUrl(it.second) }.getOrNull() } ?: "")   // 1.44.3: salgy bar bolsa şol
                 .put("roles", JSONObject().apply { Sub.roles.forEach { (d, rn) -> put(d, JSONArray().put(rn.first).put(rn.second)) } })
-                .put("uban", Lic.banned(c))
+                .put("uban", Lic.banned(c)).put("gpin", runCatching { JSONObject(Sub.pin) }.getOrNull() ?: JSONObject.NULL)
                 .put("nkb", Lic.bonus(c)).put("kson", Lic.kill(c))
                 .put("disg", runCatching { packageManager.getComponentEnabledSetting(android.content.ComponentName(c, "tm.yol.vpn.Calc")) == android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED }.getOrDefault(false))
                 .put("adm", Msg.admPw(c) != null).put("admMe", Msg.admMe(c) ?: JSONObject()).toString()
@@ -263,8 +263,9 @@ open class Main : Activity() {
         @JavascriptInterface fun select(key: String) {
             val s = Sub.list.firstOrNull { it.key == key }
             if (s != null && !State.allowed(this@Main, s)) { Msg.events.add(JSONObject().put("k", "plock")); return }   // 1.43: Premium serwer
-            if (State.selected(this@Main)?.key == s?.key) return
-            State.select(this@Main, s)
+            val want = s?.key ?: if (key == "auto:p") "auto:p" else "auto"   // 1.46.4: Premium awtomatik
+            if (State.selKey(this@Main) == want) return
+            State.select(this@Main, s, key == "auto:p")
             ui { if (State.now == State.ON || State.now == State.WAIT) startVpn() }
         }
         @JavascriptInterface fun test() = measure()

@@ -40,10 +40,14 @@ object State {
     /** Varsayılan otomatik. Elle seçilen sunucu listeden kalkarsa yine otomatiğe döner. */
     fun selected(ctx: Context): Server? {
         val k = ctx.getSharedPreferences("p", 0).getString("sel", AUTO)
-        return if (k == AUTO) null else Sub.list.firstOrNull { it.key == k }?.takeIf { allowed(ctx, it) }   // 1.43: Premium gutarsa — awtomatik (mugt)
+        return if (k == null || k.startsWith(AUTO)) null else Sub.list.firstOrNull { it.key == k }?.takeIf { allowed(ctx, it) }   // 1.43: Premium gutarsa — awtomatik (mugt)
     }
-    fun select(ctx: Context, s: Server?) =
-        ctx.getSharedPreferences("p", 0).edit().putString("sel", s?.key ?: AUTO).apply()
+    fun select(ctx: Context, s: Server?, prem: Boolean = false) =
+        ctx.getSharedPreferences("p", 0).edit().putString("sel", s?.key ?: if (prem) AUTO_P else AUTO).apply()
+    fun selKey(ctx: Context): String = ctx.getSharedPreferences("p", 0).getString("sel", AUTO) ?: AUTO
+    /** 1.46.4: awtomatik — Premium bölüminden saýlanan bolsa diňe Premium serwerler, Free-den bolsa diňe mugtlar. */
+    private fun autoPrem(ctx: Context) = selKey(ctx) == AUTO_P && Lic.prem(ctx)
+    private const val AUTO_P = "auto:p"
     private const val AUTO = "auto"
 
     // ---- ping önbelleği: açılışta ve «Barla»da ölçülür, bağlanırken bekletmez ----
@@ -51,7 +55,12 @@ object State {
     @Volatile var pingAt = 0L
     /** 1.43: Premium bolmasa diňe mugt serwerler (#tvfree); sanaw ýok bolsa (köne bot) — hemmesi. */
     fun allowed(ctx: Context?, s: Server): Boolean = ctx == null || Sub.free.isEmpty() || Lic.prem(ctx) || s.hp in Sub.free
-    private fun cands() = Sub.list.filter { !it.ru && !it.game && allowed(app, it) }.ifEmpty { Sub.list.filter { !it.ru && allowed(app, it) } }
+    private fun cands(): List<Server> {
+        val c = app
+        val base = Sub.list.filter { !it.ru && !it.game && allowed(c, it) }.ifEmpty { Sub.list.filter { !it.ru && allowed(c, it) } }
+        if (c == null || Sub.free.isEmpty() || !Lic.prem(c)) return base
+        return (if (autoPrem(c)) base.filter { it.hp !in Sub.free } else base.filter { it.hp in Sub.free }).ifEmpty { base }   // 1.46.4
+    }
 
     fun ping(s: Server): Long = runCatching { Libv2ray.measureOutboundDelay(Cfg.full(s.uri, false), PING) }
         .getOrDefault(-1L).let { if (it > 0) it else -1L }.also { pings[s.key] = it }

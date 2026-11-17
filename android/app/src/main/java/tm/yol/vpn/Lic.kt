@@ -56,8 +56,12 @@ object Lic {
     }
 
     /** 1.43: Premium — geçerli açar (bot Premium beren / satyn alnan / sowgat). Ähli serwerler we wagt çägi ýok. */
-    fun prem(ctx: Context): Boolean = Sub.roles[Msg.dev(ctx)]?.first == "o" ||   // 1.43.5: eýesi hemişe Premium
+    fun prem(ctx: Context): Boolean = (Sub.roles[Msg.dev(ctx)]?.first == "o" && !ownOff(ctx)) ||   // 1.43.5: eýesi hemişe Premium (1.46.4: özüni aýyrsa — ýok)
         (exp(ctx) != null && saved(ctx)?.let { k -> Sub.pkeys?.contains(hash(k)) ?: true } == true)   // 1.43.4: sowgat açarlary Premium däl
+
+    /** 1.46.4: eýesi öz Premium-yny aýyrdy (Premium berlende ýene açylýar). */
+    fun ownOff(ctx: Context) = p(ctx).getBoolean("ownOff", false)
+    fun setOwnOff(ctx: Context, v: Boolean) = p(ctx).edit().putBoolean("ownOff", v).apply()
 
     /** 1.43: Premium-ly telefonlar (abuna faýlyndaky açarlardan) — chatda ýalpyldaýan nyşan üçin. */
     fun premDevs(): Set<String> {
