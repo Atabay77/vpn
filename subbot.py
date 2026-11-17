@@ -106,7 +106,7 @@ def load_db():
 
 def save_db(db):
     tmp = DB_FILE + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f: json.dump(db, f, indent=4, ensure_ascii=False)
+    with open(tmp, "w", encoding="utf-8") as f: json.dump(db, f, ensure_ascii=False, separators=(",", ":"))   # 1.47: gysga — baza uly, her ýazgy çalt bolsun
     os.replace(tmp, DB_FILE)
 
 def mutate(fn):
@@ -3054,12 +3054,47 @@ def app_grant_days(dev, days, by):
 # 1.19: derejeler — her işjeň gün 10 bal, her çagyrylan dost 50 bal; käbir derejede mugt gün
 APP_LVL = [0, 50, 120, 250, 400, 600, 850, 1150, 1500, 2000]
 APP_LVL_GIFT = {3: 1, 5: 3, 7: 5, 10: 7}
+def app_dev_prem(a, dev):
+    """1.47: telefonyň häzir işleýän Premium açary barmy."""
+    now_ = time.time()
+    return any(dev in app_key_devs(v) and app_key_prem(v) and (int(v.get("exp") or 0) == 0 or v["exp"] > now_) for v in (a.get("keys") or {}).values())
+
+ALOG_FILE = os.path.join(os.path.dirname(DB_FILE) or ".", "alog.jsonl")
+def alog_add(dev, ev):
+    """1.47: adminiň (eýesinden başga) programmadaky hereketleri: basan düwmesi, açan sahypasy, eden işi."""
+    a = app_cfg(load_db())
+    staff = {}
+    for x in (a.get("apw") or {}).values():
+        if not apw_valid(x) or x.get("role") == "f": continue
+        for d_ in ([x["dev"]] if x.get("dev") else []) + (x.get("hist") or [])[-1:]: staff[d_] = x.get("name") or "?"
+    if dev not in staff or not isinstance(ev, list): return
+    nk = ((a.get("devs") or {}).get(dev) or {}).get("nick") or staff[dev]
+    with open(ALOG_FILE, "a", encoding="utf-8") as f:
+        for e_ in ev[:200]:
+            try: f.write(json.dumps({"t": int(e_[0]), "d": dev, "n": str(nk)[:32], "k": str(e_[1])[:8], "x": str(e_[2])[:120]}, ensure_ascii=False) + "\n")
+            except Exception: pass
+    try:
+        if os.path.getsize(ALOG_FILE) > 3_000_000:
+            with open(ALOG_FILE, encoding="utf-8") as f: keep = f.readlines()[-8000:]
+            with open(ALOG_FILE, "w", encoding="utf-8") as f: f.writelines(keep)
+    except Exception: pass
+
+def alog_read(n=400):
+    try:
+        with open(ALOG_FILE, encoding="utf-8") as f: lines = f.readlines()[-n:]
+    except Exception: return []
+    out = []
+    for l in reversed(lines):
+        try: out.append(json.loads(l))
+        except Exception: pass
+    return out
+
 def app_xp(a, dev):
     """(bal, dost sany). «bx» — eýesiniň beren ballary: dost çagyryşy hökmünde görünýär (her 50 bal = 1 dost)."""
     u = (a.get("devs") or {}).get(dev) or {}
     inv = sum(1 for v in (a.get("ref_devs") or {}).values() if v == dev)
     bx = int(u.get("bx") or 0)
-    return max(0, int(u.get("ad") or 0) * 10 + inv * 50 + bx), inv + max(0, bx // 50)
+    return max(0, int(u.get("ad") or 0) * 10 + inv * 50 + bx + int(u.get("pb") or 0)), inv + max(0, bx // 50)   # pb: Premium-yň goşmaça ballary (2 esse)
 def app_lvl(xp): return sum(1 for t_ in APP_LVL if xp >= t_)
 
 def app_lvl_check(dev, tell=False):
@@ -3130,9 +3165,14 @@ async def app_on_msg(app, fid, o):
             if o.get(f_): u[f_] = str(o[f_])[:40]
         u["l"] = now
         day_ = tm_now().strftime("%Y-%m-%d")
-        if u.get("ld") != day_: u["ld"] = day_; u["ad"] = int(u.get("ad") or 0) + 1; RUN.setdefault("lvl_q", set()).add(dev)   # 1.19: işjeň gün
+        if u.get("ld") != day_:
+            u["ld"] = day_; u["ad"] = int(u.get("ad") or 0) + 1; RUN.setdefault("lvl_q", set()).add(dev)   # 1.19: işjeň gün
+            if app_dev_prem(a, dev): u["pb"] = int(u.get("pb") or 0) + 10   # 1.47: Premium — bal 2 esse
         a.setdefault("codes", {})[app_ref_code(dev)] = dev
-    app_mut(reg)
+    a0_ = app_cfg(load_db()); u0_ = (a0_.get("devs") or {}).get(dev)   # 1.47: hiç zat üýtgemedik bolsa baza ýazylmaýar (her habarda ýazmak — bot haýallaýardy)
+    if (u0_ is None or u0_.get("ld") != tm_now().strftime("%Y-%m-%d") or now - int(u0_.get("l") or 0) > 300 or app_ref_code(dev) not in (a0_.get("codes") or {})
+            or any(o.get(f_) and str(o[f_])[:40] != u0_.get(f_) for f_ in ("nick", "model", "ver", "lang"))):
+        await asyncio.to_thread(app_mut, reg)
     try: await asyncio.to_thread(app_resend, fid, dev, int(o.get("ack") or 0))
     except Exception: pass
     if dev in RUN.get("lvl_q", set()):
@@ -3142,6 +3182,7 @@ async def app_on_msg(app, fid, o):
     a = app_cfg(load_db())
     if k == "adm": await app_adm(app, dev, o); return
     if k == "pr": await asyncio.to_thread(app_x_report, dev, o.get("p")); return
+    if k == "alog": await asyncio.to_thread(alog_add, dev, o.get("e")); return   # 1.47: admin log
     if k == "preq":   # 1.43: «Premium satyn al» — satyja (ýa-da eýesine) haýyş; diňe olar görýär
         sl_ = app_seller_devs(a); to_ = str(o.get("to") or "")
         if to_ and to_ not in sl_: return
@@ -3217,6 +3258,7 @@ async def app_on_msg(app, fid, o):
         if not inv or inv == dev: await asyncio.to_thread(app_send, dev, {"k": "refbad", "why": "own" if inv == dev else "bad"}); return
         def f(a_):
             a_.setdefault("ref_devs", {})[dev] = inv
+            if app_dev_prem(a_, inv): u_ = a_.setdefault("devs", {}).setdefault(inv, {}); u_["pb"] = int(u_.get("pb") or 0) + 50   # 1.47: Premium — dost üçin hem 2 esse
             cnt = sum(1 for v in a_["ref_devs"].values() if v == inv)
             rk = (a_.get("refkey") or {}).get(inv); keys = a_.setdefault("keys", {})
             if rk and rk in keys and keys[rk].get("exp", 0) > time.time():
@@ -3521,13 +3563,13 @@ async def app_relay_loop(app):
             got = await asyncio.to_thread(ntfy_poll, app_topic(fid) + "m", a.get("msg_since") or "2h", 25)
             if not got and time.time() - t0_ < 1: await asyncio.sleep(2)   # köne habar serweri garaşmaýar — aýlaw gyzmasyn
             for j in got:
-                app_mut(lambda a_: a_.__setitem__("msg_since", j.get("id")))
                 pt = app_dec(fid, j.get("message", ""))
                 if not pt: continue
                 try: o = json.loads(pt)
                 except Exception: continue
                 try: await app_on_msg(app, fid, o)
                 except Exception: log.exception("app msg (relay)")
+            if got: await asyncio.to_thread(app_mut, lambda a_, i_=got[-1].get("id"): a_.__setitem__("msg_since", i_))   # 1.47: her habarda däl, toplumda bir gezek (bot haýallamasyn)
         except Exception as e:
             if RUN.get("rel_err") != str(e)[:100]: RUN["rel_err"] = str(e)[:100]; log.info("relay loop: %s", e)
             await asyncio.sleep(3)
@@ -3656,7 +3698,7 @@ def app_adm_snap(a, e, dev):
                      "lang": u.get("lang") or "tk", "first": app_hm(u.get("f")), "seen": app_hm(u.get("l")), "l": int(u.get("l") or 0),
                      "key": (f"{max(0, int((kv_['exp'] - now) // 86400))} gün" if kv_ and kv_.get("exp") else ("çäksiz" if kv_ else "—")),
                      "inv": inv_n.get(dv, 0) + max(0, int(u.get("bx") or 0) // 50), "ban": dv in bans or dv in set(a.get("ubans") or []),
-                     "xp": max(0, int(u.get("ad") or 0) * 10 + inv_n.get(dv, 0) * 50 + int(u.get("bx") or 0))}
+                     "xp": max(0, int(u.get("ad") or 0) * 10 + inv_n.get(dv, 0) * 50 + int(u.get("bx") or 0) + int(u.get("pb") or 0))}
     if full and len(users) > 300:   # köp bolsa: diňe soňky işjeňler + biletdäkiler
         keep = sorted(users, key=lambda d_: users[d_]["l"], reverse=True)[:300]
         users = {d_: users[d_] for d_ in set(keep) | (need & set(users))}
@@ -3771,7 +3813,7 @@ async def app_adm(app, dev, o):
     who = e.get("name") or "admin"
     if e.get("perm") == "sel" and not f_ and act not in SEL_ACTS: act = "get"   # 1.43: satyjy bilet / ulanyjy dolandyryp bilmeýär
     if e.get("perm") == "chat" and not f_ and act not in CHAT_ACTS: act = "get"   # 1.45: chat admin
-    usr_ = None
+    usr_ = None; alog_ = None
     try:
         if act == "usearch":   # 1.45: ulanyjy gözlemek — ID (TM-XXXXX) ýa-da nik
             q_ = re.sub(r"\s+", "", str(r.get("q") or "")).casefold()[:32]; usr_ = []
@@ -3811,6 +3853,15 @@ async def app_adm(app, dev, o):
         elif act == "reply":
             txt = str(r.get("t") or "").strip()[:2000]
             if txt and t_: await app_admin_reply(app, tid, txt); msg = "sent"
+        elif act == "closeall":   # 1.47: ähli açyk biletleri ýap
+            ids_ = [t0 for t0, x in (a.get("tickets") or {}).items() if x.get("st") != "closed"]
+            app_mut(lambda x: [x["tickets"][t0].update({"st": "closed", "human": False}) for t0 in ids_ if t0 in x.get("tickets", {})])
+            for t0 in ids_:
+                try: await asyncio.to_thread(app_send, a["tickets"][t0]["dev"], {"k": "tkst", "st": "closed", "tid": int(t0)})
+                except Exception: pass
+            msg = f"closeall:{len(ids_)}"
+        elif act == "alog" and e.get("role") == "f":   # 1.47: adminleriň hereketleri — diňe eýesi
+            alog_ = await asyncio.to_thread(alog_read, 400)
         elif act in ("close", "reopen") and t_:
             st_ = "closed" if act == "close" else "open"
             app_mut(lambda x: x["tickets"][tid].update({"st": st_, "human": False} if st_ == "closed" else {"st": st_}))
@@ -4085,6 +4136,7 @@ async def app_adm(app, dev, o):
     snap = app_adm_snap(app_cfg(load_db()), (app_cfg(load_db()).get("apw") or {}).get(aid) or e, dev)
     snap.update({"ok": True, "a": act, "msg": msg, "err": err})
     if usr_ is not None: snap["usr"] = usr_
+    if alog_ is not None: snap["alog"] = alog_
     await asyncio.to_thread(app_adm_out, dev, pw, snap)
 
 def apw_view(a):
@@ -4521,6 +4573,8 @@ async def post_init(app):
     app.bot_data["appsync"] = asyncio.create_task(app_loop(app))
     app.bot_data["apptg"] = asyncio.create_task(app_tg_loop())
     app.bot_data["hunt"] = asyncio.create_task(hunt_loop(app))   # 1.46: kod awy
+    try: app_mut(lambda x: x.pop("fs_fast", None))   # 1.47: «çalt rejim» aýryldy
+    except Exception: pass
     app.bot_data["appmsg"] = asyncio.create_task(app_msg_loop(app))
     app.bot_data["apprel"] = asyncio.create_task(app_relay_loop(app))
     try: ADMINS.update(int(k) for k in load_db().get("temp_admins", {}))   # acil yetkililer yeniden başlatmada kalır

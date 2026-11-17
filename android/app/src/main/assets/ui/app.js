@@ -50,7 +50,18 @@
   let A = null;         // admin paneli: botdan gelen ýagdaý (biletler, ulanyjylar, açarlar…)
   let admAt = 0, admPend = 0;
   const ADM_PAGES = ['admin', 'adm_t', 'adm_u', 'adm_b', 'adm_k', 'adm_kd', 'adm_x', 'adm_l', 'adm_s', 'adm_st', 'adm_ai', 'adm_or'];
-  const act = (a, o) => { NB.adm(JSON.stringify(Object.assign({ a }, o || {}))); if (!admPend) admPend = Date.now(); };
+  const act = (a, o) => { NB.adm(JSON.stringify(Object.assign({ a }, o || {}))); if (!admPend) admPend = Date.now(); if (a !== 'get' && a !== 'alog') alogPush('a', a + ' ' + JSON.stringify(o || {}).slice(0, 90)); };
+  const TKO = {};   // 1.46.7: bilet ýagdaýy (ýapdym / açdym) — bot jogap berýänçä
+  // 1.46.7: admin log — eýesinden başga adminleriň programmadaky hereketleri (basan düwmesi, açan sahypasy, eden işi) bota; diňe eýesi görýär
+  const AL = []; let alAt = 0;
+  function alogPush(k, x) {
+    try { const me = (A && A.me) || INFO.admMe || {}; if (!window.C || !window.C.state.admOn || !me.role || me.role === 'f') return;
+      AL.push([Math.floor(Date.now() / 1000), k, String(x || '').replace(/\s+/g, ' ').trim().slice(0, 120)]);
+      if (AL.length >= 30 || Date.now() - alAt > 20000) { alAt = Date.now(); NB.send(JSON.stringify({ k: 'alog', e: AL.splice(0) })); } } catch (e) {}
+  }
+  setInterval(() => { if (AL.length) { alAt = Date.now(); try { NB.send(JSON.stringify({ k: 'alog', e: AL.splice(0) })); } catch (e) {} } }, 20000);
+  document.addEventListener('click', (e) => { const b = e.target && e.target.closest && e.target.closest('button,a,label,[role=button]'); if (!b || !window.C) return;
+    alogPush('b', (b.getAttribute('aria-label') || b.innerText || b.textContent || '').trim().slice(0, 60) + ' · ' + window.C.state.page); }, true);
   const admMe = () => (A && A.me) || INFO.admMe || {};
 
   // ---- 1.16: profil, hususy habarlar, nyşanlar ----
@@ -752,6 +763,7 @@
         if (Array.isArray(r.srvList)) r.srvList = tab === 'pubg' ? [] : r.srvList.map((x, j) => ({ x, v: ng[j] })).filter((q) => inTab(q, tab === 'prem')).map((q) => mark(q.x, q.v, tab === 'prem'));
         if (Array.isArray(r.gList)) r.gList = r.gList.map((x, j) => ({ x, v: gg[j] })).filter((q) => inTab(q, tab !== 'free')).map((q) => mark(q.x, q.v, tab !== 'free'));
         if (tab === 'pubg') r.svEmpty = false;
+        if (tab === 'free' && PF) { r.srvList = []; r.gList = []; r.svEmpty = false; }   // 1.46.7: mugt serwerler görünmeýär — diňe «Awtomatik» (basanda iň gowusyna birikýär)
         r.svTabs = [['free', 'Free', ''], ['prem', '👑 Premium', 'seg-prem'], ['pubg', '👑 PUBG', 'seg-prem']].map((q) => ({ t: q[1], cls: (tab === q[0] ? 'seg-on' : 'seg-off') + ' ' + q[2], p: tab === q[0] ? 'true' : 'false', pick: () => this.setState({ svTab: q[0] }) }));
         r.svPremBan = !PR && PF && tab !== 'free';
         // 1.46.4: awtomatik — Free bölüminde diňe mugt serwerler, Premium bölüminde diňe Premium serwerler
@@ -781,6 +793,10 @@
         const isSel = roleOf(me1) === 'o' || roleOf(me1) === 's' || isF2 || sel2, AQ = (A && A.preq) || [], byId = {}, rqDone = LS.get('preqDone', {}) || {};
         (LS.get('preqs', []) || []).forEach((q) => { byId[q.id] = Object.assign({}, q, { at: q.at || this.hm((q.ts || 0) * 1000) }); });
         AQ.forEach((q) => { byId[q.id] = Object.assign(byId[q.id] || {}, q); });
+        // 1.46.7: alyjy 30 minut ýazmasa — haýyş özi ýapylýar
+        const lastFrom = (d) => { const x = DMS[d]; let t = 0; ((x && x.msgs) || []).forEach((m) => { if (m.f === d && (m.t || 0) > t) t = m.t || 0; }); return t * 1000; };
+        Object.keys(byId).forEach((k) => { const q = byId[k]; if (q.st !== 'done' && !rqDone[k] && q.ts && Date.now() - Math.max(q.ts * 1000, lastFrom(q.dev)) > 30 * 60000) {
+          rqDone[k] = 1; LS.set('preqDone', rqDone); if (s.admOn) act('preqx', { id: k }); } });
         const rq = Object.keys(byId).map((k) => Object.assign(byId[k], rqDone[k] ? { st: 'done' } : {})).sort((a, b) => ((a.st === 'done') - (b.st === 'done')) || ((b.ts || 0) - (a.ts || 0))).slice(0, 60);
         const newN = rq.filter((q) => q.st !== 'done').length;
         r.preqBtnOn = pg === 'main' && isSel; r.preqHas = newN > 0; r.preqN = newN > 9 ? '9+' : String(newN);
@@ -855,6 +871,12 @@
       r.dgOnI = r.dgCls === 'on'; r.dgOffI = !r.dgOnI; r.dgW = String((DGW[s.lang] || DGW.tk)[r.dgOnI ? 1 : 0]);
       // 1.22: derejäni synap görmek (chatda we baş sahypada)
       { const mt = rkT(r.rkmT); r.rkmFr = mt >= 3 ? 'fr' + mt : ''; r.rkmNm = rkNm(mt); r.rkmMe = this.meName || '…'; r.rkmIni = ini(this.meName || '?'); r.rkmBg = '#E0B04A'; r.rkmHasB = mt >= 2; }
+      // 1.46.7: biletleriň hemmesini ýapmak; admin log (diňe eýesi)
+      { const opN = ((A && A.tk) || []).filter((t) => t.st !== 'closed').length; r.tkAllOn = !!s.admOn && opN > 0; r.tkAllT = tx.tk_all + ' (' + opN + ')'; r.tkCloseAll = this.tkCloseAll;
+        const me4 = admMe(); r.alogOn = me4.role === 'f'; r.alogGo = () => { act('alog'); this.say(tx.k_wait); };
+        const KN = { a: '⚙️', b: '👆', p: '📄' };
+        r.alogRows = (s.alog || []).slice(0, 300).map((x) => ({ t: this.hm((x.t || 0) * 1000) + ' · ' + new Date((x.t || 0) * 1000).toLocaleDateString('ru-RU').slice(0, 5), n: x.n || '?', x: (KN[x.k] || '•') + ' ' + (x.x || '') }));
+        r.alogEmpty = !!s.alog && !r.alogRows.length; }
       // 1.34: admin — çalt rejim (Firestore tölegli)
       { const on = s.faCur != null ? s.faCur : !!(A && A.fast);
         r.faSt = on ? tx.fa_on : tx.fa_off; r.faCls = on ? 'chip-on' : ''; r.faBtn = on ? tx.fa_btnOff : tx.fa_btnOn;
@@ -981,7 +1003,11 @@
     C.reroll = ((f) => () => { const old = C.meName; f(); const cand = C.meName; C.meName = old; C.saveNk(cand); })(C.reroll);
     // ---- profil suraty (512 — ulaldyp görmek üçin) we fon ----
     C.onPhoto = (e) => { const f = fileOf(e); if (!f) return; shrink(f, 512, 0.82, (d) => { if (d) C.setState({ photo: d }); }, true); e.target.value = ''; };
-    C.onBg = (e) => { const f = fileOf(e); if (!f) return; shrink(f, 900, 0.7, (d) => { if (d) { C.setState({ pbg: d }); LS.set('pbg', d); } else C.say(C.T()[C.state.lang].ph_big); }); e.target.value = ''; };
+    C.onBg = (e) => { const f = fileOf(e), tx = C.T()[C.state.lang]; try { e.target.value = ''; } catch (e2) {} if (!f) { C.say('⚠️ ' + tx.bg_none); return; }   // 1.46.7: ýalňyşlyk görkezilýär
+      C.say(tx.k_wait);
+      const done = (d) => { if (!d) { C.say('⚠️ ' + tx.ph_big); return; } let x = d; if (x.length > 300000) { shrinkData(x, 700, 0.6, (y) => { C.setState({ pbg: y }); LS.set('pbg', y); C.say('✓ ' + tx.bg_ok); }); return; } C.setState({ pbg: x }); LS.set('pbg', x); C.say('✓ ' + tx.bg_ok); };
+      if (window.createImageBitmap) createImageBitmap(f).then((bm) => { const k = Math.min(1, 900 / Math.max(bm.width, bm.height)), c = document.createElement('canvas'); c.width = Math.round(bm.width * k); c.height = Math.round(bm.height * k); c.getContext('2d').drawImage(bm, 0, 0, c.width, c.height); try { bm.close(); } catch (e3) {} done(c.toDataURL('image/jpeg', 0.7)); }).catch(() => shrink(f, 900, 0.7, done));
+      else shrink(f, 900, 0.7, done); };
     C.delBg = () => { C.setState({ pbg: '' }); LS.set('pbg', ''); };
     // ---- profil / hususy habarlar ----
     J(NB.dmList(), []).forEach((q) => { if (q.p) DMS[q.p] = Object.assign(DMS[q.p] || { msgs: [], un: 0 }, { st: q.st || '', n: q.n || '' }); });
@@ -1165,8 +1191,10 @@
     C.admExit = () => { act('logout'); admPend = 0; A = null; C.setState({ admOn: false, page: 'main' }); C.say('🔒 ' + C.T()[C.state.lang].ad_closed); };
     C.tkToggle = () => {
       const t = A && A.tk.find((x) => x.id === C.state.admT); if (!t) return;
-      act(t.st === 'closed' ? 'reopen' : 'close', { tid: t.id }); t.st = t.st === 'closed' ? 'open' : 'closed'; C.setState({ admTick: (C.state.admTick || 0) + 1 });
+      act(t.st === 'closed' ? 'reopen' : 'close', { tid: t.id }); t.st = t.st === 'closed' ? 'open' : 'closed'; TKO[String(t.id)] = { st: t.st, at: Date.now() }; C.setState({ admTick: (C.state.admTick || 0) + 1 });
     };
+    C.tkCloseAll = () => { const tx = C.T()[C.state.lang], op = ((A && A.tk) || []).filter((t) => t.st !== 'closed'); if (!op.length) return;   // 1.46.7
+      C.confirm(tx.tk_allQ.replace('{n}', String(op.length)), '🔒 ' + tx.tk_all, () => { act('closeall'); op.forEach((t) => { t.st = 'closed'; TKO[String(t.id)] = { st: 'closed', at: Date.now() }; }); C.setState({ admTick: (C.state.admTick || 0) + 1 }); }); };
     C.banToggle = () => { const d = C.state.admU, u = A && A.us[d]; if (!u) return; act('ban', { dev: d, on: !u.ban }); u.ban = !u.ban; C.setState({ admTick: (C.state.admTick || 0) + 1 }); };
     C.onQIn = (e) => C.setState({ qIn: String(e.target.value || '').trim().slice(0, 500) });
     C.qAddB = () => { const u = (C.state.qIn || '').trim(); if (!/^https?:\/\/\S{8,}/.test(u)) return; act('qadd', { u }); C.setState({ qIn: '' }); C.say(C.T()[C.state.lang].k_wait); };
@@ -1261,7 +1289,7 @@
     const s2 = C.state;
     if (lastPick !== null && (s2.pick !== lastPick || (s2.pick < 0 && !!s2.autoP !== lastAutoP))) { lastPick = s2.pick; lastAutoP = !!s2.autoP; const v = SV[s2.pick]; NB.select(v ? v.id : (s2.autoP ? 'auto:p' : '')); }
     if (lastLang !== s2.lang) { if (lastLang !== null) { NB.lang(s2.lang); INFO = J(NB.info(), INFO); } lastLang = s2.lang; }
-    if (lastPage !== s2.page) { NB.gwatch(s2.page === 'global'); NB.dmPage(s2.page === 'dms'); lastPage = s2.page; }
+    if (lastPage !== s2.page) { NB.gwatch(s2.page === 'global'); NB.dmPage(s2.page === 'dms'); lastPage = s2.page; alogPush('p', s2.page + (s2.page === 'uprof' ? ' ' + (nameOf(s2.upDev) || s2.upDev || '') : s2.page === 'dm' ? ' ' + (nameOf(s2.dmPeer) || '') : '')); }
     const dmW = s2.page === 'dm' ? (s2.dmPeer || '') : '';
     if (dmW !== lastDmW) { NB.dmWatch(dmW); lastDmW = dmW; }
     if (INFO.relay) syncPhoto(C);
@@ -1417,6 +1445,8 @@
         return;
       }
       const d = e.d || {}; A = d; INFO.admMe = d.me; INFO.adm = true;
+      Object.keys(TKO).forEach((id) => { if (Date.now() - TKO[id].at > 120000) { delete TKO[id]; return; } const t0 = (A.tk || []).find((x) => String(x.id) === id); if (t0) t0.st = TKO[id].st; });   // 1.46.7: ýapan biletim köne maglumat bilen gaýtadan açylmasyn
+      if (Array.isArray(d.alog)) up.alog = d.alog;   // 1.46.7
       if (Array.isArray(d.usr)) { d.usr.forEach((u) => { if (u && u.dev) SR[u.dev] = u.n; }); up.usRes = d.usr; up.usDone = true; }   // 1.45
       (d.qal || []).forEach((q) => qAdd(q.id, q.t, q.at));
       if (s.admLogging || !s.admOn) { Object.assign(up, { admOn: true, admAsk: false, admLogging: false, admErr: '', admFails: 0, page: 'admin', admTab: 'tk' }); C.say('🔓 ' + tx.ad_ok); }
