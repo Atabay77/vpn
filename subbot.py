@@ -1204,6 +1204,24 @@ def app_flag_best(codes, hpms=None):
     keep |= {i for i, _ in best.values()}
     return [c for i, c in enumerate(codes) if i in keep]
 
+def app_free_borrow(codes, free_, cfg, now=None):
+    """1.46.8: mugt serwerleriň hiç biri Türkmenistanda işlemeýän bolsa (telefonlar soňky sagatda «jogap ýok» diýdi) — Premium-dan iň çalt işleýän
+    bir serwer wagtlaýyn mugta berilýär; kanalda täze kod çykan badyna yzyna alynýar (oňa bagly telefonlar özi başga mugt serwere geçýär).
+    Dönüş: (täze mugt sanawy, ýagdaý ýa-da None)."""
+    now = now or time.time(); hm = cfg.get("hp_ms") or {}; b = cfg.get("fborrow") or None
+    hp_ = lambda c: app_x_hp(c)
+    ok_ = lambda h: h in hm and int(hm[h][0]) > 0 and now - float(hm[h][2] if len(hm[h]) > 2 else 0) < 3 * 3600 and now - float(hm[h][1]) < 3 * 3600
+    dead_ = lambda h: h in hm and int(hm[h][0]) <= 0 and now - float(hm[h][1]) < 3600
+    chts = max([int(v.get("ts") or 0) for v in (cfg.get("xcodes") or {}).values() if v.get("src") in ("tg", "tgs") and (v.get("src") == "tg" or v.get("ok"))] or [0])
+    allhp = {hp_(c): c for c in codes if hp_(c)}
+    own = [h for h in free_ if not (b and h == b.get("hp"))]
+    if b:   # kanalda täze kod çykdy / serwer sanawda ýok / işlemeýär — yzyna alynýar
+        if chts > int(b.get("ch") or 0) or b.get("hp") not in allhp or dead_(b["hp"]) or any(ok_(h) for h in own): b = None
+    if not b and own and all(dead_(h) for h in own):   # hemmesi soňky sagatda «jogap ýok» (täze / synalmadyk kod bar bolsa — garaşylýar)
+        best = sorted([(int(hm[h][0]), h) for h, c in allhp.items() if h not in free_ and ok_(h) and not app_is_game(c) and not app_is_info(c)])
+        if best: b = {"hp": best[0][1], "at": int(now), "ch": chts}
+    return (own + [b["hp"]] if b else own), b
+
 def app_free_all(codes, php, hpms=None):
     """1.46.5: Premium abunasy goşulan bolsa — Premium-da diňe şol abunanyň kodlary, galan ähli kodlar (kanal, elle goşulan, kod awy,
     adaty abunalar) mugt. Adaty abuna kody telefonlaryň ölçeginde soňky 6 sagatda işlemedik bolsa mugta goşulmaýar. Dönüş: ["host:port", …]."""
@@ -2305,7 +2323,10 @@ def app_sync(force=False):
                 if hp_: php.add(hp_)
                 if code_key(c) not in keys: keys.add(code_key(c)); codes.append(c)
         plast = {k_: v_ for k_, v_ in plast.items() if k_ in {hashlib.md5(u.encode()).hexdigest()[:8] for u in psubs}}
-        free_ = app_free_all(codes, php, cfg.get("hp_ms")) if php else app_free_pick(codes, base1, cfg.get("hp_ms"))   # 1.43.2: mugt — her ýurtdan iň gowy işleýän bir kod + kanal + 2 PUBG
+        free_ = app_free_all(codes, php, cfg.get("hp_ms")) if php else app_free_pick(codes, base1, cfg.get("hp_ms"))
+        try: free_, fb_ = app_free_borrow(codes, free_, app_cfg(load_db()))   # 1.46.8: mugtlar bloklananda Premium-dan biri wagtlaýyn
+        except Exception as e: fb_ = cfg.get("fborrow"); log.info("free borrow: %s", e)
+        if (fb_ or {}).get("hp") != (cfg.get("fborrow") or {}).get("hp"): vlog(f"🔁 Mugt serwer: {'Premium-dan wagtlaýyn ' + fb_['hp'] if fb_ else 'wagtlaýyn Premium serwer yzyna alyndy'}")   # 1.43.2: mugt — her ýurtdan iň gowy işleýän bir kod + kanal + 2 PUBG
         codes = app_brand_names(codes)   # 1.29: abunanyň atlary görünmesin
         meta = app_meta(cfg) + (["#tvfree: " + ",".join(free_)] if free_ else [])
         dig = hashlib.sha256("\n".join(meta + codes).encode()).hexdigest()[:16]
@@ -2331,6 +2352,8 @@ def app_sync(force=False):
         def f(d):
             a = d.setdefault("app", {})
             a.update({"fid": fid, "dig": dig, "last": last, "plast": plast, "n": len(codes), "ts": int(time.time()), "errs": errs})
+            if fb_: a["fborrow"] = fb_
+            else: a.pop("fborrow", None)
         mutate(f)
         return len(codes), errs
 

@@ -164,6 +164,7 @@ class Svc : VpnService() {
     private var beatAt = 0L
     // 1.35: awtomatik serwer çalşmak aýryldy (eýesiniň islegi) — birikdirilen serweriň pingi diňe ölçenýär
     @Volatile private var hcBusy = false
+    private var movedAt = 0L
     private var hcAt = 0L
     private var bad = 0
     private val tick = object : Runnable {
@@ -174,6 +175,13 @@ class Svc : VpnService() {
             }
             // 1 sagat dolunca (key yoksa) VPN durur; kullanıcı elle yeniden başlatır
             if (want && State.now == State.ON && Lic.left(this@Svc) == 0L) { stop(); expired(); return }
+            // 1.46.8: bagly serwer sanawdan aýryldy ýa-da indi Premium (mugt wagtlaýyn berlen serwer yzyna alyndy) — başga mugt serwere geçilýär
+            val act = State.active
+            if (want && State.now == State.ON && act != null && Sub.list.isNotEmpty() && now0 - movedAt > 60_000 && now0 - State.onAt > 20_000
+                && (Sub.list.none { it.hp == act.hp } || !State.allowed(this@Svc, act))) {
+                movedAt = now0; if (State.selected(this@Svc)?.hp == act.hp) State.select(this@Svc, null)
+                runCatching { startService(Intent(this@Svc, Svc::class.java)) }
+            }
             if (want && State.now == State.ON && System.currentTimeMillis() - beatAt > 5 * 60_000) {
                 beatAt = System.currentTimeMillis(); Thread { Stats.beat(this@Svc, true) }.start()
             }

@@ -751,7 +751,7 @@
       { const PR = !!INFO.prem, PF = !!INFO.pfree, pexp = +INFO.pexp, am2 = admMe(), isF2 = am2.role === 'f', full2 = isF2 || am2.perm === 'all', sel2 = am2.perm === 'sel';
         const dl = pexp > 0 ? Math.max(1, Math.ceil((pexp - Date.now()) / 86400000)) : 0, dlT = dl + ' ' + tx.pr_days;
         const nm2 = (d, fb) => { const n = nameOf(d); return n && n !== '?' ? n : (fb || '?'); };
-        const tab = ['free', 'prem', 'pubg'].indexOf(s.svTab) >= 0 ? s.svTab : (PR ? 'prem' : 'free');
+        const tab = PF ? (s.svTab === 'pubg' ? 'pubg' : 'prem') : (['free', 'prem', 'pubg'].indexOf(s.svTab) >= 0 ? s.svTab : (PR ? 'prem' : 'free'));   // 1.46.8: Free bölümi ýok (diňe «Awtomatik»)
         const ng = SV.filter((v) => !v.game), gg = SV.filter((v) => v.game);
         const mark = (x, v, premTab) => { const lock = !!(v && v.lock), isFree = !v || v.free !== false;
           const o = Object.assign(x, { pcls: premTab ? 'sv-prem' : '', tag: lock ? '🔒' : premTab && !isFree ? '👑' : '', tagCls: lock ? 'svlock' : 'svcrown' });
@@ -764,12 +764,13 @@
         if (Array.isArray(r.gList)) r.gList = r.gList.map((x, j) => ({ x, v: gg[j] })).filter((q) => inTab(q, tab !== 'free')).map((q) => mark(q.x, q.v, tab !== 'free'));
         if (tab === 'pubg') r.svEmpty = false;
         if (tab === 'free' && PF) { r.srvList = []; r.gList = []; r.svEmpty = false; }   // 1.46.7: mugt serwerler görünmeýär — diňe «Awtomatik» (basanda iň gowusyna birikýär)
-        r.svTabs = [['free', 'Free', ''], ['prem', '👑 Premium', 'seg-prem'], ['pubg', '👑 PUBG', 'seg-prem']].map((q) => ({ t: q[1], cls: (tab === q[0] ? 'seg-on' : 'seg-off') + ' ' + q[2], p: tab === q[0] ? 'true' : 'false', pick: () => this.setState({ svTab: q[0] }) }));
+        r.svTabs = (PF ? [['prem', '👑 Premium', 'seg-prem'], ['pubg', '👑 PUBG', 'seg-prem']] : [['free', 'Free', ''], ['prem', '👑 Premium', 'seg-prem'], ['pubg', '👑 PUBG', 'seg-prem']]).map((q) => ({ t: q[1], cls: (tab === q[0] ? 'seg-on' : 'seg-off') + ' ' + q[2], p: tab === q[0] ? 'true' : 'false', pick: () => this.setState({ svTab: q[0] }) }));
         r.svPremBan = !PR && PF && tab !== 'free';
         // 1.46.4: awtomatik — Free bölüminde diňe mugt serwerler, Premium bölüminde diňe Premium serwerler
-        { const autoP = !!s.autoP && PR, here = s.pick < 0 && (tab === 'free' ? !autoP : autoP);
+        { const autoP = !!s.autoP && PR, here = s.pick < 0 && (PF ? (PR ? autoP : true) : (tab === 'free' ? !autoP : autoP));
           r.autoSel = here; r.autoCls = here ? 'sv-sel' : '';
-          r.autoPick = !PR && PF && tab !== 'free' ? () => { this.say('👑 ' + tx.pr_lock); this.setState({ psh: true, pstep: 1 }); } : () => this.setState({ pick: -1, autoP: tab !== 'free', page: 'main' }); }
+          // 1.46.8: Premium ýok — «Awtomatik» iň gowy mugt serwere; Premium bar — iň gowy Premium serwere
+          r.autoPick = () => this.setState({ pick: -1, autoP: PF ? PR : tab !== 'free', page: 'main' }); }
         r.premOpen = () => { INFO = J(NB.info(), INFO); this.setState({ psh: true, pstep: 1, menu: false }); };
         r.premPillOn = pg === 'main' && (PF || PR); r.premPillCls = PR ? 'ppill-on' : '';
         r.premPillT = PR ? (pexp <= 0 ? 'Premium ♾' : 'Premium · ' + dlT) : tx.pr_buy; r.premPillS = PR ? (pexp <= 0 ? '♾' : dlT) : '';   // 1.46.6: möhletsiz (eýesi) — ♾, «0 gün» däl   // 1.44: «satyn al» ýazgysy aýryldy

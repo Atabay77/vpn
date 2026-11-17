@@ -107,7 +107,8 @@ object Msg {
     @Volatile private var subDue = false
     @Volatile private var subTry = 0L
     private fun subCheck(c: Context, now: Long) {
-        if (!visible || now - subTry < 60_000L || !(subDue || now - Sub.okAt > 300_000L)) return
+        val bg = !visible && State.now == State.ON && now - Sub.okAt > 600_000L   // 1.46.8: VPN açyk — fonda hem 10 minutda bir (mugt serwer çalşylsa bilsin)
+        if ((!visible && !bg) || now - subTry < 60_000L || !(subDue || now - Sub.okAt > 300_000L)) return
         subTry = now; subDue = false
         Thread { runCatching { if (Sub.refresh(c, 8000)) events.add(JSONObject().put("k", "srv")) } }.apply { isDaemon = true }.start()
     }
