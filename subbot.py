@@ -2183,6 +2183,10 @@ def app_publish_link(link):
     1.44.3: Drive däl göni salgy hem bolýar (meselem öz VPS: «http://IP:8091/TurkmenVPN-1.44.3.apk») — #tvul, programma 1.44.3+ şondan ýükleýär."""
     t_ = str(link or "").strip()
     url_ = next((w for w in t_.split() if re.match(r"^https?://\S+$", w)), "")
+    if not url_ and re.fullmatch(r"\d+\.\d+(?:\.\d+)?", t_):   # 1.47: diňe wersiýa («1.46.3») — öňki VPS salgysy
+        url_ = (app_cfg(load_db()).get("upd_link") or {}).get("url") or ""
+        if not url_: raise RuntimeError("Önceki link yok — bir kez linkle gönder: «1.46.3 http://IP:8091/TurkmenVPN.apk»")
+        t_ = t_ + " " + url_
     if url_ and not DRIVE_ID_RE.search(url_) and "drive.google." not in url_:
         fn_ = urllib.parse.unquote(url_.split("?")[0].rstrip("/").rsplit("/", 1)[-1])
         mv = re.search(r"(?<![\d.])(\d+\.\d+(?:\.\d+)?)(?![\d.])", t_.replace(url_, " ")) or re.search(r"(\d+\.\d+(?:\.\d+)?)", fn_)
