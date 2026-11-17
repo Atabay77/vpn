@@ -760,10 +760,10 @@
           r.autoPick = !PR && PF && tab !== 'free' ? () => { this.say('👑 ' + tx.pr_lock); this.setState({ psh: true, pstep: 1 }); } : () => this.setState({ pick: -1, autoP: tab !== 'free', page: 'main' }); }
         r.premOpen = () => { INFO = J(NB.info(), INFO); this.setState({ psh: true, pstep: 1, menu: false }); };
         r.premPillOn = pg === 'main' && (PF || PR); r.premPillCls = PR ? 'ppill-on' : '';
-        r.premPillT = PR ? (pexp === 0 ? 'Premium ♾' : 'Premium · ' + dlT) : tx.pr_buy; r.premPillS = PR ? (pexp === 0 ? '♾' : dlT) : '';   // 1.44: «satyn al» ýazgysy aýryldy
+        r.premPillT = PR ? (pexp <= 0 ? 'Premium ♾' : 'Premium · ' + dlT) : tx.pr_buy; r.premPillS = PR ? (pexp <= 0 ? '♾' : dlT) : '';   // 1.46.6: möhletsiz (eýesi) — ♾, «0 gün» däl   // 1.44: «satyn al» ýazgysy aýryldy
         // Premium sahypasy
         const plan = s.pplan || 'y';
-        r.pshOn = !!s.psh; r.pshX = () => this.setState({ psh: false }); r.pshIsPrem = PR; r.pshHaveT = PR ? (pexp === 0 ? tx.pr_unl : tx.pr_have.replace('{d}', dlT)) : '';
+        r.pshOn = !!s.psh; r.pshX = () => this.setState({ psh: false }); r.pshIsPrem = PR; r.pshHaveT = PR ? (pexp <= 0 ? tx.pr_unl : tx.pr_have.replace('{d}', dlT)) : '';
         r.pFeat = [['🌍', tx.pr_f1], ['⏱', tx.pr_f2], ['🎮', tx.pr_f3], ['👑', tx.pr_f4]].map((q) => ({ i: q[0], t: q[1] }));
         r.pPlans = [{ k: 'm', t: tx.pr_m, price: '100', note: tx.pr_mN }, { k: 'y', t: tx.pr_y, price: '700', old: '1200', save: '−42%', badge: tx.pr_best, note: tx.pr_yN }]   // 12 × 100 = 1200 → 700 (hakyky tygşytlylyk)
           .map((q) => Object.assign(q, { hasOld: !!q.old, hasBadge: !!q.badge, cls: (plan === q.k ? 'pplan-on' : '') + (q.k === 'y' ? ' pplan-y' : ''), p: plan === q.k ? 'true' : 'false', pick: () => this.setState({ pplan: q.k }) }));
