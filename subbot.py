@@ -1155,7 +1155,7 @@ def app_free_pick(codes, base1, hpms=None):
     fx = [x for x in ix if fixed(x[1])]
     take(fx, len(fx))                                                                   # kanal + elle goşulan — hemmesi
     aw = [x for x in ix if re.search(r"(?:·|🎮) aw$", orig_name(x[1]).strip()) and not app_is_game(x[1])]
-    aw_n = take(alive(aw), HUNT_FREE)                                                   # 1.46: kod awyndan iň köp 5
+    aw_n = take([x for x in sorted(aw, key=score) if score(x)[0] == 0], HUNT_FREE)       # 1.46.4: kod awyndan iň köp 5 — diňe Türkmenistanda işläni
     reg_n = sum(1 for x in fx if not app_is_game(x[1])) + aw_n
     if reg_n < 4: take(alive([x for x in ix if not app_is_game(x[1]) and not fixed(x[1]) and x not in aw]), 4 - reg_n)   # ýetmese abunadan işleýänler
     if not any(app_is_game(x[1]) for x in fx):
@@ -1492,9 +1492,7 @@ def hunt_run(force_gh=False):
         st.update({"found": len(found), "uniq": len(new_), "tested": len(cand), "ok": len(ok), "src": len(tg_) + len(urls_), "errs": errs})
         # 3) Türkmenistandaky telefonlaryň pingi: 24 sagatda hiç işlemedik — aýrylýar
         hm = a.get("hp_ms") or {}
-        def tm_bad(hp):
-            v = hm.get(hp)
-            return bool(v) and now - float(v[1]) < 6 * 3600 and int(v[0]) <= 0 and now - float(v[2] if len(v) > 2 else 0) > 24 * 3600 and now - float((pool.get(hp) or {}).get("ts") or now) > 24 * 3600
+        tm_bad = lambda hp: hunt_tm_bad(hm, hp, (pool.get(hp) or {}).get("ts"), now)
         npool = {}
         for c in cand:
             hp = app_x_hp(c); old = pool.get(hp) or {}
@@ -1517,10 +1515,20 @@ def hunt_run(force_gh=False):
         return st
     finally: HUNT_LOCK.release(); RUN.pop("hunt_prog", None)
 
+def hunt_tm_bad(hm, hp, ts, now=None):
+    """1.46.4: Türkmenistandaky telefon «jogap ýok» diýdi we soňky 6 sagatda hiç işlemedi, howuzda 1 sagatdan köp."""
+    now = now or time.time(); v = hm.get(hp)
+    return bool(v) and now - float(v[1]) < 6 * 3600 and int(v[0]) <= 0 and now - float(v[2] if len(v) > 2 else 0) > 6 * 3600 and now - float(ts or now) > 3600
+
 def hunt_codes(a):
     """Programa goşulýan aw kodlary: «🇩🇪 Germaniýa · aw» (ady boýunça mugt saýlamak üçin)."""
     pool = a.get("hunt") or {}
     if not pool or not a.get("hunt_on", True): return []
+    hm = a.get("hp_ms") or {}; now = time.time()
+    gone = [hp for hp, v in pool.items() if hunt_tm_bad(hm, hp, v.get("ts"), now)]
+    if gone:   # 1.46.4: Türkmenistanda işlemeýänler derrew (10 minutda bir) aýrylýar we hiç gaýtadan barlanmaýar
+        app_mut(lambda x: [(x.get("hunt") or {}).pop(hp, None) for hp in gone]); hunt_bad_add(gone)
+        pool = {hp: v for hp, v in pool.items() if hp not in gone}
     try: geo = geo_lookup([code_host(v["c"]) for v in pool.values() if code_host(v["c"])])
     except Exception: geo = {}
     out = []
