@@ -1065,6 +1065,17 @@ def app_x_report(dev, pr):
         return len(gone)
     n_ = app_mut(f)
     if n_: vlog(f"🗑 {n_} kod işlemedi (3 gezek ms ýok) — aýryldy"); RUN["app_dirty"] = True
+    # 1.46.6: kod awy — telefon şol ölçegde başga serwerlere ýetdi, bu koda ýetmedi → derrew aýrylýar, hiç gaýtadan barlanmaýar
+    try: items = [(str(h), int(m)) for h, m in list(pr.items())[:80]]
+    except Exception: items = []
+    if any(m > 0 for _, m in items):
+        bad_ = {h for h, m in items if m <= 0}
+        gone_h = []
+        def fh(x):
+            pool = x.get("hunt") or {}
+            for h in [h for h in pool if h in bad_]: pool.pop(h, None); gone_h.append(h)
+        if bad_: app_mut(fh)
+        if gone_h: hunt_bad_add(gone_h); RUN["app_dirty"] = True
 
 TM_CNAME = {"nl": "Niderlandlar", "fi": "Finlýandiýa", "gb": "Beýik Britaniýa", "de": "Germaniýa", "ch": "Şweýsariýa", "pl": "Polşa", "tr": "Türkiýe", "fr": "Fransiýa",
             "ru": "Russiýa", "se": "Şwesiýa", "us": "ABŞ", "at": "Awstriýa", "it": "Italiýa", "es": "Ispaniýa", "lv": "Latwiýa", "lt": "Litwa", "ee": "Estoniýa",
@@ -1518,7 +1529,7 @@ def hunt_run(force_gh=False):
 def hunt_tm_bad(hm, hp, ts, now=None):
     """1.46.4: Türkmenistandaky telefon «jogap ýok» diýdi we soňky 6 sagatda hiç işlemedi, howuzda 1 sagatdan köp."""
     now = now or time.time(); v = hm.get(hp)
-    return bool(v) and now - float(v[1]) < 6 * 3600 and int(v[0]) <= 0 and now - float(v[2] if len(v) > 2 else 0) > 6 * 3600 and now - float(ts or now) > 3600
+    return bool(v) and int(v[0]) <= 0 and now - float(v[2] if len(v) > 2 else 0) > 6 * 3600   # 1.46.6: garaşylmaýar
 
 def hunt_probe_list(a, n=400):
     """1.46.5: telefonlaryň synamaly kodlary — bot barlagyndan geçen, Türkmenistanda entek işlemedik / synalmadyk."""
@@ -1533,7 +1544,7 @@ def hunt_codes(a):
     if not pool or not a.get("hunt_on", True): return []
     hm = a.get("hp_ms") or {}; now = time.time()
     gone = [hp for hp, v in pool.items() if hunt_tm_bad(hm, hp, v.get("ts"), now)]
-    tm_ok = lambda hp: hp in hm and len(hm[hp]) > 2 and now - float(hm[hp][2] or 0) < 24 * 3600   # Türkmenistanda soňky 24 sagatda işledi
+    tm_ok = lambda hp: hp in hm and len(hm[hp]) > 2 and int(hm[hp][0]) > 0 and now - float(hm[hp][2] or 0) < 12 * 3600   # 1.46.6: soňky ölçegde Türkmenistanda işledi
     if gone:   # 1.46.4: Türkmenistanda işlemeýänler derrew (10 minutda bir) aýrylýar we hiç gaýtadan barlanmaýar
         app_mut(lambda x: [(x.get("hunt") or {}).pop(hp, None) for hp in gone]); hunt_bad_add(gone)
         pool = {hp: v for hp, v in pool.items() if hp not in gone}
