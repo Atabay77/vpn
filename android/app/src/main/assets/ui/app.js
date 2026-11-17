@@ -149,6 +149,12 @@
     rd.readAsDataURL(file);
   }
   /** Chat suraty: mümkin boldugyça uly we arassa (WebP), emma çäkden (simwol) geçmesin. */
+  // 1.46.1: käbir telefonda uly surat kiçeldilende kanwas boş (şeffaf / gara) galýar — beýle surat iberilmeýär
+  function blankCanvas(c) {
+    try { const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data, step = Math.max(1, Math.floor(d.length / 4 / 3000)) * 4; let n = 0;
+      for (let i = 0; i < d.length; i += step) { if (d[i + 3] > 0 && d[i] + d[i + 1] + d[i + 2] > 24 && ++n > 15) return false; }
+      return true; } catch (e) { return false; }
+  }
   function fitShrink(file, max, limit, cb) {
     const rd = new FileReader();
     rd.onload = () => {
@@ -158,6 +164,7 @@
         while (dim >= 420 && !out) {
           const k = Math.min(1, dim / Math.max(img.width, img.height)), c = document.createElement('canvas');
           c.width = Math.round(img.width * k); c.height = Math.round(img.height * k); c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+          if (blankCanvas(c)) { dim = Math.round(dim * 0.7); continue; }   // boş çykdy — kiçiräk synan
           for (let q = 0.9; q >= 0.44 && !out; q -= 0.06) {
             let d = c.toDataURL('image/webp', q); if (d.indexOf('data:image/webp') !== 0) d = c.toDataURL('image/jpeg', q);
             if (d.length <= limit) out = d;
@@ -1362,7 +1369,8 @@
     } else if (e.k === 'plock') {   // 1.43: Premium serwer saýlandy (Premium ýok)
       C.say('👑 ' + tx.pr_lock); up.psh = true; up.pstep = 1;
     } else if (e.k === 'img') {
-      (e.kind === 'n' ? NI : GI)[e.id] = e.d || '';
+      if (!e.d) { setTimeout(() => { delete imgAsked[(e.kind || 'g') + e.id]; }, 20000); return; }   // 1.46.1: alyp bolmady — 20 sn soň gaýtadan
+      (e.kind === 'n' ? NI : GI)[e.id] = e.d;
       up.gTick = (s.gTick || 0) + 1;
     } else if (e.k === 'gok') {
       // Global chat: habar gitdi
