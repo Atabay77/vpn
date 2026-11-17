@@ -966,7 +966,8 @@ def app_left(exp):
 # Kanal (t.me/s/<ady>) 30 minutda bir okalýar; täze kod goşulýar. Programlar ping netijesini iberýärler (k=pr):
 # bir koddan yzly-yzyna 3 gezek jogap gelmese (we soňky 6 sagatda hiç kim işledip bilmese) — kod pozulýar.
 APP_X_PROTOS = ("vless://", "ss://", "hysteria2://", "hy2://")   # programyň goldaýan kodlary
-APP_TG_DEFAULT = ["supervpntm"]
+APP_TG_DEFAULT = ["supervpntm", "happvpn"]   # 1.46.7: happvpn — abuna salgylaryny paýlaşýar
+APP_TGS_MAX, APP_TGS_EVERY = 60, 900   # kanaldaky abunadan iň köp 60 kod; abuna 15 minutda bir täzeden okalýar (täze salgy gelse — derrew)
 APP_TG_EVERY, APP_TG_MAX, APP_X_DEAD = 60, 20, 3   # 1.44.2: kanal her minutda barlanýar (täze kod — derrew programa)
 TG_CODE_RE = re.compile(r"(?:vless|ss|hysteria2|hy2)://[^\s<>\"']+", re.I)
 
@@ -976,6 +977,7 @@ def tg_channel_codes(ch):
     """Açyk kanalyň web görnüşinden DIŇE iň soňky kodlar: iň täze kodly ýazgy we ondan 90 minut öňküler."""
     req = urllib.request.Request(f"https://t.me/s/{urllib.parse.quote(ch)}", headers={"User-Agent": "Mozilla/5.0"})
     with urllib.request.urlopen(req, timeout=20) as r: page = r.read().decode("utf-8", "ignore")
+    RUN.setdefault("tg_page", {})[ch] = page   # 1.46.7: abuna salgylary üçin (sahypa gaýtadan okalmasyn)
     def codes_of(b):
         b = re.sub(r"<br\s*/?>", "\n", b); full, cut = [], []
         for m in TG_CODE_RE.finditer(b):
@@ -1006,6 +1008,58 @@ def tg_channel_codes(ch):
     for c in out: keys_.setdefault(code_key(c), c)
     return list(keys_.values())
 
+def tg_channel_subs(page):
+    """1.46.7: kanaldaky iň täze abuna salgylary (iň soňky salgyly ýazgy we ondan 90 minut öňküler)."""
+    posts = []
+    for b in re.split(r'(?=<div class="tgme_widget_message_wrap)', page):
+        ls = hunt_sub_links(b)
+        if not ls: continue
+        t_ = re.search(r'datetime="([^"]+)"', b)
+        try: ts_ = datetime.datetime.fromisoformat(t_.group(1)).timestamp() if t_ else 0
+        except Exception: ts_ = 0
+        posts.append((ts_, ls))
+    if not posts: return []
+    newest = max(t_ for t_, _ in posts); out = []
+    for t_, ls in posts:
+        if not newest or t_ >= newest - APP_TG_BATCH: out += [u for u in ls if u not in out]
+    return out[-6:]
+
+def app_tg_subs(chs):
+    """1.46.7: kanalda paýlaşylan abunalaryň kodlary → programa (src=tgs). Işlemeýänler telefon hasabatynda aýrylýar we gaýtadan goşulmaýar."""
+    got, now = [], time.time(); st = RUN.setdefault("tgs_st", {})
+    for ch in chs:
+        links = tg_channel_subs((RUN.get("tg_page") or {}).get(ch) or "")
+        if not links: continue
+        o = st.get(ch) or {}
+        if o.get("l") == links and now - o.get("at", 0) < APP_TGS_EVERY: continue
+        cs, ok_ = [], False
+        for u in links:
+            r_ = hunt_sub_codes(u)
+            if r_ is not None: ok_ = True; cs += [c for c in r_ if c not in cs]
+        if not ok_: continue   # ýetip bolmady — indiki minutda ýene
+        st[ch] = {"l": links, "at": now}
+        hps, uniq = set(), []
+        for c in cs:
+            hp_ = app_x_hp(c)
+            if hp_ and hp_ not in hps and hunt_host_ok(hp_.rsplit(":", 1)[0]): hps.add(hp_); uniq.append(c)
+        got.append((ch, uniq[:APP_TGS_MAX]))
+    if not got: return 0
+    def f(x):
+        xs = x.setdefault("xcodes", {}); dead = x.get("xdead") or {}; nw = int(time.time()); added = 0
+        for ch, cs in got:
+            keep = {code_key(c) for c in cs}
+            for k in [k for k, v in xs.items() if v.get("src") == "tgs" and str(v.get("ch", "")).lower() == ch.lower() and k not in keep]: xs.pop(k, None)   # täze abuna — köne kodlar aýrylýar
+            have_ = {app_x_hp(v["c"]) for v in xs.values()}
+            for c in cs:
+                k = code_key(c)
+                if k in xs: xs[k]["seen"] = nw; continue
+                if k in dead or app_x_hp(c) in have_: continue   # öň işlemedik — gaýtadan goşulmaýar
+                xs[k] = {"c": c, "src": "tgs", "ch": ch, "ts": nw, "seen": nw, "ok": 0, "bad": 0, "ms": 0}; added += 1
+        return added
+    n_ = app_mut(f)
+    if n_: vlog(f"📡 Kanal abunasyndan {n_} täze kod goşuldy"); RUN["app_dirty"] = True
+    return n_
+
 def app_x_hp(c):
     h, p_ = code_hostport(c)
     return f"{h}:{p_}" if h else ""
@@ -1015,10 +1069,15 @@ def app_tg_refresh(force=False):
     if not force and time.time() - RUN.get("tg_at", 0) < APP_TG_EVERY: return
     RUN["tg_at"] = time.time()
     a = app_cfg(load_db()); chs = a.get("tgsrc", APP_TG_DEFAULT)
+    if "tgsrc" in a and not a.get("tgs_hv"):   # 1.46.7: happvpn bir gezek goşulýar (soň aýrylsa — gaýtadan goşulmaýar)
+        app_mut(lambda x: (x.__setitem__("tgsrc", list(x.get("tgsrc") or []) + ([] if any(str(c_).lower() == "happvpn" for c_ in x.get("tgsrc") or []) else ["happvpn"])), x.__setitem__("tgs_hv", 1)))
+        a = app_cfg(load_db()); chs = a.get("tgsrc", APP_TG_DEFAULT)
     found = []
     for ch in chs:
         try: found += [(ch, c) for c in tg_channel_codes(ch)]
         except Exception as e: log.info("tg %s: %s", ch, e); RUN["tg_err"] = f"{ch}: {str(e)[:80]}"
+    try: app_tg_subs(chs)   # 1.46.7: kanaldaky abunalar
+    except Exception as e: log.info("tg subs: %s", e)
     if not found: return
     def f(x):
         xs = x.setdefault("xcodes", {}); now = int(time.time()); added = 0
@@ -1052,7 +1111,7 @@ def app_x_report(dev, pr):
                 if ms > 0: v.update({"ok": now, "bad": 0, "ms": ms})
                 else:
                     v["bad"] = int(v.get("bad") or 0) + 1
-                    if v.get("src") not in ("tg", "m") and v["bad"] >= APP_X_DEAD and k not in gone: gone.append(k)   # 1.45.2: elle goşulan (m) we kanal kodlary aýrylmaýar   # admin kody: yzly-yzyna 3 gezek ms ýok — aýrylýar (kanal kody täze kod gelýänçä durýar)
+                    if v.get("src") not in ("tg", "m") and v["bad"] >= (2 if v.get("src") == "tgs" else APP_X_DEAD) and k not in gone: gone.append(k)   # 1.46.7: kanal abunasynyň kody — 2 gezek n/a   # 1.45.2: elle goşulan (m) we kanal kodlary aýrylmaýar   # admin kody: yzly-yzyna 3 gezek ms ýok — aýrylýar (kanal kody täze kod gelýänçä durýar)
         hm = x.setdefault("hp_ms", {})   # 1.43.2: ähli kodlaryň soňky pingi (mugt serwerleri işleýänlerden saýlamak üçin)
         for hp, ms in list(pr.items())[:400]:
             try: old_ = hm.get(str(hp)[:80]) or []; hm[str(hp)[:80]] = [int(ms), now, now if int(ms) > 0 else (old_[2] if len(old_) > 2 else 0)]   # [soňky ms, wagty, soňky işlän wagty]
@@ -1206,7 +1265,7 @@ def app_x_named(base_codes, a):
     for k, v in sorted(xs.items(), key=lambda kv: (kv[1].get("src") != "m", kv[1].get("ts", 0))):
         cc = exit_country(v["c"], geo)[0] or ""
         flag = flag_of(cc) if len(cc) == 2 else "🌐"
-        tag = "tm" if v.get("src") == "tg" else "VIP"
+        tag = "tm" if v.get("src") in ("tg", "tgs") else "VIP"
         if cc == "ru":
             out.append(set_name(v["c"], f"🇷🇺 Russia · 🎮 {tag}")); continue
         n_ = used.get(flag, 0) + 1; used[flag] = n_
