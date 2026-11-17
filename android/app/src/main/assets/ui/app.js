@@ -721,10 +721,13 @@
         const ng = SV.filter((v) => !v.game), gg = SV.filter((v) => v.game);
         const mark = (x, v, premTab) => { const lock = !!(v && v.lock), isFree = !v || v.free !== false;
           const o = Object.assign(x, { pcls: premTab ? 'sv-prem' : '', tag: lock ? '🔒' : premTab && !isFree ? '👑' : '', tagCls: lock ? 'svlock' : 'svcrown' });
-          if (lock) o.pick = () => { this.say('👑 ' + tx.pr_lock); this.setState({ psh: true, pstep: 1 }); };
+          if (lock) { o.pick = () => { this.say('👑 ' + tx.pr_lock); this.setState({ psh: true, pstep: 1 }); };
+            const off = 'rgba(243,231,208,.18)'; Object.assign(o, { ms: '—', msCls: '', c1: off, c2: off, c3: off, c4: off, best: false }); }   // 1.46.2: Premium ýok — ping ölçenmeýär
           return o; };
-        if (Array.isArray(r.srvList)) r.srvList = tab === 'pubg' ? [] : r.srvList.map((x, j) => ({ x, v: ng[j] })).filter((q) => tab === 'prem' || !PF || (q.v && q.v.free)).map((q) => mark(q.x, q.v, tab === 'prem'));
-        if (Array.isArray(r.gList)) r.gList = r.gList.map((x, j) => ({ x, v: gg[j] })).filter((q) => tab !== 'free' || !PF || (q.v && q.v.free)).map((q) => mark(q.x, q.v, tab !== 'free'));
+        // 1.46.2: Free — diňe mugtlar; Premium / PUBG — diňe Premium-lar (mugt serwerler gaýtalanmaýar)
+        const inTab = (q, premTab) => !PF || (premTab ? !(q.v && q.v.free) : !!(q.v && q.v.free));
+        if (Array.isArray(r.srvList)) r.srvList = tab === 'pubg' ? [] : r.srvList.map((x, j) => ({ x, v: ng[j] })).filter((q) => inTab(q, tab === 'prem')).map((q) => mark(q.x, q.v, tab === 'prem'));
+        if (Array.isArray(r.gList)) r.gList = r.gList.map((x, j) => ({ x, v: gg[j] })).filter((q) => inTab(q, tab !== 'free')).map((q) => mark(q.x, q.v, tab !== 'free'));
         if (tab === 'pubg') r.svEmpty = false;
         r.svTabs = [['free', 'Free', ''], ['prem', '👑 Premium', 'seg-prem'], ['pubg', '👑 PUBG', 'seg-prem']].map((q) => ({ t: q[1], cls: (tab === q[0] ? 'seg-on' : 'seg-off') + ' ' + q[2], p: tab === q[0] ? 'true' : 'false', pick: () => this.setState({ svTab: q[0] }) }));
         r.svPremBan = !PR && PF && tab !== 'free';

@@ -376,7 +376,7 @@ open class Main : Activity() {
 
     private fun measure() {
         if (testing) return
-        val list = Sub.list.toList()
+        val list = Sub.list.filter { State.allowed(this, it) }   // 1.46.2: Premium ýok — Premium serwerleriň pingi ölçenmeýär
         if (list.isEmpty()) return
         testing = true; State.pings.clear(); push(JSONObject().put("k", "srv"))
         val pool = Executors.newFixedThreadPool(4)
