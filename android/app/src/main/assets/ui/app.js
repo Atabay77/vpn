@@ -788,6 +788,9 @@
         r.usGo = () => { const q = (this.state.usQ || '').trim(); if (q.length < 2) return; this.setState({ usDone: false, usRes: [] }); act('usearch', { q }); };
         r.usRes = (s.usRes || []).map((u) => ({ name: u.n || '?', sub: (u.code || '') + (u.seen ? ' · ' + u.seen : ''), open: () => this.setState({ page: 'uprof', upDev: u.dev }) }));
         r.usNone = !!s.usDone && !r.usRes.length;
+        // 1.46: eýesi — kodlary şu telefonda synamak
+        r.probeT = s.probeRun ? tx.pb_run : tx.pb_go;
+        r.probeGo = () => { if (this.state.probeRun || typeof NB.probe !== 'function') return; this.setState({ probeRun: true }); NB.probe(100); };
         // 1.44: öz profilimde Premium bermek (eýesi)
         { const ownR = isF2 || roleOf(me1) === 'o', px = PL.find((x) => x.dev === me1);
           const give = (n) => this.confirm(tx.pr_qGive.replace('{n}', this.meName || '?').replace('{p}', n === 30 ? tx.pr_m : n === 365 ? tx.pr_y : n === 0 ? '♾' : n + ' ' + tx.pr_days), '👑 ' + tx.pr_giveBtn,
@@ -1354,6 +1357,8 @@
       x[e.f] = [e.n || '', e.t || Date.now() / 1000];
       const ks = Object.keys(SV); if (ks.length > 60) ks.slice(0, ks.length - 60).forEach((k) => delete SV[k]);
       LS.set('stViews', SV); up.gTick = (s.gTick || 0) + 1;
+    } else if (e.k === 'probe') {   // 1.46
+      up.probeRun = false; C.say(e.n < 0 ? '⚠️ ' + tx.pb_none : tx.pb_done.replace('{n}', String(e.n)).replace('{ok}', String(e.ok)));
     } else if (e.k === 'plock') {   // 1.43: Premium serwer saýlandy (Premium ýok)
       C.say('👑 ' + tx.pr_lock); up.psh = true; up.pstep = 1;
     } else if (e.k === 'img') {

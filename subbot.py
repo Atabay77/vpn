@@ -1255,7 +1255,7 @@ def app_news_fs(a=None):
 
 # ======================= 1.46: Kod awy — kanallardan / GitHub-dan kod ýygnap, Xray bilen barlap, işleýänleri programa goşýar =======================
 HUNT_EVERY = 1800          # her 30 minutda
-HUNT_MAX_TEST = 600        # bir gezekde iň köp täze kod barlanýar
+HUNT_MAX_TEST = 1500       # bir gezekde iň köp täze kod barlanýar (1.46.5: 600 → 1500)
 HUNT_KEEP = 150            # programa iň köp (Premium)
 HUNT_FREE = 5              # mugt bölüme iň köp
 HUNT_BAD_FILE = os.path.join(os.path.dirname(DB_FILE) or ".", "hunt_bad.txt")   # 1.46.2: bir gezek işlemedik kod — hiç gaýtadan barlanmaýar (aýratyn faýl)
@@ -1325,7 +1325,7 @@ def hunt_outbound(link, tag):
     except Exception: return None
     return None
 
-def hunt_test(codes, threads=25, batch=40, port0=21000, timeout=8):
+def hunt_test(codes, threads=40, batch=60, port0=21000, timeout=6):
     """Kodlary hakyky Xray bilen barlaýar (her kod üçin socks giriş → çykyş). Dönüş: {kod: ms} — diňe işleýänler."""
     xb = xray_bin(); res = {}
     if not xb or not codes: return res
@@ -1520,19 +1520,28 @@ def hunt_tm_bad(hm, hp, ts, now=None):
     now = now or time.time(); v = hm.get(hp)
     return bool(v) and now - float(v[1]) < 6 * 3600 and int(v[0]) <= 0 and now - float(v[2] if len(v) > 2 else 0) > 6 * 3600 and now - float(ts or now) > 3600
 
+def hunt_probe_list(a, n=400):
+    """1.46.5: telefonlaryň synamaly kodlary — bot barlagyndan geçen, Türkmenistanda entek işlemedik / synalmadyk."""
+    hm = a.get("hp_ms") or {}; now = time.time(); pool = a.get("hunt") or {}
+    todo = [(hp, v) for hp, v in pool.items() if not (hp in hm and len(hm[hp]) > 2 and now - float(hm[hp][2] or 0) < 24 * 3600)]
+    todo.sort(key=lambda kv: (kv[0] in hm, kv[1].get("ms") or 9999))   # entek hiç synalmadyk öňde
+    return [v["c"] for _, v in todo[:n]]
+
 def hunt_codes(a):
     """Programa goşulýan aw kodlary: «🇩🇪 Germaniýa · aw» (ady boýunça mugt saýlamak üçin)."""
     pool = a.get("hunt") or {}
     if not pool or not a.get("hunt_on", True): return []
     hm = a.get("hp_ms") or {}; now = time.time()
     gone = [hp for hp, v in pool.items() if hunt_tm_bad(hm, hp, v.get("ts"), now)]
+    tm_ok = lambda hp: hp in hm and len(hm[hp]) > 2 and now - float(hm[hp][2] or 0) < 24 * 3600   # Türkmenistanda soňky 24 sagatda işledi
     if gone:   # 1.46.4: Türkmenistanda işlemeýänler derrew (10 minutda bir) aýrylýar we hiç gaýtadan barlanmaýar
         app_mut(lambda x: [(x.get("hunt") or {}).pop(hp, None) for hp in gone]); hunt_bad_add(gone)
         pool = {hp: v for hp, v in pool.items() if hp not in gone}
     try: geo = geo_lookup([code_host(v["c"]) for v in pool.values() if code_host(v["c"])])
     except Exception: geo = {}
     out = []
-    for v in pool.values():
+    for hp, v in pool.items():
+        if not tm_ok(hp): continue   # 1.46.5: Türkmenistanda entek synalmadyk — sanawa däl, telefonlara synag üçin (n/probe)
         cc = exit_country(v["c"], geo)[0] or ""
         nm = TM_CNAME.get(cc) or (cc.upper() if cc else "Serwer")
         out.append(set_name(v["c"], f"{flag_of(cc) if len(cc) == 2 else '🌐'} {nm} · aw"))
@@ -1606,6 +1615,13 @@ def app_sync(force=False):
             try:
                 fs_write(cfg["fs_proj"], "n/sub", app_enc(fid, build_text("vpn", "", meta + codes).decode("utf-8")), None, False); RUN["sub_fs"] = dig; RUN["sub_fs_at"] = time.time()
             except Exception as e: log.info("sub fs: %s", e)
+        if cfg.get("fs_ok") and cfg.get("fs_proj"):   # 1.46.5: telefonlar üçin synag sanawy (n/probe) — üýtgände
+            try:
+                pl_ = hunt_probe_list(app_cfg(load_db())) if app_cfg(load_db()).get("hunt_on", True) else []
+                pdig_ = hashlib.sha256("\n".join(pl_).encode()).hexdigest()[:16]
+                if RUN.get("probe_fs") != pdig_:
+                    fs_write(cfg["fs_proj"], "n/probe", app_enc(fid, json.dumps({"c": pl_, "t": int(time.time())})), None, False); RUN["probe_fs"] = pdig_
+            except Exception as e: log.info("probe fs: %s", e)
         if force or dig != cfg.get("dig"):
             if not sync_file(svc, fid, "vpn", "", meta + codes, exp=False): raise RuntimeError("Drive'a yazılamadı")
         def f(d):

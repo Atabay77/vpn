@@ -304,6 +304,11 @@ open class Main : Activity() {
         }
         /** 1.44: açary bu telefondan aýyrmak — bot telefony açardan çözýär (başga telefonda ulanyp bolýar). */
         @JavascriptInterface fun keyDel() { val c = this@Main; val k = Lic.saved(c) ?: return; Msg.send(c, JSONObject().put("k", "kunbind").put("h", Lic.hash(k))); Lic.save(c, null) }
+        /** 1.46: eýesi — bot tapan kodlary şu telefonda synamak (Türkmenistanyň interneti). */
+        @JavascriptInterface fun probe(n: Int) {
+            val ok = Probe.run(this@Main, n.coerceIn(1, 200), force = true) { t, g -> push(JSONObject().put("k", "probe").put("n", t).put("ok", g)) }
+            if (!ok) push(JSONObject().put("k", "probe").put("n", -1))
+        }
         @JavascriptInterface fun key(raw: String) = Thread { push(JSONObject().put("k", "key").put("r", checkKey(raw))) }.start()
         @JavascriptInterface fun send(json: String) { runCatching { Msg.send(this@Main, JSONObject(json)) } }
         // 1.16: profil, hususy habarlar, Global chat suraty

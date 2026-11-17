@@ -267,6 +267,7 @@ object Msg {
             if (visible && !(rel && watchG) && now - gAt > gEvery) { gAt = now; runCatching { global() } }   // 1.40.1: chat açyk + VPS — relGLoop
             runCatching { Chat.poll(c, visible, dmPage) }
             if (visible || on) runCatching { State.pingExtra(c) }
+            if (visible) runCatching { Probe.run(c) }   // 1.46: bot tapan kodlary Türkmenistanyň interneti bilen synamak
             if (visible && Fs.on() && now - newsAt > (if (fast) 60_000L else 120_000L)) { newsAt = now; runCatching { newsFs() } }
             synchronized(lock) { runCatching { lock.wait(if (fast && visible) 700L else if (watchG || Chat.watch != null || (hot && visible)) 2000L else 5000L) } }
         }
