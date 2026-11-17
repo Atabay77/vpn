@@ -386,9 +386,9 @@
         r.gPinH = PN ? '📌 ' + (PN.n || tx.g_pinT) : tx.g_pinT; r.gPinTxt = PN ? PN.t : tx.g_pin; r.gPinGo = PN ? () => rpJump(PN.id) : null;
         r.gPinX = !!PN && canP;
         r.gPinUn = (e) => { if (e && e.stopPropagation) e.stopPropagation(); act('gpin', { id: '' }); GPIN = { id: '', at: Date.now() }; this.say('📌 ' + tx.g_pinOff); this.setState({ gTick: (this.state.gTick || 0) + 1 }); };
-        r.gMsgs = r.gMsgs.map((g) => Object.assign(g, { canPin: canP && !String(g.gk).match(/^[lp]/), pin: () => {
-          const m = G.find((q) => q.id === g.gk) || {}, n = m.i === me ? this.meName : (m.n || '?'), t = (m.t || (m.st ? m.st : m.pi ? '📷' : '')).slice(0, 200);
-          act('gpin', { id: g.gk, n, t }); GPIN = { id: g.gk, n, t, at: Date.now() }; this.say('📌 ' + tx.g_pinOk); this.setState({ gTick: (this.state.gTick || 0) + 1 }); } })); }
+        this._canPin = canP;   // 1.46.5: 📌 — habary basyp saklanda menýuda
+        this.pinMsg = (id) => { const m = G.find((q) => q.id === id) || {}, n = m.i === me ? this.meName : (m.n || '?'), t = (m.t || (m.st ? m.st : m.pi ? '📷' : '')).slice(0, 200);
+          act('gpin', { id, n, t }); GPIN = { id, n, t, at: Date.now() }; this.say('📌 ' + tx.g_pinOk); this.setState({ gTick: (this.state.gTick || 0) + 1 }); }; }
       if (s.page === 'global') lvAsk(gl.map((m) => m.i));
       const onl = INFO.online > 0 ? tx.g_online.replace('{n}', String(INFO.online)) : '';
       r.gOnline = onl; r.gHead = tx.p_global.toUpperCase() + (onl ? ' · ' + onl : '');
@@ -913,7 +913,8 @@
         } else { if (this._svKey) { clearTimeout(this._svT); this._svKey = null; } Object.assign(r, { svImg: '', svHasImg: false, svNoImg: true, svIsVid: false, svVid: '', svName: '', svAgo: '', svBars: [], svCanDel: false, svDel: null, svMine: false, svViews: '0', svvOn: false, svvList: [], svvEmpty: true, svvOpen: null, svvX: null }); }
         r.svX = () => this.setState({ sv: null }); r.svNext = this.svNext; r.svPrev = this.svPrev; }
       // 1.28: öz habaryň menýusy we üýtgedilýän habar
-      { const M = s.ma; r.maOn = !!M; r.maT = M ? M.t : ''; r.maHasT = !!(M && M.t); r.maCanEd = !!(M && M.t);
+      { const M = s.ma; r.maOn = !!M; r.maT = M ? M.t : ''; r.maHasT = !!(M && M.t); r.maCanEd = !!(M && M.t && M.own);
+        r.maOwn = !!(M && M.own); r.maPin = !!(M && M.kind === 'g' && this._canPin && !/^[lp]/.test(M.id)); r.maPinGo = () => { const m = this.state.ma; this.setState({ ma: null }); if (m) this.pinMsg(m.id); };   // 1.46.5
         r.maCopy = () => this.maAct('copy'); r.maEdit = () => this.maAct('edit'); r.maDel = () => this.maAct('del'); r.maX = () => this.setState({ ma: null });
         r.gEdOn = !!s.gEdit; r.gEdT = s.gIn || ''; r.gEdX = () => this.setState({ gEdit: null, gIn: '' });
         r.dmEdOn = !!s.dmEdit; r.dmEdT = s.dmIn || ''; r.dmEdX = () => this.setState({ dmEdit: null, dmIn: '' }); }
@@ -1021,7 +1022,7 @@
     };
     C.dmSendT = () => { const t = (C.state.dmIn || '').trim(); if (!t || !C.state.dmPeer) return; if (C.state.dmEdit) { dmPush(C.state.dmPeer, { ed: C.state.dmEdit, x: t }); C.setState({ dmIn: '', dmEdit: null }); return; } dmPush(C.state.dmPeer, { x: t }); C.setState({ dmIn: '' }); };
     // 1.28: öz habaryňy basyp saklamak → göçür / üýtget / poz
-    C.msgMenu = (id, kind, t) => C.setState({ ma: { id, kind, t: t || '' }, rxFor: null });
+    C.msgMenu = (id, kind, t, own) => C.setState({ ma: { id, kind, t: t || '', own: own !== false }, rxFor: null });
     C.maAct = (a) => { const m = C.state.ma, tx = C.T()[C.state.lang]; C.setState({ ma: null }); if (!m) return;
       if (a === 'copy') { NB.copy(m.t); C.say('✓ ' + tx.copied); return; }
       if (a === 'edit') { if (m.kind === 'd') C.setState({ dmEdit: m.id, dmIn: m.t, dmRp: null }); else C.setState({ gEdit: m.id, gIn: m.t, gRp: null }); return; }
@@ -1573,6 +1574,7 @@
     if (!t && !el.querySelector('img') || !window.C) return;
     const id = el.getAttribute('data-rp') || '';
     if (el.classList.contains('gb-me') && id && !/^[lp]/.test(id)) { lpAt = Date.now(); try { NB.tap(); } catch (e) {} window.C.msgMenu(id, window.C.state.page === 'dm' ? 'd' : 'g', t); return; }   // 1.28: öz habaryň
+    if (window.C._canPin && window.C.state.page === 'global' && id && !/^[lp]/.test(id)) { lpAt = Date.now(); try { NB.tap(); } catch (e) {} window.C.msgMenu(id, 'g', t, false); return; }   // 1.46.5: admin — berkit / göçür
     if (!t) return;
     lpAt = Date.now(); NB.copy(t); try { NB.tap(); } catch (e) {}
     window.C.say('✓ ' + window.C.T()[window.C.state.lang].copied);

@@ -1141,6 +1141,21 @@ def app_flag_best(codes, hpms=None):
     keep |= {i for i, _ in best.values()}
     return [c for i, c in enumerate(codes) if i in keep]
 
+def app_free_all(codes, php, hpms=None):
+    """1.46.5: Premium abunasy goşulan bolsa — Premium-da diňe şol abunanyň kodlary, galan ähli kodlar (kanal, elle goşulan, kod awy,
+    adaty abunalar) mugt. Adaty abuna kody telefonlaryň ölçeginde soňky 6 sagatda işlemedik bolsa mugta goşulmaýar. Dönüş: ["host:port", …]."""
+    hpms = hpms or {}; now = time.time(); out, seen_ = [], set()
+    for c in codes:
+        h, p_ = code_hostport(c)
+        if not h or not p_ or app_is_info(c): continue
+        hp = f"{h}:{p_}"
+        if hp in php or hp in seen_: continue
+        fixed = re.search(r"(?:·|🎮) (?:VIP|tm|aw)$", orig_name(c).strip())
+        v = hpms.get(hp)
+        if not fixed and v and now - float(v[1]) < 6 * 3600 and int(v[0]) <= 0: continue
+        seen_.add(hp); out.append(hp)
+    return out
+
 def app_free_pick(codes, base1, hpms=None):
     """1.45.2: mugt — kanaldan alnan («· tm») we elle goşulan («· VIP») kodlaryň HEMMESI (barlanmazdan), ýetmese abunadan işleýänler
     (jemi iň az 4 adaty serwer) we 1 PUBG (kanal / elle goşulan PUBG bolsa — olar hem). Dönüş: ["host:port", …]."""
@@ -2110,7 +2125,22 @@ def app_sync(force=False):
                 if code_key(c) not in keys: keys.add(code_key(c)); codes.append(c)
         except Exception as e: log.info("hunt codes: %s", e)
         # 1.44.3: Premium — abunalardaky ähli hakyky kodlar (bir baýdakdan bir serwer çägi aýryldy)
-        free_ = app_free_pick(codes, base1, cfg.get("hp_ms"))   # 1.43.2: mugt — her ýurtdan iň gowy işleýän bir kod + kanal + 2 PUBG
+        # 1.46.5: Premium abunasy — Premium-da diňe şonuň kodlary; kod awy, kanal, elle goşulan we adaty abunalar — mugt
+        psubs = list(cfg.get("psubs", [])); plast = dict(cfg.get("plast", {})); php = set()
+        for u in psubs:
+            h = hashlib.md5(u.encode()).hexdigest()[:8]
+            try:
+                got = fetch_codes(u)
+                if got: plast[h] = got
+                else: errs.append(f"👑 {src_label(u)}: boş")
+            except Exception as e: errs.append(f"👑 {src_label(u)}: {str(e)[:60]}")
+            for c in plast.get(h, []):
+                if app_is_info(c): continue
+                hp_ = app_x_hp(c)
+                if hp_: php.add(hp_)
+                if code_key(c) not in keys: keys.add(code_key(c)); codes.append(c)
+        plast = {k_: v_ for k_, v_ in plast.items() if k_ in {hashlib.md5(u.encode()).hexdigest()[:8] for u in psubs}}
+        free_ = app_free_all(codes, php, cfg.get("hp_ms")) if php else app_free_pick(codes, base1, cfg.get("hp_ms"))   # 1.43.2: mugt — her ýurtdan iň gowy işleýän bir kod + kanal + 2 PUBG
         codes = app_brand_names(codes)   # 1.29: abunanyň atlary görünmesin
         meta = app_meta(cfg) + (["#tvfree: " + ",".join(free_)] if free_ else [])
         dig = hashlib.sha256("\n".join(meta + codes).encode()).hexdigest()[:16]
@@ -2135,7 +2165,7 @@ def app_sync(force=False):
             if not sync_file(svc, fid, "vpn", "", meta + codes, exp=False): raise RuntimeError("Drive'a yazılamadı")
         def f(d):
             a = d.setdefault("app", {})
-            a.update({"fid": fid, "dig": dig, "last": last, "n": len(codes), "ts": int(time.time()), "errs": errs})
+            a.update({"fid": fid, "dig": dig, "last": last, "plast": plast, "n": len(codes), "ts": int(time.time()), "errs": errs})
         mutate(f)
         return len(codes), errs
 
@@ -2312,6 +2342,8 @@ async def app_loop(app):
 def app_view(db):
     cfg = app_cfg(db); subs = cfg.get("subs", [])
     lines = [f"{i + 1}. {esc(src_label(u))}" for i, u in enumerate(subs)] or ["Henüz abonelik yok."]
+    psubs = cfg.get("psubs", [])   # 1.46.5
+    lines += ["", "👑 <b>Premium aboneliği</b> (Premium'da sadece bunun kodları):"] + ([f"👑 {i + 1}. {esc(src_label(u))}" for i, u in enumerate(psubs)] or ["Yok — Premium'da bütün kodlar var (eski düzen)."])
     st = (f"\n🕒 Son yazma {ago(cfg.get('ts'))} · toplam {cfg.get('n', 0)} kod" if cfg.get("ts") else "")
     st += "".join(f"\n⚠️ {esc(e)}" for e in cfg.get("errs", []))
     st += (f"\n❌ {esc(RUN['app_err'])}" if RUN.get("app_err") else "")
@@ -2327,6 +2359,8 @@ def app_view(db):
     rows = [[B(f"❌ {i + 1}. {short(src_label(u), 24)}", f"app_rm:{hashlib.md5(u.encode()).hexdigest()[:8]}")] for i, u in enumerate(subs)]
     if len(subs) < APP_MAX_SUBS: rows.append([B("➕ Abonelik ekle", "app_add", "primary")])
     if subs: rows.append([B("🔄 Şimdi güncelle", "app_now"), B("📋 Abonelik linkleri", "app_subs")])
+    rows += [[B(f"❌ 👑 {i + 1}. {short(src_label(u), 22)}", f"app_prm:{hashlib.md5(u.encode()).hexdigest()[:8]}")] for i, u in enumerate(psubs)]   # 1.46.5
+    if len(psubs) < APP_MAX_SUBS: rows.append([B("👑 Premium aboneliği ekle", "app_padd", "primary")])
     rows.append([B("🔑 Key oluştur", "app_kn"), B(f"🗝 Keyler ({len(app_keys_live(cfg))})", "app_kl")])
     rows.append([B("📦 Yeni sürüm yayınla (link)", "app_up")])
     rows.append([B("🔎 Kod avı", "app_hunt")])   # 1.46
@@ -5582,6 +5616,24 @@ async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
             await u.message.reply_text(f"✅ <b>Türkmen VPN {esc(ver)}</b> yayında.\n<i>Programı açan herkes üstte «Täze wersiýa» bildirimini görür; güncellemek isteğe bağlı.</i>",
                                        parse_mode="HTML", reply_markup=back("app_v"))
 
+        elif act == "app_padd":   # 1.46.5: Premium aboneligi
+            if uid not in ORIG_ADMINS: return
+            lines = [x.strip() for x in txt.split() if x.strip().startswith("http")]
+            if not lines:
+                await u.message.reply_text("⚠️ Geçerli link yok.", reply_markup=back("app_v")); return
+            def f(d):
+                ap = d.setdefault("app", {}); cur = ap.setdefault("psubs", []); n = 0
+                for l in lines:
+                    if l not in cur and len(cur) < APP_MAX_SUBS: cur.append(l); n += 1
+                return n
+            n = mutate(f); audit(uid, f"app_padd n={n}")
+            await _del_msg(u.message)
+            try:
+                k, errs = await asyncio.to_thread(app_sync, True); RUN.pop("app_err", None)
+            except Exception as e: RUN["app_err"] = str(e)[:150]
+            t, kb = app_view(load_db())
+            await u.message.reply_text(f"✅ {n} Premium aboneliği eklendi. Premium bölümünde artık sadece bunun kodları var.\n\n" + t, parse_mode="HTML", reply_markup=kb)
+
         elif act == "app_add":
             if uid not in ORIG_ADMINS: return
             lines = [x.strip() for x in txt.split() if x.strip().startswith("http")]
@@ -6654,7 +6706,7 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         return
 
     elif a in ("app_v", "app_add", "app_now", "app_link", "app_subs", "app_kn", "app_kl", "app_up", "app_st", "app_ad", "app_ad_img", "app_ad_link", "app_ad_rm", "app_ad_tg", "app_dl",
-               "app_hunt", "app_hunt_run", "app_hunt_tog", "app_hunt_add", "app_hunt_clr") or a.startswith(("app_rm:", "app_k:", "app_kd:")):
+               "app_hunt", "app_hunt_run", "app_hunt_tog", "app_hunt_add", "app_hunt_clr", "app_padd") or a.startswith(("app_rm:", "app_k:", "app_kd:", "app_prm:")):
         if uid not in ORIG_ADMINS:
             await safe_edit(q, "⛔ Erişim yok", back("admin")); return
         if a.startswith("app_hunt"):   # 1.46: kod avı
@@ -6790,12 +6842,20 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
             STATE[uid] = {"action": "app_add"}
             t, kb = prompt("➕ <b>Programa abonelik ekle</b>", f"Abonelik linklerini gönder (her satıra bir tane, en çok {APP_MAX_SUBS}).", "app_v")
             await safe_edit(q, t, kb); return
+        if a == "app_padd":   # 1.46.5
+            STATE[uid] = {"action": "app_padd"}
+            t, kb = prompt("👑 <b>Premium aboneliği ekle</b>", "Premium abonelik linkini gönder (her satıra bir tane). Premium bölümünde sadece bu aboneliğin kodları olacak; "
+                           "kod avı, kanal ve diğer abonelik kodları Free'ye gider.", "app_v")
+            await safe_edit(q, t, kb); return
+        if a.startswith("app_prm:"):
+            h = a.split(":", 1)[1]
+            mutate(lambda d: d.setdefault("app", {}).__setitem__("psubs", [x for x in d["app"].get("psubs", []) if hashlib.md5(x.encode()).hexdigest()[:8] != h])); audit(uid, "app_prm")
         if a.startswith("app_rm:"):
             h = a.split(":", 1)[1]
             def f(d):
                 ap = d.setdefault("app", {}); ap["subs"] = [x for x in ap.get("subs", []) if hashlib.md5(x.encode()).hexdigest()[:8] != h]
             mutate(f); audit(uid, "app_rm")
-        if a in ("app_now",) or a.startswith("app_rm:"):
+        if a in ("app_now",) or a.startswith(("app_rm:", "app_prm:")):
             await safe_edit(q, "⏳ Programın listesi yazılıyor…", None)
             try:
                 n, errs = await asyncio.to_thread(app_sync, True); RUN.pop("app_err", None)
