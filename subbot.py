@@ -1042,7 +1042,7 @@ def app_x_report(dev, pr):
         xs = x.get("xcodes") or {}; now = int(time.time()); gone = []
         byhp = {}
         for k, v in xs.items(): byhp.setdefault(app_x_hp(v["c"]), []).append(k)
-        for hp, ms in list(pr.items())[:80]:
+        for hp, ms in list(pr.items())[:400]:   # 1.47: 80 → 400 (Premium sanawy uly — galanlary hasaba alynmaýardy, işlemeýänler sanawda galýardy)
             for k in byhp.get(str(hp), []):
                 v = xs[k]
                 try: ms = int(ms)
@@ -1052,12 +1052,12 @@ def app_x_report(dev, pr):
                     v["bad"] = int(v.get("bad") or 0) + 1
                     if v.get("src") not in ("tg", "m") and v["bad"] >= APP_X_DEAD and k not in gone: gone.append(k)   # 1.45.2: elle goşulan (m) we kanal kodlary aýrylmaýar   # admin kody: yzly-yzyna 3 gezek ms ýok — aýrylýar (kanal kody täze kod gelýänçä durýar)
         hm = x.setdefault("hp_ms", {})   # 1.43.2: ähli kodlaryň soňky pingi (mugt serwerleri işleýänlerden saýlamak üçin)
-        for hp, ms in list(pr.items())[:80]:
+        for hp, ms in list(pr.items())[:400]:
             try: old_ = hm.get(str(hp)[:80]) or []; hm[str(hp)[:80]] = [int(ms), now, now if int(ms) > 0 else (old_[2] if len(old_) > 2 else 0)]   # [soňky ms, wagty, soňky işlän wagty]
             except Exception: pass
         for hp in [h_ for h_, v in hm.items() if now - int(v[1]) > 3 * 86400]: hm.pop(hp, None)
-        if len(hm) > 600:
-            for hp in sorted(hm, key=lambda h_: hm[h_][1])[:len(hm) - 600]: hm.pop(hp, None)
+        if len(hm) > 1500:
+            for hp in sorted(hm, key=lambda h_: hm[h_][1])[:len(hm) - 1500]: hm.pop(hp, None)
         for k in gone:
             xs.pop(k, None); x.setdefault("xdead", {})[k] = now
         dd = x.get("xdead") or {}
@@ -1065,17 +1065,13 @@ def app_x_report(dev, pr):
         return len(gone)
     n_ = app_mut(f)
     if n_: vlog(f"🗑 {n_} kod işlemedi (3 gezek ms ýok) — aýryldy"); RUN["app_dirty"] = True
-    # 1.46.6: kod awy — telefon şol ölçegde başga serwerlere ýetdi, bu koda ýetmedi → derrew aýrylýar, hiç gaýtadan barlanmaýar
-    try: items = [(str(h), int(m)) for h, m in list(pr.items())[:80]]
-    except Exception: items = []
-    if any(m > 0 for _, m in items):
-        bad_ = {h for h, m in items if m <= 0}
-        gone_h = []
-        def fh(x):
-            pool = x.get("hunt") or {}
-            for h in [h for h in pool if h in bad_]: pool.pop(h, None); gone_h.append(h)
-        if bad_: app_mut(fh)
-        if gone_h: hunt_bad_add(gone_h); RUN["app_dirty"] = True
+    # 1.47: kod awy — Türkmenistandaky telefonyň netijeleri (2 gezek tassyklanmadyk sanawa goşulmaýar; işlemedik — derrew aýrylýar, hiç gaýtadan barlanmaýar)
+    items = []
+    for h, m in list(pr.items())[:400]:
+        try: items.append((str(h)[:80], int(m)))
+        except Exception: pass
+    try: hunt_report(dev, items)
+    except Exception as e: log.info("hunt report: %s", e)
 
 TM_CNAME = {"nl": "Niderlandlar", "fi": "Finlýandiýa", "gb": "Beýik Britaniýa", "de": "Germaniýa", "ch": "Şweýsariýa", "pl": "Polşa", "tr": "Türkiýe", "fr": "Fransiýa",
             "ru": "Russiýa", "se": "Şwesiýa", "us": "ABŞ", "at": "Awstriýa", "it": "Italiýa", "es": "Ispaniýa", "lv": "Latwiýa", "lt": "Litwa", "ee": "Estoniýa",
@@ -1264,26 +1260,181 @@ def app_news_fs(a=None):
     fs_write(a["fs_proj"], "n/list", app_enc(fid, body), None, False)
     RUN["news_fs"] = body
 
-# ======================= 1.46: Kod awy — kanallardan / GitHub-dan kod ýygnap, Xray bilen barlap, işleýänleri programa goşýar =======================
-HUNT_EVERY = 1800          # her 30 minutda
-HUNT_MAX_TEST = 1500       # bir gezekde iň köp täze kod barlanýar (1.46.5: 600 → 1500)
-HUNT_KEEP = 150            # programa iň köp (Premium)
-HUNT_FREE = 5              # mugt bölüme iň köp
-HUNT_BAD_FILE = os.path.join(os.path.dirname(DB_FILE) or ".", "hunt_bad.txt")   # 1.46.2: bir gezek işlemedik kod — hiç gaýtadan barlanmaýar (aýratyn faýl)
+# ======================= 1.47: Kod awy — kanallardan / GitHub-dan kod ýygnap, Xray bilen we Türkmenistandaky telefonlar bilen barlap, işleýänleri programa goşýar =======================
+# Ýagdaý esasy bazadan aýry (hunt.json, hunt_q.json, hunt_seen.bin) — esasy baza agyrlaşmasyn, bot haýallamasyn:
+#  ch   — Telegram kanallary: her aýlawda täze atlar synalýar (türkmen kanallary öňde), salgylanýan kanallar yzarlanýar
+#  gh   — GitHub faýllary: täze serwer berýän faýl yzarlanýar; bir gezek täze serwer çykmasa — hiç gaýtadan seredilmeýär
+#  q    — nobat: entek barlanmadyk kodlar (Türkmenistanda işlemek ähtimallygy boýunça tertipli)
+#  pool — bot barlagyndan geçenler: Türkmenistandaky telefonlarda synalýar; diňe 2 gezek tassyklananlar programda
+#  rate — haýsy görnüş / IP ulgamy / SNI / çeşme Türkmenistanda işleýär (öwrenilýär, nobatyň tertibi şoňa görä)
+import subprocess, tempfile, array, bisect, heapq, ipaddress
 
-def hunt_bad_load():
-    try:
-        with open(HUNT_BAD_FILE, encoding="utf-8") as f: return {l.strip() for l in f if l.strip()}
-    except Exception: return set()
+HUNT_EVERY = 1200          # 20 minutda bir
+HUNT_MAX_TEST = 3000       # bir aýlawda bot iň köp şunça kod barlaýar
+HUNT_KEEP = 150            # programda iň köp (Premium)
+HUNT_FREE = 5              # mugt bölüme iň köp
+HUNT_POOL = 2000           # bot barlagyndan geçen, telefonda synalmaga garaşýan kodlar
+HUNT_Q_MAX = 20000         # nobat
+HUNT_Q_AGE = 36 * 3600     # nobatda şundan köne kod taşlanýar (köne IP-ler eýýäm bloklanandyr)
+HUNT_TG_READ = 150         # her aýlawda okalýan belli kanal
+HUNT_NEW_CH = 100          # her aýlawda synalýan täze kanal ady
+HUNT_GH_FILES = 60         # her aýlawda barlanýan GitHub faýly
+HUNT_TM_MS = 2500          # Türkmenistanda şundan haýal kod sanawa goşulmaýar
+HUNT_FILE = os.path.join(os.path.dirname(DB_FILE) or ".", "hunt.json")
+HUNT_BAD_FILE = os.path.join(os.path.dirname(DB_FILE) or ".", "hunt_bad.txt")   # 1.46 sanawy — bir gezek okalyp hunt_seen.bin-e geçirilýär
+HUNT_URL = os.environ.get("HUNT_URL", "https://www.gstatic.com/generate_204")
+HUNT_LOCK = threading.Lock()      # bir aýlaw
+HUNT_SL = threading.RLock()       # ýagdaý
+HUNT_S = {}                       # ýagdaý (ýatda; faýla 20 sekuntda bir)
+HUNT_CODE_RE = re.compile(r"(?<![A-Za-z0-9])(?:vless|ss|hysteria2|hy2)://[^\s<>\"'`]+", re.I)   # «vmess://» içindäki «ss://» däl
+
+def hunt_fp(sfx):
+    """hunt.json-yň ýanyndaky faýllar: hunt_q.json, hunt_seen.bin…"""
+    return os.path.splitext(HUNT_FILE)[0] + sfx
+
+class HuntSeen:
+    """Barlanyp işlemedik ýa-da taşlanan host:port — hiç gaýtadan barlanmaýar. Millionlap bolup biler: 8 baýtlyk heş, tertipli massiw (az RAM).
+    Iki nesil: täzesi dolanda iň köne nesil pozulýar (iň soňky ~3 million ýatda)."""
+    GEN = 1_500_000
+    def __init__(self): self.cur = array.array("Q"); self.old = array.array("Q"); self.new = set(); self.old_dirty = False
+    @staticmethod
+    def h(hp): return int.from_bytes(hashlib.blake2b(hp.encode(), digest_size=8).digest(), "little")
+    @staticmethod
+    def _in(a, x):
+        i = bisect.bisect_left(a, x); return i < len(a) and a[i] == x
+    def __contains__(self, hp):
+        x = self.h(hp); return x in self.new or self._in(self.cur, x) or self._in(self.old, x)
+    def __len__(self): return len(self.cur) + len(self.old) + len(self.new)
+    def add(self, hps):
+        for hp in hps:
+            if hp: self.new.add(self.h(hp))
+    def merge(self):
+        if not self.new: return
+        add = sorted(x for x in self.new if not self._in(self.cur, x) and not self._in(self.old, x)); self.new = set()
+        if add: self.cur = array.array("Q", heapq.merge(self.cur, add))
+        if len(self.cur) > self.GEN: self.old, self.cur, self.old_dirty = self.cur, array.array("Q"), True
+
+def hunt_seen():
+    with HUNT_SL:
+        s = HUNT_S.get("_seen")
+        if s is None:
+            s = HuntSeen()
+            for k, sfx in (("cur", "_seen.bin"), ("old", "_seen.old.bin"), ("j", "_seen.j.bin")):
+                try:
+                    a_ = array.array("Q")
+                    with open(hunt_fp(sfx), "rb") as f: b_ = f.read()
+                    a_.frombytes(b_[:len(b_) // 8 * 8])
+                    if k == "j": s.new.update(a_); HUNT_S["_seen_j"] = set(a_)   # gündelik (soňky birleşdirmeden bäri)
+                    else: setattr(s, k, a_)
+                except Exception: pass
+            try:   # 1.46-dan galan tekst sanaw
+                with open(HUNT_BAD_FILE, encoding="utf-8") as f: s.add(l.strip() for l in f if l.strip())
+                HUNT_S["_seen_dirty"] = True
+            except Exception: pass
+            HUNT_S["_seen"] = s
+        return s
+
+def hunt_seen_save(full=False):
+    """Her minutda: täzeler gündelige goşulýar (az ýazgy). Aýlawyň ahyrynda (full): esasy faýla birleşdirilýär."""
+    with HUNT_SL:
+        s = HUNT_S.get("_seen")
+        if s is None or not (s.new or HUNT_S.get("_seen_dirty")): return
+        if not full and not HUNT_S.get("_seen_dirty"):
+            j = HUNT_S.setdefault("_seen_j", set()); add = list(s.new - j)
+            if add:
+                with open(hunt_fp("_seen.j.bin"), "ab") as f: f.write(array.array("Q", add).tobytes())
+                j.update(add)
+            return
+        s.merge(); HUNT_S.pop("_seen_j", None)
+        for a_, sfx, need in ((s.cur, "_seen.bin", True), (s.old, "_seen.old.bin", s.old_dirty)):
+            if not need: continue
+            tmp = hunt_fp(sfx) + ".tmp"
+            with open(tmp, "wb") as f: f.write(a_.tobytes())
+            os.replace(tmp, hunt_fp(sfx))
+        s.old_dirty = False
+        try: os.remove(hunt_fp("_seen.j.bin"))
+        except Exception: pass
+        if HUNT_S.pop("_seen_dirty", None) and os.path.exists(HUNT_BAD_FILE):
+            try: os.replace(HUNT_BAD_FILE, HUNT_BAD_FILE + ".old")   # geçirildi
+            except Exception: pass
 
 def hunt_bad_add(hps):
+    """Bir gezek işlemedik kod — hiç gaýtadan barlanmaýar."""
     hps = [h for h in hps if h]
-    if not hps: return
-    with open(HUNT_BAD_FILE, "a", encoding="utf-8") as f: f.write("".join(h + "\n" for h in hps))
-HUNT_URL = os.environ.get("HUNT_URL", "https://www.gstatic.com/generate_204")
-HUNT_GH_Q = ["v2ray config", "vless sub", "hysteria2 config", "free v2ray", "v2ray subscription", "shadowsocks free", "vless reality free", "proxy collector"]
-HUNT_LOCK = threading.Lock()
-import subprocess, tempfile
+    if hps:
+        with HUNT_SL: hunt_seen().add(hps)
+
+def hunt_bad_load(): return hunt_seen()   # «hp in hunt_bad_load()»
+
+def hunt_st():
+    """Ýagdaý (ilkinji gezek faýldan ýa-da 1.46 bazasyndan)."""
+    with HUNT_SL:
+        if "pool" not in HUNT_S:
+            try:
+                with open(HUNT_FILE, encoding="utf-8") as f: d = json.load(f)
+                if not isinstance(d, dict): raise ValueError
+            except Exception: d = hunt_migrate()
+            for k in ("pool", "ch", "gh", "ghr", "rate", "st"): d.setdefault(k, {})
+            try:
+                with open(hunt_fp("_q.json"), encoding="utf-8") as f: q_ = json.load(f)
+                if not isinstance(q_, dict): q_ = {}
+            except Exception: q_ = {}
+            HUNT_S.update(d); HUNT_S["q"] = q_
+        return HUNT_S
+
+def hunt_dirty(): HUNT_S["_dirty"] = True
+
+def hunt_save(force=False, full=False):
+    with HUNT_SL:
+        if "pool" not in HUNT_S: return
+        now = time.time()
+        if HUNT_S.get("_dirty") and (force or now - HUNT_S.get("_saved", 0) > 20):
+            body = json.dumps({k: v for k, v in HUNT_S.items() if not k.startswith("_") and k != "q"}, ensure_ascii=False, separators=(",", ":"))
+            with open(HUNT_FILE + ".tmp", "w", encoding="utf-8") as f: f.write(body)
+            os.replace(HUNT_FILE + ".tmp", HUNT_FILE); HUNT_S["_dirty"] = False; HUNT_S["_saved"] = now
+        if HUNT_S.pop("_qdirty", None):
+            with open(hunt_fp("_q.json") + ".tmp", "w", encoding="utf-8") as f: json.dump(HUNT_S["q"], f, ensure_ascii=False, separators=(",", ":"))
+            os.replace(hunt_fp("_q.json") + ".tmp", hunt_fp("_q.json"))
+        if force: hunt_seen_save(full)
+
+def hunt_migrate():
+    """1.46: kod awy maglumatlary esasy bazadady — aýry faýla geçirilýär (esasy baza ýeňleşýär)."""
+    d = {"pool": {}, "ch": {}, "gh": {}}
+    try: a = app_cfg(load_db())
+    except Exception: return d
+    now = time.time(); hm = a.get("hp_ms") or {}
+    for hp, v in (a.get("hunt") or {}).items():
+        if not isinstance(v, dict) or not v.get("c"): continue
+        e = {"c": v["c"], "src": str(v.get("src") or ""), "ts": int(v.get("ts") or now), "ok": int(v.get("ok") or now), "ms": int(v.get("ms") or 0)}
+        m = hm.get(hp)
+        if m and len(m) > 2 and int(m[0]) > 0 and now - float(m[2] or 0) < 6 * 3600:
+            e.update(g=1, ta=int(m[2]), tl=int(m[2]), tm=int(m[0]))   # Türkmenistanda bir gezek işledi — ýene bir tassyk gerek
+        d["pool"][hp] = e
+    for ch in a.get("hunt_tgd") or []: d["ch"].setdefault(str(ch).lower(), {"f": "old", "p": 0.5})   # öň kod tapylan kanallar — ilki
+    for u in a.get("hunt_ghd") or []: d["gh"].setdefault(u, {"f": "old", "t": int(now)})
+    if any(k in a for k in ("hunt", "hunt_tgd", "hunt_probe", "hunt_ghd", "hunt_gh_at", "hunt_bad", "hunt_st")):
+        app_mut(lambda x: [x.pop(k, None) for k in ("hunt", "hunt_tgd", "hunt_probe", "hunt_ghd", "hunt_gh_at", "hunt_bad", "hunt_st")])
+    d["_dirty"] = True
+    return d
+
+def hunt_clear():
+    """«Havuzu temizle»: howuz we nobat boşadylýar (kanallar, faýllar, öwrenilen statistika galýar)."""
+    with HUNT_SL:
+        S = hunt_st(); S["pool"] = {}; S["q"] = {}; S["_qdirty"] = True; hunt_dirty()
+    hunt_save(True)
+
+# ---------- kod: host:port, statistika açarlary ----------
+def hunt_host_ok(h):
+    """Diňe hakyky jemgyýetçilik IPv4 / domen (localhost, 10.x, 192.168.x, IPv6 we ş.m. — ýok)."""
+    try:
+        ip = ipaddress.ip_address(h)
+        return ip.version == 4 and ip.is_global
+    except ValueError:
+        return bool(re.fullmatch(r"(?=.{4,253}$)(?:[a-z0-9_-]{1,63}\.)+[a-z]{2,24}", h.lower()))
+
+def hunt_hp(c):
+    h, p_ = code_hostport(c)
+    return f"{h}:{p_}" if h and p_ and 0 < int(p_) < 65536 and hunt_host_ok(h) else ""
 
 def xray_bin():
     return os.environ.get("XRAY_BIN") or shutil.which("xray") or ("/usr/local/bin/xray" if os.path.exists("/usr/local/bin/xray") else "")
@@ -1292,6 +1443,39 @@ def hunt_q(link):
     q = link.split("#", 1)[0].split("?", 1)[1] if "?" in link.split("#", 1)[0] else ""
     return {urllib.parse.unquote(k): urllib.parse.unquote(v) for k, _, v in (x.partition("=") for x in q.split("&") if "=" in x)}
 
+def hunt_keys(c, src=""):
+    """Türkmenistan statistikasynyň açarlary: görnüş, IP /24 (ýa-da domen), IP /16, SNI, çeşme."""
+    q = hunt_q(c); p = c.split("://", 1)[0].lower(); h = (code_host(c) or "").lower()
+    typ = f"vless-{q.get('type') or 'tcp'}-{q.get('security') or 'none'}" if p == "vless" else ("hy2" if p in ("hy2", "hysteria2") else p)
+    m = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)\.\d+", h)
+    ks = ["t:" + typ, "n:" + (".".join(m.groups()) if m else ".".join(h.split(".")[-2:]))]
+    if m: ks.append("m:" + ".".join(m.groups()[:2]))
+    sni = (q.get("sni") or q.get("host") or "").lower().split(",")[0].strip()
+    if sni: ks.append("i:" + ".".join(sni.split(".")[-2:]))
+    if src: ks.append("s:" + src[:40])
+    return ks
+
+def hunt_rate_add(S, c, src, ok):
+    """Kodyň Türkmenistandaky ilkinji netijesi statistika goşulýar."""
+    rate = S["rate"]; now = int(time.time())
+    for k in hunt_keys(c, src):
+        r = rate.get(k) or [0, 0, 0]; rate[k] = [r[0] + 1, r[1] + (1 if ok else 0), now]
+    if len(rate) > 8000:
+        for k in sorted(rate, key=lambda k_: rate[k_][2])[:len(rate) - 6000]: rate.pop(k, None)
+
+def hunt_score(S, c, src, own=()):
+    """Türkmenistanda işlemek ähtimallygy (deňeşdirme üçin): öwrenilen statistika × çeşme."""
+    s = 1.0
+    for k in hunt_keys(c, src):
+        r = S["rate"].get(k)
+        if r: s *= min(20.0, max(0.05, (r[1] + 0.5) / ((r[0] + 10) * 0.05)))   # Beta öňünden (5%) — maglumat ýok bolsa 1
+    if src.startswith("tg:"):
+        e = S["ch"].get(src[3:]) or {}
+        s *= (5.0 if src[3:] in own else 3.0 if float(e.get("tm") or 0) >= 0.4 else 1.0) * (1 + min(5, int(e.get("ok") or 0)) * 0.5)
+    elif src.startswith("url:"): s *= 2.0
+    return s
+
+# ---------- bot barlagy (Xray) ----------
 def hunt_outbound(link, tag):
     """Programmanyň Cfg.kt-si ýaly: kod → Xray outbound (vless / ss / hysteria2). Bolmasa None."""
     try:
@@ -1336,10 +1520,11 @@ def hunt_outbound(link, tag):
     except Exception: return None
     return None
 
-def hunt_test(codes, threads=40, batch=60, port0=21000, timeout=6):
+def hunt_test(codes, threads=40, batch=80, port0=21000, timeout=6):
     """Kodlary hakyky Xray bilen barlaýar (her kod üçin socks giriş → çykyş). Dönüş: {kod: ms} — diňe işleýänler."""
     xb = xray_bin(); res = {}
     if not xb or not codes: return res
+    env_ = {k: v for k, v in os.environ.items() if "proxy" not in k.lower()}   # diňe Xray arkaly
     def run_batch(cs, port_base):
         obs, ins, rules, ok_cs = [], [], [], []
         for i, c in enumerate(cs):
@@ -1353,7 +1538,11 @@ def hunt_test(codes, threads=40, batch=60, port0=21000, timeout=6):
         fd, path = tempfile.mkstemp(suffix=".json"); os.write(fd, json.dumps(cfg_).encode()); os.close(fd)
         pr = subprocess.Popen([xb, "run", "-c", path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         try:
-            time.sleep(1.5)
+            t0 = time.time()
+            while time.time() - t0 < 3 and pr.poll() is None:   # 1.47: Xray açylan badyna (1.5 sn garaşmazdan)
+                try:
+                    with socket.create_connection(("127.0.0.1", port_base + ok_cs[0][0]), timeout=0.2): break
+                except OSError: time.sleep(0.1)
             if pr.poll() is not None:   # Xray başlamady (bir kod nädogry) — ýarpa bölüp gaýtadan
                 if len(cs) > 1:
                     run_batch(cs[:len(cs) // 2], port_base); run_batch(cs[len(cs) // 2:], port_base + len(cs) // 2)
@@ -1362,8 +1551,7 @@ def hunt_test(codes, threads=40, batch=60, port0=21000, timeout=6):
                 i, c = ic
                 try:
                     r = subprocess.run(["curl", "-s", "--noproxy", "", "-o", "/dev/null", "-m", str(timeout), "-w", "%{http_code} %{time_total}",
-                                        "-x", f"socks5h://127.0.0.1:{port_base + i}", HUNT_URL], capture_output=True, text=True, timeout=timeout + 4,
-                                       env={k: v for k, v in os.environ.items() if "proxy" not in k.lower()})   # diňe Xray arkaly
+                                        "-x", f"socks5h://127.0.0.1:{port_base + i}", HUNT_URL], capture_output=True, text=True, timeout=timeout + 4, env=env_)
                     code_, t_ = (r.stdout.split() + ["0", "0"])[:2]
                     if code_ in ("200", "204"): return c, max(1, int(float(t_) * 1000))
                 except Exception: pass
@@ -1382,193 +1570,506 @@ def hunt_test(codes, threads=40, batch=60, port0=21000, timeout=6):
         run_batch(codes[k:k + batch], port0 + (k // batch % 10) * batch)
     return res
 
-def hunt_tg(ch, pages=3):
-    """Kanalyň web sahypasyndaky ÄHLI kodlar (iň köp 3 sahypa — köne ýazgylar hem) we beýleki kanallara salgylar."""
+# ---------- Telegram ----------
+HUNT_TM_W = ("mugt", "açar", "acar", "işleý", "isley", "täze", "taze kod", "goşul", "gosul", "agza", "habarlaş", "üçin", "basalyň", "türkmen", "turkmen",
+             "aşgabat", "ashgabat", "tmcell", "hepdelik", "aýlyk", "serwer", "kodlar", "baglan", "internet ýok", "туркмен", "ашхабад")
+HUNT_CH_BAD = {"proxy", "share", "joinchat", "addstickers", "addemoji", "addlist", "iv", "boost", "contact", "socks", "setlanguage", "login", "confirmphone",
+               "addtheme", "invoice", "giftcode", "nft", "username", "telegram", "durov", "premium", "botfather", "stickers", "gamee"}
+
+def hunt_ch_ok(n):
+    """Kanal ady bolup biler (5–32 harp, bot däl)."""
+    return bool(5 <= len(n) <= 32 and re.fullmatch(r"[a-z][a-z0-9_]*[a-z0-9]", n) and "__" not in n and not n.endswith("bot") and n not in HUNT_CH_BAD)
+
+def hunt_tm_score(txt):
+    """Türkmençe derejesi 0…1: ň ý ä ž harplary, türkmen sözleri, 🇹🇲."""
+    t = txt.lower()
+    return round(min(1.0, sum(t.count(x) for x in "ňýäž") / 25 + sum(1 for w in HUNT_TM_W if w in t) / 6 + (0.4 if "🇹🇲" in txt else 0)), 2)
+
+def hunt_refs(txt):
+    """Tekstdäki beýleki kanallar: t.me/… we @… salgylary."""
+    out = {x.lower() for x in re.findall(r"t\.me/(?:s/)?([A-Za-z][A-Za-z0-9_]{4,31})\b(?!/joinchat)", txt)}
+    out |= {x.lower() for x in re.findall(r"(?<![\w/@.])@([A-Za-z][A-Za-z0-9_]{4,31})\b", txt)}
+    return {x for x in out if hunt_ch_ok(x)}
+
+def hunt_tg(ch, pages=1):
+    """Açyk kanalyň web sahypasy (iň köp `pages` sahypa). Dönüş: {"ok": kanalmy, "codes": kodlar (täzeleri soňda), "refs": beýleki kanallar,
+    "tm": türkmençe derejesi, "lp": soňky ýazgynyň wagty, "sub": agza sany}."""
     page, before = "", ""
-    for _ in range(pages):
-        req = urllib.request.Request(f"https://t.me/s/{urllib.parse.quote(ch)}" + (f"?before={before}" if before else ""), headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=10) as r: pg = r.read().decode("utf-8", "ignore")
-        page += pg
+    for i in range(pages):
+        req = urllib.request.Request(f"https://t.me/s/{urllib.parse.quote(ch)}" + (f"?before={before}" if before else ""), headers={"User-Agent": "Mozilla/5.0", "Accept-Language": "en"})
+        with urllib.request.urlopen(req, timeout=12) as r: pg = r.read().decode("utf-8", "ignore"); url_ = r.geturl()
+        if i == 0 and "/s/" not in url_ and 'class="tgme_channel_info' not in pg: return {"ok": False}   # kanal däl (adam / topar / bot / ýok)
+        page = pg + page   # köne sahypa öňe — täze kodlar soňda galsyn
         ids = [int(x) for x in re.findall(r'data-post="[^"/]+/(\d+)"', pg)]
         if not ids or min(ids) <= 1: break
         before = str(min(ids))
     page = re.sub(r"<br\s*/?>", "\n", page)
     codes = []
-    for m in TG_CODE_RE.finditer(page):
+    for m in HUNT_CODE_RE.finditer(page):
         c = html.unescape(re.sub(r"<[^>]+>", "", m.group(0))).strip().rstrip(".,;)")
-        if "…" not in c and "..." not in c and c.lower().startswith(APP_X_PROTOS) and code_hostport(c)[0]: codes.append(c)
-    refs = {x.lower() for x in re.findall(r"t\.me/(?:s/)?([A-Za-z][A-Za-z0-9_]{4,31})\b", page)} - {ch.lower(), "share", "joinchat", "addstickers", "proxy", "iv", "s"}
-    return codes[-600:], sorted(refs)[:40]
+        if "…" not in c and "..." not in c: codes.append(c)
+    txt = html.unescape(re.sub(r"<[^>]+>", " ", " ".join(re.findall(r'<div class="tgme_(?:widget_message_text|channel_info_description)[^"]*"[^>]*>(.*?)</div>', page, re.S))))
+    refs = (hunt_refs(page) | hunt_refs(txt)) - {ch.lower()}
+    lp = 0
+    for t_ in re.findall(r'<time datetime="([^"]+)"', page)[-3:]:
+        try: lp = max(lp, int(datetime.datetime.fromisoformat(t_).timestamp()))
+        except Exception: pass
+    sub = 0
+    m = re.search(r'<span class="counter_value">([\d.,]+)([KM]?)</span>\s*<span class="counter_type">subscriber', page)
+    if m:
+        try: sub = int(float(m.group(1).replace(",", "")) * {"K": 1000, "M": 1000000}.get(m.group(2), 1))
+        except Exception: pass
+    return {"ok": True, "codes": codes[-800:], "refs": sorted(refs)[:60], "tm": hunt_tm_score(txt), "lp": lp, "sub": sub}
 
-HUNT_WORDS_A = ["", "tm", "tkm", "turkmen", "turkmenistan", "free", "fast", "best", "super", "mega", "top", "my", "new"]
-HUNT_WORDS_B = ["vpn", "v2ray", "v2rayng", "ss", "shadowsocks", "hy2", "hysteria", "hysteria2", "vless", "proxy", "config", "configs", "kod", "kodlar", "key", "keys", "net", "server"]
-HUNT_WORDS_C = ["", "tm", "tkm", "_tm", "_tkm", "free", "fast", "vpn", "1", "2", "_free", "_vpn", "pro", "plus", "turkmen"]
+HUNT_W_TM = ["tm", "tkm", "turkmen", "tmn", "turkmenistan", "ashgabat", "asgabat", "ashkhabad", "mary", "lebap", "dashoguz", "dasoguz", "balkan", "ahal",
+             "turkmenabat", "tmcell", "tmt"]
+HUNT_W_VPN = ["vpn", "wpn", "v2ray", "kod", "proxy", "ss", "vless", "xray", "server", "serwer", "kodlar", "acar", "config", "key", "net", "internet",
+              "v2rayng", "v2", "hy2", "hysteria", "shadowsocks", "outline", "tunnel", "npv", "happ", "hiddify", "proksi", "configs", "keys", "achar",
+              "servers", "nekobox", "v2box", "singbox", "karing", "wireguard", "sub", "link"]
+HUNT_W_Q = ["free", "mugt", "fast", "tiz", "calt", "super", "mega", "best", "top", "new", "taze", "gowy", "pro", "plus", "vip", "premium", "max", "ultra",
+            "speed", "turbo", "king", "star", "gold", "my", "the", "official"]
+HUNT_W_N = ["1", "2", "3", "7", "24", "77", "2026"]
 
-def hunt_guess_names():
-    """vpntkm, tkmvpn, tmfast, fastvpn, tm_v2ray… ýaly mümkin kanal atlary."""
-    out = set()
-    for a_ in HUNT_WORDS_A:
-        for b_ in HUNT_WORDS_B:
-            for c_ in HUNT_WORDS_C:
-                for n_ in (a_ + b_ + c_, (a_ + "_" + b_ + c_) if a_ else ""):
-                    if 5 <= len(n_) <= 32 and re.fullmatch(r"[a-z][a-z0-9_]*[a-z0-9]", n_) and "__" not in n_: out.add(n_)
-    out.update(["tmfast", "fastvpn", "vpntkm", "tkmvpn", "tmvpn", "vpntm", "tm_vpn", "vpn_tm", "tkm_vpn", "vpn_tkm"])
-    tmk = lambda x: any(k in x for k in ("tkm", "turkmen")) or x.startswith("tm") or x.endswith("tm")
-    return sorted(out, key=lambda x: (not tmk(x), "vpn" not in x, len(x), x))   # türkmen + vpn öňde
+def hunt_names():
+    """Mümkin kanal atlary (ähtimallygy boýunça, ~25 müň): türkmen + vpn sözleri (vpntm, tm_vpn, tkmkod…), soň mugt/çalt + vpn (freevpn, fastvpn,
+    mugtvpn…), soň olaryň garyndysy we sanly görnüşleri. Her aýlawda indiki 100-si synalýar."""
+    if HUNT_S.get("_names"): return HUNT_S["_names"]
+    out, seen = [], set()
+    def put(group):
+        for n in sorted(set(group), key=lambda x: (len(x), x)):
+            if n not in seen and hunt_ch_ok(n): seen.add(n); out.append(n)
+    TM, V, Q = HUNT_W_TM, HUNT_W_VPN, HUNT_W_Q
+    put(x for m in TM for w in V for x in (m + w, w + m, m + "_" + w, w + "_" + m))
+    put(x for q in Q for w in V for x in (q + w, w + q, q + "_" + w, w + "_" + q))
+    put(x for q in Q for w in V[:14] for m in TM[:6] for x in (q + w + m, m + q + w, q + m + w, w + m + q, q + "_" + w + "_" + m, m + "_" + q + w, q + w + "_" + m))
+    put(x for m in TM[:6] for w in V[:14] for n in HUNT_W_N for x in (m + w + n, w + m + n, m + "_" + w + n, w + "_" + m + n))
+    HUNT_S["_names"] = out
+    return out
 
-def hunt_probe(a, n=60):
-    """Çaklanan atlardan n sanysyny barlaýar (her at 7 günde bir). Kod paýlaşýanlary gaýtarýar."""
-    tried = dict(a.get("hunt_probe") or {}); now = time.time(); got = []
-    todo = [x for x in hunt_guess_names() if now - float(tried.get(x) or 0) > 7 * 86400][:n]
-    fails = [0]
-    def one(nm):
-        if fails[0] >= 8: return nm, -1   # Telegram haýal / çäk — bu gezek bes
-        try: cs, _ = hunt_tg(nm, pages=1); return nm, len(cs)
+def hunt_ch_due(e, now):
+    """Belli kanaly şu aýlawda okamalymy: kod paýlaşýan — 20 minutda, türkmen / öň işlän — 3 sagatda, beýlekiler — günde."""
+    if e.get("s") != "ok": return False
+    iv = 1200 if e.get("c") and int(e.get("z") or 0) < 4 else (3 * 3600 if e.get("c") or float(e.get("tm") or 0) >= 0.4 or e.get("ok") else 24 * 3600)
+    if int(e.get("z") or 0) >= 8 and not e.get("ok"): iv = max(iv, 6 * 3600)
+    return now - float(e.get("a") or 0) >= iv
+
+def hunt_ch_val(e, now):
+    return (int(e.get("ok") or 0) * 20 + min(int(e.get("c") or 0), 40) + float(e.get("tm") or 0) * 30 + (10 if now - float(e.get("lp") or 0) < 86400 else 0)) / (1 + int(e.get("z") or 0))
+
+# ---------- GitHub ----------
+HUNT_GH_TM = ["turkmenistan vpn", "turkmenistan proxy", "turkmen vpn", "turkmenistan v2ray", "tm vpn", "turkmenistan vless", "turkmen proxy"]
+HUNT_GH_Q = ["v2ray config", "vless sub", "vless reality", "hysteria2 sub", "free v2ray", "v2ray subscription", "shadowsocks free", "proxy collector",
+             "v2ray collector", "telegram configs collector", "free nodes", "vpn configs", "xray config", "free vpn sub", "vless configs", "reality configs",
+             "hysteria2 free", "v2ray mix", "ss sub", "proxy list v2ray"]
+
+def hunt_gh_api(path):
+    """GitHub API (tokensyz sagatda 60 sorag; GITHUB_TOKEN bar bolsa köp)."""
+    h = {"User-Agent": "Mozilla/5.0", "Accept": "application/vnd.github+json"}
+    if os.environ.get("GITHUB_TOKEN"): h["Authorization"] = "Bearer " + os.environ["GITHUB_TOKEN"]
+    with urllib.request.urlopen(urllib.request.Request("https://api.github.com" + path, headers=h), timeout=20) as r: return json.loads(r.read().decode())
+
+def hunt_gh_pick(files):
+    """Depodaky faýllardan kod sanawy bolup bilýänler (iň köp 25): [(ýol, ölçeg)]."""
+    good = []
+    for p, sz in files:
+        pl = p.lower(); base = pl.rsplit("/", 1)[-1]
+        if not 200 <= sz <= 15_000_000 or pl.startswith((".github/", "docs/", "src/", "scripts/", "assets/", "images/", "img/")): continue
+        if re.search(r"\.(md|py|js|ts|go|rs|java|kt|json|ya?ml|html?|css|png|jpe?g|gif|svg|ico|zip|gz|7z|exe|apk|sh|bat|ps1|toml|lock|csv|xml|conf|ini|cfg|log|dat|db|mmdb|srs|dll|so|pdf|webp)$", base): continue
+        if re.search(r"(sub|mix|all|config|vless|vmess|trojan|ss|hy2|hyster|v2ray|xray|prox|node|server|reality|xhttp|ws|grpc|tuic|base64|normal|merge|collect|tm|turk|free|output|result|work|valid|test|alive)", pl):
+            good.append((p, sz))
+    good.sort(key=lambda x: (x[0].count("/"), not re.search(r"(all|mix|sub|merge)", x[0].lower()), len(x[0])))
+    return good[:25]
+
+def hunt_gh_discover(st, ghr, now):
+    """GitHub-da täze depolar (türkmen gözlegi + soňky 3 günde täzelenenler) → [(raw salgy, depo)], [kanal sanawy salgylary], [täze depolar]."""
+    if now < float(st.get("gh_wait") or 0): return [], [], []
+    i = int(st.get("ghi") or 0); since = time.strftime("%Y-%m-%d", time.gmtime(now - 3 * 86400))
+    qs = [HUNT_GH_TM[i % len(HUNT_GH_TM)]] + [HUNT_GH_Q[(2 * i + k) % len(HUNT_GH_Q)] + f" pushed:>{since}" for k in range(2)]
+    st["ghi"] = i + 1
+    repos, files, lists, done = [], [], [], []
+    for q_ in qs:
+        try: items = hunt_gh_api("/search/repositories?" + urllib.parse.urlencode({"q": q_, "sort": "updated", "order": "desc", "per_page": 10})).get("items") or []
         except urllib.error.HTTPError as e:
-            if e.code == 429: fails[0] += 8
-            return nm, 0
-        except Exception: fails[0] += 1; return nm, -1
-    with ThreadPoolExecutor(4) as ex:
-        for nm, k in ex.map(one, todo):
-            if k >= 0: tried[nm] = int(now)
-            if k > 0: got.append(nm)
-    return got, tried
+            if e.code in (403, 429): st["gh_wait"] = now + 1800; break
+            continue
+        except Exception: continue
+        repos += [(it["full_name"], it.get("default_branch") or "main") for it in items if it.get("full_name")]
+    n_api = 0
+    for full, br in list(dict.fromkeys(repos)):
+        if full in ghr and now - float(ghr[full].get("a") or 0) < 7 * 86400: continue
+        if n_api >= 8 or now < float(st.get("gh_wait") or 0): break
+        n_api += 1
+        try: tree = hunt_gh_api(f"/repos/{full}/git/trees/{urllib.parse.quote(br)}?recursive=1").get("tree") or []
+        except urllib.error.HTTPError as e:
+            if e.code in (403, 429): st["gh_wait"] = now + 1800; break
+            done.append((full, 0)); continue
+        except Exception: continue
+        fl = [(t["path"], int(t.get("size") or 0)) for t in tree if t.get("type") == "blob" and t.get("path")]
+        pick = hunt_gh_pick(fl)
+        files += [(f"https://raw.githubusercontent.com/{full}/{br}/{urllib.parse.quote(p)}", full) for p, _ in pick]
+        lists += [f"https://raw.githubusercontent.com/{full}/{br}/{urllib.parse.quote(p)}" for p, sz in fl
+                  if sz < 600_000 and re.search(r"(channel|telegram|tg[_-]?(list|src|source)|sources?)[^/]*$", p.lower()) and p.lower().endswith((".txt", ".json", ".csv", ".md"))][:3]
+        done.append((full, len(pick)))
+    return files, lists, done
+
+def hunt_fetch(url, etag=""):
+    """Ham faýl (ETag bilen: üýtgemedik bolsa 304, hiç zat ýüklenmeýär). Dönüş: (status, tekst, etag)."""
+    h = {"User-Agent": "Mozilla/5.0"}
+    if etag: h["If-None-Match"] = etag
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, headers=h), timeout=30) as r:
+            return r.status, r.read(16_000_000).decode("utf-8", "ignore"), r.headers.get("ETag") or ""
+    except urllib.error.HTTPError as e:
+        if e.code == 304: return 304, "", etag
+        raise
+
+def hunt_parse(body):
+    """Tekstdäki (ýa-da base64 abunadaky) kodlar — diňe programmanyň goldaýanlary, gaýtalanmazdan."""
+    out, seen_ = [], set()
+    def take(txt):
+        for m in HUNT_CODE_RE.finditer(txt):
+            c = m.group(0).strip().rstrip(".,;)")
+            if c not in seen_: seen_.add(c); out.append(c)
+    take(body)
+    if len(out) < 3:
+        flat = "".join(body.split())
+        if len(flat) >= 16 and re.fullmatch(r"[A-Za-z0-9+/=_-]+", flat[:4000]):
+            for alt in (None, b"-_"):
+                try: take(base64.b64decode((flat + "=" * (-len(flat) % 4)).encode("ascii"), altchars=alt).decode("utf-8", "ignore"))
+                except Exception: pass
+    return out
+
+def hunt_gh_file(url, etag="", h=""):
+    """Faýl täzelendimi: ("same", …) — üýtgemändir (bu «seretmek» hasap edilmeýär); ("new", kodlar, etag, heş); ("err", …)."""
+    try: code_, body, et = hunt_fetch(url, etag)
+    except Exception: return "err", [], etag, h
+    if code_ == 304: return "same", [], et or etag, h
+    h2 = hashlib.md5(body.encode("utf-8", "ignore")).hexdigest()[:16]
+    if h2 == h: return "same", [], et, h
+    return "new", hunt_parse(body), et, h2
 
 def hunt_url_codes(url):
-    """GitHub / başga ýerdäki tekst ýa-da base64 abuna faýly."""
-    return [c for c in fetch_codes(url) if c.lower().startswith(APP_X_PROTOS) and code_hostport(c)[0]][:3000]
+    """Eýesiniň goşan sanawy (GitHub raw / abuna salgysy) — her aýlawda okalýar."""
+    try: _, body, _ = hunt_fetch(url)
+    except Exception: return fetch_codes(url)
+    return hunt_parse(body)
 
-def hunt_github():
-    """GitHub-da kod ýygnaýan açyk depolar (tokensyz API, sagatda 60 sorag çägi) → ham faýl salgylary."""
-    out = []
-    for q_ in HUNT_GH_Q:
-        try:
-            req = urllib.request.Request("https://api.github.com/search/repositories?" + urllib.parse.urlencode({"q": q_, "sort": "updated", "per_page": 5}),
-                                         headers={"User-Agent": "Mozilla/5.0", "Accept": "application/vnd.github+json"})
-            with urllib.request.urlopen(req, timeout=20) as r: items = json.loads(r.read().decode()).get("items") or []
-        except Exception as e: log.info("hunt gh search: %s", e); continue
-        for it in items[:5]:
-            try:
-                req = urllib.request.Request(f"https://api.github.com/repos/{it['full_name']}/contents/", headers={"User-Agent": "Mozilla/5.0"})
-                with urllib.request.urlopen(req, timeout=20) as r: files = json.loads(r.read().decode())
-            except Exception: continue
-            for f_ in files if isinstance(files, list) else []:
-                nm = str(f_.get("name") or "").lower()
-                if f_.get("type") == "file" and f_.get("download_url") and int(f_.get("size") or 0) < 5_000_000 and \
-                        re.search(r"(sub|mix|all|config|vless|hy2|hysteria|ss|v2ray)", nm) and not nm.endswith((".md", ".py", ".js", ".json", ".yml", ".yaml", ".png", ".jpg", ".html")):
-                    out.append(f_["download_url"])
-        time.sleep(7)   # gözleg API: minutda 10
-    return list(dict.fromkeys(out))[:50]
+def hunt_rem_refs(codes):
+    """Kodyň adyndaky kanallar (kod ýygnaýjylar çeşmäni ýazýarlar: «…#@kanal»)."""
+    out = set()
+    for c in codes:
+        if "#" in c: out |= {x.lower() for x in re.findall(r"@([A-Za-z][A-Za-z0-9_]{4,31})", urllib.parse.unquote(c.split("#", 1)[1]))}
+    return {x for x in out if hunt_ch_ok(x)}
 
+# ---------- bir aýlaw ----------
 def hunt_run(force_gh=False):
-    """Bir aýlaw: ýygna → barla → howuz (a["hunt"]) täzelenýär. Dönüş: ýagdaý sözlügi."""
+    """Bir aýlaw: ýygna (Telegram, täze kanallar, GitHub) → nobat → Xray bilen barla → howuz. Dönüş: ýagdaý sözlügi."""
     if not HUNT_LOCK.acquire(blocking=False): return {"err": "busy"}
     try:
         a = app_cfg(load_db()); now = time.time(); st = {"at": int(now)}
-        if not xray_bin(): st["err"] = "xray yok"; app_mut(lambda x: x.__setitem__("hunt_st", st)); return st
-        pg_, probe_ = [], None
-        # 1) çeşmeler
-        gh_ = None; RUN["hunt_prog"] = "GitHub aranıyor…"
-        if force_gh or now - float(a.get("hunt_gh_at") or 0) > 6 * 3600 or not a.get("hunt_ghd"):
-            try: gh_ = hunt_github()
-            except Exception as e: log.info("hunt gh: %s", e)
-        RUN["hunt_prog"] = "Kanal adları deneniyor…"
-        try: pg_, probe_ = hunt_probe(a)   # at çaklap täze kanallar
-        except Exception as e: pg_, probe_ = [], None; log.info("hunt probe: %s", e)
-        tg_ = list(dict.fromkeys([c for c in (a.get("tgsrc") or APP_TG_DEFAULT)] + list(a.get("hunt_tg") or []) + list(a.get("hunt_tgd") or []) + pg_))
-        urls_ = list(dict.fromkeys(list(a.get("hunt_url") or []) + list(gh_ if gh_ is not None else (a.get("hunt_ghd") or []))))
-        found, refs, errs = [], set(), 0
-        mine_ = {x.lower() for x in list(a.get("tgsrc") or APP_TG_DEFAULT) + list(a.get("hunt_tg") or [])}
-        def tg1(ch):
-            try: cs, rf = hunt_tg(ch, pages=3 if ch.lower() in mine_ else 1); return ch, cs, rf, 0
-            except Exception: return ch, [], [], 1
+        S = hunt_st()
+        if not xray_bin():
+            with HUNT_SL: st["err"] = "xray yok"; S["st"] = st; hunt_dirty()
+            hunt_save(True); return st
+        own = list(dict.fromkeys(str(c).lower().lstrip("@") for c in list(a.get("tgsrc") or APP_TG_DEFAULT) + list(a.get("hunt_tg") or []) if c))
+        # 1) meýilnama (gysga gulp astynda)
+        with HUNT_SL:
+            ch, gh = S["ch"], S["gh"]; pst = S["st"]
+            known_ch = sorted([n for n, e in ch.items() if n not in own and hunt_ch_due(e, now)], key=lambda n: -hunt_ch_val(ch[n], now))[:HUNT_TG_READ]
+            jobs = [(n, 3, 0) for n in own] + [(n, 2 if (ch[n].get("c") and float(ch[n].get("tm") or 0) >= 0.4) else 1, 0) for n in known_ch]
+            # täze kanallar: türkmen kanallaryndan salgylananlar → beýleki salgylar / kod atlary → çaklanan atlar (ýa-da 30 günden soň gaýtadan) → GitHub sanawlary
+            refs = [n for n, e in ch.items() if not e.get("s") and n not in own]
+            refs.sort(key=lambda n: -float(ch[n].get("p") or 0))
+            tm_refs = [n for n in refs if float(ch[n].get("p") or 0) >= 0.4]
+            oth = [n for n in refs if 0 < float(ch[n].get("p") or 0) < 0.4 and ch[n].get("f") in ("ref", "rem")][:30]
+            ghl = [n for n in refs if ch[n].get("f") == "ghl"][:20]
+            new_ = list(dict.fromkeys(tm_refs + oth))[:HUNT_NEW_CH - 30]
+            new_ += [n for n in refs if ch[n].get("f") == "guess" and n not in new_][:max(0, HUNT_NEW_CH - len(ghl) - len(new_))]   # öňki gezek ýetişilmedik
+            names = hunt_names(); cur = int(pst.get("ng") or 0)
+            if cur >= len(names) and now - float(pst.get("ngt") or 0) > 30 * 86400: cur = 0; pst["ngt"] = int(now)
+            while cur < len(names) and len(new_) < HUNT_NEW_CH - len(ghl):
+                n = names[cur]; cur += 1
+                if n not in ch and n not in own and n not in new_: new_.append(n)
+                elif n in ch and ch[n].get("s") in ("none", "dead") and now - float(ch[n].get("a") or 0) > 30 * 86400 and n not in new_: new_.append(n)
+            pst["ng"] = cur; pst.setdefault("ngt", int(now))
+            new_ = list(dict.fromkeys(new_ + ghl))[:HUNT_NEW_CH]
+            jobs += [(n, 1, 1) for n in new_]
+            ghfiles = sorted([(u, e.get("e") or "", e.get("h") or "") for u, e in gh.items() if not e.get("dead") and now - float(e.get("a") or 0) >= 1200],
+                             key=lambda x: (bool(gh[x[0]].get("a")), -int(gh[x[0]].get("y") or 0)))[:HUNT_GH_FILES]
+            ghst = {k: pst.get(k) for k in ("ghi", "gh_wait")}; ghr = dict(S["ghr"])
+        # 2) Telegram (gulp ýok)
+        res_tg, stop = [], {"n": 0.0}
+        def tg1(job):
+            n, pg, isnew = job
+            if isnew and stop["n"] >= 3: return job, "skip"
+            try: return job, hunt_tg(n, pg)
+            except urllib.error.HTTPError as e:
+                if e.code == 429: stop["n"] += 3
+                return job, None
+            except Exception:
+                if isnew: stop["n"] += 0.25
+                return job, None
+        with ThreadPoolExecutor(5) as ex:
+            for k_, (job, r) in enumerate(ex.map(tg1, jobs)):
+                res_tg.append((job, r))
+                if k_ % 10 == 0: RUN["hunt_prog"] = f"Kanallar: {k_ + 1}/{len(jobs)}"
+        # 3) GitHub: täze depolar + yzarlanýan faýllar (diňe üýtgänler), eýesiniň salgylary
+        RUN["hunt_prog"] = "GitHub…"
+        gh_new, gh_lists, gh_done = [], [], []
+        try: gh_new, gh_lists, gh_done = hunt_gh_discover(ghst, ghr, now)
+        except Exception as e: log.info("hunt gh: %s", e)
+        newf = [(u, "", "") for u, _ in gh_new if u not in gh][:max(0, HUNT_GH_FILES - len(ghfiles)) + 20]
+        res_gh = []
         with ThreadPoolExecutor(4) as ex:
-            for k_, (ch, cs, rf, e_) in enumerate(ex.map(tg1, tg_[:120])):
-                found += [(c, "tg:" + ch) for c in cs]; refs.update(rf); errs += e_
-                RUN["hunt_prog"] = f"Kanallar okunuyor: {k_ + 1}/{min(len(tg_), 120)} · {len(found)} kod"
-        for k_, u in enumerate(urls_[:60]):
-            RUN["hunt_prog"] = f"Linkler okunuyor: {k_ + 1}/{min(len(urls_), 60)} · {len(found)} kod"
-            try: found += [(c, "url") for c in hunt_url_codes(u)]
-            except Exception: errs += 1
-        # 2) täze kodlar (host:port boýunça bir gezek), howuzdakylar gaýtadan barlanýar
-        pool = dict(a.get("hunt") or {}); bad = hunt_bad_load() | set((a.get("hunt_bad") or {}).keys()); bad_new = []
-        have = {app_x_hp(x) for v in (a.get("last") or {}).values() for x in v} | {app_x_hp(v["c"]) for v in (a.get("xcodes") or {}).values()}   # abunada / kanalda / elle — eýýäm programda
-        new_ = {}
-        for c, src in found:
-            hp = app_x_hp(c)
-            if hp and hp not in pool and hp not in bad and hp not in have and hp not in new_: new_[hp] = (c, src)
-        cand = [v["c"] for v in pool.values()] + [c for c, _ in list(new_.values())[:HUNT_MAX_TEST]]
+            for (u, _, _), r in zip(ghfiles + newf, ex.map(lambda x: hunt_gh_file(*x), ghfiles + newf)): res_gh.append((u, r))
+        lst_names = set()
+        for u in gh_lists:
+            try:
+                body_ = hunt_fetch(u)[1]
+                lst_names |= hunt_refs(body_) | {l.strip().lower().lstrip("@") for l in body_.splitlines()[:5000] if hunt_ch_ok(l.strip().lower().lstrip("@"))}
+            except Exception: pass
+        res_url = []
+        for u in list(a.get("hunt_url") or [])[:40]:
+            try: res_url.append((u, hunt_url_codes(u)))
+            except Exception: res_url.append((u, None))
+        # 4) täze kodlar → nobat (gulp astynda)
+        RUN["hunt_prog"] = "Kodlar ayıklanıyor…"
+        have = {app_x_hp(x) for v in (a.get("last") or {}).values() for x in v} | {app_x_hp(v["c"]) for v in (a.get("xcodes") or {}).values()}
+        def hps_of(codes):
+            out = {}
+            for c in codes:
+                if c.lower().startswith(APP_X_PROTOS):
+                    hp = hunt_hp(c)
+                    if hp and hp not in out: out[hp] = c
+            return out
+        tg_hp = [(job, r, hps_of(r["codes"]) if isinstance(r, dict) and r.get("ok") else {}) for job, r in res_tg]
+        gh_hp = [(u, r, hps_of(r[1]) if r[0] == "new" else {}) for u, r in res_gh]
+        url_hp = [(u, hps_of(cs or [])) for u, cs in res_url]
+        rem = hunt_rem_refs([c for _, r, _ in tg_hp if isinstance(r, dict) for c in r.get("codes") or []][:20000] + [c for _, r, _ in gh_hp for c in r[1][:20000]])
+        with HUNT_SL:
+            seen = hunt_seen(); pool, q = S["pool"], S["q"]; ch, gh, pst = S["ch"], S["gh"], S["st"]
+            pst.update({k: v for k, v in ghst.items() if v is not None})
+            for full, n_ in gh_done: S["ghr"][full] = {"a": int(now), "n": n_}
+            if len(S["ghr"]) > 3000:
+                for k in sorted(S["ghr"], key=lambda k_: S["ghr"][k_]["a"])[:500]: S["ghr"].pop(k, None)
+            for u, full in gh_new:
+                if u not in gh: gh[u] = {"f": full, "t": int(now)}
+            is_new = lambda hp: hp not in pool and hp not in q and hp not in have and hp not in seen
+            added, found, ch_new, tm_hit = {}, 0, 0, 0
+            def enq(hps, src):
+                n_ = 0
+                for hp, c in hps.items():
+                    if hp in added or not is_new(hp): continue
+                    added[hp] = 1; q[hp] = [c, src, int(now)]; n_ += 1
+                return n_
+            for (n, pg, isnew), r, hps in tg_hp:
+                e = ch.setdefault(n, {"f": "guess"} if isnew else {})
+                if r == "skip": continue   # Telegram çäklendirdi — indiki gezek
+                if r is None:
+                    e["err"] = int(e.get("err") or 0) + 1
+                    if e["err"] >= 3 and n not in own: e.update(s="none", a=int(now))
+                    continue
+                e["a"] = int(now)
+                if not r.get("ok"): e["s"] = "none"; continue
+                if isnew or e.get("s") != "ok": ch_new += 1
+                e.update(s="ok", tm=r["tm"], lp=r["lp"], sub=r["sub"], c=len(hps)); e.pop("err", None)
+                found += len(hps); y = enq(hps, "tg:" + n)
+                e["y"] = y; e["n"] = int(e.get("n") or 0) + y; e["z"] = 0 if y else int(e.get("z") or 0) + 1
+                if r["tm"] >= 0.4: tm_hit += 1
+                if r["lp"] and now - r["lp"] > 60 * 86400 and n not in own: e["s"] = "dead"   # 2 aýdan bäri ýazgy ýok
+                elif not hps and r["tm"] < 0.4 and int(e.get("z") or 0) >= 4 and not e.get("ok") and n not in own: e["s"] = "dead"   # kod paýlaşmaýar, türkmen däl
+                if hps or r["tm"] >= 0.2 or n in own:   # diňe kod paýlaşýan / türkmen kanallaryň salgylary
+                    for rf in r["refs"][:20]:
+                        if rf not in ch: ch[rf] = {"f": "ref", "p": max(0.05, r["tm"], 0.5 if n in own else 0)}
+                        elif not ch[rf].get("s"): ch[rf]["p"] = max(float(ch[rf].get("p") or 0), r["tm"])
+            for rf in rem:
+                if rf not in ch: ch[rf] = {"f": "rem", "p": 0.05}
+            for rf in lst_names:
+                if rf not in ch: ch[rf] = {"f": "ghl"}
+            gh_dead = 0
+            for u, r, hps in gh_hp:
+                e = gh.get(u)
+                if e is None: continue
+                stt, codes, et, h2 = r; e["a"] = int(now)
+                if et: e["e"] = et
+                if stt == "err":
+                    e["err"] = int(e.get("err") or 0) + 1
+                    if e["err"] >= 5: e["dead"] = "err"; gh_dead += 1
+                    continue
+                e.pop("err", None)
+                if stt == "same":
+                    if now - float(e.get("chg") or e.get("t") or now) > 48 * 3600: e["dead"] = "stale"; gh_dead += 1   # 2 gün üýtgemedi
+                    continue
+                if not e.get("id"): e["id"] = hashlib.md5(u.encode()).hexdigest()[:8]
+                e["h"] = h2; e["chg"] = int(now); e["n"] = len(hps); found += len(hps)
+                y = enq(hps, "gh:" + e["id"]); e["y"] = y; e["tot"] = int(e.get("tot") or 0) + y
+                if not y: e["dead"] = "no-new"; gh_dead += 1   # 1.47: bu gezek täze serwer ýok — bu faýla hiç gaýtadan seredilmeýär
+            for u, hps in url_hp:
+                found += len(hps); enq(hps, "url:" + hashlib.md5(u.encode()).hexdigest()[:8])
+            if len(gh) > 1500:   # köne ölüleri unut
+                for k in sorted([k_ for k_, e in gh.items() if e.get("dead")], key=lambda k_: gh[k_].get("a") or 0)[:len(gh) - 1200]: gh.pop(k, None)
+            if len(ch) > 8000:   # artykmaç: ilki synalyp peýdasyz çykanlar, soň pes ileri tutulýan synalmadyklar
+                rm = sorted([k_ for k_, e in ch.items() if e.get("s") in ("none", "dead") and k_ not in own], key=lambda k_: ch[k_].get("a") or 0)
+                rm += sorted([k_ for k_, e in ch.items() if not e.get("s") and float(e.get("p") or 0) < 0.4], key=lambda k_: float(ch[k_].get("p") or 0))
+                for k in rm[:len(ch) - 7000]: ch.pop(k, None)
+            # nobat: köneleri we artykmajy taşla (hiç barlanmaýar), iň gowulary barlaga
+            drop = [hp for hp, v in q.items() if now - float(v[2]) > HUNT_Q_AGE]
+            for hp in drop: q.pop(hp, None)
+            sc = {hp: hunt_score(S, v[0], v[1], own) * (1.0 - 0.5 * min(1.0, (now - float(v[2])) / HUNT_Q_AGE)) for hp, v in q.items()}
+            order = sorted(q, key=lambda hp: -sc[hp])
+            for hp in order[HUNT_Q_MAX:]: q.pop(hp, None); drop.append(hp)
+            seen.add(drop)
+            test_new = [(hp, q[hp][0], q[hp][1]) for hp in order[:HUNT_MAX_TEST] if hp in q]
+            test_old = [(hp, v["c"]) for hp, v in pool.items() if hunt_listed(v, now) or now - float(v.get("ok") or 0) > (3 if v.get("g") else 8) * 3600]
+            S["_qdirty"] = True; hunt_dirty()
+        # 5) Xray barlagy (gulp ýok)
+        cand = [c for _, c in test_old] + [c for _, c, _ in test_new]
         RUN["hunt_prog"] = f"{len(cand)} kod test ediliyor…"
-        ok = hunt_test(cand)
-        st.update({"found": len(found), "uniq": len(new_), "tested": len(cand), "ok": len(ok), "src": len(tg_) + len(urls_), "errs": errs})
-        # 3) Türkmenistandaky telefonlaryň pingi: 24 sagatda hiç işlemedik — aýrylýar
-        hm = a.get("hp_ms") or {}
-        tm_bad = lambda hp: hunt_tm_bad(hm, hp, (pool.get(hp) or {}).get("ts"), now)
-        npool = {}
-        for c in cand:
-            hp = app_x_hp(c); old = pool.get(hp) or {}
-            if c in ok and not tm_bad(hp):
-                npool[hp] = {"c": c, "ms": ok[c], "ok": int(now), "ts": int(old.get("ts") or now), "src": old.get("src") or (new_.get(hp) or ("", ""))[1]}
-            else: bad_new.append(hp)
-        tmk = lambda hp: (0, int(hm[hp][0])) if hp in hm and int(hm[hp][0]) > 0 and now - float(hm[hp][1]) < 6 * 3600 else (1, npool[hp]["ms"])
-        keep = sorted(npool, key=tmk)[:HUNT_KEEP]
-        npool = {hp: npool[hp] for hp in keep}; st["n"] = len(npool)
-        nrefs = [r for r in sorted(refs) if r not in {x.lower() for x in tg_}][:20]
-        def fw(x):
-            x["hunt"] = npool; x.pop("hunt_bad", None); x["hunt_st"] = st
-            x["hunt_tgd"] = list(dict.fromkeys(list(x.get("hunt_tgd") or []) + pg_ + nrefs))[-150:]
-            if probe_ is not None: x["hunt_probe"] = dict(list(probe_.items())[-3000:])
-            if gh_ is not None: x["hunt_ghd"] = gh_; x["hunt_gh_at"] = int(now)
-        hunt_bad_add(list(dict.fromkeys(bad_new + [h for h in (a.get("hunt_bad") or {}) if h not in hunt_bad_load()])))
-        st["bad"] = len(bad) + len(bad_new)
-        app_mut(fw); RUN["app_dirty"] = True
-        vlog(f"🔎 Kod awy: {st['found']} kod tapyldy, {st['tested']} barlandy, {st['ok']} işleýär → programda {st['n']}")
+        ok = hunt_test(cand) if cand else {}
+        # 6) netije → howuz (telefonlar bu wagtda howuzy üýtgedip bilerdi — diňe barlananlar täzelenýär)
+        with HUNT_SL:
+            pool, q, seen = S["pool"], S["q"], hunt_seen(); bad = []
+            for hp, c in test_old:
+                v = pool.get(hp)
+                if not v: continue
+                if c in ok: v["ok"] = int(now); v["ms"] = ok[c]
+                else: pool.pop(hp, None); bad.append(hp)
+            for hp, c, src in test_new:
+                q.pop(hp, None)
+                if c in ok and hp not in pool: pool[hp] = {"c": c, "src": src, "ts": int(now), "ok": int(now), "ms": ok[c]}
+                elif c not in ok: bad.append(hp)
+            # howuz: telefonda 24 sagat synalmadyk / 12 sagat tassyklanmadyk — taşlanýar; artykmajy (iň pes ähtimallyk) — taşlanýar
+            for hp in [hp for hp, v in pool.items() if (not v.get("g") and now - float(v.get("ts") or now) > 24 * 3600) or (v.get("g") and now - float(v.get("ta") or 0) > 12 * 3600)]:
+                pool.pop(hp, None); bad.append(hp)
+            if len(pool) > HUNT_POOL:
+                low = sorted([hp for hp, v in pool.items() if not v.get("g")], key=lambda hp: hunt_score(S, pool[hp]["c"], pool[hp].get("src") or "", own))
+                for hp in low[:len(pool) - HUNT_POOL]: pool.pop(hp, None); bad.append(hp)
+            seen.add(bad)
+            nl = sum(1 for v in pool.values() if hunt_listed(v, now))
+            st.update({"tg": len(jobs), "tg_new": len(new_), "ch_new": ch_new, "tm_ch": tm_hit, "gh": len(res_gh), "gh_dead": gh_dead, "found": found, "uniq": len(added),
+                       "tested": len(cand), "ok": len(ok), "q": len(q), "pool": len(pool), "n": nl, "dur": int(time.time() - now), "seen": len(seen),
+                       "src": len(jobs) + len(res_gh) + len(res_url)})
+            S["st"].update(st); S["_qdirty"] = True; hunt_dirty()
+        hunt_save(True, True)
+        RUN["hunt_list"] = True
+        vlog(f"🔎 Kod awy: {st['tg']} kanal ({st['ch_new']} täze), {st['gh']} GitHub faýly · {st['uniq']} täze kod · {st['tested']} barlandy, {st['ok']} işleýär → howuzda {st['pool']}, programda {nl}")
         return st
     finally: HUNT_LOCK.release(); RUN.pop("hunt_prog", None)
 
-def hunt_tm_bad(hm, hp, ts, now=None):
-    """1.46.4: Türkmenistandaky telefon «jogap ýok» diýdi we soňky 6 sagatda hiç işlemedi, howuzda 1 sagatdan köp."""
-    now = now or time.time(); v = hm.get(hp)
-    return bool(v) and int(v[0]) <= 0 and now - float(v[2] if len(v) > 2 else 0) > 6 * 3600   # 1.46.6: garaşylmaýar
+# ---------- Türkmenistandaky telefonlar ----------
+def hunt_listed(v, now=None):
+    """1.47: programa diňe şeýle kod: Türkmenistanda azyndan 2 gezek işledi (2 telefon ýa-da bir telefonda 3 gezek), soňky synagy hem işledi,
+    soňky 3 sagatda işledi, haýal däl. (4–6 sagatda bloklanýar — köne tassyk ýeterlik däl.)"""
+    now = now or time.time(); g = int(v.get("g") or 0)
+    return (g >= 3 or (g >= 2 and len(v.get("d") or []) >= 2)) and not v.get("sf") and int(v.get("tl") or 0) <= int(v.get("ta") or 0) \
+        and now - float(v.get("ta") or 0) < 3 * 3600 and 0 < int(v.get("tm") or 0) <= HUNT_TM_MS
 
-def hunt_probe_list(a, n=400):
-    """1.46.5: telefonlaryň synamaly kodlary — bot barlagyndan geçen, Türkmenistanda entek işlemedik / synalmadyk."""
-    hm = a.get("hp_ms") or {}; now = time.time(); pool = a.get("hunt") or {}
-    todo = [(hp, v) for hp, v in pool.items() if not (hp in hm and len(hm[hp]) > 2 and now - float(hm[hp][2] or 0) < 24 * 3600)]
-    todo.sort(key=lambda kv: (kv[0] in hm, kv[1].get("ms") or 9999))   # entek hiç synalmadyk öňde
-    return [v["c"] for _, v in todo[:n]]
+def hunt_report(dev, items):
+    """Türkmenistandaky telefonyň netijeleri ([(host:port, ms)]). Işlän — tassyk; işlemedik — derrew aýrylýar we hiç gaýtadan barlanmaýar
+    (diňe öň işläp, häzir hiç bir kod işlemedik telefon — interneti ýok bolup biler: sanawdan çykýar, ýene bir gezek synalýar). Dönüş: sanaw üýtgedimi."""
+    if not items: return False
+    any_ok = any(m > 0 for _, m in items); now = int(time.time()); gone, chg = [], False
+    with HUNT_SL:
+        S = hunt_st(); pool = S["pool"]
+        for hp, ms in items:
+            v = pool.get(hp)
+            if not v: continue
+            was = hunt_listed(v, now)
+            if ms > 0:
+                if not v.get("g"): hunt_rate_add(S, v["c"], v.get("src") or "", 1)
+                v["g"] = int(v.get("g") or 0) + 1; v["ta"] = v["tl"] = now; v["tm"] = int(ms); v.pop("sf", None)
+                d = v.setdefault("d", [])
+                if dev and dev not in d: d.append(str(dev)[:24]); del d[:-4]
+                if hunt_listed(v, now) and not v.get("L"):   # ilkinji gezek programa — çeşmä bal
+                    v["L"] = now; src = v.get("src") or ""
+                    if src.startswith("tg:") and src[3:] in S["ch"]: S["ch"][src[3:]]["ok"] = int(S["ch"][src[3:]].get("ok") or 0) + 1
+                    elif src.startswith("gh:"):
+                        for e in S["gh"].values():
+                            if e.get("id") == src[3:]: e["ok"] = int(e.get("ok") or 0) + 1; break
+            else:
+                v["tl"] = now
+                if any_ok or not v.get("g") or v.get("sf"):
+                    if not v.get("g"): hunt_rate_add(S, v["c"], v.get("src") or "", 0)
+                    pool.pop(hp, None); gone.append(hp)
+                else: v["sf"] = now
+            if was != (hp in pool and hunt_listed(pool[hp], now)): chg = True
+        hunt_dirty()
+        if gone: hunt_seen().add(gone)
+    if chg or gone: RUN["hunt_list"] = True   # faýla hunt_loop minutda bir ýazýar
+    return chg
+
+def hunt_probe_list(a=None):
+    """Telefonlaryň synamaly kodlary: (gyssagly — bir gezek işlän / sanawdaky köne tassykly / şübheli, täzeler — ähtimallygy boýunça)."""
+    now = time.time()
+    with HUNT_SL:
+        S = hunt_st(); urg, new_ = [], []
+        for hp, v in S["pool"].items():
+            g = int(v.get("g") or 0)
+            if not g: new_.append((-hunt_score(S, v["c"], v.get("src") or ""), v["c"]))
+            elif g == 1 or v.get("sf") or not hunt_listed(v, now): urg.append((0, -float(v.get("ta") or 0), v["c"]))
+            elif now - float(v.get("ta") or 0) > 50 * 60: urg.append((1, float(v.get("ta") or 0), v["c"]))   # 4–6 sagatda bloklanýar — ýene barla
+    urg.sort(); new_.sort()
+    return [c for *_, c in urg], [c for _, c in new_]
+
+def hunt_probe_docs():
+    """n/probe: {"c": gyssagly (iň köp 60) + iň gowy täzeler (jemi 120), "u": gyssagly sany, "k": bölek sany}; n/probe1…8: galan täzeler (60-dan).
+    Telefon bir bölegi okaýar — az trafik; köne programmalar diňe n/probe-ny okaýar."""
+    urg, new_ = hunt_probe_list()
+    u_ = urg[:60]; head = u_ + new_[:120 - len(u_)]; rest = new_[120 - len(u_):][:480]
+    parts = [rest[i:i + 60] for i in range(0, len(rest), 60)]
+    return [("n/probe", {"c": head, "u": len(u_), "k": len(parts)})] + [(f"n/probe{i + 1}", {"c": p}) for i, p in enumerate(parts)]
+
+def hunt_probe_write(cfg):
+    """Telefonlar üçin synag sanawy VPS-e (diňe üýtgän bölekler)."""
+    if not (cfg.get("fs_ok") and cfg.get("fs_proj") and cfg.get("fid")): return
+    docs = hunt_probe_docs() if cfg.get("hunt_on", True) else [("n/probe", {"c": [], "u": 0, "k": 0})]
+    dg = RUN.setdefault("probe_dg", {})
+    for path, body in docs:
+        d_ = hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()[:16]
+        if dg.get(path) == d_: continue
+        fs_write(cfg["fs_proj"], path, app_enc(cfg["fid"], json.dumps(dict(body, t=int(time.time())))), None, False); dg[path] = d_
 
 def hunt_codes(a):
-    """Programa goşulýan aw kodlary: «🇩🇪 Germaniýa · aw» (ady boýunça mugt saýlamak üçin)."""
-    pool = a.get("hunt") or {}
-    if not pool or not a.get("hunt_on", True): return []
-    hm = a.get("hp_ms") or {}; now = time.time()
-    gone = [hp for hp, v in pool.items() if hunt_tm_bad(hm, hp, v.get("ts"), now)]
-    tm_ok = lambda hp: hp in hm and len(hm[hp]) > 2 and int(hm[hp][0]) > 0 and now - float(hm[hp][2] or 0) < 12 * 3600   # 1.46.6: soňky ölçegde Türkmenistanda işledi
-    if gone:   # 1.46.4: Türkmenistanda işlemeýänler derrew (10 minutda bir) aýrylýar we hiç gaýtadan barlanmaýar
-        app_mut(lambda x: [(x.get("hunt") or {}).pop(hp, None) for hp in gone]); hunt_bad_add(gone)
-        pool = {hp: v for hp, v in pool.items() if hp not in gone}
-    try: geo = geo_lookup([code_host(v["c"]) for v in pool.values() if code_host(v["c"])])
+    """Programa goşulýan aw kodlary (diňe Türkmenistanda tassyklananlar): «🇩🇪 Germaniýa · aw»."""
+    if not a.get("hunt_on", True): return []
+    now = time.time()
+    with HUNT_SL:
+        lst = sorted((int(v.get("tm") or 9999), v["c"]) for v in hunt_st()["pool"].values() if hunt_listed(v, now))[:HUNT_KEEP]
+    if not lst: return []
+    try: geo = geo_lookup([code_host(c) for _, c in lst if code_host(c)])
     except Exception: geo = {}
     out = []
-    for hp, v in pool.items():
-        if not tm_ok(hp): continue   # 1.46.5: Türkmenistanda entek synalmadyk — sanawa däl, telefonlara synag üçin (n/probe)
-        cc = exit_country(v["c"], geo)[0] or ""
+    for _, c in lst:
+        cc = exit_country(c, geo)[0] or ""
         nm = TM_CNAME.get(cc) or (cc.upper() if cc else "Serwer")
-        out.append(set_name(v["c"], f"{flag_of(cc) if len(cc) == 2 else '🌐'} {nm} · aw"))
+        out.append(set_name(c, f"{flag_of(cc) if len(cc) == 2 else '🌐'} {nm} · aw"))
     return out
+
+def hunt_view():
+    """Admin menýusy üçin gysga ýagdaý."""
+    now = time.time()
+    with HUNT_SL:
+        S = hunt_st(); st = dict(S["st"]); pool = S["pool"]; ch = S["ch"]; gh = S["gh"]
+        listed = sum(1 for v in pool.values() if hunt_listed(v, now)); wait1 = sum(1 for v in pool.values() if int(v.get("g") or 0) == 1)
+        chs = [e for e in ch.values() if e.get("s") == "ok"]
+        top = sorted([(int(e.get("ok") or 0), n) for n, e in ch.items() if e.get("ok")], reverse=True)[:5]
+        return {"st": st, "q": len(S["q"]), "pool": len(pool), "listed": listed, "wait1": wait1, "ch": len(chs), "ch_code": sum(1 for e in chs if e.get("c")),
+                "ch_tm": sum(1 for e in chs if float(e.get("tm") or 0) >= 0.4), "tried": int(st.get("ng") or 0), "names": len(hunt_names()),
+                "gh": sum(1 for e in gh.values() if not e.get("dead")), "gh_dead": sum(1 for e in gh.values() if e.get("dead")), "top": top}
 
 async def hunt_loop(app):
     await asyncio.sleep(90)
     while True:
         try:
-            a = app_cfg(load_db())
-            if a.get("hunt_on", True) and (RUN.pop("hunt_now", None) or time.time() - float((a.get("hunt_st") or {}).get("at") or 0) >= HUNT_EVERY):
-                st = await asyncio.to_thread(hunt_run, bool(RUN.pop("hunt_gh", None)))
-                if st.get("n") is not None: RUN["app_dirty"] = True
+            a = app_cfg(load_db()); last_ = float((hunt_st().get("st") or {}).get("at") or 0)
+            if a.get("hunt_on", True) and ((RUN.get("hunt_now") and time.time() - last_ >= 300) or time.time() - last_ >= HUNT_EVERY):
+                RUN.pop("hunt_now", None)
+                await asyncio.to_thread(hunt_run, bool(RUN.pop("hunt_gh", None)))
+            if RUN.pop("hunt_list", None): RUN["app_dirty"] = True   # sanaw üýtgedi — programma (minutda iň köp bir gezek)
+            await asyncio.to_thread(hunt_save, True)
+            if a.get("hunt_on", True): await asyncio.to_thread(hunt_probe_write, a)
         except Exception as e: log.exception("hunt loop"); RUN["hunt_err"] = str(e)[:200]
         await asyncio.sleep(60)
-
 
 def app_sync(force=False):
     """Admin bölümünde eklenen aboneliklerin kodlarını toplar, programın Drive dosyasına yazar.
@@ -1626,13 +2127,8 @@ def app_sync(force=False):
             try:
                 fs_write(cfg["fs_proj"], "n/sub", app_enc(fid, build_text("vpn", "", meta + codes).decode("utf-8")), None, False); RUN["sub_fs"] = dig; RUN["sub_fs_at"] = time.time()
             except Exception as e: log.info("sub fs: %s", e)
-        if cfg.get("fs_ok") and cfg.get("fs_proj"):   # 1.46.5: telefonlar üçin synag sanawy (n/probe) — üýtgände
-            try:
-                pl_ = hunt_probe_list(app_cfg(load_db())) if app_cfg(load_db()).get("hunt_on", True) else []
-                pdig_ = hashlib.sha256("\n".join(pl_).encode()).hexdigest()[:16]
-                if RUN.get("probe_fs") != pdig_:
-                    fs_write(cfg["fs_proj"], "n/probe", app_enc(fid, json.dumps({"c": pl_, "t": int(time.time())})), None, False); RUN["probe_fs"] = pdig_
-            except Exception as e: log.info("probe fs: %s", e)
+        try: hunt_probe_write(dict(app_cfg(load_db()), fid=fid))   # 1.47: telefonlar üçin synag sanawy (n/probe + bölekler) — üýtgände
+        except Exception as e: log.info("probe fs: %s", e)
         if force or dig != cfg.get("dig"):
             if not sync_file(svc, fid, "vpn", "", meta + codes, exp=False): raise RuntimeError("Drive'a yazılamadı")
         def f(d):
@@ -6160,31 +6656,39 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
                         return
                     if st_.get("err") == "busy": return
                     t_ = ("⚠️ Kod avı: Xray kurulu değil" if st_.get("err") else
-                          f"🔎 <b>Kod avı bitti</b>\n<blockquote>{st_.get('src', 0)} kaynak · {st_.get('found', 0)} kod bulundu · {st_.get('uniq', 0)} yeni\n"
-                          f"{st_.get('tested', 0)} test edildi · <b>{st_.get('ok', 0)} çalışıyor</b>\nProgramda: <b>{st_.get('n', 0)}</b> kod · daha önce çalışmayan {st_.get('bad', 0)} kod atlandı</blockquote>")
+                          f"🔎 <b>Kod avı bitti</b>\n<blockquote>{st_.get('tg', 0)} kanal okundu ({st_.get('tg_new', 0)} yeni ad denendi, {st_.get('ch_new', 0)} yeni kanal bulundu) · {st_.get('gh', 0)} GitHub dosyası\n"
+                          f"{st_.get('found', 0)} kod bulundu · {st_.get('uniq', 0)} yeni · {st_.get('tested', 0)} test edildi · <b>{st_.get('ok', 0)} bot testini geçti</b>\n"
+                          f"Şimdi Türkmenistan'daki telefonlar deniyor ({st_.get('pool', 0)} kod) · programda: <b>{st_.get('n', 0)}</b> (TM'de 2 kez onaylı)</blockquote>")
                     try: await c.bot.send_message(chat_, t_, parse_mode="HTML", reply_markup=KB([[B("🔎 Kod avı", "app_hunt")]]))
                     except Exception as e2: log.info("hunt msg: %s", e2)
                 asyncio.create_task(_hunt_now(uid))
-                await safe_edit(q, "⏳ <b>Tarama başladı</b>\n<i>Kanallar, GitHub ve tahmin edilen kanal adları taranıyor, kodlar Xray ile test ediliyor. Bitince (5–15 dk) sonuç mesajı gelecek.</i>",
+                await safe_edit(q, "⏳ <b>Tarama başladı</b>\n<i>Kanallar, 100 yeni kanal adı, GitHub taranıyor, yeni kodlar Xray ile test ediliyor. Bitince (5–15 dk) sonuç mesajı gelecek.</i>",
                                 KB([[B("🔎 Kod avı", "app_hunt")]])); return
             elif a == "app_hunt_tog": mutate(lambda d: d.setdefault("app", {}).__setitem__("hunt_on", not d.get("app", {}).get("hunt_on", True))); RUN["app_dirty"] = True
-            elif a == "app_hunt_clr": mutate(lambda d: [d.setdefault("app", {}).pop(k_, None) for k_ in ("hunt", "hunt_tgd", "hunt_ghd")]); RUN["app_dirty"] = True
+            elif a == "app_hunt_clr": await asyncio.to_thread(hunt_clear); RUN["app_dirty"] = True
             elif a == "app_hunt_add":
                 STATE[uid] = {"action": "hunt_add"}
                 t, kb = prompt("➕ <b>Kod avı · kaynak ekle</b>", "Telegram kanalı (ör. <code>supervpntm</code> ya da <code>t.me/kanal</code>) veya kod listesi linki "
                                "(GitHub raw / abonelik linki) gönder. Birden çok olabilir, her satıra bir tane.", "app_hunt")
                 await safe_edit(q, t, kb); return
-            a_ = app_cfg(load_db()); st_ = a_.get("hunt_st") or {}; on_ = a_.get("hunt_on", True)
+            a_ = app_cfg(load_db()); on_ = a_.get("hunt_on", True); hv_ = await asyncio.to_thread(hunt_view); st_ = hv_["st"]
             src_ = [f"📡 {esc(c_)}" for c_ in (a_.get("hunt_tg") or [])] + [f"🔗 {esc(short(u_, 50))}" for u_ in (a_.get("hunt_url") or [])]
             t_ = ("🔎 <b>Kod avı</b>\n<blockquote>"
                   + ("🟢 Açık" if on_ else "🔴 Kapalı") + (" · ⚠️ <b>Xray kurulu değil</b>" if not xray_bin() else "") + "\n"
                   + (f"⏳ <b>Tarama sürüyor:</b> {esc(RUN.get('hunt_prog') or '…')}\n" if HUNT_LOCK.locked() else "")
-                  + (f"Son tarama: {datetime.datetime.fromtimestamp(st_['at']).strftime('%d.%m %H:%M')} · {st_.get('found', 0)} kod bulundu, {st_.get('tested', 0)} test, {st_.get('ok', 0)} çalışıyor\n" if st_.get("at") else "Henüz tarama yok\n")
-                  + f"Programda: <b>{len(a_.get('hunt') or {})}</b> kod (Free'de en fazla {HUNT_FREE}, Premium'da en fazla {HUNT_KEEP})\n"
-                  + f"Kaynaklar: {len(a_.get('tgsrc') or APP_TG_DEFAULT) + len(a_.get('hunt_tg') or [])} kanal + {len(a_.get('hunt_tgd') or [])} bulunan kanal · {len(a_.get('hunt_url') or [])} link + {len(a_.get('hunt_ghd') or [])} GitHub</blockquote>"
+                  + (f"Son tarama: {datetime.datetime.fromtimestamp(st_['at']).strftime('%d.%m %H:%M')} ({st_.get('dur', 0) // 60} dk) · {st_.get('uniq', 0)} yeni kod · "
+                     f"{st_.get('tested', 0)} test · {st_.get('ok', 0)} bot testini geçti\n" if st_.get("at") else "Henüz tarama yok\n")
+                  + f"📱 <b>Programda: {hv_['listed']}</b> kod — Türkmenistan'da 2 kez onaylı (Free'de en fazla {HUNT_FREE}, Premium'da en fazla {HUNT_KEEP})\n"
+                  + f"Telefon testi bekleyen: {hv_['pool']} (1 kez çalışan: {hv_['wait1']}) · kuyruk: {hv_['q']} kod\n"
+                  + f"📡 Kanallar: {hv_['ch']} ({hv_['ch_tm']} Türkmen, {hv_['ch_code']} kod paylaşan) · denenen ad: {hv_['tried']}/{hv_['names']}"
+                  + (f" · son taramada {st_.get('tg_new', 0)} yeni ad, {st_.get('ch_new', 0)} yeni kanal" if st_.get("at") else "") + "\n"
+                  + f"🐙 GitHub: {hv_['gh']} dosya izleniyor · {hv_['gh_dead']} dosya bırakıldı (yeni sunucu yok)\n"
+                  + (f"⭐ En iyi kanallar: {', '.join(f'@{esc(n_)} ({k_})' for k_, n_ in hv_['top'])}\n" if hv_["top"] else "")
+                  + f"Bir daha test edilmeyecek: {st_.get('seen', 0)} kod</blockquote>"
                   + ("\n".join(src_[:15]) + "\n" if src_ else "")
-                  + "<i>30 dakikada bir: kanallardan ve GitHub'dan kodları toplar, Xray ile test eder, çalışanları programa ekler. "
-                    "Türkmenistan'daki telefonlarda 24 saat çalışmayan kod otomatik çıkar. Kanal yeni kod atınca hemen yeniden tarar.</i>"
+                  + "<i>20 dakikada bir: bilinen kanallar + her seferinde 100 yeni kanal adı (Türkmen + vpn kelimeleri) + kanallarda anılan kanallar + GitHub. "
+                    "Yeni kodlar Xray ile test edilir, sonra Türkmenistan'daki telefonlar dener. Programa sadece TM'de 2 kez (2 telefon) çalışan, son testi de çalışan kod girer; "
+                    "çalışmayan hemen çıkar ve bir daha denenmez. Bir GitHub dosyasında yeni sunucu çıkmazsa o dosyaya bir daha bakılmaz.</i>"
                   + ("\n\n<b>Xray kurulumu (bot VPS'inde bir kez):</b>\n<code>bash -c \"$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)\" @ install && systemctl disable --now xray</code>" if not xray_bin() else ""))
             await safe_edit(q, t_, KB([[B("▶️ Şimdi tara", "app_hunt_run"), B("➕ Kaynak ekle", "app_hunt_add")],
                                        [B("⏸ Kapat" if on_ else "▶️ Aç", "app_hunt_tog"), B("🗑 Havuzu temizle", "app_hunt_clr")], [B("◀️ Geri", "app_v")]])); return
