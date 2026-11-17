@@ -1652,13 +1652,12 @@ def hunt_sub_links(page):
 
 def hunt_sub_codes(u):
     """Abuna salgysyndan kodlar («/auto» — Xray JSON beriji, ondan öň adaty görnüşi synalýar). Dönüş: kodlar ýa-da None (ýetip bolmady)."""
-    ok_ = False
-    for v in ([u[:-5], u] if u.endswith("/auto") else [u]):
+    ok_, out = False, []
+    for v in ([u[:-5], u] if u.endswith("/auto") else [u]):   # 1.46.7: «/auto» (JSON) we adaty görnüş — ikisi hem (JSON-da başga serwerler hem bar)
         try: body = hunt_fetch(v, ua="v2rayNG/1.9.0")[1]; ok_ = True   # abuna paneli diňe VPN programmasyna kod berýär
         except Exception: continue
-        cs = [c for c in hunt_parse(body) if c.lower().startswith(APP_X_PROTOS)]
-        if cs: return cs
-    return [] if ok_ else None
+        out += [c for c in hunt_parse(body) if c.lower().startswith(APP_X_PROTOS) and c not in out]
+    return out if ok_ else None
 
 HUNT_W_TM = ["tm", "tkm", "turkmen", "tmn", "turkmenistan", "ashgabat", "asgabat", "ashkhabad", "mary", "lebap", "dashoguz", "dasoguz", "balkan", "ahal",
              "turkmenabat", "tmcell", "tmt"]
@@ -1762,6 +1761,45 @@ def hunt_fetch(url, etag="", ua="Mozilla/5.0"):
         if e.code == 304: return 304, "", etag
         raise
 
+def hunt_json_codes(body):
+    """1.46.7: Xray JSON abunasy («/auto», v2rayNG «JSON» görnüşi) → vless / ss / hysteria2 kodlary (ady remarks-dan)."""
+    try: d = json.loads(body)
+    except Exception: return []
+    out = []
+    for cf in (d if isinstance(d, list) else [d]):
+        if not isinstance(cf, dict): continue
+        nm = urllib.parse.quote(str(cf.get("remarks") or "")[:60])
+        for ob in cf.get("outbounds") or []:
+            try:
+                pr, st = str(ob.get("protocol") or ""), ob.get("streamSettings") or {}; se = ob.get("settings") or {}
+                if pr == "vless":
+                    vn = (se.get("vnext") or [{}])[0]; us = (vn.get("users") or [{}])[0]; h, p_ = vn.get("address"), vn.get("port")
+                    if not (h and p_ and us.get("id")): continue
+                    net, sec = st.get("network") or "tcp", st.get("security") or "none"; q = {"type": net, "security": sec, "encryption": us.get("encryption") or "none"}
+                    if us.get("flow"): q["flow"] = us["flow"]
+                    t = st.get("tlsSettings") or {}; rl = st.get("realitySettings") or {}
+                    if sec == "tls":
+                        q.update({k: v for k, v in (("sni", t.get("serverName")), ("fp", t.get("fingerprint")), ("alpn", ",".join(t.get("alpn") or []))) if v})
+                    elif sec == "reality":
+                        q.update({k: v for k, v in (("sni", rl.get("serverName")), ("fp", rl.get("fingerprint")), ("pbk", rl.get("publicKey")), ("sid", rl.get("shortId")), ("spx", rl.get("spiderX"))) if v})
+                    ns = st.get(net + "Settings") or {}
+                    if net in ("ws", "xhttp", "httpupgrade"):
+                        q.update({k: v for k, v in (("path", ns.get("path")), ("host", ns.get("host") or (ns.get("headers") or {}).get("Host")), ("mode", ns.get("mode") if net == "xhttp" else None)) if v})
+                        if net == "xhttp" and ns.get("extra"): q["extra"] = json.dumps(ns["extra"], separators=(",", ":"))
+                    elif net == "grpc" and ns.get("serviceName"): q["serviceName"] = ns["serviceName"]
+                    if st.get("finalmask"): q["fm"] = json.dumps(st["finalmask"], separators=(",", ":"))
+                    out.append(f"vless://{us['id']}@{h}:{p_}?" + urllib.parse.urlencode(q, quote_via=urllib.parse.quote) + "#" + nm)
+                elif pr == "shadowsocks":
+                    sv = (se.get("servers") or [{}])[0]
+                    if sv.get("address") and sv.get("port") and sv.get("method"):
+                        out.append("ss://" + base64.urlsafe_b64encode(f"{sv['method']}:{sv.get('password', '')}".encode()).decode().rstrip("=") + f"@{sv['address']}:{sv['port']}#" + nm)
+                elif pr in ("hysteria", "hysteria2") and (se.get("address") or se.get("servers")):
+                    h, p_ = se.get("address"), se.get("port"); t = st.get("tlsSettings") or {}
+                    au = (st.get("hysteriaSettings") or {}).get("auth") or se.get("password") or ""
+                    if h and p_: out.append(f"hysteria2://{urllib.parse.quote(str(au))}@{h}:{p_}?" + urllib.parse.urlencode({k: v for k, v in (("sni", t.get("serverName")),) if v}) + "#" + nm)
+            except Exception: continue
+    return out
+
 def hunt_parse(body):
     """Tekstdäki (ýa-da base64 abunadaky) kodlar — diňe programmanyň goldaýanlary, gaýtalanmazdan."""
     out, seen_ = [], set()
@@ -1770,6 +1808,7 @@ def hunt_parse(body):
             c = m.group(0).strip().rstrip(".,;)")
             if c not in seen_: seen_.add(c); out.append(c)
     take(body)
+    if not out and body.lstrip()[:1] in ("[", "{"): take("\n".join(hunt_json_codes(body)))   # 1.46.7: JSON abuna
     if len(out) < 3:
         flat = "".join(body.split())
         if len(flat) >= 16 and re.fullmatch(r"[A-Za-z0-9+/=_-]+", flat[:4000]):
