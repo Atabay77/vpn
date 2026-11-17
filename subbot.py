@@ -987,7 +987,12 @@ def tg_channel_codes(ch):
         return full, cut
     posts, blocked = [], []
     for b in re.split(r'(?=<div class="tgme_widget_message_wrap)', page):
-        if not TG_CODE_RE.search(b): continue
+        if not TG_CODE_RE.search(b):   # 1.46.8: kanal «bloklandy» diýdi (kodsyz ýazgy) — wagty ýatda
+            if re.search(r"блокир|заблок|\bblok|ýapyld|не работ|işlemeý", re.sub(r"<[^>]+>", " ", b), re.I):
+                t0_ = re.search(r'datetime="([^"]+)"', b)
+                try: RUN.setdefault("tg_blk", {})[ch.lower()] = max(RUN.get("tg_blk", {}).get(ch.lower(), 0), int(datetime.datetime.fromisoformat(t0_.group(1)).timestamp()) if t0_ else 0)
+                except Exception: pass
+            continue
         t_ = re.search(r'datetime="([^"]+)"', b)
         try: ts_ = datetime.datetime.fromisoformat(t_.group(1)).timestamp() if t_ else 0
         except Exception: ts_ = 0
@@ -1076,6 +1081,8 @@ def app_tg_refresh(force=False):
     for ch in chs:
         try: found += [(ch, c) for c in tg_channel_codes(ch)]
         except Exception as e: log.info("tg %s: %s", ch, e); RUN["tg_err"] = f"{ch}: {str(e)[:80]}"
+    blk_ = max((RUN.get("tg_blk") or {}).values() or [0])
+    if blk_ > RUN.get("tg_blk_seen", 0): RUN["tg_blk_seen"] = blk_; RUN["app_dirty"] = True   # 1.46.8: kanal «bloklandy» — mugt sanaw derrew täzelensin
     try: app_tg_subs(chs)   # 1.46.7: kanaldaky abunalar
     except Exception as e: log.info("tg subs: %s", e)
     if not found: return
@@ -1130,6 +1137,11 @@ def app_x_report(dev, pr):
         return len(gone)
     n_ = app_mut(f)
     if n_: vlog(f"🗑 {n_} kod işlemedi (3 gezek ms ýok) — aýryldy"); RUN["app_dirty"] = True
+    try:   # 1.46.8: mugt serwer işlemedi — mugt sanaw derrew barlansyn (minutda iň köp bir gezek)
+        fr_ = set(RUN.get("free_hps") or ())
+        if fr_ and any(str(h) in fr_ and int(m) <= 0 for h, m in list(pr.items())[:400]) and time.time() - RUN.get("free_chk", 0) > 60:
+            RUN["free_chk"] = time.time(); RUN["app_dirty"] = True
+    except Exception: pass
     # 1.47: kod awy — Türkmenistandaky telefonyň netijeleri (2 gezek tassyklanmadyk sanawa goşulmaýar; işlemedik — derrew aýrylýar, hiç gaýtadan barlanmaýar)
     items = []
     for h, m in list(pr.items())[:400]:
@@ -1215,6 +1227,8 @@ def app_free_borrow(codes, free_, cfg, now=None):
     chts = max([int(v.get("ts") or 0) for v in (cfg.get("xcodes") or {}).values() if v.get("src") in ("tg", "tgs") and (v.get("src") == "tg" or v.get("ok"))] or [0])
     allhp = {hp_(c): c for c in codes if hp_(c)}
     own = [h for h in free_ if not (b and h == b.get("hp"))]
+    blk = max((RUN.get("tg_blk") or {}).values() or [0])   # kanal soňky koddan soň «bloklandy» ýazdy — mugtlar derrew işlemeýär hasaplanýar
+    if blk and blk > chts: dead_ = lambda h, d0=dead_: d0(h) or not ok_(h) or h in {app_x_hp(v["c"]) for v in (cfg.get("xcodes") or {}).values() if v.get("src") == "tg"}
     if b:   # kanalda täze kod çykdy / serwer sanawda ýok / işlemeýär — yzyna alynýar
         if chts > int(b.get("ch") or 0) or b.get("hp") not in allhp or dead_(b["hp"]) or any(ok_(h) for h in own): b = None
     if not b and own and all(dead_(h) for h in own):   # hemmesi soňky sagatda «jogap ýok» (täze / synalmadyk kod bar bolsa — garaşylýar)
@@ -2324,7 +2338,7 @@ def app_sync(force=False):
                 if code_key(c) not in keys: keys.add(code_key(c)); codes.append(c)
         plast = {k_: v_ for k_, v_ in plast.items() if k_ in {hashlib.md5(u.encode()).hexdigest()[:8] for u in psubs}}
         free_ = app_free_all(codes, php, cfg.get("hp_ms")) if php else app_free_pick(codes, base1, cfg.get("hp_ms"))
-        try: free_, fb_ = app_free_borrow(codes, free_, app_cfg(load_db()))   # 1.46.8: mugtlar bloklananda Premium-dan biri wagtlaýyn
+        try: free_, fb_ = app_free_borrow(codes, free_, app_cfg(load_db())); RUN["free_hps"] = list(free_)   # 1.46.8: mugtlar bloklananda Premium-dan biri wagtlaýyn
         except Exception as e: fb_ = cfg.get("fborrow"); log.info("free borrow: %s", e)
         if (fb_ or {}).get("hp") != (cfg.get("fborrow") or {}).get("hp"): vlog(f"🔁 Mugt serwer: {'Premium-dan wagtlaýyn ' + fb_['hp'] if fb_ else 'wagtlaýyn Premium serwer yzyna alyndy'}")   # 1.43.2: mugt — her ýurtdan iň gowy işleýän bir kod + kanal + 2 PUBG
         codes = app_brand_names(codes)   # 1.29: abunanyň atlary görünmesin

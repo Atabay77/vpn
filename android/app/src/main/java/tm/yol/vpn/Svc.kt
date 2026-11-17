@@ -165,6 +165,7 @@ class Svc : VpnService() {
     // 1.35: awtomatik serwer çalşmak aýryldy (eýesiniň islegi) — birikdirilen serweriň pingi diňe ölçenýär
     @Volatile private var hcBusy = false
     private var movedAt = 0L
+    private var deadHp = ""; private var deadAt = 0L
     private var hcAt = 0L
     private var bad = 0
     private val tick = object : Runnable {
@@ -175,6 +176,11 @@ class Svc : VpnService() {
             }
             // 1 sagat dolunca (key yoksa) VPN durur; kullanıcı elle yeniden başlatır
             if (want && State.now == State.ON && Lic.left(this@Svc) == 0L) { stop(); expired(); return }
+            // 1.46.8: awtomatik saýlawda bagly serwer jogap bermeýär — 25 sn soň sanaw derrew täzelenýär we işleýän serwere geçilýär
+            if (want && State.now == State.ON && State.dead && State.selected(this@Svc) == null && deadAt > 0 && now0 - deadAt > 25_000 && now0 - movedAt > 90_000) {
+                movedAt = now0
+                Thread { runCatching { Sub.refresh(this@Svc, 8000) }; runCatching { startService(Intent(this@Svc, Svc::class.java)) } }.start()
+            }
             // 1.46.8: bagly serwer sanawdan aýryldy ýa-da indi Premium (mugt wagtlaýyn berlen serwer yzyna alyndy) — başga mugt serwere geçilýär
             val act = State.active
             if (want && State.now == State.ON && act != null && Sub.list.isNotEmpty() && now0 - movedAt > 60_000 && now0 - State.onAt > 20_000
@@ -195,7 +201,14 @@ class Svc : VpnService() {
         val c = core ?: return
         val v = runCatching { c.measureDelay(State.PING) }.getOrDefault(-1L)
         if (v in 1..2999) { State.ms = v; bad = 0; State.dead = false; return }
-        if (++bad >= 2) State.dead = State.online(this)   // telefonyň öz interneti ýok bolsa serwer günäkär däl
+        if (++bad >= 2) {
+            State.dead = State.online(this)   // telefonyň öz interneti ýok bolsa serwer günäkär däl
+            val a = State.active   // 1.46.8: bagly serwer jogap bermeýär — bota derrew (mugt serwerler bloklananda Premium-dan biri berilsin)
+            if (State.dead && a != null && (a.hp != deadHp || System.currentTimeMillis() - deadAt > 300_000L)) {
+                deadHp = a.hp; deadAt = System.currentTimeMillis()
+                runCatching { Msg.send(this, org.json.JSONObject().put("k", "pr").put("p", org.json.JSONObject().put(a.hp, -1))) }
+            }
+        }
     }
 
     override fun onCreate() { super.onCreate(); State.app = applicationContext; Lang.init(this) }
