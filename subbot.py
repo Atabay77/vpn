@@ -1718,9 +1718,12 @@ def hunt_sub_codes(u):
     """Abuna salgysyndan kodlar («/auto» — Xray JSON beriji, ondan öň adaty görnüşi synalýar). Dönüş: kodlar ýa-da None (ýetip bolmady)."""
     ok_, out = False, []
     for v in ([u[:-5], u] if u.endswith("/auto") else [u]):   # 1.46.7: «/auto» (JSON) we adaty görnüş — ikisi hem (JSON-da başga serwerler hem bar)
-        try: body = hunt_fetch(v, ua="v2rayNG/1.9.0")[1]; ok_ = True   # abuna paneli diňe VPN programmasyna kod berýär
-        except Exception: continue
-        out += [c for c in hunt_parse(body) if c.lower().startswith(APP_X_PROTOS) and c not in out]
+        for _ in range(2):   # 1.46.8: käbir panel käwagt boş jogap berýär — ýene bir gezek
+            try: body = hunt_fetch(v, ua="v2rayNG/1.9.0")[1]; ok_ = True   # abuna paneli diňe VPN programmasyna kod berýär
+            except Exception: body = ""
+            got_ = [c for c in hunt_parse(body) if c.lower().startswith(APP_X_PROTOS) and c not in out]
+            if got_: out += got_; break
+            time.sleep(1.5)
     return out if ok_ else None
 
 HUNT_W_TM = ["tm", "tkm", "turkmen", "tmn", "turkmenistan", "ashgabat", "asgabat", "ashkhabad", "mary", "lebap", "dashoguz", "dasoguz", "balkan", "ahal",
