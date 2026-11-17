@@ -1099,6 +1099,8 @@ def app_tg_refresh(force=False):
 def app_x_report(dev, pr):
     """Programdan ping netijeleri: {host:port: ms (-1 = jogap ýok)}."""
     if not isinstance(pr, dict): return
+    try: any_ok = any(int(m) > 0 for m in list(pr.values())[:400])
+    except Exception: any_ok = False
     def f(x):
         xs = x.get("xcodes") or {}; now = int(time.time()); gone = []
         byhp = {}
@@ -1111,7 +1113,9 @@ def app_x_report(dev, pr):
                 if ms > 0: v.update({"ok": now, "bad": 0, "ms": ms})
                 else:
                     v["bad"] = int(v.get("bad") or 0) + 1
-                    if v.get("src") not in ("tg", "m") and v["bad"] >= (2 if v.get("src") == "tgs" else APP_X_DEAD) and k not in gone: gone.append(k)   # 1.46.7: kanal abunasynyň kody — 2 gezek n/a   # 1.45.2: elle goşulan (m) we kanal kodlary aýrylmaýar   # admin kody: yzly-yzyna 3 gezek ms ýok — aýrylýar (kanal kody täze kod gelýänçä durýar)
+                    fresh_ = v.get("src") == "tgs" and now - int(v.get("ok") or 0) < 1800   # 1.46.8: soňky 30 minutda bir telefonda işledi — başga operatorda işlemese-de aýrylmaýar
+                    if v.get("src") not in ("tg", "m") and not fresh_ and v["bad"] >= (2 if v.get("src") == "tgs" else APP_X_DEAD) and k not in gone: gone.append(k)
+                    if v.get("src") == "tgs" and any_ok and not fresh_ and k not in gone: gone.append(k)   # 1.46.8: telefon başga koda ýetdi, bu koda ýetmedi — derrew aýrylýar   # 1.46.7: kanal abunasynyň kody — 2 gezek n/a   # 1.45.2: elle goşulan (m) we kanal kodlary aýrylmaýar   # admin kody: yzly-yzyna 3 gezek ms ýok — aýrylýar (kanal kody täze kod gelýänçä durýar)
         hm = x.setdefault("hp_ms", {})   # 1.43.2: ähli kodlaryň soňky pingi (mugt serwerleri işleýänlerden saýlamak üçin)
         for hp, ms in list(pr.items())[:400]:
             try: old_ = hm.get(str(hp)[:80]) or []; hm[str(hp)[:80]] = [int(ms), now, now if int(ms) > 0 else (old_[2] if len(old_) > 2 else 0)]   # [soňky ms, wagty, soňky işlän wagty]
@@ -1263,6 +1267,7 @@ def app_x_named(base_codes, a):
     except Exception: geo = {}
     out = []
     for k, v in sorted(xs.items(), key=lambda kv: (kv[1].get("src") != "m", kv[1].get("ts", 0))):
+        if v.get("src") == "tgs" and not v.get("ok"): continue   # 1.46.8: kanal abunasynyň kody — Türkmenistanda işlänçä sanawda ýok (telefonlar synaýar)
         cc = exit_country(v["c"], geo)[0] or ""
         flag = flag_of(cc) if len(cc) == 2 else "🌐"
         tag = "tm" if v.get("src") in ("tg", "tgs") else "VIP"
@@ -2184,6 +2189,10 @@ def hunt_probe_docs():
     """n/probe: {"c": gyssagly (iň köp 60) + iň gowy täzeler (jemi 120), "u": gyssagly sany, "k": bölek sany}; n/probe1…8: galan täzeler (60-dan).
     Telefon bir bölegi okaýar — az trafik; köne programmalar diňe n/probe-ny okaýar."""
     urg, new_ = hunt_probe_list()
+    try:   # 1.46.8: kanal abunasynyň synalmadyk kodlary — iň öňde
+        xs_ = app_cfg(load_db()).get("xcodes") or {}
+        urg = [v["c"] for v in sorted(xs_.values(), key=lambda v: -int(v.get("ts") or 0)) if v.get("src") == "tgs" and not v.get("ok")][:60] + urg
+    except Exception: pass
     u_ = urg[:60]; head = u_ + new_[:120 - len(u_)]; rest = new_[120 - len(u_):][:480]
     parts = [rest[i:i + 60] for i in range(0, len(rest), 60)]
     return [("n/probe", {"c": head, "u": len(u_), "k": len(parts)})] + [(f"n/probe{i + 1}", {"c": p}) for i, p in enumerate(parts)]
