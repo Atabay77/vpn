@@ -1489,7 +1489,7 @@ def hunt_score(S, c, src, own=()):
     if src.startswith("tg:"):
         e = S["ch"].get(src[3:]) or {}
         s *= (5.0 if src[3:] in own else 3.0 if float(e.get("tm") or 0) >= 0.4 else 1.0) * (1 + min(5, int(e.get("ok") or 0)) * 0.5)
-    elif src.startswith("url:"): s *= 2.0
+    elif src.startswith(("url:", "sub:")): s *= 2.0
     return s
 
 # ---------- bot barlagy (Xray) ----------
@@ -1636,7 +1636,29 @@ def hunt_tg(ch, pages=1):
     if m:
         try: sub = int(float(m.group(1).replace(",", "")) * {"K": 1000, "M": 1000000}.get(m.group(2), 1))
         except Exception: pass
-    return {"ok": True, "codes": codes[-800:], "refs": sorted(refs)[:60], "tm": hunt_tm_score(txt), "lp": lp, "sub": sub}
+    return {"ok": True, "codes": codes[-800:], "refs": sorted(refs)[:60], "tm": hunt_tm_score(txt), "lp": lp, "sub": sub, "subl": hunt_sub_links(page)}
+
+HUNT_SUB_SKIP = re.compile(r"^https?://(?:[\w-]+\.)*(?:t\.me|telegram\.(?:org|me|dog)|telegra\.ph|w3\.org|google\.com|googleapis\.com|apple\.com|youtube\.com|youtu\.be|instagram\.com|tiktok\.com|"
+                           r"facebook\.com|twitter\.com|x\.com|github\.com|wikipedia\.org|play\.google\.com|apps\.apple\.com|inside\.ad|cdn[\w-]*\.\w+)(?:[:/?#]|$)", re.I)
+
+def hunt_sub_links(page):
+    """1.46.6: kanalda paýlaşylan abuna salgylary (meselem «https://…/exec?url=…/sub/…») — içindäki kodlar hem alynýar."""
+    out = []
+    for u in re.findall(r"https?://[^\s\"'<>]{8,600}", html.unescape(re.sub(r"<br\s*/?>", "\n", page))):
+        u = u.rstrip(".,;)»")
+        if HUNT_SUB_SKIP.match(u) or re.search(r"\.(?:png|jpe?g|gif|webp|svg|mp4|apk|css|js|ico)(?:\?|$)", u, re.I) or u in out: continue
+        out.append(u)
+    return out[-20:]
+
+def hunt_sub_codes(u):
+    """Abuna salgysyndan kodlar («/auto» — Xray JSON beriji, ondan öň adaty görnüşi synalýar). Dönüş: kodlar ýa-da None (ýetip bolmady)."""
+    ok_ = False
+    for v in ([u[:-5], u] if u.endswith("/auto") else [u]):
+        try: body = hunt_fetch(v, ua="v2rayNG/1.9.0")[1]; ok_ = True   # abuna paneli diňe VPN programmasyna kod berýär
+        except Exception: continue
+        cs = [c for c in hunt_parse(body) if c.lower().startswith(APP_X_PROTOS)]
+        if cs: return cs
+    return [] if ok_ else None
 
 HUNT_W_TM = ["tm", "tkm", "turkmen", "tmn", "turkmenistan", "ashgabat", "asgabat", "ashkhabad", "mary", "lebap", "dashoguz", "dasoguz", "balkan", "ahal",
              "turkmenabat", "tmcell", "tmt"]
@@ -1729,9 +1751,9 @@ def hunt_gh_discover(st, ghr, now):
         done.append((full, len(pick)))
     return files, lists, done
 
-def hunt_fetch(url, etag=""):
+def hunt_fetch(url, etag="", ua="Mozilla/5.0"):
     """Ham faýl (ETag bilen: üýtgemedik bolsa 304, hiç zat ýüklenmeýär). Dönüş: (status, tekst, etag)."""
-    h = {"User-Agent": "Mozilla/5.0"}
+    h = {"User-Agent": ua, "Accept": "*/*"}
     if etag: h["If-None-Match"] = etag
     try:
         with urllib.request.urlopen(urllib.request.Request(url, headers=h), timeout=30) as r:
@@ -1845,6 +1867,19 @@ def hunt_run(force_gh=False):
                 body_ = hunt_fetch(u)[1]
                 lst_names |= hunt_refs(body_) | {l.strip().lower().lstrip("@") for l in body_.splitlines()[:5000] if hunt_ch_ok(l.strip().lower().lstrip("@"))}
             except Exception: pass
+        # 1.46.6: kanallarda paýlaşylan abunalar — işleýänleri her aýlawda, täzeleri bir gezek synalýar
+        with HUNT_SL:
+            sreg = S.setdefault("subs", {})
+            sjobs = [u for u, e in sreg.items() if e.get("s") == "ok"][:40]
+            nsub = {}
+            for (n, _, _), r in res_tg:
+                if isinstance(r, dict) and r.get("ok"):
+                    for u in r.get("subl") or []:
+                        if u not in sreg and u not in nsub: nsub[u] = n
+            sjobs += list(nsub)[:20]
+        res_sub = []
+        with ThreadPoolExecutor(4) as ex:
+            for u, cs in zip(sjobs, ex.map(hunt_sub_codes, sjobs)): res_sub.append((u, cs))
         res_url = []
         for u in list(a.get("hunt_url") or [])[:40]:
             try: res_url.append((u, hunt_url_codes(u)))
@@ -1862,6 +1897,7 @@ def hunt_run(force_gh=False):
         tg_hp = [(job, r, hps_of(r["codes"]) if isinstance(r, dict) and r.get("ok") else {}) for job, r in res_tg]
         gh_hp = [(u, r, hps_of(r[1]) if r[0] == "new" else {}) for u, r in res_gh]
         url_hp = [(u, hps_of(cs or [])) for u, cs in res_url]
+        sub_hp = [(u, cs, hps_of(cs or [])) for u, cs in res_sub]
         rem = hunt_rem_refs([c for _, r, _ in tg_hp if isinstance(r, dict) for c in r.get("codes") or []][:20000] + [c for _, r, _ in gh_hp for c in r[1][:20000]])
         with HUNT_SL:
             seen = hunt_seen(); pool, q = S["pool"], S["q"]; ch, gh, pst = S["ch"], S["gh"], S["st"]
@@ -1921,6 +1957,24 @@ def hunt_run(force_gh=False):
                 e["h"] = h2; e["chg"] = int(now); e["n"] = len(hps); found += len(hps)
                 y = enq(hps, "gh:" + e["id"]); e["y"] = y; e["tot"] = int(e.get("tot") or 0) + y
                 if not y: e["dead"] = "no-new"; gh_dead += 1   # 1.47: bu gezek täze serwer ýok — bu faýla hiç gaýtadan seredilmeýär
+            sreg = S.setdefault("subs", {})
+            for u, cs, hps in sub_hp:
+                e = sreg.setdefault(u, {"f": nsub.get(u, ""), "t": int(now)}); e["a"] = int(now)
+                if cs is None:
+                    e["err"] = int(e.get("err") or 0) + 1
+                    if e["err"] >= 5: e["s"] = "dead"
+                    continue
+                e.pop("err", None)
+                if not hps:
+                    if e.get("s") != "ok": e["s"] = "none"
+                    else:
+                        e["z"] = int(e.get("z") or 0) + 1
+                        if e["z"] >= 3: e["s"] = "dead"
+                    continue
+                if not e.get("id"): e["id"] = hashlib.md5(u.encode()).hexdigest()[:8]
+                e.update(s="ok", z=0, n=len(hps)); found += len(hps); e["y"] = enq(hps, "sub:" + e["id"])
+            if len(sreg) > 600:
+                for k in sorted([k_ for k_, e in sreg.items() if e.get("s") != "ok"], key=lambda k_: sreg[k_].get("a") or 0)[:len(sreg) - 500]: sreg.pop(k, None)
             for u, hps in url_hp:
                 found += len(hps); enq(hps, "url:" + hashlib.md5(u.encode()).hexdigest()[:8])
             if len(gh) > 1500:   # köne ölüleri unut
@@ -1965,7 +2019,7 @@ def hunt_run(force_gh=False):
             nl = sum(1 for v in pool.values() if hunt_listed(v, now))
             st.update({"tg": len(jobs), "tg_new": len(new_), "ch_new": ch_new, "tm_ch": tm_hit, "gh": len(res_gh), "gh_dead": gh_dead, "found": found, "uniq": len(added),
                        "tested": len(cand), "ok": len(ok), "q": len(q), "pool": len(pool), "n": nl, "dur": int(time.time() - now), "seen": len(seen),
-                       "src": len(jobs) + len(res_gh) + len(res_url)})
+                       "src": len(jobs) + len(res_gh) + len(res_url) + len(res_sub), "subs": len(res_sub)})
             S["st"].update(st); S["_qdirty"] = True; hunt_dirty()
         hunt_save(True, True)
         RUN["hunt_list"] = True
@@ -2072,7 +2126,8 @@ def hunt_view():
         top = sorted([(int(e.get("ok") or 0), n) for n, e in ch.items() if e.get("ok")], reverse=True)[:5]
         return {"st": st, "q": len(S["q"]), "pool": len(pool), "listed": listed, "wait1": wait1, "ch": len(chs), "ch_code": sum(1 for e in chs if e.get("c")),
                 "ch_tm": sum(1 for e in chs if float(e.get("tm") or 0) >= 0.4), "tried": int(st.get("ng") or 0), "names": len(hunt_names()),
-                "gh": sum(1 for e in gh.values() if not e.get("dead")), "gh_dead": sum(1 for e in gh.values() if e.get("dead")), "top": top}
+                "gh": sum(1 for e in gh.values() if not e.get("dead")), "gh_dead": sum(1 for e in gh.values() if e.get("dead")), "top": top,
+                "subs": sum(1 for e in (S.get("subs") or {}).values() if e.get("s") == "ok")}
 
 async def hunt_loop(app):
     await asyncio.sleep(90)
@@ -6748,6 +6803,7 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
                   + f"📡 Kanallar: {hv_['ch']} ({hv_['ch_tm']} Türkmen, {hv_['ch_code']} kod paylaşan) · denenen ad: {hv_['tried']}/{hv_['names']}"
                   + (f" · son taramada {st_.get('tg_new', 0)} yeni ad, {st_.get('ch_new', 0)} yeni kanal" if st_.get("at") else "") + "\n"
                   + f"🐙 GitHub: {hv_['gh']} dosya izleniyor · {hv_['gh_dead']} dosya bırakıldı (yeni sunucu yok)\n"
+                  + f"🔗 Kanallardan alınan abonelik linkleri: {hv_.get('subs', 0)}\n"
                   + (f"⭐ En iyi kanallar: {', '.join(f'@{esc(n_)} ({k_})' for k_, n_ in hv_['top'])}\n" if hv_["top"] else "")
                   + f"Bir daha test edilmeyecek: {st_.get('seen', 0)} kod</blockquote>"
                   + ("\n".join(src_[:15]) + "\n" if src_ else "")
