@@ -3267,8 +3267,8 @@ def app_grant_days(dev, days, by):
     return kk
 
 # 1.19: derejeler — her işjeň gün 10 bal, her çagyrylan dost 50 bal; käbir derejede mugt gün
-APP_LVL = [0, 50, 120, 250, 400, 600, 850, 1150, 1500, 2000]
-APP_LVL_GIFT = {3: 1, 5: 3, 7: 5, 10: 7}
+APP_LVL = [0, 50, 120, 250, 400, 600, 850, 1150, 1500, 2000, 2700, 3500, 4500, 6000, 8000]   # 1.47: 15 dereje
+APP_LVL_GIFT = {8: 3, 9: 5, 10: 7, 11: 7, 12: 7, 13: 7, 14: 7, 15: 30}   # 1.47: sowgat — Premium günler (açar sowgady aýryldy); iň ýokary — 1 aý
 def app_dev_prem(a, dev):
     """1.47: telefonyň häzir işleýän Premium açary barmy."""
     now_ = time.time()
@@ -3319,7 +3319,7 @@ def app_lvl_check(dev, tell=False):
     old = int(u_.get("lv") or 1); top_ = max(old, int(u_.get("lgm") or 1))   # lgm: sowgat berlen iň ýokary dereje (iki gezek berilmesin)
     gift = sum(d_ for l_, d_ in APP_LVL_GIFT.items() if top_ < l_ <= lv)
     if lv != old or lv > top_: app_mut(lambda x: x.setdefault("devs", {}).setdefault(dev, {}).update({"lv": lv, "lgm": max(top_, lv)}))
-    k_ = app_grant_days(dev, gift, "lvl") if gift else None
+    k_ = app_prem_give(dev, gift, "Dereje")[0] if gift else None   # 1.47: Premium
     if tell or lv != old:
         nxt = APP_LVL[lv] if lv < len(APP_LVL) else 0
         app_send(dev, {"k": "lvl", "lv": lv, "xp": xp, "cur": APP_LVL[lv - 1], "next": nxt, "inv": inv, "up": lv > old, "days": gift, **({"key": k_} if k_ else {})})

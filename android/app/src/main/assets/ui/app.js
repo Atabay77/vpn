@@ -116,10 +116,15 @@
   let LGM = [];   // ugradylan, entek serwerden gelmedik öz Global habarlarym   // ugradylan, entek serwerden gelmedik Global tepkiler
   const isCtl = (m) => !!(m.re || m.ty || m.rd || m.dl || m.ed || m.sty);   // tepki / ýazýar / okaldy — habar däl
   // 1.20: derejeler (bot bilen deň: APP_LVL, APP_LVL_GIFT)
-  const RK_L = [0, 50, 120, 250, 400, 600, 850, 1150, 1500, 2000], RK_G = { 3: 1, 5: 3, 7: 5, 10: 7 };
-  const RK_PK = { 2: ['pk_chat'], 3: ['g', 'pk_fr3'], 4: ['pk_fr4'], 5: ['g', 'pk_sh'], 6: ['pk_fr6', 'pk_tw'], 7: ['g', 'pk_nm7', 'pk_ry'], 8: ['pk_fr8', 'pk_em'], 9: ['pk_fr9', 'pk_nm9'], 10: ['g', 'pk_fr10', 'pk_au'] };
-  const rkT = (lv) => Math.max(1, Math.min(10, Math.floor(+lv) || 1));
-  const rkNm = (t) => (t >= 10 ? 'nm10' : t >= 9 ? 'nm9' : t >= 7 ? 'nm7' : '');   // chatdaky nik
+  const RK_L = [0, 50, 120, 250, 400, 600, 850, 1150, 1500, 2000, 2700, 3500, 4500, 6000, 8000], RK_G = { 8: 3, 9: 5, 10: 7, 11: 7, 12: 7, 13: 7, 14: 7, 15: 30 };   // 1.47: 15 dereje; sowgat — Premium (açar däl)
+  const RK_PK = { 2: ['pk_chat'], 3: ['pk_fr3'], 4: ['pk_fr4'], 5: ['pk_sh'], 6: ['pk_fr6', 'pk_tw'], 7: ['pk_nm7', 'pk_ry'], 8: ['g', 'pk_fr8', 'pk_em'], 9: ['g', 'pk_fr9', 'pk_nm9'], 10: ['g', 'pk_fr10', 'pk_au'],
+    11: ['g', 'pk_fr11', 'pk_nm11'], 12: ['g', 'pk_fr12', 'pk_nm11'], 13: ['g', 'pk_fr13', 'pk_nm11'], 14: ['g', 'pk_fr14', 'pk_nm11'], 15: ['g', 'pk_fr15', 'pk_nm11'] };
+  const rkT = (lv) => Math.max(1, Math.min(15, Math.floor(+lv) || 1));
+  const rkNm = (t) => (t >= 11 ? 'nm' + t : t >= 10 ? 'nm10' : t >= 9 ? 'nm9' : t >= 7 ? 'nm7' : '');   // chatdaky nik
+  // 1.47: täze derejeleriň atlary we sowgat ýazgylary (Premium)
+  const RKX = { tk: { lv_how: 'Her gün programmany açsaňyz +10 bal (Premium — +20), her çagyran dostuňyz +50 bal. Sowgat Premium: 8-nji derejede +3 gün, 9-njy — +5 gün, 10–14-nji — +7 gün, 15-nji (iň ýokary) — +30 gün.', rk_n11: 'Serdar', rk_n12: 'Ýyldyrym', rk_n13: 'Aždarha', rk_n14: 'Gün hökümdary', rk_n15: 'Ölmez', pk_gift: '+{d} gün Premium 👑', rk_upGift: 'Gutlaýarys! Sowgat: +{d} gün Premium 👑', pk_fr11: 'Täze çarçuwa', pk_fr12: 'Ýyldyrym çarçuwasy', pk_fr13: 'Ot çarçuwasy', pk_fr14: 'Gün çarçuwasy', pk_fr15: 'Ölmez çarçuwasy', pk_nm11: 'Ýalpyldaýan nik' },
+    ru: { lv_how: 'Каждый день в программе +10 очков (Premium — +20), каждый приглашённый друг +50. Подарок Premium: на 8 уровне +3 дня, на 9 — +5, на 10–14 — +7, на 15 (высший) — +30 дней.', rk_n11: 'Сердар', rk_n12: 'Молния', rk_n13: 'Дракон', rk_n14: 'Владыка солнца', rk_n15: 'Бессмертный', pk_gift: '+{d} дн. Premium 👑', rk_upGift: 'Поздравляем! Подарок: +{d} дн. Premium 👑', pk_fr11: 'Новая рамка', pk_fr12: 'Рамка молнии', pk_fr13: 'Огненная рамка', pk_fr14: 'Солнечная рамка', pk_fr15: 'Рамка бессмертного', pk_nm11: 'Сияющий ник' },
+    tr: { lv_how: 'Her gün programı açarsanız +10 puan (Premium — +20), her davet ettiğiniz arkadaş +50 puan. Premium hediye: 8. seviyede +3 gün, 9. — +5, 10–14. — +7, 15. (en yüksek) — +30 gün.', rk_n11: 'Serdar', rk_n12: 'Yıldırım', rk_n13: 'Ejderha', rk_n14: 'Güneş Hükümdarı', rk_n15: 'Ölümsüz', pk_gift: '+{d} gün Premium 👑', rk_upGift: 'Tebrikler! Hediye: +{d} gün Premium 👑', pk_fr11: 'Yeni çerçeve', pk_fr12: 'Yıldırım çerçevesi', pk_fr13: 'Ateş çerçevesi', pk_fr14: 'Güneş çerçevesi', pk_fr15: 'Ölümsüz çerçevesi', pk_nm11: 'Parlayan takma ad' } };
   const rkNc = (t) => rkNm(t) || 'rc' + t;   // derejäniň ady
   const rkPk = (t, tx) => (RK_PK[t] || []).map((k) => ({ t: k === 'g' ? '🎁 ' + tx.pk_gift.replace('{d}', String(RK_G[t])) : tx[k], c: k === 'g' ? 'pkg' : '' }));
   function rxAgg(rows) {
@@ -295,6 +300,7 @@
     const rv0 = P.renderVals;
     P.renderVals = function () {
       const r = rv0.call(this), s = this.state, tx = r.tx, on = s.st === 'on', now = Date.now();
+      Object.assign(tx, RKX[s.lang] || RKX.tk);
       if (r.phase && document.documentElement.className !== 'ph-' + r.phase) document.documentElement.className = 'ph-' + r.phase;   // wagta görä tema
       if (INFO.ver) ['s_updS', 'i_ver'].forEach((k) => { tx[k] = String(tx[k]).replace(/1\.\d+(\.\d+)?/, INFO.ver); });
       const kexp = s.kexp; // -1 ýok, 0 çäksiz, >0 möhlet (sn)
@@ -610,9 +616,9 @@
           t: tx.dg_t, s: dg ? tx.dg_on : tx.dg_off, aria: dg ? 'true' : 'false', swCls: dg ? 'sw-on' : '', d: '0.4',
           on: () => this.confirm(dg ? tx.dg_qOff : tx.dg_qOn, dg ? tx.dg_yOff : tx.dg_yOn, () => { NB.disguise(!dg); this.setState({ disg: !dg }); this.say(dg ? tx.dg_doneOff : tx.dg_doneOn); }) })); }
       // 1.20: derejeler — baş sahypadaky düwme, profil kartoçkasy, «Derejeler» sahypasy, nyşany ýakyndan görmek
-      { const L = LS.get('lvl', null), t0 = L ? rkT(L.lv) : 1, xp = L ? +L.xp || 0 : 0, nx = t0 < 10 ? (L && L.next) || RK_L[t0] : 0;
+      { const L = LS.get('lvl', null), t0 = L ? rkT(L.lv) : 1, xp = L ? +L.xp || 0 : 0, nx = t0 < RK_L.length ? (L && L.next) || RK_L[t0] : 0;
         r.rkT = String(t0); r.rkName = tx['rk_n' + t0]; r.rkNcls = rkNc(t0); r.rkAria = tx.p_rank + ': ' + r.rkName + ' · ' + t0;
-        r.rkXpT = tx.rk_pts.replace('{x}', t0 < 10 ? xp + ' / ' + nx : String(xp));
+        r.rkXpT = tx.rk_pts.replace('{x}', t0 < RK_L.length ? xp + ' / ' + nx : String(xp));
         r.rkHeroSub = tx.rk_lv.replace('{n}', String(t0)) + ' · ' + tx.rk_pts.replace('{x}', String(xp));
         r.rkNext = t0 >= 10 ? tx.rk_max : tx.rk_left.replace('{n}', tx['rk_n' + (t0 + 1)]).replace('{x}', String(Math.max(0, nx - xp)));
         if (!L) r.lvBar = 0;
