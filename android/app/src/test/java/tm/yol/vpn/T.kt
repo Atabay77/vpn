@@ -28,7 +28,9 @@ trojan://x@1.1.1.1:1#skip
         assertEquals(listOf(true, true, false), g.map { it.game })
         assertTrue(g.all { it.ru })
         val gx = Sub.parse("ss://YWVzLTI1Ni1nY206cA==@9.9.9.9:1#🇩🇪 Germany · 🎮 PUBG Gaming Server")[0]
-        assertEquals("🇷🇺" to "Russia", gx.flag to gx.country); assertTrue(gx.game && gx.ru)
+        assertEquals("🇩🇪" to "Germany", gx.flag to gx.country); assertTrue(gx.game && gx.ru)   // 1.47: PUBG serwer öz baýdagy bilen
+        val uz = Sub.parse("ss://YWVzLTI1Ni1nY206cA==@9.9.9.8:1#🇺🇿 Uzbekistan · Tashkent")[0]
+        assertTrue(uz.game && uz.flag == "🇺🇿")   // 1.47: Özbegistan — PUBG
         assertEquals("PUBG Gaming Server 2", g[1].title)
         assertNotEquals(g[0].key, g[1].key)
         assertFalse(l.any { it.ru || it.game })

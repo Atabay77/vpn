@@ -319,6 +319,14 @@ open class Main : Activity() {
         // 1.47: köne programmadan göçmek
         @JavascriptInterface fun mig(): String = Msg.migInfo(this@Main)
         @JavascriptInterface fun migSend() { Msg.migSend(this@Main) }
+        /** 1.47: «Işlet» — GOC kody göçürilýär we köne programma «Admine ýaz» sahypasynda açylýar (ulanyjy diňe goýup iberýär). */
+        @JavascriptInterface fun migGo() = ui {
+            val c = this@Main; Msg.migSend(c)
+            runCatching { getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("GOC", Msg.migCode(c))) }
+            runCatching { startActivity(Intent(CHAT).setClassName(Msg.OLD_PKG, Msg.OLD_PKG + ".MainActivity").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+                .onFailure { runCatching { packageManager.getLaunchIntentForPackage(Msg.OLD_PKG)?.let { startActivity(it) } } }
+        }
+        @JavascriptInterface fun migSkip() { Msg.migSkip(this@Main); ui { connect() } }
         @JavascriptInterface fun delOld() { runOnUiThread { runCatching { startActivity(Intent(Intent.ACTION_DELETE, Uri.parse("package:" + Msg.OLD_PKG))) } } }
         @JavascriptInterface fun key(raw: String) = Thread { push(JSONObject().put("k", "key").put("r", checkKey(raw))) }.start()
         @JavascriptInterface fun send(json: String) { runCatching { Msg.send(this@Main, JSONObject(json)) } }
@@ -370,6 +378,7 @@ open class Main : Activity() {
 
     // ---------- bağlan ----------
     private fun connect() {
+        if (Msg.migNeed(this)) { push(JSONObject().put("k", "mig")); return }   // 1.47: ilki köne programmadan göçmek (hökmany)
         if (Upd.busy(this)) { toast(t("Täze wersiýa ýüklenýär, gutarýança garaşyň", "Идёт загрузка новой версии, подождите", "Yeni sürüm iniyor, bitene kadar bekleyin")); return }
         Upd.available(Msg.ver(this))?.let { u ->   // zorunlu güncelleme (1.44.3: salgy işlemese — birikmäge rugsat, programmany ulanyp bolsun)
             if (!(Upd.isLink(u.second) && Upd.linkFail == u.first)) { askUpdate(true); return }

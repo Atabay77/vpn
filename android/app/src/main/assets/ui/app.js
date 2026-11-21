@@ -312,26 +312,29 @@
         r.nbS = tx.nb_s.replace('{a}', hrsT(s.lang, SESS)).replace('{b}', hrsT(s.lang, SESS + 30));
         const hide = () => { LS.set('nbAt', Date.now()); this.setState({ nbShow: false }); };
         r.nbGo = () => { hide(); this.setState({ page: 'profile' }); }; r.nbX = hide; }
-      // 1.47: köne programmadan göçmek (Premium, nik, dereje) — köne programmada «Admine ýaz» bölümine GOC- koduny ýazmaly
+      // 1.47: köne programmadan göçmek — birikmekden öň hökmany «Işlet» penjiresi (köne programma «Admine ýaz»-da açylýar, kod göçürilen)
       { let M = this._mig; if (!M) { try { M = this._mig = J(NB.mig(), {}); } catch (e) { M = this._mig = {}; } }
         if (M.old && !M.done && !this._migSent) { this._migSent = true; try { NB.migSend(); } catch (e) {} }
-        const L = ({ tk: ['Köne programmadan geçiriň', 'Premium, nik we dereje geçer: köne programmany açyň → «Admine ýaz» → şu kody ýazyň: ', 'Göçür', '✅ Geçirildi', 'Indi köne programmany pozup bilersiňiz', 'Poz', 'Kod göçürildi'],
-          ru: ['Перенесите из старой программы', 'Premium, ник и уровень перейдут: откройте старую программу → «Написать админу» → напишите этот код: ', 'Копировать', '✅ Перенесено', 'Теперь старую программу можно удалить', 'Удалить', 'Код скопирован'],
-          tr: ['Eski programdan aktarın', 'Premium, takma ad ve seviye geçer: eski programı açın → «Admine yaz» → bu kodu yazın: ', 'Kopyala', '✅ Aktarıldı', 'Artık eski programı silebilirsiniz', 'Sil', 'Kod kopyalandı'] })[s.lang] || [];
-        const T = (i) => L[i] || ['Köne programmadan geçiriň', 'Köne programmany açyň → «Admine ýaz» → şu kody ýazyň: ', 'Göçür', '✅ Geçirildi', 'Indi köne programmany pozup bilersiňiz', 'Poz', 'Kod göçürildi'][i];
-        const dn = !!(M.done || s.migOk);
-        r.migOn = s.page === 'main' && !s.menu && !!M.old && !s.migX;
-        r.migT = dn ? T(3) : T(0); r.migS = dn ? T(4) : T(1) + (M.c || ''); r.migB = dn ? T(5) : T(2);
-        r.migGo = () => { if (dn) { try { NB.delOld(); } catch (e) {} this._mig = null; setTimeout(() => { this._mig = null; this.setState({ migTick: Date.now() }); }, 5000); } else { try { NB.copy(M.c || ''); } catch (e) {} this.say(T(6)); } };
-        r.migX = () => this.setState({ migX: true }); }
+        const L = ({ ru: ['Запустите программу', 'Новая программа переносит ваш Premium, ник и уровень из старой. Нажмите «Запустить» — откроется старая программа.', 'Там нажмите на поле ввода → «Вставить» → отправьте ➤. Затем вернитесь сюда.', 'Запустить', 'Ожидание кода из старой программы…', 'Открыть старую программу', 'Продолжить без переноса', '✅ Перенесено! Подключаемся…', 'Удалить старую программу', 'Закрыть'],
+          tr: ['Programı çalıştırın', 'Yeni program eski programdaki Premium, takma ad ve seviyenizi alır. «Çalıştır»a basın — eski program açılır.', 'Orada yazı alanına basın → «Yapıştır» → gönderin ➤. Sonra buraya dönün.', 'Çalıştır', 'Eski programdan kod bekleniyor…', 'Eski programı aç', 'Aktarmadan devam et', '✅ Aktarıldı! Bağlanılıyor…', 'Eski programı sil', 'Kapat'] })[s.lang]
+          || ['Programmany işlediň', 'Täze programma köne programmadaky Premium, nik we derejäňizi alýar. «Işlet» düwmesine basyň — köne programma açylar.', 'Şol ýerde ýazuw ýerine basyň → «Goý / Вставить» → iberiň ➤. Soň şu ýere gaýdyp geliň.', 'Işlet', 'Köne programmadan kod garaşylýar…', 'Köne programmany aç', 'Geçirmezden dowam et', '✅ Geçirildi! Birigýär…', 'Köne programmany poz', 'Ýap'];
+        const stp = s.migStep || 0;
+        r.mgOn = !!s.migGate; r.mgT = L[0]; r.mgS1 = L[1]; r.mgS2 = L[2];
+        r.mg0 = stp === 0; r.mg1 = stp === 1; r.mg2 = stp === 2;
+        r.mgGoT = stp === 0 ? L[3] : L[5]; r.mgWait = L[4]; r.mgCode = M.c || ''; r.mgOk = L[7]; r.mgDelT = L[8]; r.mgXT = L[9];
+        r.mgSkipOn = stp === 1 && Date.now() - (s.migAt || 0) > 180000; r.mgSkipT = L[6];   // 3 minutdan soň (bot jogap bermese — programma ulanylmaz ýagdaýda galmasyn)
+        r.mgGo = () => { try { NB.migGo(); } catch (e) {} this.setState({ migStep: 1, migAt: s.migAt || Date.now() }); };
+        r.mgSkip = () => { this.setState({ migGate: false }); try { NB.migSkip(); } catch (e) {} };
+        r.mgDel = () => { this.setState({ migGate: false }); try { NB.delOld(); } catch (e) {} };
+        r.mgX = () => this.setState({ migGate: false }); }
       // 1.47: baş sahypa — PUBG düwmesi (hemmä) we Premium / Free (Premium ulanyjylara); sazlama NB.select / NB.pubg arkaly
       { const PRm = !!INFO.prem, gN = SV.filter((x) => x.game && !x.lock).length;
         const L2 = ({ ru: ['Сейчас нет сервера PUBG', 'PUBG — только в Premium'], tr: ['Şu anda PUBG sunucusu yok', 'PUBG — sadece Premium’da'] })[s.lang] || ['Häzir PUBG serwer ýok', 'PUBG — diňe Premium-da'];
         r.modeOn = s.page === 'main' && !s.menu;
-        r.pgCls = s.pubg ? 'mtg mtg-on' : 'mtg'; r.pgT = '🎮 PUBG' + (s.pubg ? ' ✓' : '');
+        r.pgCls = s.pubg ? 'mpg mpg-on tap' : 'mpg tap';
         r.pgGo = () => { const on = !s.pubg; if (on && !gN) { this.say('⚠️ ' + (PRm ? L2[0] : L2[1])); return; } try { NB.pubg(on); } catch (e) {} this.setState({ pubg: on }); };
         r.pmOn = PRm;
-        r.pmCls = s.pick < 0 && s.autoP ? 'mtg mtg-on' : 'mtg'; r.frCls = s.pick < 0 && !s.autoP ? 'mtg mtg-on' : 'mtg';
+        r.pmCls = s.pick < 0 && s.autoP ? 'on' : ''; r.frCls = s.pick < 0 && !s.autoP ? 'on' : '';
         r.pmGo = () => this.setState({ pick: -1, autoP: true }); r.frGo = () => this.setState({ pick: -1, autoP: false }); }
       r.showUpd = !!s.upd && !s.menu;
       r.updTxt = s.dl >= 0 ? tx.u_dl.replace('{p}', String(s.dl)) : 'Türkmen VPN ' + s.upd;
@@ -1447,6 +1450,8 @@
       LS.set('stViews', SV); up.gTick = (s.gTick || 0) + 1;
     } else if (e.k === 'probe') {   // 1.46
       up.probeRun = false; C.say(e.n < 0 ? '⚠️ ' + tx.pb_none : tx.pb_done.replace('{n}', String(e.n)).replace('{ok}', String(e.ok)));
+    } else if (e.k === 'mig') {   // 1.47: birikmek isledi — ilki göçmek
+      up.migGate = true; if (!s.migStep || s.migStep === 2) up.migStep = 0;
     } else if (e.k === 'fb') {   // 1.47: PUBG / Premium-da işleýän kod ýok — adaty (mugt) koda birikdirildi, düwme özi öçdi
       C.say('⚠️ ' + (e.w === 'pubg' ? ({ ru: 'Серверы PUBG сейчас не работают — подключено к обычному', tr: 'PUBG sunucuları şu anda çalışmıyor — normal sunucuya bağlandı' }[s.lang] || 'PUBG serwerleri häzir işlemeýär — adaty serwere birikdirildi')
         : ({ ru: 'Коды Premium сейчас обновляются — подключено к бесплатному', tr: 'Premium kodları şu anda yenileniyor — ücretsiz koda bağlandı' }[s.lang] || 'Premium kodlar häzir täzelenýär — mugt koda birikdirildi')));
@@ -1532,9 +1537,10 @@
         if (m.invites != null) up.invites = m.invites;
         C.party(m.why === 'gift' ? tx.gift_got : m.why === 'ref' ? tx.ref_got.replace('{d}', String(m.days || 1)) : m.why === 'week' ? tx.wk_won.replace('{p}', String(m.place || 1)).replace('{d}', String(m.days || 1))
           : m.why === 'kgift' ? tx.gf_got.replace('{n}', m.from || '?').replace('{d}', String(m.days || 1)) : tx.k_ext);
-      } else if (m.k === 'migok') {   // 1.47: köne programmadan göçürildi
-        C._mig = null; up.migOk = true; up.migX = false; if (m.n) { C.meName = m.n; LS.set('nick', m.n); }
-        C.party('✅ ' + ({ ru: 'Перенесено из старой программы', tr: 'Eski programdan aktarıldı' }[s.lang] || 'Köne programmadan geçirildi'));
+      } else if (m.k === 'migok') {   // 1.47: köne programmadan göçürildi — penjire «Geçirildi», özi birigýär
+        C._mig = null; if (m.n) { C.meName = m.n; LS.set('nick', m.n); }
+        if (s.migGate) { up.migStep = 2; setTimeout(() => { try { NB.connect(); } catch (e2) {} }, 600); }
+        else C.party('✅ ' + ({ ru: 'Перенесено из старой программы', tr: 'Eski programdan aktarıldı' }[s.lang] || 'Köne programmadan geçirildi'));
         try { NB.refresh(); } catch (e2) {} setTimeout(() => { INFO = J(NB.info(), INFO); C.setState({ payTick: Date.now() }); }, 4000);
       } else if (m.k === 'lvl') {
         LS.set('lvl', { lv: m.lv, xp: m.xp, cur: m.cur, next: m.next, inv: m.inv }); up.payTick = t; if (m.inv != null) up.invites = m.inv;

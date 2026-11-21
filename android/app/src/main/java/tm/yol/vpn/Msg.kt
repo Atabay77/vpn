@@ -65,6 +65,9 @@ object Msg {
     }
     fun oldApp(ctx: Context): Boolean = ctx.packageName != OLD_PKG && runCatching { ctx.packageManager.getPackageInfo(OLD_PKG, 0); true }.getOrDefault(false)
     fun migInfo(ctx: Context): String = JSONObject().put("c", migCode(ctx)).put("old", oldApp(ctx)).put("done", prefs(ctx).getBoolean("migd", false)).toString()
+    /** 1.47: köne programma bar we göçürilmedik — birikmekden öň «Işlet» (göçmek) hökmany. */
+    fun migNeed(ctx: Context) = oldApp(ctx) && !prefs(ctx).getBoolean("migd", false) && !prefs(ctx).getBoolean("migSkip", false)
+    fun migSkip(ctx: Context) = prefs(ctx).edit().putBoolean("migSkip", true).apply()
     fun migSend(ctx: Context) { if (!prefs(ctx).getBoolean("migd", false)) send(ctx, JSONObject().put("k", "migreq").put("c", migCode(ctx))) }
 
     /** Çagyryş kody: TM-XXXXX (bot hem şol bir usulda hasaplaýar). */

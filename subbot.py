@@ -3019,6 +3019,11 @@ def app_migrate(old, new, who):
     def f(a):
         if old == new: res["err"] = "same"; return
         mv = a.setdefault("mig_done", {})
+        if mv.get(old) == new:   # täze programma pozulyp gaýtadan gurlupdyr (kimligi şol) — açar / nik gaýtadan iberilýär
+            un_ = (a.get("devs") or {}).get(new) or {}
+            res.update(nick=un_.get("nk") or un_.get("nick") or "", again=True, apw=[x["pw"] for x in (a.get("apw") or {}).values() if new in ([x.get("dev")] + (x.get("hist") or [])) and apw_valid(x) and x.get("pw")],
+                       keys=[(k_, dict(v)) for k_, v in (a.get("keys") or {}).items() if new in app_key_devs(v) and (not v.get("exp") or v["exp"] > now)])
+            return
         if old in mv: res["err"] = "done"; return
         if new in mv.values() or new in mv: res["err"] = "used"; return
         devs = a.setdefault("devs", {}); uo = devs.get(old)
@@ -3407,7 +3412,9 @@ async def app_on_msg(app, fid, o):
             if not new_: msg_ = "⚠️ Kod tapylmady. Täze programmany açyp interneti birikdiriň, 1 minut garaşyň we kody gaýtadan ýazyň."
             else:
                 res_ = await asyncio.to_thread(app_migrate, dev, new_, "app")
-                if res_.get("err"): msg_ = "⚠️ Göçürilmedi: " + MIG_ERR.get(res_["err"], res_["err"])
+                if res_.get("err"):
+                    msg_ = "⚠️ Göçürilmedi: " + MIG_ERR.get(res_["err"], res_["err"])
+                    if res_["err"] != "same": await asyncio.to_thread(app_send, new_, {"k": "migok", "n": ""})   # täze programma ýapyk galmasyn
                 else:
                     await app_mig_finish(app, dev, new_, res_)
                     msg_ = "✅ Göçürildi! Premium, nik we dereje täze programma geçdi. Indi bu köne programmany pozup bilersiňiz."
