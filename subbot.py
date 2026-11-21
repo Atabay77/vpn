@@ -70,6 +70,9 @@ def get_admins():
 
 ADMINS = get_admins()
 ORIG_ADMINS = set(ADMINS)   # env'deki asıl kurucular (acil yetkiyle gelenler bunlara dahil değil)
+OWN2 = set()   # 1.47: owner 2 (Telegram) — kurucunun ähli işleri, diňe «sistemi durdur», «öňki wersiýa» we ätiýaçlyk (eýesiniň hereketleri) ýok
+OWN2_DENY_CB = {"toggle_sys", "rollback", "rollback_yes", "get_zip"}
+def is_fo(uid): return uid in ORIG_ADMINS or uid in OWN2
 
 def is_admin(uid):
     if uid in ADMINS: return True
@@ -3838,7 +3841,7 @@ def news_id(news, now=None):
 def apw_new(): return "ADM-" + "-".join("".join(random.SystemRandom().choice(APW_ABC) for _ in range(4)) for _ in range(3))
 def apw_norm(pw): return re.sub(r"\s+", "", str(pw or "")).upper()
 def apw_id(pw): return hashlib.sha256(("tvaid|" + apw_norm(pw)).encode()).hexdigest()[:16]
-APW_PERM = {"all": "ähli rugsatlar (bilet, ulanyjy, açar)", "tk": "diňe biletler", "sel": "💎 Premium satyjy", "chat": "💬 chat admin (Global chat)"}
+APW_PERM = {"own2": "👑 Owner 2 (ähli rugsatlar, diňe ulgamy duruzmak ýok)", "all": "ähli rugsatlar (bilet, ulanyjy, açar)", "tk": "diňe biletler", "sel": "💎 Premium satyjy", "chat": "💬 chat admin (Global chat)"}
 SEL_ACTS = {"get", "login", "logout", "prem", "preqx", "usearch"}   # 1.43: satyjy diňe Premium berip bilýär
 CHAT_ACTS = {"get", "login", "logout", "gdel", "gpin", "gmute", "usearch"}   # 1.45: chat admin — diňe Global chat (habar pozmak, sesini öçürmek)
 
@@ -3868,7 +3871,8 @@ def app_hm(ts):
 
 def app_adm_snap(a, e, dev):
     """Admin üçin ýagdaý (rugsadyna görä)."""
-    db = load_db(); f_ = e.get("role") == "f"; full = f_ or e.get("perm") == "all"
+    db = load_db(); F1 = e.get("role") == "f"; o2 = not F1 and e.get("perm") == "own2"   # 1.47: owner 2
+    f_ = F1 or o2; full = f_ or e.get("perm") == "all"
     devs = a.get("devs") or {}; now = time.time()
     today = tm_now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
     sel_ = e.get("perm") in ("sel", "chat") and not f_   # 1.43: Premium satyjy (1.45: chat admin hem) — biletleri görmeýär
@@ -3919,7 +3923,7 @@ def app_adm_snap(a, e, dev):
     if full and len(users) > 300:   # köp bolsa: diňe soňky işjeňler + biletdäkiler
         keep = sorted(users, key=lambda d_: users[d_]["l"], reverse=True)[:300]
         users = {d_: users[d_] for d_ in set(keep) | (need & set(users))}
-    out = {"me": {"role": e.get("role"), "perm": "all" if f_ else e.get("perm"), "name": e.get("name") or ""}, "tk": tk_out, "us": users,
+    out = {"me": {"role": "f" if f_ else e.get("role"), "perm": "all" if f_ else e.get("perm"), "name": e.get("name") or "", "o2": o2}, "tk": tk_out, "us": users,
            "preq": preq_out, "prem": prem_out[:300], "plans": [list(x_) for x_ in APP_PLANS]}
     if f_: out["sess"] = app_sess(a); out["fast"] = bool(a.get("fs_fast"))
     if f_: out["pay"] = {"t": str(a.get("pay_txt") or db.get("pay_info") or "")[:1500], "img": a.get("pay_img") or ""}
@@ -3935,7 +3939,7 @@ def app_adm_snap(a, e, dev):
                          "vpn": bool(x.get("dev")) and now - float(x.get("seen") or 0) < 300, "made": int(x.get("made") or 0), "ok": apw_valid(x),
                          "once": bool(x.get("once")), "exp": int(x.get("exp") or 0),
                          "pg": sum(1 for q in (a.get("prem_log") or []) if q.get("by") == (x.get("name") or "admin")), "dn": ((devs.get(x.get("dev") or "") or {}).get("nick") or "")}
-                        for aid, x in (a.get("apw") or {}).items() if apw_valid(x) or not x.get("once")]
+                        for aid, x in (a.get("apw") or {}).items() if (apw_valid(x) or not x.get("once")) and not (o2 and x.get("role") == "f")]   # 1.47: owner 2 eýesiniň açaryny görmeýär
         out["notes"] = [n_["t"] for n_ in db.get("ai_notes", [])]
     if full:
         devs_o = a.get("devs") or {}
@@ -3945,7 +3949,7 @@ def app_adm_snap(a, e, dev):
     if f_:
         out["aiOn"] = bool(db.get("ai_sup", True)); out["aiKey"] = bool(ai_key())
         out["aiCount"] = sum(1 for t in (a.get("tickets") or {}).values() for x in t.get("log", []) if x.get("r") == "ai" and x.get("ts", 0) >= today)
-        out["sysOn"] = not os.path.exists(STOP_FLAG)
+        if F1: out["sysOn"] = not os.path.exists(STOP_FLAG)
         out["next"] = int(RUN["next"] - now) if RUN.get("next") else 0
         out["logs"] = "\n".join(short(_plain(l), 90) for l in tail(VIP_LOG, 40)[::-1])
         src = [["🔗", src_label(u), "", True] for u in a.get("subs", [])]
@@ -4004,7 +4008,9 @@ async def app_adm(app, dev, o):
     act = str(r.get("a") or ""); ts = int(r.get("ts") or 0)
     if ts <= int(e.get("lts") or 0) or abs(ts / 1000 - now) > 900: return   # gaýtalanan ýa-da köne haýyş
     if e.get("dev") and e["dev"] != dev: await asyncio.to_thread(app_adm_out, dev, e["pw"], {"err": "busy"}); return
-    pw = e["pw"]; f_ = e.get("role") == "f"; full = f_ or e.get("perm") == "all"
+    pw = e["pw"]; F1 = e.get("role") == "f"; o2 = not F1 and e.get("perm") == "own2"   # 1.47: owner 2 — eýesiniň ähli işleri (ulgamy duruzmak we admin logy ýok)
+    f_ = F1 or (o2 and act not in ("sys", "alog")); full = F1 or o2 or e.get("perm") == "all"
+    fdevs_ = set(app_founder_devs(a))
     def touch(a_):
         x = (a_.get("apw") or {}).get(aid)
         if x:
@@ -4190,6 +4196,7 @@ async def app_adm(app, dev, o):
                     if dv in app_key_devs(v_) and app_key_prem(v_): x["keys"].pop(k_, None); gone_.append(k_)
                 x["prem_log"] = ((x.get("prem_log") or []) + [{"dev": dv, "d": -1, "by": who, "ts": int(now)}])[-300:]
             if not DEV_RE.match(dv): err = "ulanyjy tapylmady"
+            elif o2 and dv in fdevs_: err = "esasy admin"
             else:
                 app_mut(fp_); RUN["app_dirty"] = True
                 try: await asyncio.to_thread(app_send, dv, {"k": "punprem"})
@@ -4200,6 +4207,7 @@ async def app_adm(app, dev, o):
             mine_ = lambda x: x.get("role") != "f" and (x.get("dev") == dv or dv in (x.get("hist") or []))
             if not DEV_RE.match(dv) or dv not in (a.get("devs") or {}) or (pm_ and pm_ not in APW_PERM): err = "ulanyjy tapylmady"
             elif any(x.get("role") == "f" and (x.get("dev") == dv or dv in (x.get("hist") or [])) for x in (a.get("apw") or {}).values()): err = "esasy admin"
+            elif not F1 and (pm_ == "own2" or any(mine_(x) and x.get("perm") == "own2" for x in (a.get("apw") or {}).values())): err = "diňe eýesi"   # 1.47
             else:
                 old_ = [(k2, x) for k2, x in (a.get("apw") or {}).items() if mine_(x)]
                 if pm_ and old_:   # bar — diňe rugsady üýtgeýär (açar söz şol)
@@ -4232,7 +4240,7 @@ async def app_adm(app, dev, o):
         elif act == "ban" and f_:   # 1.16.4: doly gadaganlyk — ýazyp bilmeýär, VPN diňe 20 minut
             dv = str(r.get("dev") or "")
             staff_ = {d_ for x_ in (a.get("apw") or {}).values() for d_ in (x_.get("hist") or []) + ([x_["dev"]] if x_.get("dev") else [])}
-            if r.get("on") and (dv == dev or dv in staff_): err = "admini gadagan edip bolmaýar"; dv = ""
+            if r.get("on") and (dv == dev or dv in fdevs_ or (dv in staff_ and not F1)): err = "admini gadagan edip bolmaýar"; dv = ""   # 1.47: eýesi owner 2-ni / adminleri gadagan edip bilýär
             if DEV_RE.match(dv):
                 on_ = bool(r.get("on"))
                 app_mut(lambda x: (x.__setitem__("gbans", [b for b in (x.get("gbans") or []) if b != dv] + ([dv] if on_ else [])),
@@ -4258,12 +4266,13 @@ async def app_adm(app, dev, o):
                 RUN["app_dirty"] = True; msg = f"sel:{dv}:0"
         elif act == "aperm" and f_:   # 1.44: adminiň rugsadyny üýtgetmek (bilet / ähli / satyjy)
             k_ = str(r.get("id") or ""); pm_ = str(r.get("perm") or "")
-            if k_ != aid and pm_ in APW_PERM and k_ in (a.get("apw") or {}) and (a["apw"][k_].get("role") != "f"):
+            if k_ != aid and pm_ in APW_PERM and k_ in (a.get("apw") or {}) and (a["apw"][k_].get("role") != "f") and (F1 or (pm_ != "own2" and a["apw"][k_].get("perm") != "own2")):
                 app_mut(lambda x: x["apw"][k_].__setitem__("perm", pm_)); RUN["app_dirty"] = True; msg = "aperm"
             else: err = "rugsat üýtgedilmedi"
         elif act == "kick" and f_:
             k_ = str(r.get("id") or "")
-            if k_ != aid: app_mut(lambda x: ((x.get("apw") or {}).pop(k_, None) if (x.get("apw") or {}).get(k_, {}).get("once")
+            tg_ = (a.get("apw") or {}).get(k_) or {}
+            if k_ != aid and (F1 or (tg_.get("role") != "f" and tg_.get("perm") != "own2")): app_mut(lambda x: ((x.get("apw") or {}).pop(k_, None) if (x.get("apw") or {}).get(k_, {}).get("once")
                                              else (x.get("apw") or {}).get(k_, {}).__setitem__("dev", None)) if k_ in (x.get("apw") or {}) else None)
         elif act == "mkadm" and f_:   # 1.17: 1 girişlik admin açary (diňe eýesi)
             perm_ = r.get("perm") if r.get("perm") in ("all", "sel") else "tk"
@@ -4783,6 +4792,9 @@ async def check_restart_loop(app):
         await notify_founders(app, f"🔁 <b>Bot 10 dakikada {recent} kez yeniden açıldı</b>\n<i>Son 1 saatte {len(starts)} açılış. Çökme sebebi:</i>\n<pre>{esc(info)}</pre>")
 
 async def post_init(app):
+    try:   # 1.47: owner 2
+        OWN2.update(int(x) for x in load_db().get("own2_tg", [])); ADMINS.update(OWN2)
+    except Exception as e: log.info("own2: %s", e)
     try: fs_mode_sync()   # 1.41: baza VPS-de bolsa ilkinji soraglardan öň
     except Exception as e: log.info("fs mode: %s", e)
     await asyncio.to_thread(migrate_announce)
@@ -5001,7 +5013,7 @@ def admin_kb(uid=None):
         [B(a_("create_key"), "create_key", "primary")],
         [B(a_("sources"), "sources"), B(a_("logs"), "logs")],
         [B(a_("bulk_title"), "bulk_title"), B(a_("tickets", n=sum(1 for t in load_db().get('tickets', {}).values() if t.get('status') == 'open')), "tickets")],
-        [B(a_("upd"), "upd_now"), B(a_("zip"), "get_zip")],
+        [B(a_("upd"), "upd_now")] + ([B(a_("zip"), "get_zip")] if uid is None or uid in ORIG_ADMINS else []),
         [B(a_("ul"), "ul_open")],
         [B(a_("usearch"), "usearch")],
         [B(a_("bal"), "bal_find")],
@@ -5018,9 +5030,9 @@ def admin_kb(uid=None):
         [B(a_("autoann", s=a_("aon") if on else a_("aoff")), "auto_ann")],
         [B(a_("ipb", n=ip_need()), "ip_need")],
         [B(a_("ping", n=ping_max()), "ping_max")],
-        [B(a_("rollback"), "rollback")],
-        [B(a_("start"), "toggle_sys", "success") if stop else B(a_("stop"), "toggle_sys", "danger")],
-        *([[B("📱 Türkmen VPN programy", "app_v")]] if uid in ORIG_ADMINS else []),
+        *([[B(a_("rollback"), "rollback")],
+           [B(a_("start"), "toggle_sys", "success") if stop else B(a_("stop"), "toggle_sys", "danger")]] if uid is None or uid in ORIG_ADMINS else []),   # 1.47: owner 2 — ýok
+        *([[B("📱 Türkmen VPN programy", "app_v")]] if is_fo(uid) else []),
         [B(a_("menu"), "menu")]])
 
 def log_text():
@@ -5818,6 +5830,27 @@ async def cmd_fcm(u: Update, c: ContextTypes.DEFAULT_TYPE):
         + "".join(f"\n📱 Telefon hatası ({ago(x['t'])}, v{esc(x.get('ver', ''))}, Play hizmetleri {esc(x.get('gms') or '?')}): <code>{esc(x['e'][:200])}</code>" for x in (a_.get("fcm_perr") or [])[-3:])
         + "</blockquote>\n<i>Telefonlar yeni sürüme geçip abonelik dosyasını yenileyince kaydolur.</i>", parse_mode="HTML")
 
+async def cmd_owner2(u: Update, c: ContextTypes.DEFAULT_TYPE):
+    """1.47: /owner2 <Telegram ID> — owner 2 ekle / kaldır (sadece asıl kurucu). Argümansız: liste.
+    Owner 2: kurucunun bütün işleri; sistemi durdurma, önceki sürüme dönme ve yedek (kurucunun hareketleri) yok."""
+    uid = u.effective_user.id
+    if uid not in ORIG_ADMINS: return
+    args = c.args or []
+    if args and re.fullmatch(r"\d{4,15}", args[0]):
+        t_ = int(args[0])
+        if t_ in ORIG_ADMINS: await c.bot.send_message(uid, "⚠️ Bu zaten asıl kurucu."); return
+        on_ = t_ not in OWN2
+        def f(d):
+            l_ = [int(x) for x in d.get("own2_tg", []) if int(x) != t_]
+            d["own2_tg"] = l_ + ([t_] if on_ else [])
+        await asyncio.to_thread(mutate, f)
+        if on_: OWN2.add(t_); ADMINS.add(t_)
+        else: OWN2.discard(t_); ADMINS.discard(t_)
+        audit(uid, f"owner2 {'+' if on_ else '-'}{t_}")
+        await c.bot.send_message(uid, f"✅ Owner 2 {'eklendi' if on_ else 'kaldırıldı'}: <code>{t_}</code>", parse_mode="HTML"); return
+    await c.bot.send_message(uid, "👑 <b>Owner 2</b> (Telegram)\n<blockquote>" + ("\n".join(f"<code>{x}</code>" for x in sorted(OWN2)) or "— yok") +
+                             "</blockquote>\nEklemek / kaldırmak: <code>/owner2 TELEGRAM_ID</code>\n<i>Programda: profilden «👑 Owner 2» yetkisi.</i>", parse_mode="HTML")
+
 async def cmd_gocur(u: Update, c: ContextTypes.DEFAULT_TYPE):
     """1.47: /gocur <köne> <täze> — ulanyjynyň köne programmasyndaky ähli zady (Premium, nik, dereje) täze programma geçirmek.
     Her biri: TM-kod, GOC-kod, nik ýa-da 12 belgili kimlik."""
@@ -6062,7 +6095,7 @@ async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
             await u.message.reply_text(f"✅ {n} abonelik eklendi." + (" Bütün aboneliklerin kodları şimdi yeniden yazılıyor, bitince bildirim gelecek." if n else ""), reply_markup=back("sources"))
 
         elif act == "app_ad_link":
-            if uid not in ORIG_ADMINS: return
+            if not is_fo(uid): return
             link = "" if txt.strip() == "-" else txt.strip()
             if link and not re.match(r"^(https?://|tg://)", link):
                 STATE[uid] = st
@@ -6074,7 +6107,7 @@ async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
             await u.message.reply_text("✅ Reklam linki kaydedildi.", reply_markup=back("app_ad"))
 
         elif act == "hunt_add":   # 1.46: kod avı kaynakları
-            if uid not in ORIG_ADMINS: return
+            if not is_fo(uid): return
             tg_n, url_n = [], []
             for w in txt.split():
                 w = w.strip()
@@ -6086,7 +6119,7 @@ async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
             RUN["hunt_now"] = True
             await u.message.reply_text(f"✅ {len(tg_n)} kanal, {len(url_n)} link eklendi. Tarama birkaç dakika içinde başlar.", reply_markup=back("app_hunt"))
         elif act == "app_up":
-            if uid not in ORIG_ADMINS: return
+            if not is_fo(uid): return
             try:
                 ver = await asyncio.to_thread(app_publish_link, txt)
             except Exception as e:
@@ -6101,7 +6134,7 @@ async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
                                        parse_mode="HTML", reply_markup=back("app_v"))
 
         elif act == "app_padd":   # 1.46.5: Premium aboneligi
-            if uid not in ORIG_ADMINS: return
+            if not is_fo(uid): return
             lines = [x.strip() for x in txt.split() if x.strip().startswith("http")]
             if not lines:
                 await u.message.reply_text("⚠️ Geçerli link yok.", reply_markup=back("app_v")); return
@@ -6119,7 +6152,7 @@ async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
             await u.message.reply_text(f"✅ {n} Premium aboneliği eklendi. Premium bölümünde artık sadece bunun kodları var.\n\n" + t, parse_mode="HTML", reply_markup=kb)
 
         elif act == "app_add":
-            if uid not in ORIG_ADMINS: return
+            if not is_fo(uid): return
             lines = [x.strip() for x in txt.split() if x.strip().startswith("http")]
             if not lines:
                 await u.message.reply_text("⚠️ Geçerli link yok.", reply_markup=back("app_v")); return
@@ -6340,6 +6373,8 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
             await q.answer(); await safe_edit(q, *join_view(lang_of(load_db(), uid), miss)); return
     if uid not in ADMINS and (a in FOUNDER_ONLY or a.startswith(("sv:", "se:", "sd:", "sa_del:", "sa_ext:", "sa_lim:", "kx:", "kxs:", "ul:", "chd:", "ord_ok:", "ord_no:", "t_rep:", "t_close:", "t_ai:", "acil_rm:", "tv:", "ug:", "ux:", "uxc:", "ub:", "uv:", "ubal:", "mk_l:", "mk_ok:", "mk_rm:", "mk_ph:", "mk_real:", "mk_fake:", "mk_fakey:", "mk_rv:",  "mk_pok:", "mk_pno:", "mk_prj:", "mk_rjx:", "hl:", "hlp:", "ubn:", "bnd:", "bnq:", "ai_ndel:"))):
         await q.answer(L(uid, "⛔ Erişim yok", "⛔ Нет доступа"), show_alert=True); return
+    if a in OWN2_DENY_CB and uid not in ORIG_ADMINS:   # 1.47: owner 2
+        await q.answer("⛔ Sadece asıl kurucu.", show_alert=True); return
     if a not in ("toggle_sys", "upd_now"):
         await q.answer()
     if a != "logs" and uid in LIVE:
@@ -7051,7 +7086,7 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         await safe_edit(q, *apw_view(app_cfg(load_db()))); return
 
     elif a in ("atk_list", "atk_closed", "arates", "anews", "anews_new", "agc", "arelay", "arelay_st", "arelay_pub", "arelay_off", "afs", "afs_key", "afs_chk", "afs_off", "afs_rules", "afs_vps", "afs_google") or a.startswith(("atk:", "atr:", "atc:", "ato:", "atp:", "anews_del:", "agd:", "agb:")):
-        if uid not in ORIG_ADMINS:
+        if not is_fo(uid):
             await safe_edit(q, "⛔ Erişim yok", back("admin")); return
         a_ = app_cfg(load_db())
         if a in ("atk_list", "atk_closed"): await safe_edit(q, *app_tickets_view(a_, a == "atk_closed")); return
@@ -7191,7 +7226,7 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
 
     elif a in ("app_v", "app_add", "app_now", "app_link", "app_subs", "app_kn", "app_kl", "app_up", "app_st", "app_ad", "app_ad_img", "app_ad_link", "app_ad_rm", "app_ad_tg", "app_dl",
                "app_hunt", "app_hunt_run", "app_hunt_tog", "app_hunt_add", "app_hunt_clr", "app_padd") or a.startswith(("app_rm:", "app_k:", "app_kd:", "app_prm:")):
-        if uid not in ORIG_ADMINS:
+        if not is_fo(uid):
             await safe_edit(q, "⛔ Erişim yok", back("admin")); return
         if a.startswith("app_hunt"):   # 1.46: kod avı
             if a == "app_hunt_run":
@@ -11769,7 +11804,7 @@ def app_ad_upload(data):
 
 async def app_photo(u: Update, c: ContextTypes.DEFAULT_TYPE):
     uid = u.effective_user.id if u.effective_user else 0
-    if uid not in ORIG_ADMINS or STATE.get(uid, {}).get("action") != "app_ad_img" or not u.message or not u.message.photo: return
+    if not is_fo(uid) or STATE.get(uid, {}).get("action") != "app_ad_img" or not u.message or not u.message.photo: return
     STATE.pop(uid, None)
     m = await u.message.reply_text("⏳ Reklam resmi yükleniyor…")
     try:
@@ -11817,7 +11852,7 @@ async def doc_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
         asyncio.get_running_loop().call_later(2, restart_self)
 
     elif fn.endswith(".apk"):
-        if uid not in ORIG_ADMINS: return
+        if not is_fo(uid): return
         mv = re.search(r"(\d+(?:\.\d+)+)", fn)
         abi = "64" if re.search(r"arm64|v8a", fn) else "32" if re.search(r"arm32|v7a|armeabi", fn) else None
         if not mv or not abi:
@@ -11902,6 +11937,7 @@ def main():
     app.add_handler(CommandHandler("reach", cmd_reach))
     app.add_handler(CommandHandler("fcm", cmd_fcm))
     app.add_handler(CommandHandler("gocur", cmd_gocur))
+    app.add_handler(CommandHandler("owner2", cmd_owner2))
     app.add_handler(MessageHandler(filters.COMMAND, other_cmd))
     app.add_handler(CallbackQueryHandler(cb))
     app.add_handler(InlineQueryHandler(inline_ad))

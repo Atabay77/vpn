@@ -312,6 +312,7 @@
         r.nbS = tx.nb_s.replace('{a}', hrsT(s.lang, SESS)).replace('{b}', hrsT(s.lang, SESS + 30));
         const hide = () => { LS.set('nbAt', Date.now()); this.setState({ nbShow: false }); };
         r.nbGo = () => { hide(); this.setState({ page: 'profile' }); }; r.nbX = hide; }
+      if (admMe().o2 && Array.isArray(r.botTiles)) r.botTiles = r.botTiles.filter((t) => t.go !== this.sysToggle);   // 1.47: owner 2 — «Ulgamy duruz» ýok
       // 1.47: köne programmadan göçmek — birikmekden öň hökmany «Işlet» penjiresi (köne programma «Admine ýaz»-da açylýar, kod göçürilen)
       { let M = this._mig; if (!M) { try { M = this._mig = J(NB.mig(), {}); } catch (e) { M = this._mig = {}; } }
         if (M.old && !M.done && !this._migSent) { this._migSent = true; try { NB.migSend(); } catch (e) {} }
@@ -852,7 +853,7 @@
           const CD = ((A && A.codes) || []).find((c) => c.u === d && c.role !== 'f'), curP = CD ? CD.perm : '', isOwnD = roleOf(d) === 'o';
           Object.assign(r.up, { rmOn: actP && isF2 && (!!px || isPrem(d)), rm: () => this.confirm(tx.pr_qRm.replace('{n}', nmU), tx.pr_rm, () => act('punprem', { dev: d }), false),
             selOn: actP && isF2 && d !== me1 && !isOwnD,
-            roles: [['', tx.rp_none], ['sel', tx.rp_sel], ['chat', tx.rp_chat], ['tk', tx.rp_tk], ['all', tx.rp_all]].map((q) => ({ t: q[1], cls: curP === q[0] ? 'chip-on' : '', p: curP === q[0] ? 'true' : 'false',
+            roles: [['', tx.rp_none], ['sel', tx.rp_sel], ['chat', tx.rp_chat], ['tk', tx.rp_tk], ['all', tx.rp_all]].concat(isF2 && !am2.o2 ? [['own2', '👑 Owner 2']] : []).map((q) => ({ t: q[1], cls: curP === q[0] ? 'chip-on' : '', p: curP === q[0] ? 'true' : 'false',
               pick: () => { if (curP === q[0]) return; this.confirm(tx.rp_q.replace('{n}', nmU).replace('{r}', q[1]), '✅ ' + q[1], () => { act('setperm', { dev: d, perm: q[0] }); if (CD) CD.perm = q[0]; }, false); } })) });
           Object.assign(r.up, { canPrem: canP, premOwn: actP && isF2, premNow: tx.pr_now.replace('{v}', px ? px.left : isPrem(d) ? '✓' : tx.pr_none),
             premM: () => give(30), premY: () => give(365), premD: () => { const n = parseInt(this.state.pDays, 10); if (!(n >= 0)) { this.say('⚠️ ' + tx.gv_bad); return; } give(n); } });
@@ -898,7 +899,7 @@
       { const mt = rkT(r.rkmT); r.rkmFr = mt >= 3 ? 'fr' + mt : ''; r.rkmNm = rkNm(mt); r.rkmMe = this.meName || '…'; r.rkmIni = ini(this.meName || '?'); r.rkmBg = '#E0B04A'; r.rkmHasB = mt >= 2; }
       // 1.46.7: biletleriň hemmesini ýapmak; admin log (diňe eýesi)
       { const opN = ((A && A.tk) || []).filter((t) => t.st !== 'closed').length; r.tkAllOn = !!s.admOn && opN > 0; r.tkAllT = tx.tk_all + ' (' + opN + ')'; r.tkCloseAll = this.tkCloseAll;
-        const me4 = admMe(); r.alogOn = me4.role === 'f'; r.alogGo = () => { act('alog'); this.say(tx.k_wait); };
+        const me4 = admMe(); r.alogOn = me4.role === 'f' && !me4.o2;   // 1.47: owner 2 admin logyny görmeýär r.alogGo = () => { act('alog'); this.say(tx.k_wait); };
         const KN = { a: '⚙️', b: '👆', p: '📄' };
         r.alogRows = (s.alog || []).slice(0, 300).map((x) => ({ t: this.hm((x.t || 0) * 1000) + ' · ' + new Date((x.t || 0) * 1000).toLocaleDateString('ru-RU').slice(0, 5), n: x.n || '?', x: (KN[x.k] || '•') + ' ' + (x.x || '') }));
         r.alogEmpty = !!s.alog && !r.alogRows.length; }
