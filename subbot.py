@@ -3964,6 +3964,15 @@ def app_adm_snap(a, e, dev):
                          "pg": sum(1 for q in (a.get("prem_log") or []) if q.get("by") == (x.get("name") or "admin")), "dn": ((devs.get(x.get("dev") or "") or {}).get("nick") or "")}
                         for aid, x in (a.get("apw") or {}).items() if (apw_valid(x) or not x.get("once")) and not (o2 and x.get("role") == "f")]   # 1.47: owner 2 eýesiniň açaryny görmeýär
         out["notes"] = [n_["t"] for n_ in db.get("ai_notes", [])]
+    if full:   # 1.47: satyjylaryň satuwy (eýesiniň beren Premium-y sanalmaýar) — doly adminler we owner 2
+        nm_ok = {x.get("name") or "admin" for x in (a.get("apw") or {}).values() if x.get("role") != "f"} - {x.get("name") or "admin" for x in (a.get("apw") or {}).values() if x.get("role") == "f"}
+        sl_ = {}
+        for q in (a.get("prem_log") or []):
+            by_, d_ = q.get("by"), q.get("d")
+            if by_ not in nm_ok or d_ is None or int(d_) < 0: continue
+            x_ = sl_.setdefault(by_, {"n": by_, "w": 0, "m": 0, "y": 0, "o": 0, "t": 0, "last": 0})
+            x_["w" if d_ == 7 else "m" if d_ == 30 else "y" if d_ == 365 else "o"] += 1; x_["t"] += 1; x_["last"] = max(x_["last"], int(q.get("ts") or 0))
+        out["sales"] = sorted(sl_.values(), key=lambda x: -x["t"])
     if full:
         devs_o = a.get("devs") or {}
         out["orders"] = [{"id": oid, "dev": x.get("dev"), "nm": (devs_o.get(x.get("dev")) or {}).get("nick") or "?", "d": x.get("d"), "p": x.get("p"), "n": x.get("n", ""),

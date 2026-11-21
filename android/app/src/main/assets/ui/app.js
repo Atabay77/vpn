@@ -838,7 +838,11 @@
         r.preqOpen = () => { this.setState({ rq: true, rqTab: 'req' }); if (this.state.admOn) act('get'); };
         r.rqOn = !!s.rq; r.rqX = () => this.setState({ rq: false }); r.rqNeedAdm = !s.admOn; r.rqGoAdm = () => this.setState({ rq: false, page: 'admin' });
         const PL = (A && A.prem) || [], rqT = s.rqTab || 'req';
-        r.rqTabs = [['req', tx.pr_tabReq + ' · ' + newN], ['prem', tx.pr_list + ' · ' + PL.length]].map((q) => ({ t: q[1], p: rqT === q[0] ? 'true' : 'false', cls: rqT === q[0] ? 'chip-on' : '', pick: () => this.setState({ rqTab: q[0] }) }));
+        const SLS = (full2 && A && A.sales) || [], SLT = ({ ru: ['📊 Продажи', 'нед', 'мес', 'год', 'др.', 'Продаж пока нет'], tr: ['📊 Satış', 'hf', 'ay', 'yıl', 'diğer', 'Henüz satış yok'] })[s.lang] || ['📊 Satuw', 'hp', 'aý', 'ýyl', 'beýleki', 'Entek satuw ýok'];
+        r.rqIsSales = rqT === 'sales' && full2;   // 1.47: satyjylaryň näçe Premium satandygy (eýesiniň bereni sanalmaýar)
+        r.slList = SLS.map((x) => ({ n: x.n, t: String(x.t), sub: [[x.w, SLT[1]], [x.m, SLT[2]], [x.y, SLT[3]], [x.o, SLT[4]]].filter((q) => q[0]).map((q) => q[0] + ' ' + q[1]).join(' · ') }));
+        r.slEmpty = !r.slList.length; r.slEmptyT = SLT[5];
+        r.rqTabs = [['req', tx.pr_tabReq + ' · ' + newN], ['prem', tx.pr_list + ' · ' + PL.length]].concat(full2 ? [['sales', SLT[0] + ' · ' + SLS.reduce((a2, x) => a2 + x.t, 0)]] : []).map((q) => ({ t: q[1], p: rqT === q[0] ? 'true' : 'false', cls: rqT === q[0] ? 'chip-on' : '', pick: () => this.setState({ rqTab: q[0] }) }));
         r.rqIsReq = rqT === 'req'; r.rqIsPrem = rqT === 'prem';
         r.rqList = rq.map((q) => Object.assign(ava(q.dev), { name: nm2(q.dev, q.n), sub: ((q.plan === 'y' ? tx.pr_y : q.plan === 'w' ? ({ ru: '1 неделя', tr: '1 hafta' }[s.lang] || '1 hepde') : tx.pr_m)) + ' · ' + (q.at || '') + (q.to ? ' · → ' + q.to : ''),
           cls: q.st === 'done' ? 'prq-done' : '', done: q.st === 'done', open: q.st !== 'done', doneT: tx.pr_done + (q.by ? ' · ' + q.by : ''),
@@ -853,7 +857,7 @@
         if (r.isUprof && r.up && s.upDev) {
           const myR = roleOf(me1), ownR = isF2 || myR === 'o', staffP = ownR || full2 || sel2 || myR === 's';
           const d = s.upDev, canP = staffP && (d !== me1 || ownR), actP = canP && !!s.admOn, px = PL.find((x) => x.dev === d);
-          const give = (n) => this.confirm(tx.pr_qGive.replace('{n}', r.up.name || '?').replace('{p}', n === 30 ? tx.pr_m : n === 365 ? tx.pr_y : n === 0 ? '♾' : n + ' ' + tx.pr_days), '👑 ' + tx.pr_giveBtn,
+          const give = (n) => this.confirm(tx.pr_qGive.replace('{n}', r.up.name || '?').replace('{p}', n === 7 ? ({ ru: '1 неделя', tr: '1 hafta' }[s.lang] || '1 hepde') : n === 30 ? tx.pr_m : n === 365 ? tx.pr_y : n === 0 ? '♾' : n + ' ' + tx.pr_days), '👑 ' + tx.pr_giveBtn,
             () => { act('prem', { dev: d, d: n }); this.setState({ pDays: '' }); }, false);
           const selIs = roleOf(d) === 's', nmU = r.up.name || '?';
           Object.assign(r.up, { premAct: actP, premNeed: canP && !s.admOn, premGoAdm: () => this.setState({ page: 'admin' }),
@@ -865,6 +869,7 @@
             roles: [['', tx.rp_none], ['sel', tx.rp_sel], ['chat', tx.rp_chat], ['tk', tx.rp_tk], ['all', tx.rp_all]].concat(isF2 && !am2.o2 ? [['own2', '👑 Owner 2']] : []).map((q) => ({ t: q[1], cls: curP === q[0] ? 'chip-on' : '', p: curP === q[0] ? 'true' : 'false',
               pick: () => { if (curP === q[0]) return; this.confirm(tx.rp_q.replace('{n}', nmU).replace('{r}', q[1]), '✅ ' + q[1], () => { act('setperm', { dev: d, perm: q[0] }); if (CD) CD.perm = q[0]; }, false); } })) });
           Object.assign(r.up, { canPrem: canP, premOwn: actP && isF2, premNow: tx.pr_now.replace('{v}', px ? px.left : isPrem(d) ? '✓' : tx.pr_none),
+            premW: () => give(7), premWT: ({ ru: '1 неделя', tr: '1 hafta' }[s.lang] || '1 hepde'),
             premM: () => give(30), premY: () => give(365), premD: () => { const n = parseInt(this.state.pDays, 10); if (!(n >= 0)) { this.say('⚠️ ' + tx.gv_bad); return; } give(n); } });
         } else if (r.up) Object.assign(r.up, { canPrem: false, premOwn: false, premNow: '', premAct: false, premNeed: false, selOn: false, rmOn: false });
         // 1.45: Global chat — sesini öçürmek (doly admin / chat admin)
@@ -881,11 +886,12 @@
         r.probeGo = () => { if (this.state.probeRun || typeof NB.probe !== 'function') return; this.setState({ probeRun: true }); NB.probe(100); };
         // 1.44: öz profilimde Premium bermek (eýesi)
         { const ownR = isF2 || roleOf(me1) === 'o', px = PL.find((x) => x.dev === me1);
-          const give = (n) => this.confirm(tx.pr_qGive.replace('{n}', this.meName || '?').replace('{p}', n === 30 ? tx.pr_m : n === 365 ? tx.pr_y : n === 0 ? '♾' : n + ' ' + tx.pr_days), '👑 ' + tx.pr_giveBtn,
+          const give = (n) => this.confirm(tx.pr_qGive.replace('{n}', this.meName || '?').replace('{p}', n === 7 ? ({ ru: '1 неделя', tr: '1 hafta' }[s.lang] || '1 hepde') : n === 30 ? tx.pr_m : n === 365 ? tx.pr_y : n === 0 ? '♾' : n + ' ' + tx.pr_days), '👑 ' + tx.pr_giveBtn,
             () => { act('prem', { dev: me1, d: n }); this.setState({ pDays: '' }); }, false);
           r.mp = { on: pg === 'profile' && ownR, act: !!s.admOn, needAdm: !s.admOn, goAdm: () => this.setState({ page: 'admin' }),
             canRm: !!s.admOn && isF2 && !!px, rm: () => this.confirm(tx.pr_qRm.replace('{n}', this.meName || '?'), tx.pr_rm, () => act('punprem', { dev: me1 }), false),
             now: tx.pr_now.replace('{v}', px ? px.left : PR ? (pexp === 0 ? '♾' : dlT) : tx.pr_none),
+            premW: () => give(7), premWT: ({ ru: '1 неделя', tr: '1 hafta' }[s.lang] || '1 hepde'),
             premM: () => give(30), premY: () => give(365), premD: () => { const n = parseInt(this.state.pDays, 10); if (!(n >= 0)) { this.say('⚠️ ' + tx.gv_bad); return; } give(n); } }; } }
       ['srvList', 'gList'].forEach((k) => { if (Array.isArray(r[k])) r[k] = r[k].map(withFc); });
       // 1.23: eýesi serweri basyp saklap 30 sekunt gizleýär (diňe öz ekranynda)

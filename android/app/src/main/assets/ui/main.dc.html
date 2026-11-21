@@ -842,7 +842,7 @@ html .glass.row.sv-prem,html[class*=ph-] .glass.row.sv-prem{animation:none!impor
       <sc-if value="{{up.canPrem}}" hint-placeholder-val="{{false}}"><div class="glass pcard" style="border-radius:18px;padding:14px;display:flex;flex-direction:column;gap:10px;flex-shrink:0">
         <div style="display:flex;align-items:center;gap:8px"><span class="pcard-t">👑 {{tx.pr_give}}</span><span class="pcard-now">{{up.premNow}}</span></div>
         <sc-if value="{{up.premNeed}}" hint-placeholder-val="{{false}}"><button onClick="{{up.premGoAdm}}" class="chip tap" style="align-self:flex-start">🛡 {{tx.pr_needAdm}}</button></sc-if>
-        <sc-if value="{{up.premAct}}" hint-placeholder-val="{{true}}"><div style="display:flex;gap:8px"><button onClick="{{up.premM}}" class="pgbtn tap">{{tx.pr_m}}</button><button onClick="{{up.premY}}" class="pgbtn pgbtn-y tap">{{tx.pr_y}}</button></div></sc-if>
+        <sc-if value="{{up.premAct}}" hint-placeholder-val="{{true}}"><div style="display:flex;gap:8px"><button onClick="{{up.premW}}" class="pgbtn tap">{{up.premWT}}</button><button onClick="{{up.premM}}" class="pgbtn tap">{{tx.pr_m}}</button><button onClick="{{up.premY}}" class="pgbtn pgbtn-y tap">{{tx.pr_y}}</button></div></sc-if>
         <sc-if value="{{up.premOwn}}" hint-placeholder-val="{{false}}"><div style="display:flex;gap:8px"><input class="kin" value="{{pDays}}" onChange="{{onPDays}}" placeholder="{{tx.pr_daysPh}}" inputmode="numeric" maxlength="4" autocomplete="off" style="flex-grow:1;min-width:0;height:42px;border-radius:12px;padding:0 12px;font-size:13px;color:#F3E7D0;text-align:left"><button onClick="{{up.premD}}" class="pgbtn tap" style="flex:0 0 auto;padding:0 18px">{{tx.pr_giveBtn}}</button></div></sc-if>
         <sc-if value="{{up.rmOn}}" hint-placeholder-val="{{false}}"><button onClick="{{up.rm}}" class="selbtn sel-off tap">{{tx.pr_rm}}</button></sc-if>
         <sc-if value="{{up.selOn}}" hint-placeholder-val="{{false}}"><div style="font-size:10px;font-weight:900;letter-spacing:.14em;color:#E0B04A;margin-top:4px">🛡 {{tx.rp_t}}</div>
@@ -1017,7 +1017,7 @@ html .glass.row.sv-prem,html[class*=ph-] .glass.row.sv-prem{animation:none!impor
         <div style="display:flex;align-items:center;gap:8px"><span class="pcard-t">👑 {{tx.pr_give}}</span><span class="pcard-now">{{mp.now}}</span></div>
         <sc-if value="{{mp.needAdm}}" hint-placeholder-val="{{false}}"><button onClick="{{mp.goAdm}}" class="chip tap" style="align-self:flex-start">🛡 {{tx.pr_needAdm}}</button></sc-if>
         <sc-if value="{{mp.act}}" hint-placeholder-val="{{true}}">
-          <div style="display:flex;gap:8px"><button onClick="{{mp.premM}}" class="pgbtn tap">{{tx.pr_m}}</button><button onClick="{{mp.premY}}" class="pgbtn pgbtn-y tap">{{tx.pr_y}}</button></div>
+          <div style="display:flex;gap:8px"><button onClick="{{mp.premW}}" class="pgbtn tap">{{mp.premWT}}</button><button onClick="{{mp.premM}}" class="pgbtn tap">{{tx.pr_m}}</button><button onClick="{{mp.premY}}" class="pgbtn pgbtn-y tap">{{tx.pr_y}}</button></div>
           <div style="display:flex;gap:8px"><input class="kin" value="{{pDays}}" onChange="{{onPDays}}" placeholder="{{tx.pr_daysPh}}" inputmode="numeric" maxlength="4" autocomplete="off" style="flex-grow:1;min-width:0;height:42px;border-radius:12px;padding:0 12px;font-size:13px;color:#F3E7D0;text-align:left"><button onClick="{{mp.premD}}" class="pgbtn tap" style="flex:0 0 auto;padding:0 18px">{{tx.pr_giveBtn}}</button></div>
         </sc-if>
         <sc-if value="{{mp.canRm}}" hint-placeholder-val="{{false}}"><button onClick="{{mp.rm}}" class="selbtn sel-off tap">{{tx.pr_rm}}</button></sc-if>
@@ -1708,6 +1708,8 @@ html .glass.row.sv-prem,html[class*=ph-] .glass.row.sv-prem{animation:none!impor
         <sc-if value="{{rqEmpty}}" hint-placeholder-val="{{false}}"><div class="psh-empty">{{tx.pr_empty}}</div></sc-if></div></sc-if>
       <sc-if value="{{rqIsPrem}}" hint-placeholder-val="{{false}}"><div class="psh-list"><sc-for list="{{rpList}}" as="rp" hint-placeholder-count="3"><button onClick="{{rp.open}}" class="prq tap"><span class="pava"><sc-if value="{{rp.hasPh}}" hint-placeholder-val="{{false}}"><img src="{{rp.photo}}" alt=""></sc-if><sc-if value="{{rp.noPh}}" hint-placeholder-val="{{true}}"><b style="background:{{rp.bg}}">{{rp.ini}}</b></sc-if></span><span class="prq-m"><b>{{rp.name}} <span class="bdg-p">👑</span></b><span>{{rp.sub}}</span></span></button></sc-for>
         <sc-if value="{{rpEmpty}}" hint-placeholder-val="{{false}}"><div class="psh-empty">{{tx.pr_premEmpty}}</div></sc-if></div></sc-if>
+      <sc-if value="{{rqIsSales}}" hint-placeholder-val="{{false}}"><div class="psh-list"><sc-for list="{{slList}}" as="sl" hint-placeholder-count="2"><div class="prq" style="display:flex;align-items:center;gap:10px"><span style="flex-grow:1;display:flex;flex-direction:column;min-width:0;text-align:left"><b style="font-size:13px">{{sl.n}}</b><span style="font-size:11px;opacity:.75">{{sl.sub}}</span></span><span style="font-size:18px;font-weight:900;color:#FFD27A">{{sl.t}}</span></div></sc-for>
+        <sc-if value="{{slEmpty}}" hint-placeholder-val="{{false}}"><div class="psh-empty">{{slEmptyT}}</div></sc-if></div></sc-if>
     </div>
   </sc-if>
   <sc-if value="{{hasToast}}" hint-placeholder-val="{{false}}">
