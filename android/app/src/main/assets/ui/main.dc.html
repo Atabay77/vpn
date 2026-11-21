@@ -399,6 +399,7 @@ html .glass.row.sv-prem,html[class*=ph-] .glass.row.sv-prem{animation:none!impor
       <div class="glass" role="tablist" style="border-radius:14px;padding:4px;display:flex;gap:4px;flex-shrink:0">
         <sc-for list="{{svTabs}}" as="st" hint-placeholder-count="3"><button onClick="{{st.pick}}" role="tab" aria-selected="{{st.p}}" class="tap {{st.cls}}" style="flex:1 1 0;height:36px;border-radius:10px;border:none;font-size:12px;font-weight:800;cursor:pointer">{{st.t}}</button></sc-for>
       </div>
+      <sc-if value="{{svOwnNote}}" hint-placeholder-val="{{false}}"><div style="margin:0 0 8px;padding:8px 12px;border-radius:12px;background:rgba(124,196,255,.12);border:1px solid rgba(124,196,255,.45);color:#BFE3FF;font-size:11px;font-weight:700;line-height:1.35">{{svOwnNote}}</div></sc-if>
       <sc-if value="{{svPremBan}}" hint-placeholder-val="{{false}}"><button onClick="{{premOpen}}" class="pban tap"><span class="pban-c">👑</span><span class="pban-t"><b>{{tx.pr_banT}}</b><span>{{tx.pr_banS}}</span></span><span class="pban-go">{{tx.pr_buy}}</span></button></sc-if>
       <button onClick="{{autoPick}}" class="glass tap row {{autoCls}}" style="min-height:58px;border-radius:16px;display:flex;align-items:center;gap:12px;padding:8px 14px;cursor:pointer;text-align:left;flex-shrink:0">
         <span style="width:40px;height:40px;border-radius:13px;background:linear-gradient(145deg,#F2CD7A,#C8902E);display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0">⚡</span>
