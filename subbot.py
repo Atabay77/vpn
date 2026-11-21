@@ -1173,6 +1173,25 @@ def app_is_game(c):
     nm = orig_name(c)
     return "🎮" in nm or "🇷🇺" in nm or "🇺🇿" in nm or "🇰🇿" in nm or bool(re.search(r"pubg|gaming|oýun|game|uzbek|kazak", nm, re.I))   # 1.45.2: Russiýa serwerleri — PUBG bölüminde (1.47: Özbegistan / Gazagystan hem)
 
+def app_prem_fill(codes, free_, cfg, lo=15, hi=20, keep_free=3):
+    """1.47: @happvpn (kanal abunasy) — esasy çeşme: onuň kodlary (Türkmenistanda işländen soň) ms boýunça bir Premium-a, bir mugta;
+    Premium-da hemişe 15–20 adaty serwer (az bolsa mugtdan — ms bermese-de — Premium-a geçýär; mugtda iň az 3 galýar). Dönüş: täze mugt sanawy."""
+    hm = cfg.get("hp_ms") or {}; xs = cfg.get("xcodes") or {}
+    tgs = [v for v in xs.values() if v.get("src") == "tgs" and v.get("ok")]
+    hv = {app_x_hp(v["c"]) for v in tgs if "happvpn" in str(v.get("ch", "")).lower()} or {app_x_hp(v["c"]) for v in tgs}
+    ok_ = lambda h: h in hm and int(hm[h][0]) > 0
+    msf = lambda h: (0 if ok_(h) else 1, int(hm[h][0]) if ok_(h) else 9999, h)
+    allhp = list(dict.fromkeys(h for h in (app_x_hp(c) for c in codes if not app_is_game(c) and not app_is_info(c)) if h))
+    fr = [h for h in free_ if h in set(allhp)]; frs = set(fr); other_free = [h for h in free_ if h not in set(allhp)]
+    hv_in = sorted([h for h in fr if h in hv], key=msf)
+    to_p = set(hv_in[0::2]) if len(hv_in) >= 2 else set()
+    prem_n = sum(1 for h in allhp if h not in frs) + len(to_p)
+    if prem_n < lo:
+        for h in sorted([h for h in fr if h not in to_p], key=lambda h: (h in hv, msf(h))):
+            if prem_n >= hi or len(fr) - len(to_p) <= keep_free: break
+            to_p.add(h); prem_n += 1
+    return [h for h in fr if h not in to_p] + other_free
+
 def app_free_pubg(codes, free_, hpms=None, add=False):
     """1.47: mugtda PUBG ýok (add=False — aýyrýar). add=True: Premium-da 2+ PUBG serwer bar bolsa iň çalt biri mugta goşulýar."""
     hpms = hpms or {}
@@ -2386,6 +2405,8 @@ def app_sync(force=False):
                 if code_key(c) not in keys: keys.add(code_key(c)); codes.append(c)
         plast = {k_: v_ for k_, v_ in plast.items() if k_ in {hashlib.md5(u.encode()).hexdigest()[:8] for u in psubs}}
         free_ = app_free_all(codes, php, cfg.get("hp_ms")) if php else app_free_pick(codes, base1, cfg.get("hp_ms"))
+        try: free_ = app_prem_fill(codes, free_, app_cfg(load_db()))   # 1.47: @happvpn — Free we Premium; Premium-da 15–20 serwer
+        except Exception as e: log.info("prem fill: %s", e)
         free_ = app_free_pubg(codes, free_)   # 1.47: mugt adaty serwerlerde PUBG ýok
         try: free_, fb_ = app_free_borrow(codes, free_, app_cfg(load_db())); RUN["free_hps"] = list(free_)   # 1.46.8: mugtlar bloklananda Premium-dan biri wagtlaýyn
         except Exception as e: fb_ = cfg.get("fborrow"); log.info("free borrow: %s", e)
