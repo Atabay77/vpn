@@ -93,7 +93,10 @@ open class Main : Activity() {
         web.webChromeClient = object : WebChromeClient() {
             override fun onShowFileChooser(v: WebView, cb: ValueCallback<Array<Uri>>, p: FileChooserParams): Boolean {
                 fileCb?.onReceiveValue(null); fileCb = cb
-                return runCatching { startActivityForResult(Intent(Intent.ACTION_GET_CONTENT).setType("image/*").addCategory(Intent.CATEGORY_OPENABLE), 7); true }
+                val vid = p.acceptTypes.any { it.contains("video") }   // 1.47: hekaýa — surat ýa-da gysga wideo (öň diňe surat saýlanýardy)
+                val gi = Intent(Intent.ACTION_GET_CONTENT).addCategory(Intent.CATEGORY_OPENABLE)
+                    .apply { if (vid) setType("*/*").putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("image/*", "video/*")) else setType("image/*") }
+                return runCatching { startActivityForResult(gi, 7); true }
                     .getOrElse { fileCb = null; false }
             }
             override fun onConsoleMessage(m: ConsoleMessage): Boolean { android.util.Log.d("ui", m.message() + " @" + m.lineNumber()); return true }
@@ -140,6 +143,7 @@ open class Main : Activity() {
             INSTALL -> Upd.install(this)
             GO -> if (State.now != State.ON && State.now != State.WAIT) connect()
             CHAT -> push(JSONObject().put("k", "go").put("page", "chat"))
+            GLOB -> push(JSONObject().put("k", "go").put("page", "global"))   // 1.47: @agzamak bildirişi
             ADMT -> push(JSONObject().put("k", "go").put("page", "adm_t").put("tid", i.getIntExtra("tid", 0)))
             PREQ -> push(JSONObject().put("k", "go").put("page", "main").put("rq", true))   // 1.44
         }
@@ -502,6 +506,7 @@ open class Main : Activity() {
         const val GO = "tm.yol.vpn.GO"
         const val INSTALL = "tm.yol.vpn.INSTALL"
         const val CHAT = "tm.yol.vpn.CHAT"
+        const val GLOB = "tm.yol.vpn.GLOB"
         const val ADMT = "tm.yol.vpn.ADMT"
         const val PREQ = "tm.yol.vpn.PREQ"
         const val HOST = "tvpn.local"

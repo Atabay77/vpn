@@ -344,6 +344,7 @@ object Msg {
             if (o.optString("k") == "migok") prefs(c).edit().putBoolean("migd", true).apply()   // 1.47: köne programmadan göçürildi
             pend(c, JSONObject().put("k", "in").put("m", o))
             if (!visible && o.optString("k") == "tk" && o.optString("who") == "a") Svc.notifyReply(c, o.optString("t"))
+            if (!visible && o.optString("k") == "gmen") Svc.notifyMention(c, o.optString("n"), o.optString("t"), o.optBoolean("rp"))   // 1.47
             if (!visible && o.optString("k") == "preq") Svc.notifyPreq(c, o.optString("n"), o.optString("plan"))   // 1.44: Premium aljak geldi
             if (!visible && o.optString("k") == "atk" && admPw(c) != null) Svc.notifyAdmin(c, o.optInt("tid"), o.optString("n"), o.optString("t"))
         }

@@ -3143,6 +3143,30 @@ def app_user_info(a, dv):
             "tk": sum(1 for t in (a.get("tickets") or {}).values() if t.get("dev") == dv),
             "ban": dv in set(a.get("gbans") or []) or dv in set(a.get("ubans") or []), "mv": u_.get("mvf") or ""}
 
+def app_g_purge(dv):
+    """1.47: gadagan edilen ulanyjynyň Global chat habarlary pozulýar (Firestore + VPS). Dönüş: pozulan sany."""
+    a = app_cfg(load_db()); fid = a.get("fid")
+    if not fid or not DEV_RE.match(dv or ""): return 0
+    gids = set()
+    if a.get("fs_ok") and a.get("fs_proj"):
+        try:
+            for name, b, _t in fs_query(a["fs_proj"], "", "g", None, 400) or []:
+                try: o = json.loads(app_dec(fid, b) or "null")
+                except Exception: o = None
+                if isinstance(o, dict) and str(o.get("i") or "") == dv: gids.add(str(name).split("/")[-1])
+            if gids: fs_delete(a["fs_proj"], ["g/" + g_ for g_ in gids])
+        except Exception as e: log.info("g purge fs: %s", e)
+    if app_relay():
+        tp = app_topic(fid) + "g"
+        try:
+            for j in ntfy_poll(tp, "48h"):
+                try: o = json.loads(app_dec(fid, j.get("message") or "") or "null")
+                except Exception: o = None
+                if isinstance(o, dict) and str(o.get("i") or "") == dv and o.get("id"): gids.add(str(o["id"]))
+            for g_ in gids: ntfy_pub(tp, app_enc(fid, json.dumps({"del": g_})))
+        except Exception as e: log.info("g purge relay: %s", e)
+    return len(gids)
+
 def app_dev_find(a, q):
     """Eýesiniň buýrugy üçin: TM-kod, GOC-kod, 12 belgili kimlik ýa-da nik → telefon (ýa-da None)."""
     q = (q or "").strip(); qu = q.upper().replace(" ", "")
@@ -3438,6 +3462,20 @@ async def app_on_msg(app, fid, o):
     if k == "adm": await app_adm(app, dev, o); return
     if k == "pr": await asyncio.to_thread(app_x_report, dev, o.get("p")); return
     if k == "alog": await asyncio.to_thread(alog_add, dev, o.get("e")); return   # 1.47: admin log
+    if k == "gmen":   # 1.47: Global chatda jogap / @agzamak — şol adama bildiriş (programma ýapyk bolsa-da)
+        rl_ = RUN.setdefault("gmen_at", {})
+        if time.time() - rl_.get(dev, 0) < 3 or dev in (a.get("ubans") or []) or dev in (a.get("gbans") or []): return
+        rl_[dev] = time.time()
+        devs_ = a.get("devs") or {}; nmap = {}
+        for d_, u_ in devs_.items():
+            for f_ in ("nk", "nick"):
+                if u_.get(f_) and not u_.get("mvto"): nmap.setdefault(str(u_[f_]).casefold(), d_)
+        tos = [str(x) for x in (o.get("to") or [])[:3] if DEV_RE.match(str(x))] + [nmap[str(n_).casefold()] for n_ in (o.get("nm") or [])[:5] if str(n_).casefold() in nmap]
+        nk_ = str((devs_.get(dev) or {}).get("nick") or o.get("n") or "?")[:32]
+        for t_ in list(dict.fromkeys(tos))[:5]:
+            if t_ == dev or t_ not in devs_: continue
+            await asyncio.to_thread(app_send, t_, {"k": "gmen", "n": nk_, "d": dev, "t": str(o.get("t") or "")[:160], "id": str(o.get("id") or "")[:40], "rp": bool(o.get("to") and t_ in o.get("to"))})
+        return
     if k == "usq":   # 1.47: ulanyjy gözlemek (hemmeler üçin, Telegram ýaly — nigiň bir bölegi ýa-da TM-kod)
         if time.time() - RUN.setdefault("usq_at", {}).get(dev, 0) < 1.5: return
         RUN["usq_at"][dev] = time.time()
@@ -4324,6 +4362,7 @@ async def app_adm(app, dev, o):
                 app_mut(lambda x: (x.__setitem__("gbans", [b for b in (x.get("gbans") or []) if b != dv] + ([dv] if on_ else [])),
                                    x.__setitem__("ubans", [b for b in (x.get("ubans") or []) if b != dv] + ([dv] if on_ else []))))
                 await asyncio.to_thread(app_send, dv, {"k": "uban", "on": on_})
+                if on_: asyncio.create_task(asyncio.to_thread(app_g_purge, dv))   # 1.47: gadagan — Global chatdaky habarlary pozulýar
                 try: RUN.__setitem__("app_dirty", True)   # 1.47: fonda (admin jogaby garaşmasyn)
                 except Exception as e2: RUN["app_err"] = str(e2)[:150]
         elif act == "mksel" and f_:   # 1.44: eýesi profilden satyjy edýär (açar söz özi döredilýär we telefona gidýär) ýa-da aýyrýar

@@ -408,6 +408,16 @@ class Svc : VpnService() {
                 .setContentText(pl).setContentIntent(open).setAutoCancel(true).build())
         }
 
+        /** 1.47: Global chatda biri jogap berdi / @agzady. */
+        fun notifyMention(ctx: Context, who: String, text: String, reply: Boolean) = runCatching {
+            val nm = ctx.getSystemService(NotificationManager::class.java)
+            if (Build.VERSION.SDK_INT >= 26) nm.createNotificationChannel(NotificationChannel("g", t("Global chat", "Общий чат", "Genel sohbet"), NotificationManager.IMPORTANCE_DEFAULT))
+            val open = PendingIntent.getActivity(ctx, 8, Intent(ctx, MainActivity::class.java).setAction(Main.GLOB), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+            val nb = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(ctx, "g") else Notification.Builder(ctx)
+            val title = "💬 " + who.take(32) + " · " + (if (reply) t("size jogap berdi", "ответил(а) вам", "size yanıt verdi") else t("sizi agzady", "упомянул(а) вас", "sizden bahsetti"))
+            nm.notify(7, nb.setSmallIcon(R.drawable.ic_notif).setContentTitle(title).setContentText(text.take(200))
+                .setStyle(Notification.BigTextStyle().bigText(text.take(500))).setContentIntent(open).setAutoCancel(true).build())
+        }
         fun notifyReply(ctx: Context, text: String) = runCatching {
             val nm = ctx.getSystemService(NotificationManager::class.java)
             if (Build.VERSION.SDK_INT >= 26) nm.createNotificationChannel(NotificationChannel("m", t("Admin jogaby", "Ответ админа", "Yönetici yanıtı"), NotificationManager.IMPORTANCE_DEFAULT))
