@@ -3410,9 +3410,11 @@ async def app_on_msg(app, fid, o):
     if k == "preq":   # 1.43: «Premium satyn al» — satyja (ýa-da eýesine) haýyş; diňe olar görýär
         sl_ = app_seller_devs(a); to_ = str(o.get("to") or "")
         if to_ and to_ not in sl_: return
-        q0 = [q for q in (a.get("preq") or {}).values() if q.get("dev") == dev and now - int(q.get("ts") or 0) < 3600]
-        if len(q0) >= 3: return   # sagatda iň köp 3 haýyş
-        plan_ = "y" if o.get("plan") == "y" else "m"; nk_ = str(o.get("n") or ((a.get("devs") or {}).get(dev) or {}).get("nick") or "?")[:32]
+        fd_ = set(app_founder_devs(a)); sel_only = {d_: n_ for d_, n_ in sl_.items() if d_ not in fd_}   # 1.47: diňe satyjylar (satyjy ýok bolsa — eýesi)
+        q0 = sorted([q for q in (a.get("preq") or {}).values() if q.get("dev") == dev and q.get("st") != "done" and now - int(q.get("ts") or 0) < 7 * 86400], key=lambda q: int(q.get("ts") or 0))
+        if q0:   # 1.47: her alyjy bir haýyş — gaýtadan iberse ilkinji satyja (DM) ugradylýar
+            await asyncio.to_thread(app_send, dev, {"k": "preqdup", "to": q0[0].get("to") or "", "n": sl_.get(q0[0].get("to") or "", "")}); return
+        plan_ = o.get("plan") if o.get("plan") in ("y", "m", "w") else "m"; nk_ = str(o.get("n") or ((a.get("devs") or {}).get(dev) or {}).get("nick") or "?")[:32]
         qid = format(int(time.time() * 1000), "x")[-9:]
         def fq(x):
             qs = x.setdefault("preq", {}); qs[qid] = {"dev": dev, "to": to_, "plan": plan_, "n": nk_, "ts": now, "st": "new"}
@@ -3420,11 +3422,11 @@ async def app_on_msg(app, fid, o):
                 for k2 in sorted(qs, key=lambda k3: qs[k3].get("ts", 0))[:len(qs) - 300]: qs.pop(k2, None)
         app_mut(fq)
         item = {"k": "preq", "id": qid, "dev": dev, "n": nk_, "plan": plan_, "to": to_, "ts": now}
-        for d_ in dict.fromkeys(([to_] if to_ else list(sl_)) + app_founder_devs(a)):
+        for d_ in dict.fromkeys([to_] if to_ else (list(sel_only) or list(sl_))):
             if d_ == dev: continue
             try: await asyncio.to_thread(app_send, d_, dict(item))
             except Exception as e: log.info("preq %s: %s", d_, e)
-        await notify_founders(app, f"👑 <b>Premium haýyşy</b> — {esc(nk_)} · {'1 ýyl' if plan_ == 'y' else '1 aý'}" + (f" → {esc(sl_.get(to_) or '?')}" if to_ else ""), silent=True)
+        await notify_founders(app, f"👑 <b>Premium haýyşy</b> — {esc(nk_)} · {'1 ýyl' if plan_ == 'y' else '1 hepde' if plan_ == 'w' else '1 aý'}" + (f" → {esc(sl_.get(to_) or '?')}" if to_ else ""), silent=True)
         return
     if dev in (a.get("ubans") or []) and k in ("tk", "human", "fb", "rate", "ref", "gift", "nick"): return   # 1.16.4: gadagan — diňe VPN (20 min)
     if k == "tk":

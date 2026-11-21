@@ -806,12 +806,18 @@
         const plan = s.pplan || 'y';
         r.pshOn = !!s.psh; r.pshX = () => this.setState({ psh: false }); r.pshIsPrem = PR; r.pshHaveT = PR ? (pexp <= 0 ? tx.pr_unl : tx.pr_have.replace('{d}', dlT)) : '';
         r.pFeat = [['🌍', tx.pr_f1], ['⏱', tx.pr_f2], ['🎮', tx.pr_f3], ['👑', tx.pr_f4]].map((q) => ({ i: q[0], t: q[1] }));
-        r.pPlans = [{ k: 'm', t: tx.pr_m, price: '100', note: tx.pr_mN }, { k: 'y', t: tx.pr_y, price: '700', old: '1200', save: '−42%', badge: tx.pr_best, note: tx.pr_yN }]   // 12 × 100 = 1200 → 700 (hakyky tygşytlylyk)
+        const WK = ({ ru: ['1 неделя', 'Попробуйте неделю'], tr: ['1 hafta', 'Bir hafta deneyin'] })[s.lang] || ['1 hepde', 'Bir hepde synap görüň'];   // 1.47: hepdelik Premium 50 TMT
+        r.pPlans = [{ k: 'w', t: WK[0], price: '50', note: WK[1] }, { k: 'm', t: tx.pr_m, price: '100', note: tx.pr_mN }, { k: 'y', t: tx.pr_y, price: '700', old: '1200', save: '−42%', badge: tx.pr_best, note: tx.pr_yN }]   // 12 × 100 = 1200 → 700 (hakyky tygşytlylyk)
           .map((q) => Object.assign(q, { hasOld: !!q.old, hasBadge: !!q.badge, cls: (plan === q.k ? 'pplan-on' : '') + (q.k === 'y' ? ' pplan-y' : ''), p: plan === q.k ? 'true' : 'false', pick: () => this.setState({ pplan: q.k }) }));
         const RL = INFO.roles || {};
-        r.pSellers = Object.keys(RL).filter((d) => (RL[d][0] === 's' || RL[d][0] === 'o') && d !== me1).sort((a, b) => (RL[a][0] === 'o' ? 1 : 0) - (RL[b][0] === 'o' ? 1 : 0))
+        // 1.47: diňe satyjylar (eýesi sanawda ýok; satyjy ýok bolsa — eýesi); her alyjy bir haýyş — gaýtadan basanda ilkinji satyja (DM)
+        const slv = Object.keys(RL).filter((d) => RL[d][0] === 's' && d !== me1), PQ = LS.get('preqTo', null);
+        const pqOn = PQ && PQ.d && Date.now() - (PQ.at || 0) < 7 * 86400000 && !PR;
+        r.pSellers = (slv.length ? slv : Object.keys(RL).filter((d) => RL[d][0] === 'o' && d !== me1))
           .map((d) => Object.assign(ava(d), { name: nm2(d, RL[d][1]), isO: RL[d][0] === 'o', isS: RL[d][0] === 's',
-            go: () => { NB.send(JSON.stringify({ k: 'preq', to: d, plan, n: this.meName })); this.setState({ psh: false }); this.say('👑 ' + tx.pr_sent); this.openDm(d); } }));
+            go: () => { this.setState({ psh: false });
+              if (pqOn) { this.say('👑 ' + ({ ru: 'Вы уже отправили запрос продавцу — пишите ему', tr: 'Zaten bir satıcıya istek gönderdiniz — ona yazın' }[s.lang] || 'Siz eýýäm satyja haýyş iberdiňiz — şoňa ýazyň')); this.openDm(PQ.d); return; }
+              LS.set('preqTo', { d, at: Date.now() }); NB.send(JSON.stringify({ k: 'preq', to: d, plan, n: this.meName })); this.say('👑 ' + tx.pr_sent); this.openDm(d); } }));
         r.pSellEmpty = !r.pSellers.length;
         // 1.43: ilki tarif → «Satyn al», soň satyjylar
         const pq = r.pPlans.find((q) => q.k === plan) || r.pPlans[1];
@@ -834,7 +840,7 @@
         const PL = (A && A.prem) || [], rqT = s.rqTab || 'req';
         r.rqTabs = [['req', tx.pr_tabReq + ' · ' + newN], ['prem', tx.pr_list + ' · ' + PL.length]].map((q) => ({ t: q[1], p: rqT === q[0] ? 'true' : 'false', cls: rqT === q[0] ? 'chip-on' : '', pick: () => this.setState({ rqTab: q[0] }) }));
         r.rqIsReq = rqT === 'req'; r.rqIsPrem = rqT === 'prem';
-        r.rqList = rq.map((q) => Object.assign(ava(q.dev), { name: nm2(q.dev, q.n), sub: (q.plan === 'y' ? tx.pr_y : tx.pr_m) + ' · ' + (q.at || '') + (q.to ? ' · → ' + q.to : ''),
+        r.rqList = rq.map((q) => Object.assign(ava(q.dev), { name: nm2(q.dev, q.n), sub: ((q.plan === 'y' ? tx.pr_y : q.plan === 'w' ? ({ ru: '1 неделя', tr: '1 hafta' }[s.lang] || '1 hepde') : tx.pr_m)) + ' · ' + (q.at || '') + (q.to ? ' · → ' + q.to : ''),
           cls: q.st === 'done' ? 'prq-done' : '', done: q.st === 'done', open: q.st !== 'done', doneT: tx.pr_done + (q.by ? ' · ' + q.by : ''),
           prof: () => this.setState({ rq: false, page: 'uprof', upDev: q.dev }), write: () => { this.setState({ rq: false }); this.openDm(q.dev); },
           x: () => { rqDone[q.id] = 1; LS.set('preqDone', rqDone); if (this.state.admOn) act('preqx', { id: q.id }); this.setState({ rqTick: (this.state.rqTick || 0) + 1 }); } }));
@@ -1556,9 +1562,12 @@
       else if (m.k === 'prem') {   // 1.43: Premium berildi
         C.party('👑 ' + (m.exp === 0 ? tx.pr_gotU : tx.pr_got.replace('{d}', (m.d === 365 ? tx.pr_y : m.d === 30 ? tx.pr_m : m.d + ' ' + tx.pr_days))));
         try { NB.refresh(); } catch (e2) {} setTimeout(() => { INFO = J(NB.info(), INFO); C.setState({ payTick: Date.now() }); }, 4000);
+      } else if (m.k === 'preqdup') {   // 1.47: bu alyjynyň haýyşy eýýäm bar — ilkinji satyja
+        if (m.to) { LS.set('preqTo', { d: m.to, at: Date.now() }); C.openDm(m.to); }
+        C.say('👑 ' + ({ ru: 'Вы уже отправили запрос продавцу — пишите ему', tr: 'Zaten bir satıcıya istek gönderdiniz — ona yazın' }[s.lang] || 'Siz eýýäm satyja haýyş iberdiňiz — şoňa ýazyň'));
       } else if (m.k === 'preq') {   // 1.43: satyja / eýesine täze haýyş
         const L = (LS.get('preqs', []) || []).filter((q) => q.id !== m.id); L.unshift({ id: m.id, dev: m.dev, n: m.n, plan: m.plan, ts: m.ts, st: 'new' }); LS.set('preqs', L.slice(0, 60));
-        C.say('👑 ' + tx.pr_newReq.replace('{n}', m.n || '?').replace('{p}', m.plan === 'y' ? tx.pr_y : tx.pr_m)); up.payTick = t;
+        C.say('👑 ' + tx.pr_newReq.replace('{n}', m.n || '?').replace('{p}', (m.plan === 'y' ? tx.pr_y : m.plan === 'w' ? ({ ru: '1 неделя', tr: '1 hafta' }[s.lang] || '1 hepde') : tx.pr_m))); up.payTick = t;
       } else if (m.k === 'pgv') {   // 1.43: satyjy Premium berdi (eýesine)
         C.say('👑 ' + tx.pr_pgv.replace('{by}', m.by || '?').replace('{n}', m.n || '?').replace('{p}', m.d === 365 ? tx.pr_y : m.d === 30 ? tx.pr_m : (m.d || 0) + ' ' + tx.pr_days)); up.payTick = t;
       }
