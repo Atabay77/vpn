@@ -28,11 +28,11 @@ android {
     ndkVersion = "27.2.12479018"
 
     defaultConfig {
-        applicationId = "tm.yol.vpn"
+        applicationId = "tm.yol.app"   // 1.47: täze gol (köne açar ýitdi) — täze paket: köne programmanyň üstünden däl, ýanynda gurnalýar, göçmek kody bilen
         minSdk = 24
         targetSdk = 35
-        versionCode = 102
-        versionName = "1.46.9"
+        versionCode = 103
+        versionName = "1.47.0"
         externalNativeBuild { cmake { arguments += "-DSEC_DIR=${secDir.absolutePath}" } }
     }
 

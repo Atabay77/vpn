@@ -267,6 +267,14 @@ html .glass.row.sv-prem,html[class*=ph-] .glass.row.sv-prem{animation:none!impor
           <button onClick="{{nbX}}" aria-label="{{tx.close}}" class="tap" style="width:30px;height:36px;border:none;background:transparent;color:#9FB8CC;font-size:16px;cursor:pointer;padding:0">✕</button>
         </div>
       </sc-if>
+      <sc-if value="{{migOn}}" hint-placeholder-val="{{false}}">
+        <div class="warn" role="status" style="min-height:52px;border-radius:14px;display:flex;align-items:center;gap:10px;padding:6px 6px 6px 12px;box-sizing:border-box;background:rgba(38,28,6,.96);border:1.5px solid #E0B04A;box-shadow:0 6px 20px rgba(0,0,0,.45)">
+          <span style="font-size:20px;flex-shrink:0">📦</span>
+          <span style="flex-grow:1;display:flex;flex-direction:column;min-width:0;gap:1px"><span style="font-size:12px;font-weight:900;color:#FFD27A">{{migT}}</span><span style="font-size:11px;color:#F3E7D0;line-height:1.3;overflow-wrap:anywhere;user-select:text">{{migS}}</span></span>
+          <button onClick="{{migGo}}" class="tap" style="height:36px;padding:0 12px;border-radius:10px;border:none;background:linear-gradient(90deg,#FFD27A,#E0B04A);color:#06100B;font-size:12px;font-weight:900;cursor:pointer;white-space:nowrap">{{migB}}</button>
+          <button onClick="{{migX}}" aria-label="{{tx.close}}" class="tap" style="width:30px;height:36px;border:none;background:transparent;color:#C9BFA8;font-size:16px;cursor:pointer;padding:0">✕</button>
+        </div>
+      </sc-if>
       <sc-if value="{{showNewsBan}}" hint-placeholder-val="{{false}}">
         <div class="warn" role="status" style="min-height:52px;border-radius:14px;display:flex;align-items:center;gap:10px;padding:6px 6px 6px 12px;box-sizing:border-box;background:rgba(8,30,22,.95);border:1px solid #6FDB9C;box-shadow:0 6px 20px rgba(0,0,0,.45)">
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#6FDB9C" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex-shrink:0"><path d="M4 10v4h3l7 4V6L7 10z"></path><path d="M17 9a4 4 0 0 1 0 6"></path></svg>

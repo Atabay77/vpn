@@ -312,6 +312,18 @@
         r.nbS = tx.nb_s.replace('{a}', hrsT(s.lang, SESS)).replace('{b}', hrsT(s.lang, SESS + 30));
         const hide = () => { LS.set('nbAt', Date.now()); this.setState({ nbShow: false }); };
         r.nbGo = () => { hide(); this.setState({ page: 'profile' }); }; r.nbX = hide; }
+      // 1.47: köne programmadan göçmek (Premium, nik, dereje) — köne programmada «Admine ýaz» bölümine GOC- koduny ýazmaly
+      { let M = this._mig; if (!M) { try { M = this._mig = J(NB.mig(), {}); } catch (e) { M = this._mig = {}; } }
+        if (M.old && !M.done && !this._migSent) { this._migSent = true; try { NB.migSend(); } catch (e) {} }
+        const L = ({ tk: ['Köne programmadan geçiriň', 'Premium, nik we dereje geçer: köne programmany açyň → «Admine ýaz» → şu kody ýazyň: ', 'Göçür', '✅ Geçirildi', 'Indi köne programmany pozup bilersiňiz', 'Poz', 'Kod göçürildi'],
+          ru: ['Перенесите из старой программы', 'Premium, ник и уровень перейдут: откройте старую программу → «Написать админу» → напишите этот код: ', 'Копировать', '✅ Перенесено', 'Теперь старую программу можно удалить', 'Удалить', 'Код скопирован'],
+          tr: ['Eski programdan aktarın', 'Premium, takma ad ve seviye geçer: eski programı açın → «Admine yaz» → bu kodu yazın: ', 'Kopyala', '✅ Aktarıldı', 'Artık eski programı silebilirsiniz', 'Sil', 'Kod kopyalandı'] })[s.lang] || [];
+        const T = (i) => L[i] || ['Köne programmadan geçiriň', 'Köne programmany açyň → «Admine ýaz» → şu kody ýazyň: ', 'Göçür', '✅ Geçirildi', 'Indi köne programmany pozup bilersiňiz', 'Poz', 'Kod göçürildi'][i];
+        const dn = !!(M.done || s.migOk);
+        r.migOn = s.page === 'main' && !s.menu && !!M.old && !s.migX;
+        r.migT = dn ? T(3) : T(0); r.migS = dn ? T(4) : T(1) + (M.c || ''); r.migB = dn ? T(5) : T(2);
+        r.migGo = () => { if (dn) { try { NB.delOld(); } catch (e) {} this._mig = null; setTimeout(() => { this._mig = null; this.setState({ migTick: Date.now() }); }, 5000); } else { try { NB.copy(M.c || ''); } catch (e) {} this.say(T(6)); } };
+        r.migX = () => this.setState({ migX: true }); }
       r.showUpd = !!s.upd && !s.menu;
       r.updTxt = s.dl >= 0 ? tx.u_dl.replace('{p}', String(s.dl)) : 'Türkmen VPN ' + s.upd;
       r.updBtn = s.dl >= 0 ? '…' : tx.u_btn; r.doUpd = () => NB.update();
@@ -1507,6 +1519,10 @@
         if (m.invites != null) up.invites = m.invites;
         C.party(m.why === 'gift' ? tx.gift_got : m.why === 'ref' ? tx.ref_got.replace('{d}', String(m.days || 1)) : m.why === 'week' ? tx.wk_won.replace('{p}', String(m.place || 1)).replace('{d}', String(m.days || 1))
           : m.why === 'kgift' ? tx.gf_got.replace('{n}', m.from || '?').replace('{d}', String(m.days || 1)) : tx.k_ext);
+      } else if (m.k === 'migok') {   // 1.47: köne programmadan göçürildi
+        C._mig = null; up.migOk = true; up.migX = false; if (m.n) { C.meName = m.n; LS.set('nick', m.n); }
+        C.party('✅ ' + ({ ru: 'Перенесено из старой программы', tr: 'Eski programdan aktarıldı' }[s.lang] || 'Köne programmadan geçirildi'));
+        try { NB.refresh(); } catch (e2) {} setTimeout(() => { INFO = J(NB.info(), INFO); C.setState({ payTick: Date.now() }); }, 4000);
       } else if (m.k === 'lvl') {
         LS.set('lvl', { lv: m.lv, xp: m.xp, cur: m.cur, next: m.next, inv: m.inv }); up.payTick = t; if (m.inv != null) up.invites = m.inv;
         if (m.up) { up.rkm = { t: rkT(m.lv), up: true, days: m.days || 0 }; C.party('⭐ ' + tx.lv_up.replace('{n}', String(m.lv)) + (m.days ? ' · +' + m.days + ' ' + tx.days : '')); }

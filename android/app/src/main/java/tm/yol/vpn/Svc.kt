@@ -54,7 +54,7 @@ object State {
     val pings = ConcurrentHashMap<String, Long>()   // server.key → ms (-1 = yok)
     @Volatile var pingAt = 0L
     /** 1.43: Premium bolmasa diňe mugt serwerler (#tvfree); sanaw ýok bolsa (köne bot) — hemmesi. */
-    fun allowed(ctx: Context?, s: Server): Boolean = ctx == null || Sub.free.isEmpty() || Lic.prem(ctx) || s.hp in Sub.free
+    fun allowed(ctx: Context?, s: Server): Boolean = ctx == null || (Sub.free.isEmpty() && Sub.pkeys == null) || Lic.prem(ctx) || s.hp in Sub.free   // 1.47: täze bot (#tvkp bar) — mugt sanaw boş bolsa hem Premium serwerler açylmaýar
     private fun cands(): List<Server> {
         val c = app
         val base = Sub.list.filter { !it.ru && !it.game && allowed(c, it) }.ifEmpty { Sub.list.filter { !it.ru && allowed(c, it) } }
@@ -230,7 +230,9 @@ class Svc : VpnService() {
     private fun start(g: Int) = synchronized(lock) {
         if (!want || g != gen) return
         try {
-            stopLoop()   // 1.28: köne tunel täzesi açylýança ýapylmaýar — arada gorag ýok ýagdaý bolmasyn
+            // 1.47: birikme bar (serwer çalşylýar) — täze serwer tapylýança köne birikme kesilmeýär; tapylmasa şol galýar
+            val keep = State.now == State.ON && core != null && State.active?.let { a -> State.allowed(this, a) && Sub.list.any { it.hp == a.hp } } == true
+            if (!keep) stopLoop()   // 1.28: köne tunel täzesi açylýança ýapylmaýar — arada gorag ýok ýagdaý bolmasyn
             // 1.16: her birikmede ilki abuna täzelenýär (iň köp 5 sn). Gijä galsa — häzirki sanawdan iň çalt jogap bereni saýlanýar
             val app = applicationContext
             val th = Thread { runCatching { if (Sub.refresh(app, 5000)) Msg.events.add(org.json.JSONObject().put("k", "srv")) } }.apply { isDaemon = true; start() }
@@ -238,10 +240,11 @@ class Svc : VpnService() {
             val slow = th.isAlive
             if (Sub.list.isEmpty()) Sub.load(this)
             if (!want || g != gen) return
-            State.noPing = false; State.noNet = false; State.ms = 0; State.dead = false; bad = 0
             val sel = State.selected(this)   // 1.35: saýlanan serwer — abuna gijä galsa-da başga serwere geçilmeýär
             if (sel != null && !State.online(this)) { State.noNet = true; throw IllegalStateException("internet yok") }
-            val s = sel ?: State.best(this) ?: throw IllegalStateException("ping yok")
+            val s = sel ?: State.best(this) ?: if (keep) return else throw IllegalStateException("ping yok")
+            if (keep) stopLoop()
+            State.noPing = false; State.noNet = false; State.ms = 0; State.dead = false; bad = 0
             if (sel != null) State.ms = State.pings[sel.key]?.takeIf { it > 0 && System.currentTimeMillis() - State.pingAt < 5 * 60_000 } ?: 0L
             State.active = s
             val port = 20000 + java.security.SecureRandom().nextInt(20000)

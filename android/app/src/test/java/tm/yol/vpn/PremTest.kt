@@ -33,6 +33,8 @@ class PremTest {
         Sub.meta("#tvkp: $h\n#tvfree: 1.1.1.1:443\n#tvk: $h $exp 0123456789ab")
         assertTrue(Lic.prem(c)); assertTrue(State.allowed(c, prem))
         Lic.save(c, null)
+        Sub.meta("#tvkp: -\n#tvk: $h $exp 0123456789ab")   // 1.47: täze bot, mugt sanaw boş — Premium serwerler açylmaýar
+        assertFalse(State.allowed(c, prem)); assertFalse(State.allowed(c, free))
         Sub.meta("#tvkp: -\n#tvfree: 1.1.1.1:443\n#tvrole: 0123456789ab o")   // 1.43.5: eýesi açarsyz hem Premium
         assertTrue(Lic.prem(c)); assertTrue(State.allowed(c, prem))
         Sub.meta("")

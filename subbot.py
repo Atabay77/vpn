@@ -2459,6 +2459,10 @@ def app_publish_link(link):
     if not url_ and re.fullmatch(r"\d+\.\d+(?:\.\d+)?", t_):   # 1.47: diňe wersiýa («1.46.3») — öňki VPS salgysy
         url_ = (app_cfg(load_db()).get("upd_link") or {}).get("url") or ""
         if not url_: raise RuntimeError("Önceki link yok — bir kez linkle gönder: «1.46.3 http://IP:8091/TurkmenVPN.apk»")
+        if not DRIVE_ID_RE.search(url_) and "drive.google." not in url_:   # 1.47: öňki faýl ady köne wersiýa — serwerdäki iň täze APK (/turkmenvpn.apk)
+            url_ = "/".join(url_.split("?")[0].split("/")[:3]) + "/turkmenvpn.apk"
+            hv_ = apk_head_ver(url_)
+            if hv_ and hv_ != t_: raise RuntimeError(f"VPS'teki en yeni APK {hv_} sürümü — önce {t_} APK'sını VPS'e yükle (adında sürüm olsun)")
         t_ = t_ + " " + url_
     if url_ and not DRIVE_ID_RE.search(url_) and "drive.google." not in url_:
         fn_ = urllib.parse.unquote(url_.split("?")[0].rstrip("/").rsplit("/", 1)[-1])
@@ -2989,6 +2993,93 @@ def app_prem_give(dev, days, who):
     app_mut(f)
     return res["k"], res["exp"]
 
+# 1.47: göçmek — täze programma (täze paket we täze gol: telefonyň kimligi üýtgeýär) köne telefonyň ähli zadyny alýar:
+# täze programma GOC-XXXXXX koduny iberýär (migreq), ulanyjy şol kody köne programmada «Admine ýaz» bölümine ýazýar.
+MIG_RE = re.compile(r"G\s*[OÖ0]\s*[CÇ]\s*[-–—_ ]*\s*([A-Za-z0-9]{6})(?![A-Za-z0-9])", re.I)
+def app_mig_code(dev):
+    h = _sha("tvmig|" + dev)
+    return "GOC-" + "".join(REF_ABC[h[i] % len(REF_ABC)] for i in range(6))
+
+def app_migrate(old, new, who):
+    """Köne telefonyň (old) açarlary, nigi, derejesi, çagyranlary, admin ýazgysy täze telefona (new) geçýär.
+    Dönüş: {"err": …} ýa-da {"nick", "keys": [(açar, ýazgy)], "apw": [açar söz]}."""
+    res = {}; now = int(time.time())
+    def f(a):
+        if old == new: res["err"] = "same"; return
+        mv = a.setdefault("mig_done", {})
+        if old in mv: res["err"] = "done"; return
+        if new in mv.values() or new in mv: res["err"] = "used"; return
+        devs = a.setdefault("devs", {}); uo = devs.get(old)
+        if not uo or uo.get("mvto"): res["err"] = "nodev"; return
+        un = devs.get(new) or {"f": now}
+        live = {k_: un[k_] for k_ in ("l", "model", "ver", "lang") if un.get(k_)}
+        m_ = dict(uo)
+        for k_, v in un.items():
+            if k_ in live or k_ in ("nick", "nk"): continue
+            if isinstance(v, (int, float)) and isinstance(m_.get(k_), (int, float)): m_[k_] = (min if k_ == "f" else max)(m_[k_], v)
+            elif k_ not in m_: m_[k_] = v
+        m_.update(live); m_["mvf"] = old
+        devs[new] = m_
+        devs[old] = {**{k_: uo[k_] for k_ in ("f", "l", "model", "ver", "lang") if uo.get(k_)}, "mvto": new}
+        out_ = []
+        for kk, v in (a.get("keys") or {}).items():
+            ds = app_key_devs(v)
+            if old not in ds: continue
+            if v.get("devs") is not None: v["devs"] = list(dict.fromkeys(new if d_ == old else d_ for d_ in v["devs"]))
+            if v.get("dev") == old: v["dev"] = new
+            if not v.get("exp") or v["exp"] > now: out_.append((kk, dict(v)))
+        rd = a.setdefault("ref_devs", {})
+        if old in rd: rd[new] = rd.pop(old)
+        for d_ in list(rd):
+            if rd[d_] == old: rd[d_] = new
+        rk_ = a.get("refkey") or {}
+        if old in rk_: rk_[new] = rk_.pop(old)
+        a.setdefault("codes", {})[app_ref_code(old)] = new   # köne çagyryş kody hem täze telefona işleýär
+        pw_ = []
+        for x in (a.get("apw") or {}).values():
+            hit = x.get("dev") == old or old in (x.get("hist") or [])
+            if x.get("dev") == old: x["dev"] = new
+            if x.get("hist"): x["hist"] = list(dict.fromkeys(new if h_ == old else h_ for h_ in x["hist"]))
+            if hit and apw_valid(x) and x.get("pw"): pw_.append(x["pw"])
+        for lk in ("gbans", "ubans"):
+            if old in (a.get(lk) or []): a[lk] = list(dict.fromkeys(a[lk] + [new]))
+        if (a.get("gmutes") or {}).get(old): a["gmutes"][new] = a["gmutes"][old]
+        (a.get("fcm") or {}).pop(old, None)
+        mv[old] = new; (a.get("mig_q") or {}).pop(app_mig_code(new), None)
+        a["mig_log"] = ((a.get("mig_log") or []) + [{"o": old, "n": new, "by": who, "ts": now}])[-300:]
+        res.update(nick=m_.get("nk") or m_.get("nick") or "", keys=out_, apw=pw_)
+    app_mut(f)
+    return res
+
+async def app_mig_finish(app, old, new, res):
+    """Göçürilenden soň täze telefona açar / nik / admin girişi iberilýär."""
+    ks = sorted(res.get("keys") or [], key=lambda kv: (not app_key_prem(kv[1]), -(kv[1].get("exp") or 10 ** 12)))
+    if ks:
+        k_, v = ks[0]; exp_ = int(v.get("exp") or 0)
+        d_ = 0 if not exp_ else max(1, round((exp_ - time.time()) / 86400))
+        if app_key_prem(v): await asyncio.to_thread(app_send, new, {"k": "prem", "key": k_, "d": d_, "exp": exp_})
+        else: await asyncio.to_thread(app_send, new, {"k": "key", "key": k_, "why": "mig", "days": d_})
+    for pw in (res.get("apw") or [])[:1]:
+        await asyncio.to_thread(app_send, new, {"k": "admgrant", "pw": pw})
+    await asyncio.to_thread(app_send, new, {"k": "migok", "n": res.get("nick") or ""})
+    try: await asyncio.to_thread(app_lvl_check, new, True)
+    except Exception as e: log.info("mig lvl: %s", e)
+    RUN["app_dirty"] = True
+
+def app_dev_find(a, q):
+    """Eýesiniň buýrugy üçin: TM-kod, GOC-kod, 12 belgili kimlik ýa-da nik → telefon (ýa-da None)."""
+    q = (q or "").strip(); qu = q.upper().replace(" ", "")
+    if DEV_RE.match(q.lower()): return q.lower() if q.lower() in (a.get("devs") or {}) else None
+    if qu.startswith("TM-"): return (a.get("codes") or {}).get(qu)
+    m_ = MIG_RE.fullmatch(q)
+    if m_: return (a.get("mig_q") or {}).get("GOC-" + m_.group(1).upper(), {}).get("dev")
+    low = q.casefold().lstrip("@")
+    hits = [d_ for d_, u_ in (a.get("devs") or {}).items() if not u_.get("mvto") and (u_.get("nk") or u_.get("nick") or "").casefold() == low]
+    return hits[0] if len(hits) == 1 else None
+
+MIG_ERR = {"same": "bu şol bir telefon", "done": "bu köne telefon eýýäm göçürildi", "used": "täze telefona eýýäm göçürildi",
+           "nodev": "köne telefon tapylmady"}
+
 def app_founder_devs(a=None):
     """Eýesiniň (esasy admin) telefonlary."""
     a = a if a is not None else app_cfg(load_db())
@@ -3251,7 +3342,7 @@ async def app_on_msg(app, fid, o):
         if u.get("ld") != day_:
             u["ld"] = day_; u["ad"] = int(u.get("ad") or 0) + 1; RUN.setdefault("lvl_q", set()).add(dev)   # 1.19: işjeň gün
             if app_dev_prem(a, dev): u["pb"] = int(u.get("pb") or 0) + 10   # 1.47: Premium — bal 2 esse
-        a.setdefault("codes", {})[app_ref_code(dev)] = dev
+        if not u.get("mvto"): a.setdefault("codes", {})[app_ref_code(dev)] = dev   # 1.47: göçürilen köne telefon kody täzesinde galýar
     a0_ = app_cfg(load_db()); u0_ = (a0_.get("devs") or {}).get(dev)   # 1.47: hiç zat üýtgemedik bolsa baza ýazylmaýar (her habarda ýazmak — bot haýallaýardy)
     if (u0_ is None or u0_.get("ld") != tm_now().strftime("%Y-%m-%d") or now - int(u0_.get("l") or 0) > 300 or app_ref_code(dev) not in (a0_.get("codes") or {})
             or any(o.get(f_) and str(o[f_])[:40] != u0_.get(f_) for f_ in ("nick", "model", "ver", "lang"))):
@@ -3266,6 +3357,15 @@ async def app_on_msg(app, fid, o):
     if k == "adm": await app_adm(app, dev, o); return
     if k == "pr": await asyncio.to_thread(app_x_report, dev, o.get("p")); return
     if k == "alog": await asyncio.to_thread(alog_add, dev, o.get("e")); return   # 1.47: admin log
+    if k == "migreq":   # 1.47: täze programma — göçmek kody (köne programmada ýazylanda tanalsyn)
+        c_ = app_mig_code(dev)
+        if str(o.get("c") or "").upper() == c_ and not (a.get("mig_q") or {}).get(c_):
+            def fm(x):
+                q_ = x.setdefault("mig_q", {}); q_[c_] = {"dev": dev, "ts": now}
+                if len(q_) > 3000:
+                    for k2 in sorted(q_, key=lambda k3: q_[k3].get("ts", 0))[:len(q_) - 3000]: q_.pop(k2, None)
+            await asyncio.to_thread(app_mut, fm)
+        return
     if k == "preq":   # 1.43: «Premium satyn al» — satyja (ýa-da eýesine) haýyş; diňe olar görýär
         sl_ = app_seller_devs(a); to_ = str(o.get("to") or "")
         if to_ and to_ not in sl_: return
@@ -3289,6 +3389,19 @@ async def app_on_msg(app, fid, o):
     if k == "tk":
         text = str(o.get("t") or "").strip()[:1000]
         if not text: return
+        mm_ = MIG_RE.search(text)
+        if mm_ and len(text) < 60:   # 1.47: köne programmadan GOC- kody — göçürmek (bilet açylmaýar)
+            new_ = ((a.get("mig_q") or {}).get("GOC-" + mm_.group(1).upper()) or {}).get("dev")
+            if not new_: msg_ = "⚠️ Kod tapylmady. Täze programmany açyp interneti birikdiriň, 1 minut garaşyň we kody gaýtadan ýazyň."
+            else:
+                res_ = await asyncio.to_thread(app_migrate, dev, new_, "app")
+                if res_.get("err"): msg_ = "⚠️ Göçürilmedi: " + MIG_ERR.get(res_["err"], res_["err"])
+                else:
+                    await app_mig_finish(app, dev, new_, res_)
+                    msg_ = "✅ Göçürildi! Premium, nik we dereje täze programma geçdi. Indi bu köne programmany pozup bilersiňiz."
+                    await notify_founders(app, f"📦 <b>Göçürildi</b> — {esc(res_.get('nick') or '?')} ({app_ref_code(dev)} → {app_ref_code(new_)})", silent=True)
+            await asyncio.to_thread(app_send, dev, {"k": "tk", "who": "a", "t": msg_, "tid": int(o.get("tid") or 0)})
+            return
         tid0 = int(o.get("tid") or 0)
         def f(a_):
             tid1 = tid0
@@ -3337,6 +3450,8 @@ async def app_on_msg(app, fid, o):
         await notify_founders(app, f"⭐ <b>Baha: {'★' * n}{'☆' * (5 - n)}</b>\n<blockquote>{app_who(a, dev)}" + (f"\n🏷 {esc(', '.join(tags))}" if tags else "") + (f"\n💬 {esc(cm)}" if cm else "") + "</blockquote>", silent=True)
     elif k == "ref":
         c = str(o.get("c") or "").upper(); inv = (a.get("codes") or {}).get(c)
+        if o.get("old") or ((a.get("devs") or {}).get(dev) or {}).get("mvf"):   # 1.47: köne programmasy bar / göçürilen — täze ulanyjy däl
+            await asyncio.to_thread(app_send, dev, {"k": "refbad", "why": "used"}); return
         if (a.get("ref_devs") or {}).get(dev): await asyncio.to_thread(app_send, dev, {"k": "refbad", "why": "used"}); return
         if not inv or inv == dev: await asyncio.to_thread(app_send, dev, {"k": "refbad", "why": "own" if inv == dev else "bad"}); return
         def f(a_):
@@ -5683,6 +5798,24 @@ async def cmd_fcm(u: Update, c: ContextTypes.DEFAULT_TYPE):
         + f"Gönderilen: ✅ {st['ok']} · ❌ {st['bad']}" + (f"\nSon hata: <code>{esc(st['err'])}</code>" if st.get("err") else "")
         + "".join(f"\n📱 Telefon hatası ({ago(x['t'])}, v{esc(x.get('ver', ''))}, Play hizmetleri {esc(x.get('gms') or '?')}): <code>{esc(x['e'][:200])}</code>" for x in (a_.get("fcm_perr") or [])[-3:])
         + "</blockquote>\n<i>Telefonlar yeni sürüme geçip abonelik dosyasını yenileyince kaydolur.</i>", parse_mode="HTML")
+
+async def cmd_gocur(u: Update, c: ContextTypes.DEFAULT_TYPE):
+    """1.47: /gocur <köne> <täze> — ulanyjynyň köne programmasyndaky ähli zady (Premium, nik, dereje) täze programma geçirmek.
+    Her biri: TM-kod, GOC-kod, nik ýa-da 12 belgili kimlik."""
+    uid = u.effective_user.id
+    if uid not in ORIG_ADMINS: return
+    args = c.args or []
+    if len(args) != 2:
+        await c.bot.send_message(uid, "📦 Kullanım: <code>/gocur ESKİ YENİ</code>\nESKİ: eski programdaki TM-kod ya da takma ad · YENİ: yeni programdaki TM-kod ya da GOC-kod", parse_mode="HTML"); return
+    a = app_cfg(load_db()); old_, new_ = app_dev_find(a, args[0]), app_dev_find(a, args[1])
+    if not old_ or not new_:
+        await c.bot.send_message(uid, "⚠️ Bulunamadı: " + ", ".join(x for x, d_ in ((args[0], old_), (args[1], new_)) if not d_)); return
+    res = await asyncio.to_thread(app_migrate, old_, new_, f"tg:{uid}")
+    if res.get("err"):
+        await c.bot.send_message(uid, "⚠️ Aktarılmadı: " + MIG_ERR.get(res["err"], res["err"])); return
+    await app_mig_finish(c.application, old_, new_, res)
+    audit(uid, f"gocur {old_}->{new_}")
+    await c.bot.send_message(uid, f"✅ Aktarıldı: {esc(res.get('nick') or '?')} · {app_ref_code(old_)} → {app_ref_code(new_)} · açar: {len(res.get('keys') or [])}", parse_mode="HTML")
 
 async def cmd_reach(u: Update, c: ContextTypes.DEFAULT_TYPE):
     uid = u.effective_user.id
@@ -11749,6 +11882,7 @@ def main():
     app.add_handler(CommandHandler("gmailalt", cmd_gmailalt))
     app.add_handler(CommandHandler("reach", cmd_reach))
     app.add_handler(CommandHandler("fcm", cmd_fcm))
+    app.add_handler(CommandHandler("gocur", cmd_gocur))
     app.add_handler(MessageHandler(filters.COMMAND, other_cmd))
     app.add_handler(CallbackQueryHandler(cb))
     app.add_handler(InlineQueryHandler(inline_ad))

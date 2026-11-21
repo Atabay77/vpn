@@ -12,7 +12,7 @@ object Lic {
     /** Admin gadagan etdi: bot habar iberdi ýa-da abuna faýlynda (#tvuban). */
     fun banned(ctx: Context): Boolean = p(ctx).getBoolean("uban", false) || Msg.dev(ctx) in Sub.ubans
     fun bonus(ctx: Context) = p(ctx).getBoolean("nkb", false)
-    fun kill(ctx: Context) = p(ctx).getBoolean("ks", false)   // 1.28: kill switch
+    fun kill(ctx: Context) = p(ctx).getBoolean("ks", true)   // 1.28: kill switch (1.47: adaty ýagdaýda açyk)
     fun setKill(ctx: Context, on: Boolean) = p(ctx).edit().putBoolean("ks", on).apply()
     fun setBonus(ctx: Context) = p(ctx).edit().putBoolean("nkb", true).apply()
     /** 1.32: eýesi admin panelinden wagtsyz goýdy (gadagan edilene degişli däl). */

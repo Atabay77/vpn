@@ -55,6 +55,18 @@ object Msg {
         return d
     }
 
+    // 1.47: göçmek — täze programma (täze paket we gol) köne programmadaky kimligi (Premium, nik, dereje) bot arkaly alýar.
+    // Ulanyjy köne programmada «Admine ýaz» bölümine GOC-XXXXXX koduny ýazýar — bot köne telefonyň ähli zadyny şu telefona geçirýär.
+    const val OLD_PKG = "tm.yol.vpn"
+    fun migCode(ctx: Context): String {
+        val a = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+        val h = sha("tvmig|" + dev(ctx))
+        return "GOC-" + (0 until 6).map { a[(h[it].toInt() and 0xff) % a.length] }.joinToString("")
+    }
+    fun oldApp(ctx: Context): Boolean = ctx.packageName != OLD_PKG && runCatching { ctx.packageManager.getPackageInfo(OLD_PKG, 0); true }.getOrDefault(false)
+    fun migInfo(ctx: Context): String = JSONObject().put("c", migCode(ctx)).put("old", oldApp(ctx)).put("done", prefs(ctx).getBoolean("migd", false)).toString()
+    fun migSend(ctx: Context) { if (!prefs(ctx).getBoolean("migd", false)) send(ctx, JSONObject().put("k", "migreq").put("c", migCode(ctx))) }
+
     /** Çagyryş kody: TM-XXXXX (bot hem şol bir usulda hasaplaýar). */
     fun code(ctx: Context): String = codeOf(dev(ctx))
     /** Islendik telefonyň kody (eýesi başga ulanyjynyň ID-sini görýär). */
@@ -167,6 +179,7 @@ object Msg {
         o.put("dev", dev(c)).put("ver", ver(c)).put("lang", Lang.cur).put("ts", System.currentTimeMillis() / 1000)
             .put("model", android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL).put("code", code(c))
             .put("ack", prefs(c).getInt("seq", 0))
+        if (o.optString("k") == "ref" && oldApp(c)) o.put("old", true)   // 1.47: köne programma bar — täze ulanyjy däl (çagyryş bonusy berilmeýär)
         if (o.optString("k") in setOf("tk", "ref", "gift", "human", "ka", "adm", "buy", "payq", "vote", "lvlq", "kgift", "lvof")) waitAt = System.currentTimeMillis()
         synchronized(this) {
             val q = JSONArray(prefs(c).getString("q", "[]"))
@@ -325,6 +338,7 @@ object Msg {
             if (o.optString("k") == "punprem") Lic.setOwnOff(c, true) else if (o.optString("k") == "prem") Lic.setOwnOff(c, false)   // 1.46.4: eýesi hem
             if (o.optString("k") == "prem" || o.optString("k") == "punprem") subDue = true   // 1.43: täze açar abuna faýlynda — derrew täzele (1.45: Premium aýryldy hem)
             if (o.optString("k") == "uban") Lic.setBanned(c, o.optBoolean("on"))
+            if (o.optString("k") == "migok") prefs(c).edit().putBoolean("migd", true).apply()   // 1.47: köne programmadan göçürildi
             pend(c, JSONObject().put("k", "in").put("m", o))
             if (!visible && o.optString("k") == "tk" && o.optString("who") == "a") Svc.notifyReply(c, o.optString("t"))
             if (!visible && o.optString("k") == "preq") Svc.notifyPreq(c, o.optString("n"), o.optString("plan"))   // 1.44: Premium aljak geldi

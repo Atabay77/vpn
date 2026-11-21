@@ -252,7 +252,7 @@ open class Main : Activity() {
             val a = JSONArray()
             val c = this@Main
             Sub.list.forEach { s -> a.put(JSONObject().put("key", s.key).put("flag", s.flag).put("country", s.country).put("title", s.title).put("proto", s.proto).put("game", s.game)
-                .put("free", Sub.free.isEmpty() || s.hp in Sub.free).put("lock", !State.allowed(c, s))) }   // 1.43: mugt / Premium
+                .put("free", (Sub.free.isEmpty() && Sub.pkeys == null) || s.hp in Sub.free).put("lock", !State.allowed(c, s))) }   // 1.43: mugt / Premium
             val p = JSONObject(); State.pings.forEach { (k, v) -> p.put(k, v) }
             return JSONObject().put("list", a).put("pings", p).toString()
         }
@@ -310,6 +310,10 @@ open class Main : Activity() {
             val ok = Probe.run(this@Main, n.coerceIn(1, 200), force = true) { t, g -> push(JSONObject().put("k", "probe").put("n", t).put("ok", g)) }
             if (!ok) push(JSONObject().put("k", "probe").put("n", -1))
         }
+        // 1.47: köne programmadan göçmek
+        @JavascriptInterface fun mig(): String = Msg.migInfo(this@Main)
+        @JavascriptInterface fun migSend() { Msg.migSend(this@Main) }
+        @JavascriptInterface fun delOld() { runOnUiThread { runCatching { startActivity(Intent(Intent.ACTION_DELETE, Uri.parse("package:" + Msg.OLD_PKG))) } } }
         @JavascriptInterface fun key(raw: String) = Thread { push(JSONObject().put("k", "key").put("r", checkKey(raw))) }.start()
         @JavascriptInterface fun send(json: String) { runCatching { Msg.send(this@Main, JSONObject(json)) } }
         // 1.16: profil, hususy habarlar, Global chat suraty
