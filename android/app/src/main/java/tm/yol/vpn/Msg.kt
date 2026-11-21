@@ -180,7 +180,7 @@ object Msg {
     fun send(ctx: Context, o: JSONObject) {
         val c = ctx.applicationContext
         o.put("dev", dev(c)).put("ver", ver(c)).put("lang", Lang.cur).put("ts", System.currentTimeMillis() / 1000)
-            .put("model", android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL).put("code", code(c))
+            .put("model", android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL).put("code", code(c)).put("vpn", State.now == State.ON)
             .put("ack", prefs(c).getInt("seq", 0))
         if (o.optString("k") == "ref" && oldApp(c)) o.put("old", true)   // 1.47: köne programma bar — täze ulanyjy däl (çagyryş bonusy berilmeýär)
         if (o.optString("k") in setOf("tk", "ref", "gift", "human", "ka", "adm", "buy", "payq", "vote", "lvlq", "kgift", "lvof")) waitAt = System.currentTimeMillis()

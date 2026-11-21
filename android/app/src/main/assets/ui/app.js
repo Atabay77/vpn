@@ -498,7 +498,7 @@
       real.forEach((v) => { if (fl.indexOf(v.f) < 0) fl.push(v.f); });
       r.svFlags = fl.slice(0, 9).join(' ') + (fl.length > 9 ? ' …' : '') || r.offCard.sub;
       r.svCount = ({ tk: '{n} serwer', ru: '{n} серв.', tr: '{n} sunucu' }[s.lang] || '{n}').replace('{n}', String(SV.length));
-      r.myCode = INFO.code || '—';
+      r.myCode = INFO.code || '—'; r.cpMyId = () => { NB.copy(INFO.code || ''); this.say('✓ ' + tx.copied); };   // 1.47: ID göçürmek
       // açar döret: 3/7/30 + möhletsiz; elle gün ýazylsa şol
       r.kDays = [[3, '3 ' + tx.days, '15 TMT'], [7, '7 ' + tx.days, '30 TMT'], [30, tx.bk_month, '100 TMT'], [0, '♾', tx.bk_unl.replace('♾ ', '')]].map((q) => {
         const on = !(parseInt(s.kCustom, 10) > 0) && s.kDay === q[0];
@@ -588,7 +588,9 @@
         r.hasLvl = !!L; r.lvN = L ? String(L.lv) : '1'; r.lvXp = L ? tx.lv_xp.replace('{x}', String(L.xp)).replace('{n}', L.next ? String(L.next) : '—') : '';
         r.lvBar = L && L.next ? Math.max(3, Math.min(100, Math.round((L.xp - L.cur) * 100 / Math.max(1, L.next - L.cur)))) : 100;
         r.lvHow = tx.lv_how; r.hasTop = top.length > 0;
-        r.topList = top.map((q, i) => ({ n: (i < 3 ? ['🥇', '🥈', '🥉'][i] : (i + 1) + '.') + ' ' + q[0], c: tx.lv_inv.replace('{n}', String(q[1])), lv: String(rkT(q[2])) })); }
+        const ownTop = admMe().role === 'f' || roleOf(INFO.dev) === 'o';   // 1.47: eýesi — atlaryna basyp profilini açýar
+        r.topList = top.map((q, i) => ({ n: (i < 3 ? ['🥇', '🥈', '🥉'][i] : (i + 1) + '.') + ' ' + q[0], c: tx.lv_inv.replace('{n}', String(q[1])), lv: String(rkT(q[2])),
+          cls: ownTop && q[3] ? 'tap' : '', open: () => { if (ownTop && q[3]) this.openProf(q[3]); } })); }
       // 1.19: açar satyn almak
       r.isBuy = false;   // 1.33: «Açar satyn al» aýryldy
       { const pay = LS.get('payInfo', null), plans = (pay && pay.p) || [[3, 15], [7, 30], [30, 100]], sel = s.buyD || plans[1][0];
@@ -711,6 +713,14 @@
       r.gvX = s.gvX || ''; r.onGvX = (e) => this.setState({ gvX: String(e.target.value || '').replace(/[^0-9-]/g, '').slice(0, 7) });
       // hususy habarlar sanawy
       r.isDms = pg === 'dms';
+      // 1.47: hemmeler üçin ulanyjy gözlemek (Telegram ýaly — nigiň bir bölegi ýa-da TM-kod); netije botdan gelýär
+      { const q = s.dmQ || ''; r.dmQ = q; r.dmQph = ({ ru: '🔎 Поиск пользователей…', tr: '🔎 Kullanıcı ara…' })[s.lang] || '🔎 Ulanyjy gözle…';
+        r.onDmQ = (e) => { const v = String(e.target.value || '').slice(0, 32); this.setState({ dmQ: v }); clearTimeout(this._dqT);
+          if (v.trim().length >= 2) this._dqT = setTimeout(() => { try { NB.send(JSON.stringify({ k: 'usq', q: v.trim() })); } catch (e2) {} }, 450); };
+        const R = s.dmSR && s.dmSR.q === q.trim() ? s.dmSR.l : null;
+        r.dmSOn = q.trim().length >= 2; r.dmSWait = r.dmSOn && !R; r.dmSNone = r.dmSOn && !!R && !R.length;
+        r.dmSWaitT = ({ ru: 'Поиск…', tr: 'Aranıyor…' })[s.lang] || 'Gözlenýär…'; r.dmSNoneT = tx.us_none;
+        r.dmSRows = r.dmSOn && R ? R.map((u) => Object.assign(ava(u.d), { name: u.n || '?', lv: String(rkT(u.lv || 1)), open: () => { this.setState({ dmQ: '' }); this.openProf(u.d); } })) : []; }
       const rows = Object.keys(DMS).filter((d) => d !== me1).sort((a, b) => (DMS[b].lt || 0) - (DMS[a].lt || 0));
       r.dmEmpty = !rows.length;
       r.dmRows = rows.map((d, i) => { const x = DMS[d], m = x.msgs.filter((q) => !isCtl(q)).pop(), av = ava(d);
@@ -878,6 +888,18 @@
             premW: () => give(7), premWT: ({ ru: '1 неделя', tr: '1 hafta' }[s.lang] || '1 hepde'),
             premM: () => give(30), premY: () => give(365), premD: () => { const n = parseInt(this.state.pDays, 10); if (!(n >= 0)) { this.say('⚠️ ' + tx.gv_bad); return; } give(n); } });
         } else if (r.up) Object.assign(r.up, { canPrem: false, premOwn: false, premNow: '', premAct: false, premNeed: false, selOn: false, rmOn: false });
+        // 1.47: hemmä — ID (TM-kod) we göçürmek; eýesi / doly admin — «ℹ️ Ulanyjy maglumaty»
+        if (r.isUprof && r.up && s.upDev) { const d = s.upDev, id2 = typeof NB.codeOf === 'function' ? NB.codeOf(d) || '' : '';
+          r.up.idOn = !!id2; r.up.idT = id2; r.up.cpId2 = () => { NB.copy(id2); this.say('✓ ' + tx.copied); };
+          const UL = ({ ru: ['Информация о пользователе', 'Присоединился', 'Последний раз', 'Активные дни', 'Дни с VPN', 'Последнее подключение', 'Пригласил', 'Пригласивший', 'Очки / уровень', 'Premium', 'Модель / версия', 'Тикеты', 'Бан', 'Перенесён из старой программы', 'да', 'нет'],
+            tr: ['Kullanıcı bilgisi', 'Katıldı', 'Son görülme', 'Aktif günler', 'VPN kullandığı gün', 'Son bağlantı', 'Davet ettiği', 'Davet eden', 'Puan / seviye', 'Premium', 'Model / sürüm', 'Destek talepleri', 'Ban', 'Eski programdan taşındı', 'evet', 'hayır'] })[s.lang]
+            || ['Ulanyjy maglumaty', 'Goşuldy', 'Soňky gezek', 'Işjeň günleri', 'VPN ulanan günleri', 'Soňky birikmesi', 'Çagyranlary', 'Çagyran', 'Bal / dereje', 'Premium', 'Model / wersiýa', 'Biletleri', 'Gadagan', 'Köne programmadan göçürildi', 'hawa', 'ýok'];
+          const ui2 = s.uInfo && s.uInfo.dev === d ? s.uInfo : null;
+          r.up.uiOn = !!s.admOn && full2 && d !== me1; r.up.uiT = UL[0]; r.up.uiHas = !!ui2;
+          r.up.uiGo = () => { act('uinfo', { dev: d }); this.say(tx.k_wait); };
+          r.up.uiRows = ui2 ? [[UL[1], ui2.first], [UL[2], ui2.seen], [UL[3], String(ui2.ad)], [UL[4], String(ui2.vd)], [UL[5], ui2.vl], [UL[6], String(ui2.inv)], [UL[7], ui2.by || '—'],
+            [UL[8], ui2.xp + ' · ' + (tx['rk_n' + rkT(ui2.lv)] || ui2.lv)], [UL[9], ui2.prem || UL[15]], [UL[10], ui2.model + ' · v' + ui2.ver], [UL[11], String(ui2.tk)], [UL[12], ui2.ban ? UL[14] : UL[15]]]
+            .concat(ui2.mv ? [[UL[13], UL[14]]] : []).map((q) => ({ k: q[0], v: q[1] })) : []; }
         // 1.45: Global chat — sesini öçürmek (doly admin / chat admin)
         if (r.isUprof && r.up && s.upDev) { const d = s.upDev, ok = !!s.admOn && (full2 || am2.perm === 'chat') && d !== me1 && !roleOf(d);
           r.up.muteOn = ok; r.up.mutes = [[10, tx.gm_10], [60, tx.gm_60], [1440, tx.gm_1d], [0, tx.gm_off]].map((q) => ({ t: q[1], go: () => act('gmute', { dev: d, m: q[0] }) })); }
@@ -1500,6 +1522,7 @@
       const d = e.d || {}; A = d; INFO.admMe = d.me; INFO.adm = true;
       Object.keys(TKO).forEach((id) => { if (Date.now() - TKO[id].at > 120000) { delete TKO[id]; return; } const t0 = (A.tk || []).find((x) => String(x.id) === id); if (t0) t0.st = TKO[id].st; });   // 1.46.7: ýapan biletim köne maglumat bilen gaýtadan açylmasyn
       if (Array.isArray(d.alog)) up.alog = d.alog;   // 1.46.7
+      if (d.uinfo && d.uinfo.dev) up.uInfo = d.uinfo;   // 1.47: ulanyjy maglumaty
       if (Array.isArray(d.usr)) { d.usr.forEach((u) => { if (u && u.dev) SR[u.dev] = u.n; }); up.usRes = d.usr; up.usDone = true; }   // 1.45
       (d.qal || []).forEach((q) => qAdd(q.id, q.t, q.at));
       if (s.admLogging || !s.admOn) { Object.assign(up, { admOn: true, admAsk: false, admLogging: false, admErr: '', admFails: 0, page: 'admin', admTab: 'tk' }); C.say('🔓 ' + tx.ad_ok); }
@@ -1567,6 +1590,7 @@
       } else if (m.k === 'lvl') {
         LS.set('lvl', { lv: m.lv, xp: m.xp, cur: m.cur, next: m.next, inv: m.inv }); up.payTick = t; if (m.inv != null) up.invites = m.inv;
         if (m.up) { up.rkm = { t: rkT(m.lv), up: true, days: m.days || 0 }; C.party('⭐ ' + tx.lv_up.replace('{n}', String(m.lv)) + (m.days ? ' · +' + m.days + ' ' + tx.days : '')); }
+      } else if (m.k === 'usr') { up.dmSR = { q: m.q || '', l: m.l || [] };   // 1.47: ulanyjy gözleginiň netijesi
       } else if (m.k === 'top') { LS.set('top', m.l || []); up.payTick = t; }
       else if (m.k === 'lvs') { const tn = Date.now(); Object.keys(m.m || {}).forEach((d) => { LVB[d] = [+m.m[d] || 0, tn]; }); LS.set('lvb', LVB); up.gTick = (s.gTick || 0) + 1; }
       else if (m.k === 'kgift') { if (m.ok) { C.say(tx.gf_ok.replace('{n}', m.to || '?').replace('{d}', String(m.d || 1))); up.gfTo = ''; try { NB.refresh(); } catch (e2) {} } else C.say('⚠️ ' + (tx['gf_e_' + m.why] || tx.gf_e_notfound)); }

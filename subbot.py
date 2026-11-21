@@ -3107,6 +3107,42 @@ async def app_mig_finish(app, old, new, res):
     except Exception as e: log.info("mig lvl: %s", e)
     RUN["app_dirty"] = True
 
+def app_user_find(a, q, me=""):
+    """1.47: nik boýunça gözleg (doly gabat gelýän → başlaýan → içinde bar), TM-kod hem; gadagan edilenler we göçürilen köne telefonlar ýok."""
+    q = re.sub(r"\s+", " ", str(q or "")).strip().lstrip("@")[:32]; ql = q.casefold()
+    if len(ql) < 2: return []
+    bans = set(a.get("gbans") or []) | set(a.get("ubans") or []); cq = ql.upper().replace(" ", "")
+    hits = []
+    for d_, u_ in (a.get("devs") or {}).items():
+        if d_ == me or d_ in bans or u_.get("mvto"): continue
+        nk_ = str(u_.get("nk") or u_.get("nick") or ""); nl = nk_.casefold()
+        if cq.startswith("TM-") and app_ref_code(d_) == cq: sc = 0
+        elif not nk_ or nk_ == "?": continue
+        elif nl == ql: sc = 1
+        elif nl.startswith(ql): sc = 2
+        elif any(w.startswith(ql) for w in re.split(r"[\s._\-]+", nl)): sc = 3
+        elif ql in nl: sc = 4
+        else: continue
+        hits.append((sc, -float(u_.get("l") or 0), d_, nk_ or "?", int(u_.get("lv") or 1)))
+    hits.sort()
+    return [{"d": d_, "n": n_, "lv": lv_} for _, _, d_, n_, lv_ in hits[:20]]
+
+def app_user_info(a, dv):
+    """1.47: ulanyjy maglumaty (eýesi / doly admin): goşulan, soňky gezek, VPN ulanan günleri, çagyranlary, işjeňligi."""
+    u_ = (a.get("devs") or {}).get(dv)
+    if not u_: return None
+    xp_, inv_ = app_xp(a, dv); now_ = time.time()
+    keys_ = [v for v in (a.get("keys") or {}).values() if dv in app_key_devs(v) and (not v.get("exp") or v["exp"] > now_)]
+    pk_ = [v for v in keys_ if app_key_prem(v)]
+    by_ = (a.get("ref_devs") or {}).get(dv)
+    return {"dev": dv, "n": u_.get("nick") or "?", "code": app_ref_code(dv), "first": app_hm(u_.get("f")), "seen": app_hm(u_.get("l")),
+            "ad": int(u_.get("ad") or 0), "vd": int(u_.get("vd") or 0), "vl": app_hm(u_.get("vl")) if u_.get("vl") else "—",
+            "inv": inv_, "by": ((a.get("devs") or {}).get(by_) or {}).get("nick") or "" if by_ else "", "xp": xp_, "lv": app_lvl(xp_),
+            "prem": ("♾" if pk_ and not all(v.get("exp") for v in pk_) else f"{max(0, int((max(v['exp'] for v in pk_) - now_) // 86400))} gün") if pk_ else "",
+            "key": bool(keys_), "model": u_.get("model") or "?", "ver": u_.get("ver") or "?", "lang": u_.get("lang") or "?",
+            "tk": sum(1 for t in (a.get("tickets") or {}).values() if t.get("dev") == dv),
+            "ban": dv in set(a.get("gbans") or []) or dv in set(a.get("ubans") or []), "mv": u_.get("mvf") or ""}
+
 def app_dev_find(a, q):
     """Eýesiniň buýrugy üçin: TM-kod, GOC-kod, 12 belgili kimlik ýa-da nik → telefon (ýa-da None)."""
     q = (q or "").strip(); qu = q.upper().replace(" ", "")
@@ -3332,7 +3368,7 @@ def app_top(a):
     devs_ = a.get("devs") or {}
     for d_, u_ in devs_.items():
         if int(u_.get("bx") or 0) >= 50: c_[d_] = c_.get(d_, 0) + int(u_["bx"]) // 50
-    return [[(devs_.get(d_) or {}).get("nick") or "?", n_, app_lvl(app_xp(a, d_)[0])] for d_, n_ in sorted(c_.items(), key=lambda kv: -kv[1])[:10]]
+    return [[(devs_.get(d_) or {}).get("nick") or "?", n_, app_lvl(app_xp(a, d_)[0]), d_] for d_, n_ in sorted(c_.items(), key=lambda kv: -kv[1])[:10]]   # 1.47: d_ — eýesi profili açýar
 
 def app_order_done(oid, ok, who):
     """Sargyt tassyklandy (açar berilýär — işjeň açary bar bolsa uzaldylýar) ýa-da ret edildi. Dönüş: sargyt ýa-da None."""
@@ -3380,13 +3416,17 @@ async def app_on_msg(app, fid, o):
             if o.get(f_): u[f_] = str(o[f_])[:40]
         u["l"] = now
         day_ = tm_now().strftime("%Y-%m-%d")
+        if o.get("vpn"):   # 1.47: VPN bilen ulanan günleri we soňky birikme (ulanyjy maglumaty üçin)
+            u["vl"] = now
+            if u.get("vld") != day_: u["vld"] = day_; u["vd"] = int(u.get("vd") or 0) + 1
         if u.get("ld") != day_:
             u["ld"] = day_; u["ad"] = int(u.get("ad") or 0) + 1; RUN.setdefault("lvl_q", set()).add(dev)   # 1.19: işjeň gün
             if app_dev_prem(a, dev): u["pb"] = int(u.get("pb") or 0) + 10   # 1.47: Premium — bal 2 esse
         if not u.get("mvto"): a.setdefault("codes", {})[app_ref_code(dev)] = dev   # 1.47: göçürilen köne telefon kody täzesinde galýar
     a0_ = app_cfg(load_db()); u0_ = (a0_.get("devs") or {}).get(dev)   # 1.47: hiç zat üýtgemedik bolsa baza ýazylmaýar (her habarda ýazmak — bot haýallaýardy)
     if (u0_ is None or u0_.get("ld") != tm_now().strftime("%Y-%m-%d") or now - int(u0_.get("l") or 0) > 300 or app_ref_code(dev) not in (a0_.get("codes") or {})
-            or any(o.get(f_) and str(o[f_])[:40] != u0_.get(f_) for f_ in ("nick", "model", "ver", "lang"))):
+            or any(o.get(f_) and str(o[f_])[:40] != u0_.get(f_) for f_ in ("nick", "model", "ver", "lang"))
+            or (o.get("vpn") and (u0_.get("vld") != tm_now().strftime("%Y-%m-%d") or now - int(u0_.get("vl") or 0) > 1800))):
         await asyncio.to_thread(app_mut, reg)
     try: await asyncio.to_thread(app_resend, fid, dev, int(o.get("ack") or 0))
     except Exception: pass
@@ -3398,6 +3438,10 @@ async def app_on_msg(app, fid, o):
     if k == "adm": await app_adm(app, dev, o); return
     if k == "pr": await asyncio.to_thread(app_x_report, dev, o.get("p")); return
     if k == "alog": await asyncio.to_thread(alog_add, dev, o.get("e")); return   # 1.47: admin log
+    if k == "usq":   # 1.47: ulanyjy gözlemek (hemmeler üçin, Telegram ýaly — nigiň bir bölegi ýa-da TM-kod)
+        if time.time() - RUN.setdefault("usq_at", {}).get(dev, 0) < 1.5: return
+        RUN["usq_at"][dev] = time.time()
+        await asyncio.to_thread(app_send, dev, {"k": "usr", "q": str(o.get("q") or "")[:32], "l": app_user_find(a, o.get("q"), dev)}); return
     if k == "migreq":   # 1.47: täze programma — göçmek kody (köne programmada ýazylanda tanalsyn)
         c_ = app_mig_code(dev)
         if str(o.get("c") or "").upper() == c_ and not (a.get("mig_q") or {}).get(c_):
@@ -4081,6 +4125,8 @@ async def app_adm(app, dev, o):
                         if len(usr_) >= 30: break
             msg = "usr"
 
+        if act == "uinfo" and full:   # 1.47: profilde «ℹ️ Maglumat»
+            usr_ = app_user_info(a, str(r.get("dev") or "")); msg = "uinfo" if usr_ else ""; err = "" if usr_ else "ulanyjy tapylmady"
         if act == "prem":   # 1.43: Premium bermek — eýesi islän möhleti, satyjy / admin diňe 1 aý ýa-da 1 ýyl
             dv = str(r.get("dev") or "")
             try: d_ = int(r.get("d") or 0)
@@ -4393,7 +4439,7 @@ async def app_adm(app, dev, o):
         log.exception("app adm %s", act); err = str(e2)[:120]
     snap = app_adm_snap(app_cfg(load_db()), (app_cfg(load_db()).get("apw") or {}).get(aid) or e, dev)
     snap.update({"ok": True, "a": act, "msg": msg, "err": err})
-    if usr_ is not None: snap["usr"] = usr_
+    if usr_ is not None: snap["uinfo" if msg == "uinfo" else "usr"] = usr_
     if alog_ is not None: snap["alog"] = alog_
     await asyncio.to_thread(app_adm_out, dev, pw, snap)
 
