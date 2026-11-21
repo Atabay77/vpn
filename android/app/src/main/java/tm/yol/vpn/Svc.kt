@@ -47,6 +47,17 @@ object State {
     fun selKey(ctx: Context): String = ctx.getSharedPreferences("p", 0).getString("sel", AUTO) ?: AUTO
     /** 1.46.4: awtomatik — Premium bölüminden saýlanan bolsa diňe Premium serwerler, Free-den bolsa diňe mugtlar. */
     private fun autoPrem(ctx: Context) = selKey(ctx) == AUTO_P && Lic.prem(ctx)
+    /** 1.47: baş sahypadaky PUBG düwmesi — awtomatik diňe PUBG serwerlerinden saýlaýar. */
+    fun pubg(ctx: Context) = ctx.getSharedPreferences("p", 0).getBoolean("pubg", false)
+    fun setPubg(ctx: Context, on: Boolean) = ctx.getSharedPreferences("p", 0).edit().putBoolean("pubg", on).apply()
+    /** 1.47: awtomatik birikme — PUBG / Premium-da işleýän kod ýok bolsa düwme özi öçýär we adaty (mugt) koda birikýär, programma sebäbini aýdýar. */
+    fun bestFb(ctx: Context): Server? {
+        best(ctx)?.let { return it }
+        if (noNet) return null
+        if (pubg(ctx)) { setPubg(ctx, false); Msg.events.add(org.json.JSONObject().put("k", "fb").put("w", "pubg")); best(ctx)?.let { return it } }
+        if (autoPrem(ctx)) { select(ctx, null, false); Msg.events.add(org.json.JSONObject().put("k", "fb").put("w", "prem")); best(ctx)?.let { return it } }
+        return null
+    }
     private const val AUTO_P = "auto:p"
     private const val AUTO = "auto"
 
@@ -57,9 +68,10 @@ object State {
     fun allowed(ctx: Context?, s: Server): Boolean = ctx == null || (Sub.free.isEmpty() && Sub.pkeys == null) || Lic.prem(ctx) || s.hp in Sub.free   // 1.47: täze bot (#tvkp bar) — mugt sanaw boş bolsa hem Premium serwerler açylmaýar
     private fun cands(): List<Server> {
         val c = app
+        if (c != null && pubg(c)) return Sub.list.filter { it.game && allowed(c, it) }   // 1.47: PUBG düwmesi
         val base = Sub.list.filter { !it.ru && !it.game && allowed(c, it) }.ifEmpty { Sub.list.filter { !it.ru && allowed(c, it) } }
         if (c == null || Sub.free.isEmpty() || !Lic.prem(c)) return base
-        return (if (autoPrem(c)) base.filter { it.hp !in Sub.free } else base.filter { it.hp in Sub.free }).ifEmpty { base }   // 1.46.4
+        return if (autoPrem(c)) base.filter { it.hp !in Sub.free } else base.filter { it.hp in Sub.free }.ifEmpty { base }   // 1.46.4 (1.47: Premium-da kod ýok — bestFb mugta geçirýär)
     }
 
     fun ping(s: Server): Long = runCatching { Libv2ray.measureOutboundDelay(Cfg.full(s.uri, false), PING) }
@@ -242,7 +254,7 @@ class Svc : VpnService() {
             if (!want || g != gen) return
             val sel = State.selected(this)   // 1.35: saýlanan serwer — abuna gijä galsa-da başga serwere geçilmeýär
             if (sel != null && !State.online(this)) { State.noNet = true; throw IllegalStateException("internet yok") }
-            val s = sel ?: State.best(this) ?: if (keep) return else throw IllegalStateException("ping yok")
+            val s = sel ?: State.bestFb(this) ?: if (keep) return else throw IllegalStateException("ping yok")
             if (keep) stopLoop()
             State.noPing = false; State.noNet = false; State.ms = 0; State.dead = false; bad = 0
             if (sel != null) State.ms = State.pings[sel.key]?.takeIf { it > 0 && System.currentTimeMillis() - State.pingAt < 5 * 60_000 } ?: 0L

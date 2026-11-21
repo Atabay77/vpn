@@ -116,6 +116,8 @@ html.ph-s .c-bg{background-image:var(--bgS,url(img/bg0_s.jpg))!important}
 .warn{animation:warnin .5s cubic-bezier(.2,.9,.25,1)}@keyframes warnin{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
 .wpulse{animation:wp 1.6s ease-in-out infinite;transform-origin:center}@keyframes wp{0%,100%{transform:scale(1)}50%{transform:scale(1.18)}}
 .slot-off{bottom:100px}.slot-on{bottom:198px}
+.mtg{height:28px;padding:0 12px;border:none;background:rgba(6,16,11,.72);color:#C9BFA8;font-size:11px;font-weight:800;cursor:pointer;white-space:nowrap}
+.mtg-on{background:linear-gradient(90deg,#FFD27A,#E0B04A);color:#06100B}
 .thi{animation:thi .55s cubic-bezier(.3,1.5,.5,1)}@keyframes thi{from{transform:rotate(-120deg) scale(.3);opacity:0}to{transform:none;opacity:1}}
 .ubar{display:block;width:100%;border-radius:8px 8px 3px 3px;background:linear-gradient(180deg,#6FDB9C,#1F8F5C);transform-origin:bottom;animation:barup .7s cubic-bezier(.2,.9,.25,1) backwards}
 .ubar-today{background:linear-gradient(180deg,#FFD27A,#C8902E)}
@@ -234,6 +236,17 @@ html .glass.row.sv-prem,html[class*=ph-] .glass.row.sv-prem{animation:none!impor
     <div style="position:absolute;left:16px;right:16px;top:390px;display:flex;flex-direction:column;align-items:center;gap:4px;text-align:center">
       <div class="{{stCls}}" style="font-family:'Montserrat',sans-serif;font-size:19px;font-weight:800;transition:color .5s ease;text-shadow:0 2px 12px rgba(0,0,0,.8)">{{statusText}}</div>
       <div style="font-size:11px;color:#C9BFA8;text-shadow:0 1px 6px rgba(0,0,0,.9)">{{hintText}}</div>
+      <sc-if value="{{modeOn}}" hint-placeholder-val="{{false}}">
+        <div style="display:flex;gap:8px;margin-top:6px;justify-content:center;flex-wrap:wrap">
+          <sc-if value="{{pmOn}}" hint-placeholder-val="{{false}}">
+            <span style="display:flex;border-radius:14px;overflow:hidden;border:1px solid rgba(224,176,74,.6)">
+              <button onClick="{{pmGo}}" class="{{pmCls}} tap">👑 Premium</button>
+              <button onClick="{{frGo}}" class="{{frCls}} tap">Free</button>
+            </span>
+          </sc-if>
+          <button onClick="{{pgGo}}" class="{{pgCls}} tap" style="border-radius:14px;border:1px solid rgba(224,176,74,.6)">{{pgT}}</button>
+        </div>
+      </sc-if>
     </div>
 
     <div class="{{slotCls}}" style="position:absolute;left:16px;right:16px;display:flex;flex-direction:column;gap:8px;z-index:4">

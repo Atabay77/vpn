@@ -103,10 +103,10 @@ object Sub {
                 }
                 val name = Cfg.dec(line.substringAfter('#', ""))
                 val (flag, country, title) = splitName(name)
-                val game = name.contains("🎮") || Regex("pubg|gaming|oýun|game", RegexOption.IGNORE_CASE).containsMatchIn(name)
+                // 1.47: Özbegistan / Gazagystan serwerleri hem PUBG (öz baýdagy bilen)
+                val game = name.contains("🎮") || flag == "🇺🇿" || flag == "🇰🇿" || Regex("pubg|gaming|oýun|game|uzbek|kazak|kazakh", RegexOption.IGNORE_CASE).containsMatchIn(name)
                 val ru = game || flag == "🇷🇺" || country.equals("Russia", true) || country.equals("Rossiýa", true)
-                // oyun sunucuları gerçek yeri ne olursa olsun Rusya görünür
-                if (game) Server("🇷🇺", "Russia", title, proto, line, true, true)
+                if (game) Server(flag.ifEmpty { "🇷🇺" }, country.ifEmpty { "Russia" }, title, proto, line, true, true)
                 else Server(flag, country, title, proto, line, false, ru)
             }.toList().numbered()
     }

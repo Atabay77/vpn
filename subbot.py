@@ -1168,7 +1168,17 @@ TM_CNAME = {"nl": "Niderlandlar", "fi": "Finlýandiýa", "gb": "Beýik Britaniý
 def app_is_game(c):
     """Oýun (PUBG) kody: adynda 🎮 ýa-da pubg/gaming/oýun/game."""
     nm = orig_name(c)
-    return "🎮" in nm or "🇷🇺" in nm or bool(re.search(r"pubg|gaming|oýun|game", nm, re.I))   # 1.45.2: Russiýa serwerleri — PUBG bölüminde
+    return "🎮" in nm or "🇷🇺" in nm or "🇺🇿" in nm or "🇰🇿" in nm or bool(re.search(r"pubg|gaming|oýun|game|uzbek|kazak", nm, re.I))   # 1.45.2: Russiýa serwerleri — PUBG bölüminde (1.47: Özbegistan / Gazagystan hem)
+
+def app_free_pubg(codes, free_, hpms=None, add=False):
+    """1.47: mugtda PUBG ýok (add=False — aýyrýar). add=True: Premium-da 2+ PUBG serwer bar bolsa iň çalt biri mugta goşulýar."""
+    hpms = hpms or {}
+    gh = list(dict.fromkeys(h for h in (app_x_hp(c) for c in codes if app_is_game(c)) if h))
+    out = [h for h in free_ if h not in set(gh)]
+    if add and len(gh) >= 2:
+        msf = lambda h: int(hpms[h][0]) if h in hpms and int(hpms[h][0]) > 0 else 99999
+        out.append(min(gh, key=msf))
+    return out
 
 def app_brand_names(codes):
     """1.29: kodlaryň ady abunanyňky däl, biziňki: «🇪🇸 Ispaniýa · Türkmen VPN · 4»; oýun kodlary «🇷🇺 Russiýa · Türkmen VPN · PUBG 1 🎮»."""
@@ -2373,8 +2383,10 @@ def app_sync(force=False):
                 if code_key(c) not in keys: keys.add(code_key(c)); codes.append(c)
         plast = {k_: v_ for k_, v_ in plast.items() if k_ in {hashlib.md5(u.encode()).hexdigest()[:8] for u in psubs}}
         free_ = app_free_all(codes, php, cfg.get("hp_ms")) if php else app_free_pick(codes, base1, cfg.get("hp_ms"))
+        free_ = app_free_pubg(codes, free_)   # 1.47: mugt adaty serwerlerde PUBG ýok
         try: free_, fb_ = app_free_borrow(codes, free_, app_cfg(load_db())); RUN["free_hps"] = list(free_)   # 1.46.8: mugtlar bloklananda Premium-dan biri wagtlaýyn
         except Exception as e: fb_ = cfg.get("fborrow"); log.info("free borrow: %s", e)
+        free_ = app_free_pubg(codes, free_, cfg.get("hp_ms"), add=True)   # 1.47: Premium-da 2+ PUBG bolsa biri mugta (baş sahypadaky PUBG düwmesi)
         if (fb_ or {}).get("hp") != (cfg.get("fborrow") or {}).get("hp"): vlog(f"🔁 Mugt serwer: {'Premium-dan wagtlaýyn ' + fb_['hp'] if fb_ else 'wagtlaýyn Premium serwer yzyna alyndy'}")   # 1.43.2: mugt — her ýurtdan iň gowy işleýän bir kod + kanal + 2 PUBG
         codes = app_brand_names(codes)   # 1.29: abunanyň atlary görünmesin
         meta = app_meta(cfg) + (["#tvfree: " + ",".join(free_)] if free_ else [])

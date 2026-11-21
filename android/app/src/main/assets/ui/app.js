@@ -324,6 +324,15 @@
         r.migT = dn ? T(3) : T(0); r.migS = dn ? T(4) : T(1) + (M.c || ''); r.migB = dn ? T(5) : T(2);
         r.migGo = () => { if (dn) { try { NB.delOld(); } catch (e) {} this._mig = null; setTimeout(() => { this._mig = null; this.setState({ migTick: Date.now() }); }, 5000); } else { try { NB.copy(M.c || ''); } catch (e) {} this.say(T(6)); } };
         r.migX = () => this.setState({ migX: true }); }
+      // 1.47: baş sahypa — PUBG düwmesi (hemmä) we Premium / Free (Premium ulanyjylara); sazlama NB.select / NB.pubg arkaly
+      { const PRm = !!INFO.prem, gN = SV.filter((x) => x.game && !x.lock).length;
+        const L2 = ({ ru: ['Сейчас нет сервера PUBG', 'PUBG — только в Premium'], tr: ['Şu anda PUBG sunucusu yok', 'PUBG — sadece Premium’da'] })[s.lang] || ['Häzir PUBG serwer ýok', 'PUBG — diňe Premium-da'];
+        r.modeOn = s.page === 'main' && !s.menu;
+        r.pgCls = s.pubg ? 'mtg mtg-on' : 'mtg'; r.pgT = '🎮 PUBG' + (s.pubg ? ' ✓' : '');
+        r.pgGo = () => { const on = !s.pubg; if (on && !gN) { this.say('⚠️ ' + (PRm ? L2[0] : L2[1])); return; } try { NB.pubg(on); } catch (e) {} this.setState({ pubg: on }); };
+        r.pmOn = PRm;
+        r.pmCls = s.pick < 0 && s.autoP ? 'mtg mtg-on' : 'mtg'; r.frCls = s.pick < 0 && !s.autoP ? 'mtg mtg-on' : 'mtg';
+        r.pmGo = () => this.setState({ pick: -1, autoP: true }); r.frGo = () => this.setState({ pick: -1, autoP: false }); }
       r.showUpd = !!s.upd && !s.menu;
       r.updTxt = s.dl >= 0 ? tx.u_dl.replace('{p}', String(s.dl)) : 'Türkmen VPN ' + s.upd;
       r.updBtn = s.dl >= 0 ? '…' : tx.u_btn; r.doUpd = () => NB.update();
@@ -1271,7 +1280,7 @@
       const st = n.st === 'fail' ? 'off' : n.st;
       if (first) { const p = loadServers(); up.pings = p; }
       const idx = (k) => (k ? SV.findIndex((v) => v.id === k) : -1);
-      up.st = st; up.ms = n.ms > 0 ? n.ms : 0; up.testing = n.testing; up.ks = !!n.ks; up.dead = !!n.dead;
+      up.st = st; up.ms = n.ms > 0 ? n.ms : 0; up.testing = n.testing; up.ks = !!n.ks; up.dead = !!n.dead; up.pubg = !!n.pubg;
       up.si = Math.max(0, idx(n.act) >= 0 ? idx(n.act) : (idx(n.sel) >= 0 ? idx(n.sel) : 0));
       if (lastPick === null || (lastPick === s.pick && lastAutoP === !!s.autoP)) { up.pick = idx(n.sel); lastPick = up.pick; up.autoP = !!n.selp; lastAutoP = up.autoP; }
       up.hasKey = n.left < 0 && !n.nolim; up.nolim = !!n.nolim; if (n.sess != null && n.sess !== SESS) { SESS = +n.sess; up.sessTick = (s.sessTick || 0) + 1; } up.left = n.left >= 0 ? n.left : 0; up.kexp = n.kexp; up.upd = n.upd; up.dl = n.dl;
@@ -1438,6 +1447,10 @@
       LS.set('stViews', SV); up.gTick = (s.gTick || 0) + 1;
     } else if (e.k === 'probe') {   // 1.46
       up.probeRun = false; C.say(e.n < 0 ? '⚠️ ' + tx.pb_none : tx.pb_done.replace('{n}', String(e.n)).replace('{ok}', String(e.ok)));
+    } else if (e.k === 'fb') {   // 1.47: PUBG / Premium-da işleýän kod ýok — adaty (mugt) koda birikdirildi, düwme özi öçdi
+      C.say('⚠️ ' + (e.w === 'pubg' ? ({ ru: 'Серверы PUBG сейчас не работают — подключено к обычному', tr: 'PUBG sunucuları şu anda çalışmıyor — normal sunucuya bağlandı' }[s.lang] || 'PUBG serwerleri häzir işlemeýär — adaty serwere birikdirildi')
+        : ({ ru: 'Коды Premium сейчас обновляются — подключено к бесплатному', tr: 'Premium kodları şu anda yenileniyor — ücretsiz koda bağlandı' }[s.lang] || 'Premium kodlar häzir täzelenýär — mugt koda birikdirildi')));
+      if (e.w === 'pubg') up.pubg = false; else { up.autoP = false; up.pick = -1; }
     } else if (e.k === 'plock') {   // 1.43: Premium serwer saýlandy (Premium ýok)
       C.say('👑 ' + tx.pr_lock); up.psh = true; up.pstep = 1;
     } else if (e.k === 'img') {

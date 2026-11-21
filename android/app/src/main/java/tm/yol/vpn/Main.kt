@@ -224,7 +224,7 @@ open class Main : Activity() {
             val q = Upd.query(c)
             return JSONObject()
                 .put("st", when (State.now) { State.ON -> "on"; State.WAIT -> "wait"; State.FAIL -> "fail"; else -> "off" }).put("ks", State.hold).put("dead", State.dead && State.now == State.ON)
-                .put("act", State.active?.key ?: "").put("sel", State.selected(c)?.key ?: "").put("selp", State.selKey(c) == "auto:p")
+                .put("act", State.active?.key ?: "").put("sel", State.selected(c)?.key ?: "").put("selp", State.selKey(c) == "auto:p").put("pubg", State.pubg(c))
                 .put("ms", State.ms).put("left", if (left == null) -1 else left / 1000).put("kexp", if (exp == null) -1 else exp / 1000)
                 .put("nolim", exp == null && Lic.unlim(c)).put("sess", Sub.sess)
                 .put("dn", dRate).put("up", uRate).put("rxT", rxSum).put("txT", txSum).put("onAt", State.onAt)
@@ -266,6 +266,12 @@ open class Main : Activity() {
             val want = s?.key ?: if (key == "auto:p") "auto:p" else "auto"   // 1.46.4: Premium awtomatik
             if (State.selKey(this@Main) == want) return
             State.select(this@Main, s, key == "auto:p")
+            ui { if (State.now == State.ON || State.now == State.WAIT) startVpn() }
+        }
+        /** 1.47: baş sahypadaky PUBG düwmesi (birikme bar bolsa derrew täzeden birikýär). */
+        @JavascriptInterface fun pubg(on: Boolean) {
+            if (State.pubg(this@Main) == on) return
+            State.setPubg(this@Main, on); if (on) State.select(this@Main, null, State.selKey(this@Main) == "auto:p")
             ui { if (State.now == State.ON || State.now == State.WAIT) startVpn() }
         }
         @JavascriptInterface fun test() = measure()
