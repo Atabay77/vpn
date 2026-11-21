@@ -366,6 +366,15 @@ def http_reason(e):
     return re.sub(r"key=[^&\s\"]+", "key=***", " ".join(txt.split()))[:120]
 
 def fetch_codes(url):
+    try:   # 1.47: käbir panel diňe v2rayNG-a kod berýär, JSON (/auto, json5) hem okalýar
+        b_ = urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "v2rayNG/1.9.0", "Accept": "*/*"}), timeout=20).read(16_000_000).decode("utf-8", "ignore")
+        cs_ = hunt_parse(b_)
+        if not cs_ and url.rstrip("/").endswith("/auto"):
+            cs_ = hunt_parse(urllib.request.urlopen(urllib.request.Request(url.rstrip("/")[:-5], headers={"User-Agent": "v2rayNG/1.9.0", "Accept": "*/*"}), timeout=20).read(16_000_000).decode("utf-8", "ignore"))
+        if cs_: return cs_
+    except urllib.error.HTTPError as e0:
+        if e0.code == 404: raise RuntimeError("HTTP 404 tapylmady")
+    except Exception: pass
     req = urllib.request.Request(url, headers={"User-Agent": "v2rayN/6.42"})
     try:
         with urllib.request.urlopen(req, timeout=15) as r:
@@ -1234,6 +1243,9 @@ def app_free_borrow(codes, free_, cfg, now=None):
     if not b and own and all(dead_(h) for h in own):   # hemmesi soňky sagatda «jogap ýok» (täze / synalmadyk kod bar bolsa — garaşylýar)
         best = sorted([(int(hm[h][0]), h) for h, c in allhp.items() if h not in free_ and ok_(h) and not app_is_game(c) and not app_is_info(c)])
         if best: b = {"hp": best[0][1], "at": int(now), "ch": chts}
+    if not own and not b and allhp:   # 1.47: mugt sanaw hiç haçan boş bolmaýar — boş bolsa programma «köne bot» diýip ÄHLI serwerleri açýardy
+        cand_ = sorted(((0 if ok_(h) else 1, int(hm[h][0]) if h in hm and int(hm[h][0]) > 0 else 9999, h) for h, c in allhp.items() if not app_is_game(c) and not app_is_info(c)))
+        if cand_: b = {"hp": cand_[0][2], "at": int(now), "ch": chts}
     return (own + [b["hp"]] if b else own), b
 
 def app_free_all(codes, php, hpms=None):
@@ -2271,6 +2283,14 @@ def hunt_view():
                 "gh": sum(1 for e in gh.values() if not e.get("dead")), "gh_dead": sum(1 for e in gh.values() if e.get("dead")), "top": top,
                 "subs": sum(1 for e in (S.get("subs") or {}).values() if e.get("s") == "ok")}
 
+def app_tk_autoclose(now=None):
+    """1.47: 6 sagat hiç kim ýazmadyk açyk biletler özi ýapylýar."""
+    now = now or time.time()
+    a = app_cfg(load_db())
+    ids_ = [t for t, x in (a.get("tickets") or {}).items() if x.get("st") != "closed" and now - float(x.get("lt") or x.get("ts") or now) > 6 * 3600]
+    if ids_: app_mut(lambda x: [x["tickets"][t].update({"st": "closed", "human": False}) for t in ids_ if t in x.get("tickets", {})])
+    return ids_
+
 async def hunt_loop(app):
     await asyncio.sleep(90)
     while True:
@@ -2280,6 +2300,11 @@ async def hunt_loop(app):
                 RUN.pop("hunt_now", None)
                 await asyncio.to_thread(hunt_run, bool(RUN.pop("hunt_gh", None)))
             if RUN.pop("hunt_list", None): RUN["app_dirty"] = True   # sanaw üýtgedi — programma (minutda iň köp bir gezek)
+            if time.time() - RUN.get("tk_ac", 0) > 600:   # 1.47: köne biletler
+                RUN["tk_ac"] = time.time()
+                for t_ in await asyncio.to_thread(app_tk_autoclose):
+                    try: await asyncio.to_thread(app_send, (app_cfg(load_db())["tickets"][t_]).get("dev"), {"k": "tkst", "st": "closed", "tid": int(t_)})
+                    except Exception: pass
             await asyncio.to_thread(hunt_save, True)
             if a.get("hunt_on", True): await asyncio.to_thread(hunt_probe_write, a)
         except Exception as e: log.exception("hunt loop"); RUN["hunt_err"] = str(e)[:200]
@@ -2295,14 +2320,19 @@ def app_sync(force=False):
         subs = list(cfg.get("subs", []))
         last = dict(cfg.get("last", {}))
         errs, codes, keys = [], [], set()
+        sf_ = RUN.setdefault("sub_fetch", {}); now_f = time.time(); now_all = RUN.pop("subs_now", None)
         for u in subs:
             h = hashlib.md5(u.encode()).hexdigest()[:8]
-            try:
-                got = fetch_codes(u)
-                if got: last[h] = got
-                else: errs.append(f"{src_label(u)}: boş")
-            except Exception as e:
-                errs.append(f"{src_label(u)}: {str(e)[:60]}")
+            if not now_all and h in last and now_f - sf_.get(h, 0) < 300: pass   # 1.47: 5 minutda bir okalýar (her ýazgyda däl — bot haýallamasyn)
+            else:
+                sf_[h] = now_f
+                try:
+                    got = fetch_codes(u)
+                    if got: last[h] = got
+                    else: errs.append(f"{src_label(u)}: boş")
+                except Exception as e:
+                    errs.append(f"{src_label(u)}: {str(e)[:60]}")
+                    if " 404" in f" {e}" or "HTTP 404" in str(e): RUN.setdefault("sub_404", []).append(("subs", u))   # 1.47: abuna ýok — aýrylýar
             for c in last.get(h, []):
                 k = code_key(c)
                 if k not in keys: keys.add(k); codes.append(c)
@@ -2326,11 +2356,16 @@ def app_sync(force=False):
         psubs = list(cfg.get("psubs", [])); plast = dict(cfg.get("plast", {})); php = set()
         for u in psubs:
             h = hashlib.md5(u.encode()).hexdigest()[:8]
-            try:
-                got = fetch_codes(u)
-                if got: plast[h] = got
-                else: errs.append(f"👑 {src_label(u)}: boş")
-            except Exception as e: errs.append(f"👑 {src_label(u)}: {str(e)[:60]}")
+            if not now_all and h in plast and now_f - sf_.get("p" + h, 0) < 300: pass
+            else:
+                sf_["p" + h] = now_f
+                try:
+                    got = fetch_codes(u)
+                    if got: plast[h] = got
+                    else: errs.append(f"👑 {src_label(u)}: boş")
+                except Exception as e:
+                    errs.append(f"👑 {src_label(u)}: {str(e)[:60]}")
+                    if "HTTP 404" in str(e): RUN.setdefault("sub_404", []).append(("psubs", u))
             for c in plast.get(h, []):
                 if app_is_info(c): continue
                 hp_ = app_x_hp(c)
@@ -2368,6 +2403,10 @@ def app_sync(force=False):
             a.update({"fid": fid, "dig": dig, "last": last, "plast": plast, "n": len(codes), "ts": int(time.time()), "errs": errs})
             if fb_: a["fborrow"] = fb_
             else: a.pop("fborrow", None)
+            for kind_, u_ in RUN.pop("sub_404", []):   # 1.47: 404 — abuna ýok edildi: aýrylýar, eýesine habar
+                if u_ in (a.get(kind_) or []):
+                    a[kind_] = [x for x in a[kind_] if x != u_]
+                    RUN.setdefault("sub404_tg", []).append(f"{'👑 Premium' if kind_ == 'psubs' else 'Abonelik'} silindi (HTTP 404 — artık yok): {src_label(u_)}")
         mutate(f)
         return len(codes), errs
 
@@ -2534,6 +2573,7 @@ async def app_loop(app):
                 n, errs = await asyncio.to_thread(app_sync, bool(RUN.pop("app_dirty", None)))
                 RUN.pop("app_err", None)
                 for t_ in RUN.pop("quota_tg", []): await notify_founders(app, f"⚠️ <b>Kota dolmak üzere</b>\n<blockquote>{esc(t_)}</blockquote>")
+                for t_ in RUN.pop("sub404_tg", []): await notify_founders(app, f"🗑 <b>{esc(t_)}</b>")
             except Exception as e:
                 msg = str(e)[:150]
                 if RUN.get("app_err") != msg:
@@ -2589,7 +2629,7 @@ APP_GMOD_EVERY = 30 # Global chat gözegçiligi 30 sn-da bir
 APP_MSG_FAST = 2    # 1.34: çalt rejim (Firestore tölegli) — 2 sn-da bir, boş wagt hem; gözegçilik 6 sn
 APP_GMOD_FAST = 6
 APP_PRICES = "Premium: 1 aý — 100 TMT · 1 ýyl — 700 TMT (12 aýlykdan 500 TMT arzan)"
-APP_PLANS = [(30, 100), (365, 700)]   # 1.43: Premium — (gün, TMT)
+APP_PLANS = [(7, 50), (30, 100), (365, 700)]   # 1.47: hepdelik 50 TMT   # 1.43: Premium — (gün, TMT)
 REF_ABC = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
 DEV_RE = re.compile(r"^[0-9a-f]{12}$")
 
@@ -2932,6 +2972,9 @@ def app_prem_give(dev, days, who):
         ks = x.setdefault("keys", {}); cur = None
         for k_, v in ks.items():
             if app_key_devs(v) == [dev] and int(v.get("n") or 1) == 1 and (not v.get("exp") or v["exp"] > now): cur = k_; break
+        dup_ = cur and any(q.get("dev") == dev and q.get("d") == days and q.get("by") == who and now - float(q.get("ts") or 0) < 300 for q in (x.get("prem_log") or []))
+        if dup_:   # 1.47: şol bir bermek 5 minutda gaýtalandy (programma jogap gijä galanda gaýtadan iberýär) — goşulmaýar
+            res.update(k=cur, exp=ks[cur].get("exp") or 0); return
         if cur:
             v = ks[cur]
             v["exp"] = 0 if (days == 0 or not v.get("exp")) else int(max(v["exp"], now) + days * 86400)
@@ -2973,12 +3016,14 @@ Ulanyjynyň dilinde (türkmen, rus ýa-da türk) gysga (1–3 sözlem), dostlukl
 Ulanyjynyň iň soňky habaryna jogap ber. Salamlaşsa ýa-da «sen kim» diýse adaty gürleş, meselem: «Salam! Men Türkmen VPN-iň AI kömekçisi. Size nähili kömek edip bilerin?»
 FAKTLAR:
 - Programma mugt: her birikme 1 sagat dowam edýär (profilde nigini üýtgedenlere 1,5 sagat), soň täzeden birigip bolýar. Premium bilen çäk ýok.
-- Mugt ulanyjylar: «Free» bölümindäki serwerler we PUBG serweri, birikme wagty çäkli.
+- Mugt ulanyjylar: «Serwerler» sahypasyndaky «Awtomatik» — iň gowy mugt serwere özi birikýär (mugt serwerleriň sanawy görkezilmeýär), birikme wagty çäkli.
+- PUBG serwerleri DIŇE Premium üçin. Mugt ulanyjylar üçin PUBG serweri ÝOK.
 - Premium: ähli serwerler («Premium» we «PUBG» bölümleri), wagt çägi ýok, profilde we chatda ýalpyldaýan 👑 Premium nyşany.
-- Premium bahasy: 1 aý — 100 TMT, 1 ýyl — 700 TMT (12 aýlykdan 500 TMT arzan — iň amatlysy ýyllyk). Diňe şu iki möhlet bar.
+- Premium bahasy: 1 hepde — 50 TMT, 1 aý — 100 TMT, 1 ýyl — 700 TMT (iň amatlysy ýyllyk).
 - Premium satyn almak: baş sahypanyň ýokarsyndaky «👑 Premium satyn al» düwmesi → möhleti we satyjyny saýla → oňa ýaz. Satyjy tölegden soň Premium-y siziň profiliňize özi berýär. Sen özüň Premium berme we töleg maglumatyny oýlap tapma.
-- AÇAR SATYLMAÝAR — diňe Premium bar. Ulanyjy «açar gerek», «açar nädip almaly», «açar näçe», «VPN satyn almak» ýaly ýazsa, «Açar ýaz» bölümini görkezme:
-  Premium-yň bahasyny (1 aý — 100 TMT, 1 ýyl — 700 TMT) we nädip satyn alynýandygyny aýt (baş sahypadaky «👑 Premium satyn al» → möhlet → «Satyn al» → satyja ýaz).
+- AÇAR (mysal: 1 günlük, 2 günlük açar) satylmaýar, ýöne sowgat bolýar: dost çagyrmak, günlük sowgat, admin. Açar birikme wagt çägini aýyrýar / uzaldýar (Premium däl).
+  Açary ulanmak: Menýu → «Açar ýaz» → açary ýazyň → «Barla». Ulanyjy «açary nädip ulanmaly» diýse şuny aýt.
+  Ulanyjy VPN satyn almak isläse Premium-y aýt (baş sahypadaky «👑 Premium» → möhlet → satyja ýaz).
 - Serwerler: Menýu → Serwerler → «Pingi barla», iň çalt serweri saýla. «Awtomatik» iň çaltyny özi saýlaýar. Russiýa — PUBG oýny üçin.
 - Birikmese: ilki interneti (Wi-Fi / mobil) barla. «Kodlar täzelenýär» diýse 3–5 minut garaş we täzeden synan.
 - «Dostuňy çagyr»: dostuň programmany açyp seniň kodyňy (TM-XXXXX) ýazsa, saňa 1 gün wagt çäksiz; her täze dost +1 gün (bu Premium däl).
@@ -2986,10 +3031,11 @@ FAKTLAR:
 - Programma pozulsa: tkmvpnn@gmail.com salgysyna «vpn» diýip hat ýaz — ýükläp almak linki geler (VPN-siz açylýar).
 - Täze wersiýa çykanda programma özi soraýar — «Hawa» bas.
 - «Global chat» — ähli ulanyjylaryň umumy çaty.
+Ulanyjy diňe öwse, sag bol diýse ýa-da pikirini aýtsa (mysal: «gowy vpn») — diňe gysga minnetdarlyk bildir, hiç bir fakty ýatlama.
 Hiç haçan «admine geçirýärin», «admin ýazar», «admin jogap berer» diýme — özüň doly jogap ber, gürrüňi dowam et. Ulanyjy «admin gerek» diýse-de özüň kömek et.
 Jogaby diňe şu JSON görnüşinde ber: {"answer": "..."}"""
 
-APP_AI_HOLD = 300   # 1.31: admin bilete ýazandan soň AI 5 minut dymýar
+APP_AI_HOLD = 3600   # 1.47: admin bilete ýazandan soň AI 1 sagat dymýar (soň iň soňky habara jogap berilmedik bolsa jogap berýär)
 def app_adm_last(t):
     return max([int(x.get("ts") or 0) for x in (t or {}).get("log", []) if x.get("r") == "a"] or [0])
 
@@ -3692,7 +3738,7 @@ def app_adm_snap(a, e, dev):
     devs = a.get("devs") or {}; now = time.time()
     today = tm_now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
     sel_ = e.get("perm") in ("sel", "chat") and not f_   # 1.43: Premium satyjy (1.45: chat admin hem) — biletleri görmeýär
-    tks = [] if sel_ else sorted((a.get("tickets") or {}).items(), key=lambda kv: kv[1].get("lt", 0), reverse=True)[:50]
+    tks = [] if sel_ else sorted((a.get("tickets") or {}).items(), key=lambda kv: (kv[1].get("st") == "closed", -kv[1].get("lt", 0)))[:200]   # 1.47: açyklar öňde, 50 çägi aýryldy
     tk_out, need = [], set()
     for tid, t in tks:
         lg = t.get("log", [])
@@ -3869,16 +3915,16 @@ async def app_adm(app, dev, o):
             except Exception: d_ = -1
             if not (f_ or full or e.get("perm") == "sel"): err = "rugsat ýok"
             elif not DEV_RE.match(dv) or dv not in (a.get("devs") or {}): err = "ulanyjy tapylmady"
-            elif not ((f_ and 0 <= d_ <= 3650) or d_ in (30, 365)): err = "diňe 1 aý ýa-da 1 ýyl"
+            elif not ((f_ and 0 <= d_ <= 3650) or d_ in (7, 30, 365)): err = "diňe 1 hepde, 1 aý ýa-da 1 ýyl"
             else:
                 k_, exp_ = await asyncio.to_thread(app_prem_give, dv, d_, who)
-                try: await asyncio.to_thread(app_sync, True)
+                try: RUN.__setitem__("app_dirty", True)   # 1.47: fonda (admin jogaby garaşmasyn)
                 except Exception as e2: RUN["app_err"] = str(e2)[:150]
                 nk_ = ((app_cfg(load_db()).get("devs") or {}).get(dv) or {}).get("nick") or "?"
                 await asyncio.to_thread(app_send, dv, {"k": "prem", "key": k_, "d": d_, "exp": exp_})
                 msg = f"prem:{dv}:{exp_}"
                 if not f_:   # satyjy berdi — eýesine Telegram-da we programda
-                    plan_ = "1 ýyl" if d_ == 365 else "1 aý"
+                    plan_ = "1 ýyl" if d_ == 365 else "1 hepde" if d_ == 7 else "1 aý"
                     await notify_founders(app, f"👑 <b>{esc(who)}</b> Premium berdi: {esc(nk_)} · {plan_}\n<blockquote>{app_who(app_cfg(load_db()), dv)}</blockquote>")
                     for fd_ in app_founder_devs():
                         try: await asyncio.to_thread(app_send, fd_, {"k": "pgv", "n": nk_[:32], "dev": dv, "d": d_, "by": who[:32]})
@@ -3908,7 +3954,7 @@ async def app_adm(app, dev, o):
             if 0 <= d_ <= 3650:
                 k_, _ = app_key_make(d_, None, f"app:{who}", n_)
                 app_mut(lambda x: x["apw"][aid].__setitem__("made", int(x["apw"][aid].get("made") or 0) + 1))
-                try: await asyncio.to_thread(app_sync, True)
+                try: RUN.__setitem__("app_dirty", True)   # 1.47: fonda (admin jogaby garaşmasyn)
                 except Exception as e2: RUN["app_err"] = str(e2)[:150]
                 msg = "key:" + k_
                 if not f_: await notify_founders(app, f"🛠 <b>{esc(who)}</b> programdan açar döretdi: <code>{k_}</code> · {d_ or '♾'} gün · {n_} adam", silent=True)
@@ -3928,14 +3974,14 @@ async def app_adm(app, dev, o):
                         kv["n"] = max(nn, len(dv_) if nn > 1 else 1)
                         if kv["n"] > 1: kv["devs"] = dv_
                 app_mut(ke)
-                try: await asyncio.to_thread(app_sync, True)
+                try: RUN.__setitem__("app_dirty", True)   # 1.47: fonda (admin jogaby garaşmasyn)
                 except Exception as e2: RUN["app_err"] = str(e2)[:150]
                 msg = "kdel" if act == "kdel" else "kok"
                 if not f_: await notify_founders(app, f"🛠 <b>{esc(who)}</b> açary {'pozdy' if act == 'kdel' else 'üýtgetdi'}: <code>{k_}</code>", silent=True)
             else: err = "açar tapylmady"
         elif act == "xadd" and f_:
             n_ = app_x_add(r.get("t"), who)
-            try: await asyncio.to_thread(app_sync, True)
+            try: RUN.__setitem__("app_dirty", True)   # 1.47: fonda (admin jogaby garaşmasyn)
             except Exception as e2: RUN["app_err"] = str(e2)[:150]
             msg = f"xadd:{n_}"
         elif act == "xpgive" and f_:   # 1.21: eýesi ulanyja bal ýa-da dereje berýär (dost çagyryşy ýaly görünýär)
@@ -3965,13 +4011,13 @@ async def app_adm(app, dev, o):
                 if old_.get("img") and a.get("fs_proj"):
                     try: await asyncio.to_thread(fs_delete, a["fs_proj"], ["n/" + old_["img"]])
                     except Exception as e2: log.info("news img del: %s", e2)
-                try: await asyncio.to_thread(app_sync, True)
+                try: RUN.__setitem__("app_dirty", True)   # 1.47: fonda (admin jogaby garaşmasyn)
                 except Exception as e2: RUN["app_err"] = str(e2)[:150]
             msg = "ndel"
         elif act == "xdel" and f_:
             k_ = str(r.get("id") or "")
             app_mut(lambda x: (x.get("xcodes") or {}).pop(next((kk for kk in (x.get("xcodes") or {}) if hashlib.md5(kk.encode()).hexdigest()[:10] == k_), ""), None))
-            try: await asyncio.to_thread(app_sync, True)
+            try: RUN.__setitem__("app_dirty", True)   # 1.47: fonda (admin jogaby garaşmasyn)
             except Exception as e2: RUN["app_err"] = str(e2)[:150]
             msg = "xdel"
         elif act in ("qadd", "qdel") and f_:   # kota yzarlanýan panel linki (Drive faýly kota görkezmeýär)
@@ -3988,7 +4034,7 @@ async def app_adm(app, dev, o):
             if re.fullmatch(r"[A-Za-z0-9_]{4,40}", ch_):
                 app_mut(lambda x: x.__setitem__("tgsrc", [c_ for c_ in x.get("tgsrc", APP_TG_DEFAULT) if c_.lower() != ch_.lower()] + ([ch_] if act == "chadd" else [])))
                 if act == "chadd":
-                    try: await asyncio.to_thread(app_tg_refresh, True); await asyncio.to_thread(app_sync, True)
+                    try: await asyncio.to_thread(app_tg_refresh, True); RUN.__setitem__("app_dirty", True)   # 1.47: fonda (admin jogaby garaşmasyn)
                     except Exception as e2: err = str(e2)[:120]
             msg = act
         elif act == "gmute" and (full or e.get("perm") == "chat"):   # 1.45: Global chatda sesini öçürmek (m minut, 0 — açmak)
@@ -4058,7 +4104,7 @@ async def app_adm(app, dev, o):
                 app_mut(lambda x: (x.__setitem__("gbans", [b for b in (x.get("gbans") or []) if b != dv] + ([dv] if on_ else [])),
                                    x.__setitem__("ubans", [b for b in (x.get("ubans") or []) if b != dv] + ([dv] if on_ else []))))
                 await asyncio.to_thread(app_send, dv, {"k": "uban", "on": on_})
-                try: await asyncio.to_thread(app_sync, True)
+                try: RUN.__setitem__("app_dirty", True)   # 1.47: fonda (admin jogaby garaşmasyn)
                 except Exception as e2: RUN["app_err"] = str(e2)[:150]
         elif act == "mksel" and f_:   # 1.44: eýesi profilden satyjy edýär (açar söz özi döredilýär we telefona gidýär) ýa-da aýyrýar
             dv = str(r.get("dev") or ""); on_ = bool(r.get("on"))
@@ -4145,12 +4191,12 @@ async def app_adm(app, dev, o):
                         nw_["img"] = nw_["id"]
                 elif r.get("img"): err = "surat doly gelmedi — täzeden synanyşyň"
                 app_mut(lambda x: x.__setitem__("news", ([nw_] + (x.get("news") or []))[:10]))
-                try: await asyncio.to_thread(app_sync, True)
+                try: RUN.__setitem__("app_dirty", True)   # 1.47: fonda (admin jogaby garaşmasyn)
                 except Exception as e2: RUN["app_err"] = str(e2)[:150]
                 msg = "bc"
         elif act == "ai" and f_:
             mutate(lambda d: d.__setitem__("ai_sup", bool(r.get("on"))))
-            try: await asyncio.to_thread(app_sync, True)
+            try: RUN.__setitem__("app_dirty", True)   # 1.47: fonda (admin jogaby garaşmasyn)
             except Exception as e2: RUN["app_err"] = str(e2)[:150]
         elif act == "note" and f_:
             txt = str(r.get("t") or "").strip()[:800]
@@ -4197,7 +4243,8 @@ def apw_make(uid, name, role, perm, pw=None):
     pw = apw_norm(pw) if pw else apw_new()
     def f(x):
         ap = x.setdefault("apw", {})
-        for k_ in [k_ for k_, v in ap.items() if int(v.get("uid") or 0) == int(uid)]: ap.pop(k_)
+        # 1.47: diňe şol adamyň öz (Telegram-dan berlen) açar sözi çalşylýar — programdan döredilen adminler / satyjylar / chat adminler galýar
+        for k_ in [k_ for k_, v in ap.items() if int(v.get("uid") or 0) == int(uid) and v.get("role") == role and not v.get("by_app") and not v.get("once")]: ap.pop(k_)
         ap[apw_id(pw)] = {"pw": pw, "uid": int(uid), "name": name[:32], "role": role, "perm": perm, "dev": None, "ts": int(time.time()), "made": 0}
     app_mut(f)
     return pw
@@ -4393,6 +4440,31 @@ async def monitor(app):
 
 
 # ───────── SÜRE / YEDEK ─────────
+def apw_restore_from_backups():
+    """1.47: eýesiniň açar sözi çalşylanda programdan döredilen adminler / satyjylar / chat adminler hem pozulýardy — ätiýaçlyk nusgalardan bir gezek dikeldilýär."""
+    a = app_cfg(load_db())
+    if a.get("apw_rest1"): return 0
+    found = {}
+    try: fns = sorted(os.listdir(BACKUP_DIR), reverse=True)
+    except Exception: fns = []
+    for fn in fns:
+        try:
+            with zipfile.ZipFile(os.path.join(BACKUP_DIR, fn)) as zf: old = json.loads(zf.read(os.path.basename(DB_FILE)).decode("utf-8"))
+        except Exception: continue
+        for k_, v in ((old.get("app") or {}).get("apw") or {}).items():
+            if isinstance(v, dict) and v.get("role") != "f" and not v.get("once") and k_ not in found: found[k_] = v
+    def f(x):
+        ap = x.setdefault("apw", {}); n_ = 0
+        have_devs = {d_ for v in ap.values() for d_ in ([v.get("dev")] if v.get("dev") else []) + list(v.get("hist") or [])}
+        for k_, v in found.items():
+            if k_ in ap: continue
+            devs_ = ([v.get("dev")] if v.get("dev") else []) + list(v.get("hist") or [])
+            if devs_ and all(d_ in have_devs for d_ in devs_): continue   # şol telefona eýýäm täze rugsat berlipdir
+            v = dict(v); v["by_app"] = True; ap[k_] = v; n_ += 1
+        x["apw_rest1"] = int(time.time())
+        return n_
+    return app_mut(f)
+
 def make_backup():
     """Botun bütün verisi: ayarlar, veritabanı, loglar, banner'lar, ülke önbellekleri, AI sohbet kayıtları."""
     buf = io.BytesIO(); n = 0
@@ -4612,6 +4684,10 @@ async def post_init(app):
     app.bot_data["hunt"] = asyncio.create_task(hunt_loop(app))   # 1.46: kod awy
     try: app_mut(lambda x: x.pop("fs_fast", None))   # 1.47: «çalt rejim» aýryldy
     except Exception: pass
+    try:
+        n_rest = apw_restore_from_backups()
+        if n_rest: RUN["app_dirty"] = True; asyncio.create_task(notify_founders(app, f"♻️ <b>{n_rest} admin / satyjy / chat admin ätiýaçlyk nusgadan dikeldildi</b>\n<i>Owner açar sözi çalşylanda pozulypdy.</i>"))
+    except Exception as e: log.info("apw restore: %s", e)
     app.bot_data["appmsg"] = asyncio.create_task(app_msg_loop(app))
     app.bot_data["apprel"] = asyncio.create_task(app_relay_loop(app))
     try: ADMINS.update(int(k) for k in load_db().get("temp_admins", {}))   # acil yetkililer yeniden başlatmada kalır
@@ -7112,6 +7188,7 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
             def f(d):
                 ap = d.setdefault("app", {}); ap["subs"] = [x for x in ap.get("subs", []) if hashlib.md5(x.encode()).hexdigest()[:8] != h]
             mutate(f); audit(uid, "app_rm")
+        if a == "app_now": RUN["subs_now"] = True   # 1.47: abunalar derrew täzeden okalsyn
         if a in ("app_now",) or a.startswith(("app_rm:", "app_prm:")):
             await safe_edit(q, "⏳ Programın listesi yazılıyor…", None)
             try:
