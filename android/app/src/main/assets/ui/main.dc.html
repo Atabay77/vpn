@@ -122,10 +122,26 @@ html.ph-s .c-bg{background-image:var(--bgS,url(img/bg0_s.jpg))!important}
 .mseg{display:flex;padding:3px;border-radius:999px;background:rgba(8,24,17,.78);border:1px solid rgba(224,176,74,.42);-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);box-shadow:0 4px 14px rgba(0,0,0,.4)}
 .mseg button{height:24px;padding:0 10px;border:none;border-radius:999px;background:transparent;color:#C9BFA8;font-size:11px;font-weight:800;cursor:pointer;white-space:nowrap;transition:background .25s,color .25s}
 .mseg button.on{background:linear-gradient(180deg,#FFE3A0,#E0B04A);color:#1A1405;box-shadow:0 2px 8px rgba(224,176,74,.45)}
+/* 1.47.2: Free ⇄ Premium — fon sülük ýaly: öňki gyrasy uzalýar, soň yzky gyrasy çekilýär */
+.mseg.mp,.mseg.mf{position:relative;display:grid;grid-template-columns:1fr 1fr}
+.mseg.mp button,.mseg.mf button{position:relative;z-index:1;background:transparent;box-shadow:none}
+.mseg.mp::before,.mseg.mf::before{content:"";position:absolute;top:3px;bottom:3px;border-radius:999px;background:linear-gradient(180deg,#FFE3A0,#E0B04A);box-shadow:0 2px 8px rgba(224,176,74,.45)}
+.mseg.mp::before{left:3px;right:50%;transition:left .5s cubic-bezier(.5,0,.3,1),right .55s cubic-bezier(.6,0,.2,1) .45s;animation:leechL 1.1s ease-in-out}
+.mseg.mf::before{left:50%;right:3px;transition:right .5s cubic-bezier(.5,0,.3,1),left .55s cubic-bezier(.6,0,.2,1) .45s;animation:leechR 1.1s ease-in-out}
+@keyframes leechL{0%,100%{border-radius:999px}35%{border-radius:999px 60% 60% 999px/999px 40% 40% 999px}70%{border-radius:60% 999px 999px 60%/40% 999px 999px 40%}}
+@keyframes leechR{0%,100%{border-radius:999px}35%{border-radius:60% 999px 999px 60%/40% 999px 999px 40%}70%{border-radius:999px 60% 60% 999px/999px 40% 40% 999px}}
 .mpg{display:flex;align-items:center;gap:6px;height:30px;padding:0 4px 0 9px;border-radius:999px;background:rgba(8,24,17,.78);border:1px solid rgba(224,176,74,.42);-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);box-shadow:0 4px 14px rgba(0,0,0,.4);color:#C9BFA8;font-size:11px;font-weight:800;cursor:pointer}
 .mpg .sw{position:relative;width:30px;height:18px;border-radius:9px;background:rgba(255,255,255,.14);transition:background .25s}
 .mpg .sw i{position:absolute;left:2px;top:2px;width:14px;height:14px;border-radius:7px;background:#C9BFA8;transition:left .25s,background .25s}
-.mpg-on{color:#F3E7D0;border-color:#6FDB9C}
+/* 1.47.2: mugt «Awtomatik» kartasy */
+.autohot{min-height:68px!important;border:1.5px solid #6FDB9C!important;background:linear-gradient(135deg,rgba(43,191,122,.30),rgba(11,33,23,.75))!important;animation:ahot 2s ease-in-out infinite}
+@keyframes ahot{0%,100%{box-shadow:0 0 0 0 rgba(111,219,156,.55),0 6px 18px rgba(0,0,0,.35)}50%{box-shadow:0 0 0 6px rgba(111,219,156,0),0 0 22px rgba(111,219,156,.45)}}
+.afree{font-size:10px;font-weight:900;letter-spacing:.04em;padding:2px 8px;border-radius:999px;background:linear-gradient(180deg,#8CF5B5,#2BBF7A);color:#06210F;box-shadow:0 2px 8px rgba(43,191,122,.5)}
+.mpg-on{color:#F3E7D0;border-color:transparent;position:relative;isolation:isolate}
+/* 1.47.2: PUBG açyk — gutynyň daşyndan aýlanýan çyzyk */
+.mpg-on::before{content:"";position:absolute;inset:-1.5px;border-radius:inherit;padding:1.5px;background:conic-gradient(from var(--pga,0deg),transparent 0 62%,#6FDB9C 78%,#E8FFD9 86%,transparent 92%);-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude;animation:pgspin 2.2s linear infinite;pointer-events:none;z-index:-1}
+@property --pga{syntax:"<angle>";inherits:false;initial-value:0deg}
+@keyframes pgspin{to{--pga:360deg}}
 .pgs{font-size:8.5px;font-weight:700;opacity:.75;letter-spacing:.02em}.pgs-ok{color:#6FDB9C;opacity:1}.pgs-no{color:#FF9A8A}.mpg-on .sw{background:#2BBF7A}.mpg-on .sw i{left:14px;background:#fff}
 .mg-dlg{position:absolute;left:20px;right:20px;top:170px;z-index:63;border-radius:20px;padding:20px 18px;background:rgba(10,28,20,.98);border:1px solid rgba(224,176,74,.6);box-shadow:0 20px 50px rgba(0,0,0,.6);display:flex;flex-direction:column;gap:12px;text-align:center}
 .mg-btn{height:46px;border-radius:14px;border:none;background:linear-gradient(90deg,#FFD27A,#E0B04A);color:#06100B;font-size:15px;font-weight:900;cursor:pointer}
@@ -234,9 +250,9 @@ html .glass.row.sv-prem,html[class*=ph-] .glass.row.sv-prem{animation:none!impor
 
 /* 1.47: dereje çarçuwalary (surat) */
 .avw{position:relative;display:inline-flex;flex-shrink:0;align-self:flex-start;cursor:pointer}
-.avfr{position:absolute;left:50%;top:50%;width:232%;height:232%;transform:translate(-50%,-50%);pointer-events:none;z-index:2;max-width:none}
-.avfrb{position:absolute;left:50%;top:50%;width:236px;height:236px;transform:translate(-50%,-50%);pointer-events:none;z-index:2;max-width:none}
-.gm .avw{margin:6px 10px 0 22px}
+.avfr{position:absolute;left:50%;top:50%;width:176%;height:176%;transform:translate(-50%,-50%);pointer-events:none;z-index:2;max-width:none}
+.avfrb{position:absolute;left:50%;top:50%;width:172px;height:172px;transform:translate(-50%,-50%);pointer-events:none;z-index:2;max-width:none}
+.gm .avw{margin:12px 16px 0 14px}
 label[for="pfph"]{z-index:3}
 .frx{animation:frglow 2.6s ease-in-out infinite}
 @keyframes frglow{0%,100%{filter:drop-shadow(0 0 2px rgba(255,220,140,.5)) brightness(1)}50%{filter:drop-shadow(0 0 7px rgba(255,220,140,.95)) brightness(1.15)}}
@@ -310,7 +326,7 @@ label[for="pfph"]{z-index:3}
       <sc-if value="{{modeOn}}" hint-placeholder-val="{{false}}">
         <div style="display:flex;gap:6px;margin-top:6px;justify-content:center;align-items:center;flex-wrap:wrap;width:100%">
           <sc-if value="{{pmOn}}" hint-placeholder-val="{{false}}">
-            <span class="mseg"><button onClick="{{pmGo}}" class="{{pmCls}}">👑 Premium</button><button onClick="{{frGo}}" class="{{frCls}}">Free</button></span>
+            <span class="mseg {{msegCls}}"><button onClick="{{pmGo}}" class="{{pmCls}}">👑 Premium</button><button onClick="{{frGo}}" class="{{frCls}}">Free</button></span>
           </sc-if>
           <button onClick="{{pgGo}}" class="{{pgCls}}" aria-label="PUBG"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 11h4M8 9v4M15 12h.01M18 10h.01"></path><path d="M17.3 5H6.7a4 4 0 0 0-4 3.6l-.6 5.9A2.7 2.7 0 0 0 4.8 17.5c1 0 1.9-.6 2.4-1.5L8 14h8l.8 2c.5.9 1.4 1.5 2.4 1.5a2.7 2.7 0 0 0 2.7-3l-.6-5.9A4 4 0 0 0 17.3 5z"></path></svg><span style="display:flex;flex-direction:column;align-items:flex-start;line-height:1.05">PUBG<small class="pgs {{pgSubCls}}">{{pgSub}}</small></span><span class="sw"><i></i></span></button>
         </div>
@@ -431,11 +447,11 @@ label[for="pfph"]{z-index:3}
       </div>
     </sc-if>
     <sc-if value="{{notOn}}" hint-placeholder-val="{{true}}">
-      <button onClick="{{goServers}}" class="glass tap" style="position:absolute;left:16px;right:16px;bottom:24px;height:66px;border-radius:18px;display:flex;align-items:center;gap:12px;padding:0 14px;cursor:pointer;text-align:left">
+      <button onClick="{{goServers}}" class="{{homeCls}}" style="position:absolute;left:16px;right:16px;bottom:24px;height:66px;border-radius:18px;display:flex;align-items:center;gap:12px;padding:0 14px;cursor:pointer;text-align:left">
         <span style="width:40px;height:40px;border-radius:20px;border:2px solid #E0B04A;display:flex;align-items:center;justify-content:center;font-size:20px;background:#0B2117;flex-shrink:0;overflow:hidden"><sc-if value="{{offCard.hasFc}}" hint-placeholder-val="{{false}}"><img class="flg" src="img/flags/{{offCard.fc}}.svg" alt="" style="width:36px;height:36px"></sc-if><sc-if value="{{offCard.noFc}}" hint-placeholder-val="{{true}}">{{offCard.f}}</sc-if></span>
         <span style="flex-grow:1;display:flex;flex-direction:column;gap:2px;min-width:0">
           <span style="font-size:9px;font-weight:800;letter-spacing:.16em;color:#6FDB9C">{{tx.sv_pickL}}</span>
-          <span style="font-size:15px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{offCard.name}}</span>
+          <span style="font-size:15px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:flex;align-items:center;gap:6px">{{offCard.name}}<sc-if value="{{homeFree}}" hint-placeholder-val="{{false}}"><span class="afree">{{autoFreeT}}</span></sc-if></span>
           <span class="svfl"><sc-for list="{{svFl}}" as="sf" hint-placeholder-count="5"><img class="flg" src="img/flags/{{sf.fc}}.svg" alt=""></sc-for><sc-if value="{{svFlMore}}" hint-placeholder-val="{{false}}"><span>…</span></sc-if><sc-if value="{{svFlNone}}" hint-placeholder-val="{{false}}"><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{svFlags}}</span></sc-if></span>
         </span>
         <span style="height:34px;padding:0 10px;border-radius:11px;background:linear-gradient(90deg,#E0B04A,#C8902E);color:#0B2117;font-size:11px;font-weight:800;display:flex;align-items:center;gap:4px;flex-shrink:0;white-space:nowrap">{{svCount}}<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#0B2117" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg></span>
@@ -466,7 +482,7 @@ label[for="pfph"]{z-index:3}
       <sc-if value="{{svPremBan}}" hint-placeholder-val="{{false}}"><button onClick="{{premOpen}}" class="pban tap"><span class="pban-c">👑</span><span class="pban-t"><b>{{tx.pr_banT}}</b><span>{{tx.pr_banS}}</span></span><span class="pban-go">{{tx.pr_buy}}</span></button></sc-if>
       <button onClick="{{autoPick}}" class="glass tap row {{autoCls}}" style="min-height:58px;border-radius:16px;display:flex;align-items:center;gap:12px;padding:8px 14px;cursor:pointer;text-align:left;flex-shrink:0">
         <span style="width:40px;height:40px;border-radius:13px;background:linear-gradient(145deg,#F2CD7A,#C8902E);display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0">⚡</span>
-        <span style="flex-grow:1;display:flex;flex-direction:column;gap:2px;min-width:0"><span style="font-size:14px;font-weight:800">{{tx.auto}}</span><span style="font-size:11px;color:#C9BFA8">{{autoSub}}</span></span>
+        <span style="flex-grow:1;display:flex;flex-direction:column;gap:2px;min-width:0"><span style="font-size:14px;font-weight:800;display:flex;align-items:center;gap:6px;flex-wrap:wrap">{{tx.auto}}<sc-if value="{{autoFree}}" hint-placeholder-val="{{false}}"><span class="afree">{{autoFreeT}}</span></sc-if></span><sc-if value="{{autoFree}}" hint-placeholder-val="{{false}}"><span style="font-size:11px;font-weight:700;color:#9FF0C0">{{autoFreeS}}</span></sc-if><span style="font-size:11px;color:#C9BFA8">{{autoSub}}</span></span>
         <sc-if value="{{autoSel}}" hint-placeholder-val="{{true}}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#6FDB9C" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg></sc-if>
       </button>
       <sc-for list="{{srvList}}" as="sr" hint-placeholder-count="8">
@@ -887,12 +903,12 @@ label[for="pfph"]{z-index:3}
 
   <sc-if value="{{isUprof}}" hint-placeholder-val="{{false}}">
     <div class="pg" style="position:absolute;left:16px;right:16px;top:94px;bottom:0;overflow-y:auto;display:flex;flex-direction:column;gap:10px;padding-bottom:24px">
-      <div class="glass" style="border-radius:22px;padding:24px 16px 18px;display:flex;flex-direction:column;align-items:center;gap:8px;text-align:center;flex-shrink:0;background-image:{{up.bgImg}};background-size:cover;background-position:center">
+      <div class="glass" style="border-radius:22px;padding:40px 16px 18px;display:flex;flex-direction:column;align-items:center;gap:8px;text-align:center;flex-shrink:0;background-image:{{up.bgImg}};background-size:cover;background-position:center">
         <button onClick="{{up.zoom}}" aria-label="{{up.name}}" style="position:relative;border:none;background:transparent;padding:0;cursor:zoom-in">
           <sc-if value="{{up.hasPh}}" hint-placeholder-val="{{false}}"><img src="{{up.photo}}" alt="" class="avbig" style="object-fit:cover;display:block"></sc-if>
           <sc-if value="{{up.noPh}}" hint-placeholder-val="{{true}}"><div class="avbig" style="background:{{up.bg}};display:flex;align-items:center;justify-content:center;font-size:34px;font-weight:800;color:#0B2117">{{up.ini}}</div></sc-if>
         <sc-if value="{{up.hasRk}}" hint-placeholder-val="{{false}}"><img class="avfrb {{up.frCls}}" src="img/fr/f{{up.rkT}}.webp" alt=""></sc-if></button>
-        <div class="{{up.ncls}}" style="font-size:21px;font-weight:800;margin-top:4px">{{up.name}}</div>
+        <div class="{{up.ncls}}" style="font-size:21px;font-weight:800;margin-top:28px">{{up.name}}</div>
         <sc-if value="{{up.hasRk}}" hint-placeholder-val="{{false}}"><div class="uprk"><span class="rk t{{up.rkT}} lite" style="--s:44px"><i class="rk-au"></i><i class="rk-ry"></i><img class="rk-im" src="img/rk/b{{up.rkT}}.webp" alt=""><i class="rk-sh" style="-webkit-mask-image:url(img/rk/b{{up.rkT}}.webp);mask-image:url(img/rk/b{{up.rkT}}.webp)"></i><i class="rk-sp s1"></i><i class="rk-sp s2"></i><i class="rk-sp s3"></i><i class="rk-em e1"></i><i class="rk-em e2"></i><i class="rk-em e3"></i><i class="rk-or"></i></span><span class="{{up.rkNcls}}">{{up.rkName}}</span><span class="rkpl">{{up.rkT}}</span></div></sc-if>
         <sc-if value="{{up.isO}}" hint-placeholder-val="{{false}}"><span class="bdg-o big">👑 OWNER</span></sc-if>
         <sc-if value="{{up.isA}}" hint-placeholder-val="{{false}}"><span class="bdg-a big">🛡 ADMIN</span></sc-if><sc-if value="{{up.isS}}" hint-placeholder-val="{{false}}"><span class="bdg-s big">💎 SATYJY</span></sc-if><sc-if value="{{up.isP}}" hint-placeholder-val="{{false}}"><span class="bdg-p big">👑 PREMIUM</span></sc-if>
@@ -1071,17 +1087,17 @@ label[for="pfph"]{z-index:3}
         </span>
         <span style="flex-shrink:0;display:flex;align-items:center;gap:2px;font-size:11px;font-weight:800;color:#FFD27A">{{tx.rk_more}}<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg></span>
       </button>
-      <div class="glass" style="border-radius:22px;padding:22px 16px 18px;display:flex;flex-direction:column;align-items:center;gap:8px;text-align:center;flex-shrink:0;background-image:{{pfBgImg}};background-size:cover;background-position:center">
+      <div class="glass" style="border-radius:22px;padding:40px 16px 18px;display:flex;flex-direction:column;align-items:center;gap:8px;text-align:center;flex-shrink:0;background-image:{{pfBgImg}};background-size:cover;background-position:center">
         <div style="position:relative;width:104px;height:104px">
           <sc-if value="{{me.hasPh}}" hint-placeholder-val="{{false}}"><img src="{{me.photo}}" alt="{{me.name}}" class="avbig" style="object-fit:cover;display:block"></sc-if>
           <sc-if value="{{me.noPh}}" hint-placeholder-val="{{true}}"><div class="avbig" style="background:{{me.bg}};display:flex;align-items:center;justify-content:center;font-size:34px;font-weight:800;color:#0B2117">{{me.ini}}</div></sc-if>
           <img class="avfrb {{meFrCls}}" src="img/fr/f{{meFrN}}.webp" alt="">
-           <label for="pfph" aria-label="{{tx.pf_photo}}" class="tap" style="position:absolute;right:-2px;bottom:-2px;width:34px;height:34px;border-radius:17px;background:#E0B04A;border:3px solid #0B2117;display:flex;align-items:center;justify-content:center;cursor:pointer;box-sizing:border-box">
+           <label for="pfph" aria-label="{{tx.pf_photo}}" class="tap" style="position:absolute;right:-40px;bottom:-26px;width:34px;height:34px;border-radius:17px;background:#E0B04A;border:3px solid #0B2117;display:flex;align-items:center;justify-content:center;cursor:pointer;box-sizing:border-box">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#0B2117" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h3l1.5-2h7L17 8h3v11H4z"></path><circle cx="12" cy="13" r="3.5"></circle></svg>
           </label>
         </div>
         <input id="pfph" type="file" accept="image/*" onChange="{{onPhoto}}" style="display:none">
-        <div class="{{meNcls}}" style="font-size:21px;font-weight:800;margin-top:4px">{{me.name}}</div>
+        <div class="{{meNcls}}" style="font-size:21px;font-weight:800;margin-top:28px">{{me.name}}</div>
         <sc-if value="{{isOwner}}" hint-placeholder-val="{{false}}"><span class="bdg-o big">👑 OWNER</span></sc-if>
         <sc-if value="{{isAdminR}}" hint-placeholder-val="{{false}}"><span class="bdg-a big">🛡 ADMIN</span></sc-if>
         <div class="nkrow"><input class="kin" value="{{nkIn}}" onChange="{{onNk}}" maxlength="20" placeholder="{{tx.pf_nickPh}}" aria-label="{{tx.pf_nickPh}}" autocomplete="off"><button onClick="{{saveNk}}" class="tap nkbtn">{{tx.pf_nickSave}}</button></div>

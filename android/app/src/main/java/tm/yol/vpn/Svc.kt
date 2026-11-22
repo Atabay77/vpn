@@ -71,7 +71,7 @@ object State {
         if (c != null && pubg(c)) return Sub.list.filter { it.game && allowed(c, it) }   // 1.47: PUBG düwmesi
         val base = Sub.list.filter { !it.ru && !it.game && allowed(c, it) }.ifEmpty { Sub.list.filter { !it.ru && allowed(c, it) } }
         if (c == null || Sub.free.isEmpty() || !Lic.prem(c)) return base
-        return if (autoPrem(c)) base.filter { it.hp !in Sub.free } else base.filter { it.hp in Sub.free }.ifEmpty { base }   // 1.46.4 (1.47: Premium-da kod ýok — bestFb mugta geçirýär)
+        return if (autoPrem(c)) base.filter { it.hp !in Sub.free || it.hp in Sub.both } else base.filter { it.hp in Sub.free }.ifEmpty { base }   // 1.46.4 (1.47: Premium-da kod ýok — bestFb mugta geçirýär)
     }
 
     fun ping(s: Server): Long = runCatching { Libv2ray.measureOutboundDelay(Cfg.full(s.uri, false), PING) }

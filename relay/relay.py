@@ -22,7 +22,7 @@ DATA = os.environ.get("DATA", "/var/lib/tvrelay")
 TOPIC = re.compile(r"^[a-z0-9]{8,80}$")
 # konunyň görnüşi: tvpn + 16 simwol, soň: m (bota), d (telefona), g (Global chat), p (surat)
 # 1.40: admin paneli (~60 KB), bilet suratlary we hekaýalar sygar ýaly çäkler ulaldyldy
-KIND = {"m": (3000, 7 * 86400, 192 * 1024), "d": (60, 7 * 86400, 256 * 1024), "g": (2000, 14 * 86400, 8192), "p": (1, 10 ** 9, 96 * 1024)}
+KIND = {"m": (3000, 7 * 86400, 192 * 1024), "d": (60, 7 * 86400, 1024 * 1024), "g": (2000, 14 * 86400, 8192), "p": (1, 10 ** 9, 96 * 1024)}
 OTHER = (100, 86400, 8192)
 # bir IP-den minutda (1.40: Türkmenistanda müňlerçe adam operatoryň bir IP-sinden çykýar; 1.42: öňdäki VPS-den hemmeler bir IP bolup gelýär)
 RATE_GET, RATE_POST = 300000, 60000

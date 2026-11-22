@@ -1202,20 +1202,18 @@ def app_is_game(c):
     return "🎮" in nm or "🇷🇺" in nm or "🇺🇿" in nm or "🇰🇿" in nm or bool(re.search(r"pubg|gaming|oýun|game|uzbek|kazak", nm, re.I))   # 1.45.2: Russiýa serwerleri — PUBG bölüminde (1.47: Özbegistan / Gazagystan hem)
 
 def app_prem_fill(codes, free_, cfg, lo=15, hi=20, keep_free=3):
-    """1.47: @happvpn (kanal abunasy) — esasy çeşme: onuň kodlary (Türkmenistanda işländen soň) ms boýunça bir Premium-a, bir mugta;
+    """1.47: kanal kodlary (supervpntm, happvpn) mugtda galýar we Premium-da hem görünýär (#tvboth);
     Premium-da hemişe 15–20 adaty serwer (az bolsa mugtdan — ms bermese-de — Premium-a geçýär; mugtda iň az 3 galýar). Dönüş: täze mugt sanawy."""
     hm = cfg.get("hp_ms") or {}; xs = cfg.get("xcodes") or {}
-    tgs = [v for v in xs.values() if v.get("src") == "tgs" and v.get("ok")]
-    hv = {app_x_hp(v["c"]) for v in tgs if "happvpn" in str(v.get("ch", "")).lower()} or {app_x_hp(v["c"]) for v in tgs}
+    ch_ = {app_x_hp(v["c"]) for v in xs.values() if v.get("src") in ("tg", "tgs")}   # 1.47: kanal kodlary — Free we Premium ikisinde (#tvboth)
     ok_ = lambda h: h in hm and int(hm[h][0]) > 0
     msf = lambda h: (0 if ok_(h) else 1, int(hm[h][0]) if ok_(h) else 9999, h)
     allhp = list(dict.fromkeys(h for h in (app_x_hp(c) for c in codes if not app_is_game(c) and not app_is_info(c)) if h))
     fr = [h for h in free_ if h in set(allhp)]; frs = set(fr); other_free = [h for h in free_ if h not in set(allhp)]
-    hv_in = sorted([h for h in fr if h in hv], key=msf)
-    to_p = set(hv_in[0::2]) if len(hv_in) >= 2 else set()
-    prem_n = sum(1 for h in allhp if h not in frs) + len(to_p)
+    to_p = set()
+    prem_n = sum(1 for h in allhp if h not in frs) + sum(1 for h in fr if h in ch_)
     if prem_n < lo:
-        for h in sorted([h for h in fr if h not in to_p], key=lambda h: (h in hv, msf(h))):
+        for h in sorted([h for h in fr if h not in to_p and h not in ch_], key=msf):
             if prem_n >= hi or len(fr) - len(to_p) <= keep_free: break
             to_p.add(h); prem_n += 1
     return [h for h in fr if h not in to_p] + other_free
@@ -1371,7 +1369,7 @@ def app_x_named(base_codes, a):
     except Exception: geo = {}
     out = []
     for k, v in sorted(xs.items(), key=lambda kv: (kv[1].get("src") != "m", kv[1].get("ts", 0))):
-        if v.get("src") == "tgs" and not v.get("ok"): continue   # 1.46.8: kanal abunasynyň kody — Türkmenistanda işlänçä sanawda ýok (telefonlar synaýar)
+        # 1.47: kanal abunasynyň kodlary derrew sanawda (supervpntm ýaly); işlemeýänler telefon hasabatynda aýrylýar
         cc = exit_country(v["c"], geo)[0] or ""
         flag = flag_of(cc) if len(cc) == 2 else "🌐"
         tag = "tm" if v.get("src") in ("tg", "tgs") else "VIP"
@@ -2442,6 +2440,8 @@ def app_sync(force=False):
         if (fb_ or {}).get("hp") != (cfg.get("fborrow") or {}).get("hp"): vlog(f"🔁 Mugt serwer: {'Premium-dan wagtlaýyn ' + fb_['hp'] if fb_ else 'wagtlaýyn Premium serwer yzyna alyndy'}")   # 1.43.2: mugt — her ýurtdan iň gowy işleýän bir kod + kanal + 2 PUBG
         codes = app_brand_names(codes)   # 1.29: abunanyň atlary görünmesin
         meta = app_meta(cfg) + (["#tvfree: " + ",".join(free_)] if free_ else [])
+        both_ = sorted({app_x_hp(v["c"]) for v in (cfg.get("xcodes") or {}).values() if v.get("src") in ("tg", "tgs")} & set(free_))
+        if both_: meta.append("#tvboth: " + ",".join(both_))   # 1.47: kanal kodlary Premium-da hem (Premium awtomatik we sanaw)
         mv_ = app_min_ver(cfg)
         if mv_ and cfg.get("fid") and codes:   # 1.47: diňe iň täze wersiýa — kodlar şifrli; köne programmalar diňe «täze wersiýany gurnaň» görýär
             meta.append(f"#tvx: {mv_} {app_enc(cfg['fid'], chr(10).join(codes))}"); codes = [APP_OLD_STUB]
@@ -4118,13 +4118,14 @@ def app_adm_snap(a, e, dev):
     devs = a.get("devs") or {}; now = time.time()
     today = tm_now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
     sel_ = e.get("perm") in ("sel", "chat") and not f_   # 1.43: Premium satyjy (1.45: chat admin hem) — biletleri görmeýär
-    tks = [] if sel_ else sorted((a.get("tickets") or {}).items(), key=lambda kv: (kv[1].get("st") == "closed", -kv[1].get("lt", 0)))[:200]   # 1.47: açyklar öňde, 50 çägi aýryldy
+    tks_all = [] if sel_ else sorted((a.get("tickets") or {}).items(), key=lambda kv: (kv[1].get("st") == "closed", -kv[1].get("lt", 0)))
+    tks = [kv for kv in tks_all if kv[1].get("st") != "closed"][:120] + [kv for kv in tks_all if kv[1].get("st") == "closed"][:30]   # 1.47: jogap kiçi bolsun (admin girişi gijä galmasyn)
     tk_out, need = [], set()
     for tid, t in tks:
         lg = t.get("log", [])
         st = "closed" if t.get("st") == "closed" else ("ans" if lg and lg[-1].get("r") == "a" else "open")
         tk_out.append({"id": int(tid), "u": t.get("dev"), "st": st, "fb": t.get("fb", ""),
-                       "msgs": [[x.get("r"), str(x.get("t", ""))[:600], app_hm(x.get("ts"))] for x in lg[-25:]]})
+                       "msgs": [[x.get("r"), str(x.get("t", ""))[:400], app_hm(x.get("ts"))] for x in lg[-15:]]})
         need.add(t.get("dev"))
     bans = set(a.get("gbans") or [])
     keys_ = a.get("keys") or {}
@@ -4214,12 +4215,24 @@ def app_adm_snap(a, e, dev):
                         "ai": out["aiCount"], "admins": [sum(1 for x in (a.get("apw") or {}).values() if x.get("dev")), len(a.get("apw") or {})]}
         out["xc"] = [{"id": hashlib.md5(k_.encode()).hexdigest()[:10], "src": v.get("src"), "ch": v.get("ch", ""), "hp": app_x_hp(v["c"]), "name": orig_name(v["c"])[:40],
                       "ok": app_hm(v.get("ok")) if v.get("ok") else "", "ms": int(v.get("ms") or 0), "bad": int(v.get("bad") or 0), "at": app_hm(v.get("ts"))}
-                     for k_, v in sorted((a.get("xcodes") or {}).items(), key=lambda kv: -kv[1].get("ts", 0))]
+                     for k_, v in sorted((a.get("xcodes") or {}).items(), key=lambda kv: -kv[1].get("ts", 0))[:300]]
         out["tgsrc"] = a.get("tgsrc", APP_TG_DEFAULT)
         out["qsubs"] = [{"u": u_, "label": src_label(u_), **({"pct": v_["pct"], "t": app_quota_txt(v_), "exp": v_.get("exp", 0)} if (v_ := (a.get("quota") or {}).get(hashlib.md5(u_.encode()).hexdigest()[:8])) else {})} for u_ in a.get("qsubs", [])]
         out["qal"] = [{"id": h, "t": app_quota_txt(v), "at": (a.get("quota_al") or {}).get(h, 0)} for h, v in (a.get("quota") or {}).items() if (a.get("quota_al") or {}).get(h)]
         out["news"] = [{"t": n_["t"], "x": n_["x"], "time": app_hm(n_.get("ts")), "img": n_.get("img", "")} for n_ in (a.get("news") or [])]
     return out
+
+def snap_fit(snap, lim=170_000):   # VPS habar serweri: «d» mowzugy 256 KB (şifrlenende ~1.35 esse)
+    """1.47: admin jogaby Firestore (1 MB) / VPS çäginden uly bolmasyn — uly bolsa biletleriň köne habarlary we kodlar gysgaldylýar."""
+    size = lambda: len(json.dumps(snap, ensure_ascii=False))
+    for keep in (10, 6, 3, 1):
+        if size() <= lim: return
+        for t in snap.get("tk") or []: t["msgs"] = t["msgs"][-keep:]
+    for k_, n_ in (("xc", 100), ("us", 150), ("tk", 60), ("prem", 150), ("xc", 0)):
+        if size() <= lim: return
+        v = snap.get(k_)
+        if isinstance(v, list): snap[k_] = v[:n_]
+        elif isinstance(v, dict): snap[k_] = dict(list(v.items())[:n_])
 
 def app_adm_out(dev, pw, resp):
     """Jogaby telefona: Firestore d/<dev>/i/adm (üstüne ýazylýar); Firestore ýok bolsa ntfy (kiçi jogaplar)."""
@@ -4620,6 +4633,7 @@ async def app_adm(app, dev, o):
         log.exception("app adm %s", act); err = str(e2)[:120]
     snap = app_adm_snap(app_cfg(load_db()), (app_cfg(load_db()).get("apw") or {}).get(aid) or e, dev)
     snap.update({"ok": True, "a": act, "msg": msg, "err": err})
+    snap_fit(snap)
     if usr_ is not None: snap["uinfo" if msg == "uinfo" else "usr"] = usr_
     if alog_ is not None: snap["alog"] = alog_
     await asyncio.to_thread(app_adm_out, dev, pw, snap)
@@ -5932,7 +5946,8 @@ def mail_send(to, subject, text, reply=None, link=None, link_text=None):
     msg.attach(MIMEText(f'<div style="font-family:Arial,sans-serif;font-size:15px;line-height:1.5;color:#222">{body}</div>', "html", "utf-8"))
     # 1.37: esasy hasap gündelik çäge ýetse ýa-da girip bilmese — ýedek hasaplar (jogap ýene esasy salga gelýär: Reply-To)
     lim = RUN.setdefault("mail_lim", {}); last_e = None
-    for addr, apw in [(me, pw)] + mail_alts():
+    acc_ = [(me, pw)] + mail_alts(); k_ = RUN.get("mail_rr", 0) % max(1, len(acc_)); RUN["mail_rr"] = k_ + 1
+    for addr, apw in acc_[k_:] + acc_[:k_]:   # 1.47: hasaplar nobatma-nobat (diňe biri ulanylmasyn)
         if time.time() - lim.get(addr.lower(), 0) < MAIL_LIM_H * 3600: continue
         if addr.lower() != me.lower():
             msg.replace_header("From", formataddr(("Türkmen VPN", addr)))

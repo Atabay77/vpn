@@ -49,6 +49,7 @@ object Sub {
     @Volatile var fsProj = ""; @Volatile var fsKey = ""; @Volatile var fsDb = "(default)"                 // Google Firestore (VPN-siz açylýar)
     @Volatile var fsBase = ""                                           // 1.41: Firestore ýerine öz VPS (#tvdb) — Google ulanylmaýar
     @Volatile var free: Set<String> = emptySet()
+    @Volatile var both: Set<String> = emptySet()                        // 1.47.2: kanal kodlary (#tvboth) — mugt hem bolsa Premium-da hem görünýär
     @Volatile var pkeys: Set<String>? = null                            // 1.43.4: Premium açarlar (#tvkp); null — köne bot (hemme açar Premium)                        // 1.43: mugt serwerler (host:port); boş bolsa — hemmesi mugt (köne bot)
 
     private fun body(text: String) = text.trim().let { t ->
@@ -60,7 +61,7 @@ object Sub {
     /** Botun yazdığı gizli satırlar: «#tvk: özet bitiş» ve «#tvu64: sürüm dosya». */
     fun meta(text: String) {
         val k = HashMap<String, Long>(); val u = HashMap<String, Pair<String, String>>(); var a: Pair<String, String>? = null
-        val kd = HashMap<String, String>(); val kn2 = HashMap<String, Int>(); val rl = HashMap<String, Pair<String, String>>(); val ub = HashSet<String>(); val nw = ArrayList<Triple<String, Long, String>>(); var on = 0; var se = 60; var fa = false; var fc = ""; var aiOn = false; val bn = HashSet<String>(); var rel = ""; var fp = ""; var fk = ""; var fd = "(default)"; var fb = ""; val fr = HashSet<String>(); var pk: HashSet<String>? = null; var pn = ""
+        val kd = HashMap<String, String>(); val kn2 = HashMap<String, Int>(); val rl = HashMap<String, Pair<String, String>>(); val ub = HashSet<String>(); val nw = ArrayList<Triple<String, Long, String>>(); var on = 0; var se = 60; var fa = false; var fc = ""; var aiOn = false; val bn = HashSet<String>(); var rel = ""; var fp = ""; var fk = ""; var fd = "(default)"; var fb = ""; val fr = HashSet<String>(); val bo = HashSet<String>(); var pk: HashSet<String>? = null; var pn = ""
         for (l in body(text).lineSequence()) {
             val p = l.trim().split(Regex("\\s+"))
             if (p.size >= 3 && p[0] == "#tvk:") p[2].toLongOrNull()?.let { k[p[1]] = it; if (p.size >= 4 && p[3] != "-") kd[p[1]] = p[3]; if (p.size >= 5) p[4].toIntOrNull()?.let { n -> kn2[p[1]] = n } }
@@ -68,6 +69,7 @@ object Sub {
                 nw.add(Triple(p[1], p[2].toLong(), String(android.util.Base64.decode(p[3], android.util.Base64.URL_SAFE or android.util.Base64.NO_PADDING), Charsets.UTF_8)))
             }
             if (p.size >= 2 && p[0] == "#tvkp:") pk = HashSet(p[1].split(',').filter { it.length >= 8 })
+            if (p.size >= 2 && p[0] == "#tvboth:") bo.addAll(p[1].split(',').map { it.trim() }.filter { it.contains(':') })
             if (p.size >= 2 && p[0] == "#tvfree:") fr.addAll(p[1].split(',').map { it.trim() }.filter { it.contains(':') })
             if (p.size >= 3 && p[0] == "#tvrole:" && Regex("^[0-9a-f]{12}$").matches(p[1]) && p[2] in setOf("o", "a", "s"))   // 1.43: s — Premium satyjy
                 rl[p[1]] = p[2] to runCatching { String(android.util.Base64.decode(p.getOrElse(3) { "" }, android.util.Base64.URL_SAFE or android.util.Base64.NO_PADDING), Charsets.UTF_8).take(32) }.getOrDefault("")
@@ -85,7 +87,7 @@ object Sub {
             if (p.size >= 3 && p[0].startsWith("#tvu") && p[0].endsWith(":")) u[p[0].removePrefix("#tvu").removeSuffix(":")] = p[1] to p[2]
             if (p.size >= 2 && p[0] == "#tvad:") a = p[1] to Cfg.dec(p.getOrElse(2) { "" })
         }
-        keys = k; upd = u; ad = a; kdev = kd; kn = kn2; roles = rl; ubans = ub; news = newsFs ?: nw; online = on; sess = se; fast = fa; fcmApp = fc; ai = aiOn; bans = bn; relay = rel; fsProj = fp; fsKey = fk; fsDb = fd; fsBase = fb; free = fr; pkeys = pk; pin = pn
+        keys = k; upd = u; ad = a; kdev = kd; kn = kn2; roles = rl; ubans = ub; news = newsFs ?: nw; online = on; sess = se; fast = fa; fcmApp = fc; ai = aiOn; bans = bn; relay = rel; fsProj = fp; fsKey = fk; fsDb = fd; fsBase = fb; free = fr; both = bo; pkeys = pk; pin = pn
     }
 
     /** Abonelik metnini sunucu listesine çevirir (desteklenmeyen satırlar atlanır). */

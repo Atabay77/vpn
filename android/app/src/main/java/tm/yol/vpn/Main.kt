@@ -258,7 +258,7 @@ open class Main : Activity() {
             val a = JSONArray()
             val c = this@Main
             Sub.list.forEach { s -> a.put(JSONObject().put("key", s.key).put("flag", s.flag).put("country", s.country).put("title", s.title).put("proto", s.proto).put("game", s.game)
-                .put("free", (Sub.free.isEmpty() && Sub.pkeys == null) || s.hp in Sub.free).put("lock", !State.allowed(c, s))) }   // 1.43: mugt / Premium
+                .put("free", (Sub.free.isEmpty() && Sub.pkeys == null) || s.hp in Sub.free).put("lock", !State.allowed(c, s)).put("both", s.hp in Sub.both)) }   // 1.43: mugt / Premium
             val p = JSONObject(); State.pings.forEach { (k, v) -> p.put(k, v) }
             return JSONObject().put("list", a).put("pings", p).toString()
         }
@@ -277,8 +277,19 @@ open class Main : Activity() {
         /** 1.47: baş sahypadaky PUBG düwmesi (birikme bar bolsa derrew täzeden birikýär). */
         @JavascriptInterface fun pubg(on: Boolean) {
             if (State.pubg(this@Main) == on) return
-            State.setPubg(this@Main, on); if (on) State.select(this@Main, null, State.selKey(this@Main) == "auto:p")
-            ui { if (State.now == State.ON || State.now == State.WAIT) startVpn() }
+            if (!on) { State.setPubg(this@Main, false); ui { if (State.now == State.ON || State.now == State.WAIT) startVpn() }; return }
+            State.setPubg(this@Main, true)
+            Thread {   // 1.47.2: ilki PUBG serwerleri ölçülýär — hiç biri jogap bermese (N/A) düwme özi öçýär, birikme üýtgemeýär
+                val gs = Sub.list.filter { it.game && State.allowed(this@Main, it) }
+                val pool = java.util.concurrent.Executors.newFixedThreadPool(maxOf(1, minOf(gs.size, 6)))
+                val ok = java.util.concurrent.atomic.AtomicBoolean(false)
+                gs.forEach { s -> pool.execute { if (State.ping(s) > 0) ok.set(true) } }
+                pool.shutdown(); pool.awaitTermination(12, java.util.concurrent.TimeUnit.SECONDS)
+                if (!State.pubg(this@Main)) return@Thread
+                if (!ok.get()) { State.setPubg(this@Main, false); push(JSONObject().put("k", "pgna")); return@Thread }
+                State.select(this@Main, null, State.selKey(this@Main) == "auto:p")
+                ui { if (State.now == State.ON || State.now == State.WAIT) startVpn() }
+            }.start()
         }
         @JavascriptInterface fun test() = measure()
         /** 1.19: açar satyn almak — töleg çekiniň suraty Firestore-a (gi/), sargyt bota. */
