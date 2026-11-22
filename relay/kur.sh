@@ -32,8 +32,8 @@ systemctl restart tvrelay
 (command -v ufw >/dev/null 2>&1 && ufw allow $PORT/tcp >/dev/null 2>&1) || true
 (command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --permanent --add-port=$PORT/tcp >/dev/null 2>&1 && firewall-cmd --reload >/dev/null 2>&1) || true
 iptables -C INPUT -p tcp --dport $PORT -j ACCEPT 2>/dev/null || iptables -I INPUT -p tcp --dport $PORT -j ACCEPT 2>/dev/null || true
-sleep 2
-if curl -fsS -m 15 http://127.0.0.1:$PORT/health >/dev/null; then
+OK=0; for i in $(seq 1 30); do sleep 2; curl -fsS -m 5 http://127.0.0.1:$PORT/health >/dev/null 2>&1 && { OK=1; break; }; done   # uly baza açylýança garaşýar (60 s çenli)
+if [ "$OK" = 1 ]; then
   IP=$(curl -fsS -4 https://api.ipify.org 2>/dev/null || hostname -I | awk '{print $1}')
   echo ""
   if [ -n "$UPSTREAM" ]; then
