@@ -332,7 +332,7 @@ label[for="pfph"]{z-index:3}
       <div class="{{stCls}}" style="font-family:'Montserrat',sans-serif;font-size:19px;font-weight:800;transition:color .5s ease;text-shadow:0 2px 12px rgba(0,0,0,.8)">{{statusText}}</div>
       <div style="font-size:11px;color:#C9BFA8;text-shadow:0 1px 6px rgba(0,0,0,.9)">{{hintText}}</div>
       <sc-if value="{{modeOn}}" hint-placeholder-val="{{false}}">
-        <div style="display:flex;gap:6px;margin-top:6px;justify-content:center;align-items:center;flex-wrap:wrap;width:100%">
+        <div style="display:flex;flex-direction:column;gap:6px;margin-top:6px;justify-content:center;align-items:center;width:100%">
           <sc-if value="{{pmOn}}" hint-placeholder-val="{{false}}">
             <span class="mseg {{msegCls}}"><i class="mth" aria-hidden="true"></i><button onClick="{{pmGo}}" class="{{pmCls}}">👑 Premium</button><button onClick="{{bhGo}}" class="{{bhCls}}">⚡ Auto</button><button onClick="{{frGo}}" class="{{frCls}}">Free</button></span>
           </sc-if>
