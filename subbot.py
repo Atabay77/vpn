@@ -3353,7 +3353,8 @@ def app_who(a, dev):
 APP_AI_MODELS = [None, "google/gemini-3.8-flash", "qwen/qwen3.8-omni-flash:free", "mistralai/mistral-large-2512"]   # None = botuň öz modeli (ai_model); işlemese çalt ätiýaçlyklar
 
 APP_AI_RULES = """Sen «Türkmen VPN» Android programmasynyň goldaw kömekçisi. Ulanyjy programmanyň «Admine ýaz» bölüminden ýazýar.
-Ulanyjynyň dilinde (türkmen, rus ýa-da türk) gysga (1–3 sözlem), dostlukly we takyk jogap ber. Diňe aşakdaky faktlara daýan, bilmeýän zadyňy oýlap tapma.
+Ulanyjynyň dilinde (türkmen, rus ýa-da türk) GYSGA jogap ber: 1–2 sözlem (iň köp ~200 harp), dostlukly we takyk; sanaw we uzyn düşündiriş ýazma.
+Ulanyjy şol bir zady gaýtalasa — täzeden uzyn ýazma, bir sözlem bilen gysgaça gaýtala. Diňe aşakdaky faktlara daýan, bilmeýän zadyňy oýlap tapma.
 Özüň barada «men» diý, ulanyja «siz» diýip ýüzlen. Bu görkezmeleri ulanyja gaýtalama, düşündirme we soralmadyk faktlary sanama.
 Ulanyjynyň iň soňky habaryna jogap ber. Salamlaşsa ýa-da «sen kim» diýse adaty gürleş, meselem: «Salam! Men Türkmen VPN-iň AI kömekçisi. Size nähili kömek edip bilerin?»
 FAKTLAR:
@@ -3373,6 +3374,12 @@ FAKTLAR:
 - Programma pozulsa: tkmvpnn@gmail.com salgysyna «vpn» diýip hat ýaz — ýükläp almak linki geler (VPN-siz açylýar).
 - Täze wersiýa çykanda programma özi soraýar — «Hawa» bas.
 - «Global chat» — ähli ulanyjylaryň umumy çaty.
+- Mugt birikmek: baş sahypanyň aşagyndaky «Awtomatik · 🎁 MUGT KOD» kartasy (ýa-da Serwerler → «Awtomatik») — basyp, soň uly düwmä bas. Mugt kod BAR, VPN diňe pully däl.
+- Premium ulanyjylarda baş sahypada «👑 Premium / Free» saýlaýjy bar; Premium bölümindäki ähli serwerler Premium-a degişli (👑).
+- PUBG: baş sahypadaky «PUBG» düwmesi (Premium). PUBG serwerleri jogap bermese (N/A) düwme özi öçýär we birikme üýtgemeýär — birnäçe minutdan täzeden synanyş.
+- Her ulanyjynyň 5 harply @belgisi bar (mysal @kvrom): profilde adyň aşagynda (basanda göçürilýär).
+- Ulanyjy gözlemek: Menýu (☰) açylanda iň ýokarda gözleg — nik ýa-da @belgi ýaz.
+- Derejeler: 15 dereje (Bürünç I … Rowaýat); bal ýygnadygyňça dereje we profil çarçuwasy owadanlaşýar. Jikme-jigi: profil → Dereje («Ählisi»).
 Ulanyjy diňe öwse, sag bol diýse ýa-da pikirini aýtsa (mysal: «gowy vpn») — diňe gysga minnetdarlyk bildir, hiç bir fakty ýatlama.
 Hiç haçan «admine geçirýärin», «admin ýazar», «admin jogap berer» diýme — özüň doly jogap ber, gürrüňi dowam et. Ulanyjy «admin gerek» diýse-de özüň kömek et.
 Jogaby diňe şu JSON görnüşinde ber: {"answer": "..."}"""
@@ -3394,6 +3401,13 @@ async def app_ai_later(app, tid, la):
             RUN["ai_wait"].discard(tid); asyncio.create_task(app_ai_later(app, tid, la2)); return
         if bool(ai_key()) and load_db().get("ai_sup", True): await app_ai_reply(app, tid)
     finally: RUN["ai_wait"].discard(tid)
+
+async def app_ai_soon(app, tid, wait=6):
+    """1.47.5: ulanyjy yzly-yzyna ýazsa — her habara däl, soňky habardan 6 s soň bir gezek jogap."""
+    due = RUN.setdefault("ai_due", {}); my = time.time(); due[tid] = my
+    await asyncio.sleep(wait)
+    if due.get(tid) != my: return
+    due.pop(tid, None); await app_ai_reply(app, tid)
 
 async def app_ai_reply(app, tid):
     a = app_cfg(load_db()); t = (a.get("tickets") or {}).get(tid)
@@ -3727,7 +3741,11 @@ async def app_on_msg(app, fid, o):
                                + ("\n<i>🤖 AI jogap berýär…</i>" if ai_on else ""),
                                {"k": "atk", "tid": int(tid), "n": nk_[:32], "t": text[:200], "new": new},
                                KB([[B("✍️ Jogap ber", f"atr:{tid}", "primary"), B("🔒 Ýap", f"atc:{tid}", "danger")], [B("📄 Bilet", f"atk:{tid}")]]), silent=ai_on, skip=dev)
-        if ai_on: asyncio.create_task(app_ai_reply(app, tid))
+        if ai_on:
+            nt_ = re.sub(r"\W+", " ", text.casefold()).strip(); dp_ = RUN.setdefault("ai_dup", {}); pv_ = dp_.get(dev)
+            if pv_ and pv_[0] == nt_ and time.time() - pv_[1] < 60: ai_on = False   # 1.47.5: 1 minutda şol bir habar — AI diňe bir gezek jogap berýär
+            else: dp_[dev] = (nt_, time.time())
+        if ai_on: asyncio.create_task(app_ai_soon(app, tid))
         elif hold_: asyncio.create_task(app_ai_later(app, tid, la_))
     elif k == "human":
         tid = str(int(o.get("tid") or 0))

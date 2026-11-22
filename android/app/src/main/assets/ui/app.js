@@ -822,7 +822,7 @@
         const tab = PF && !OWV ? (s.svTab === 'pubg' ? 'pubg' : 'prem') : (['free', 'prem', 'pubg'].indexOf(s.svTab) >= 0 ? s.svTab : (PR ? 'prem' : 'free'));   // 1.46.8: Free bölümi ýok (diňe «Awtomatik»)
         const ng = SV.filter((v) => !v.game), gg = SV.filter((v) => v.game);
         const mark = (x, v, premTab) => { const lock = !!(v && v.lock), isFree = !v || v.free !== false;
-          const o = Object.assign(x, { pcls: premTab ? 'sv-prem' : '', tag: lock ? '🔒' : premTab && !isFree ? '👑' : '', tagCls: lock ? 'svlock' : 'svcrown' });
+          const o = Object.assign(x, { pcls: premTab ? 'sv-prem' : '', tag: lock ? '🔒' : '', crown: premTab && !lock, tagCls: lock ? 'svlock' : 'svcrown' });   // 1.47.5: Premium bölüminde ähli serwerler (mugtlar hem) — täç
           if (lock) { o.pick = () => { this.say('👑 ' + tx.pr_lock); this.setState({ psh: true, pstep: 1 }); };
             const off = 'rgba(243,231,208,.18)'; Object.assign(o, { ms: '—', msCls: '', c1: off, c2: off, c3: off, c4: off, best: false }); }   // 1.46.2: Premium ýok — ping ölçenmeýär
           return o; };
