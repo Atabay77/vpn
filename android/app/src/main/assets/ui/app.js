@@ -116,15 +116,15 @@
   let LGM = [];   // ugradylan, entek serwerden gelmedik öz Global habarlarym   // ugradylan, entek serwerden gelmedik Global tepkiler
   const isCtl = (m) => !!(m.re || m.ty || m.rd || m.dl || m.ed || m.sty);   // tepki / ýazýar / okaldy — habar däl
   // 1.20: derejeler (bot bilen deň: APP_LVL, APP_LVL_GIFT)
-  const RK_L = [0, 50, 120, 250, 400, 600, 850, 1150, 1500, 2000, 2700, 3500, 4500, 6000, 8000], RK_G = { 8: 3, 9: 5, 10: 7, 11: 7, 12: 7, 13: 7, 14: 7, 15: 30 };   // 1.47: 15 dereje; sowgat — Premium (açar däl)
+  const RK_L = [0, 100, 300, 600, 1000, 1500, 2200, 3000, 4000, 5500, 7500, 10000, 14000, 20000, 30000], RK_G = { 8: 3, 9: 5, 10: 7, 11: 7, 12: 7, 13: 7, 14: 7, 15: 30 };   // 1.47: 15 dereje; sowgat — Premium (açar däl)
   const RK_PK = { 2: ['pk_chat'], 3: ['pk_fr3'], 4: ['pk_fr4'], 5: ['pk_sh'], 6: ['pk_fr6', 'pk_tw'], 7: ['pk_nm7', 'pk_ry'], 8: ['g', 'pk_fr8', 'pk_em'], 9: ['g', 'pk_fr9', 'pk_nm9'], 10: ['g', 'pk_fr10', 'pk_au'],
     11: ['g', 'pk_fr11', 'pk_nm11'], 12: ['g', 'pk_fr12', 'pk_nm11'], 13: ['g', 'pk_fr13', 'pk_nm11'], 14: ['g', 'pk_fr14', 'pk_nm11'], 15: ['g', 'pk_fr15', 'pk_nm11'] };
   const rkT = (lv) => Math.max(1, Math.min(15, Math.floor(+lv) || 1));
   const rkNm = (t) => (t >= 11 ? 'nm' + t : t >= 10 ? 'nm10' : t >= 9 ? 'nm9' : t >= 7 ? 'nm7' : '');   // chatdaky nik
   // 1.47: täze derejeleriň atlary we sowgat ýazgylary (Premium)
-  const RKX = { tk: { lv_how: 'Her gün programmany açsaňyz +10 bal (Premium — +20), her çagyran dostuňyz +50 bal. Sowgat Premium: 8-nji derejede +3 gün, 9-njy — +5 gün, 10–14-nji — +7 gün, 15-nji (iň ýokary) — +30 gün.', rk_n11: 'Serdar', rk_n12: 'Ýyldyrym', rk_n13: 'Aždarha', rk_n14: 'Gün hökümdary', rk_n15: 'Ölmez', pk_gift: '+{d} gün Premium 👑', rk_upGift: 'Gutlaýarys! Sowgat: +{d} gün Premium 👑', pk_fr11: 'Täze çarçuwa', pk_fr12: 'Ýyldyrym çarçuwasy', pk_fr13: 'Ot çarçuwasy', pk_fr14: 'Gün çarçuwasy', pk_fr15: 'Ölmez çarçuwasy', pk_nm11: 'Ýalpyldaýan nik' },
-    ru: { lv_how: 'Каждый день в программе +10 очков (Premium — +20), каждый приглашённый друг +50. Подарок Premium: на 8 уровне +3 дня, на 9 — +5, на 10–14 — +7, на 15 (высший) — +30 дней.', rk_n11: 'Сердар', rk_n12: 'Молния', rk_n13: 'Дракон', rk_n14: 'Владыка солнца', rk_n15: 'Бессмертный', pk_gift: '+{d} дн. Premium 👑', rk_upGift: 'Поздравляем! Подарок: +{d} дн. Premium 👑', pk_fr11: 'Новая рамка', pk_fr12: 'Рамка молнии', pk_fr13: 'Огненная рамка', pk_fr14: 'Солнечная рамка', pk_fr15: 'Рамка бессмертного', pk_nm11: 'Сияющий ник' },
-    tr: { lv_how: 'Her gün programı açarsanız +10 puan (Premium — +20), her davet ettiğiniz arkadaş +50 puan. Premium hediye: 8. seviyede +3 gün, 9. — +5, 10–14. — +7, 15. (en yüksek) — +30 gün.', rk_n11: 'Serdar', rk_n12: 'Yıldırım', rk_n13: 'Ejderha', rk_n14: 'Güneş Hükümdarı', rk_n15: 'Ölümsüz', pk_gift: '+{d} gün Premium 👑', rk_upGift: 'Tebrikler! Hediye: +{d} gün Premium 👑', pk_fr11: 'Yeni çerçeve', pk_fr12: 'Yıldırım çerçevesi', pk_fr13: 'Ateş çerçevesi', pk_fr14: 'Güneş çerçevesi', pk_fr15: 'Ölümsüz çerçevesi', pk_nm11: 'Parlayan takma ad' } };
+  const RKX = { tk: { rk_n1: 'Bürünç I', rk_n2: 'Bürünç II', rk_n3: 'Bürünç III', rk_n4: 'Kümüş I', rk_n5: 'Kümüş II', rk_n6: 'Kümüş III', rk_n7: 'Altyn I', rk_n8: 'Altyn II', rk_n9: 'Altyn III', rk_n10: 'Platina', rk_n11: 'Almaz', rk_n12: 'Ussat', rk_n13: 'Beýik ussat', rk_n14: 'Çempion', rk_n15: 'Rowaýat', lv_how: 'Her gün programmany açsaňyz +10 bal (Premium — +20), her çagyran dostuňyz +50 bal. Sowgat Premium: 8-nji derejede +3 gün, 9-njy — +5 gün, 10–14-nji — +7 gün, 15-nji (iň ýokary) — +30 gün.', pk_gift: '+{d} gün Premium 👑', rk_upGift: 'Gutlaýarys! Sowgat: +{d} gün Premium 👑', pk_fr11: 'Täze çarçuwa', pk_fr12: 'Ýyldyrym çarçuwasy', pk_fr13: 'Ot çarçuwasy', pk_fr14: 'Gün çarçuwasy', pk_fr15: 'Ölmez çarçuwasy', pk_nm11: 'Ýalpyldaýan nik' },
+    ru: { rk_n1: 'Бронза I', rk_n2: 'Бронза II', rk_n3: 'Бронза III', rk_n4: 'Серебро I', rk_n5: 'Серебро II', rk_n6: 'Серебро III', rk_n7: 'Золото I', rk_n8: 'Золото II', rk_n9: 'Золото III', rk_n10: 'Платина', rk_n11: 'Алмаз', rk_n12: 'Мастер', rk_n13: 'Грандмастер', rk_n14: 'Чемпион', rk_n15: 'Легенда', lv_how: 'Каждый день в программе +10 очков (Premium — +20), каждый приглашённый друг +50. Подарок Premium: на 8 уровне +3 дня, на 9 — +5, на 10–14 — +7, на 15 (высший) — +30 дней.', pk_gift: '+{d} дн. Premium 👑', rk_upGift: 'Поздравляем! Подарок: +{d} дн. Premium 👑', pk_fr11: 'Новая рамка', pk_fr12: 'Рамка молнии', pk_fr13: 'Огненная рамка', pk_fr14: 'Солнечная рамка', pk_fr15: 'Рамка бессмертного', pk_nm11: 'Сияющий ник' },
+    tr: { rk_n1: 'Bronz I', rk_n2: 'Bronz II', rk_n3: 'Bronz III', rk_n4: 'Gümüş I', rk_n5: 'Gümüş II', rk_n6: 'Gümüş III', rk_n7: 'Altın I', rk_n8: 'Altın II', rk_n9: 'Altın III', rk_n10: 'Platin', rk_n11: 'Elmas', rk_n12: 'Usta', rk_n13: 'Büyük Usta', rk_n14: 'Şampiyon', rk_n15: 'Efsane', lv_how: 'Her gün programı açarsanız +10 puan (Premium — +20), her davet ettiğiniz arkadaş +50 puan. Premium hediye: 8. seviyede +3 gün, 9. — +5, 10–14. — +7, 15. (en yüksek) — +30 gün.', pk_gift: '+{d} gün Premium 👑', rk_upGift: 'Tebrikler! Hediye: +{d} gün Premium 👑', pk_fr11: 'Yeni çerçeve', pk_fr12: 'Yıldırım çerçevesi', pk_fr13: 'Ateş çerçevesi', pk_fr14: 'Güneş çerçevesi', pk_fr15: 'Ölümsüz çerçevesi', pk_nm11: 'Parlayan takma ad' } };
   const rkNc = (t) => rkNm(t) || 'rc' + t;   // derejäniň ady
   const rkPk = (t, tx) => (RK_PK[t] || []).map((k) => ({ t: k === 'g' ? '🎁 ' + tx.pk_gift.replace('{d}', String(RK_G[t])) : tx[k], c: k === 'g' ? 'pkg' : '' }));
   function rxAgg(rows) {
@@ -420,7 +420,7 @@
         const ph = mine ? s.photo : ((PH[m.i] || {}).d || '');
         return { name: nm + (mine ? ' · ' + tx.g_you : ''), ini: ini(nm), bg: mine ? '#E0B04A' : colorOf(m.i), nc: mine ? '#06100B' : colorOf(m.i), photo: ph, hasPh: !!ph, noPh: !ph,
           t: m.st ? '' : GE.E[m.id] != null ? GE.E[m.id] : m.t, time: (GE.E[m.id] != null ? tx.m_edited + ' ' : '') + this.hm((m.time || 0) * 1000 || now) + (m.pend ? ' ⏳' : '') + (m.v ? ' · v' + String(m.v).slice(0, 10) : ''), gk: m.id, cls: mine ? 'gm-me' : 'gm-o', bcls: mine ? 'gb-me' : 'gb-o', canDel: false, del: null,
-          prof: () => this.openProf(m.i), isO: isOwnShown(m.i), isA: roleOf(m.i) === 'a', isS: roleOf(m.i) === 's', isP: isPrem(m.i), ncls: isOwnShown(m.i) ? 'goldtxt' : (lvq ? rkNm(rt) : ''), fr: lvq && rt >= 3 && !isOwnShown(m.i) ? 'fr' + rt : '',
+          prof: () => this.openProf(m.i), isO: isOwnShown(m.i), isA: roleOf(m.i) === 'a', isS: roleOf(m.i) === 's', isP: isPrem(m.i), ncls: isOwnShown(m.i) ? 'goldtxt' : (lvq ? rkNm(rt) : ''), fr: '', hasFr: !!lvq && !isOwnShown(m.i), frN: String(rt), frCls: rt >= 10 ? 'frx' : '',   // 1.47: surat çarçuwa
           isSt: !!m.st, st: m.st || '', hasImg: !!(m.pi && GI[m.pi]), img: (m.pi && GI[m.pi]) || '', zoom: () => this.setState({ zoom: GI[m.pi] || '' }),
           hasRp: !!(m.rp && m.rp.n), rpN: m.rp ? m.rp.n : '', rpT: m.rp ? m.rp.t : '', rpI: m.rp ? m.rp.i || '' : '',
           hasLv: isOwnShown(m.i) ? false : roleOf(m.i) === 'o' ? true : lvq >= 2, lv: String(rt),
@@ -589,6 +589,7 @@
       r.nkIn = s.nkIn == null ? this.meName : s.nkIn; r.onNk = this.onNk; r.saveNk = this.saveNk;
       r.nkMsg = s.nkSt ? tx['nk_' + s.nkSt] : ''; r.nkCls = s.nkSt === 'ok' ? 'nk-ok' : s.nkSt === 'wait' ? '' : s.nkSt ? 'nk-bad' : '';
       const bgUrl = (d) => (d ? 'linear-gradient(rgba(6,16,11,.45),rgba(6,16,11,.88)),url(' + d + ')' : 'none');
+      { const mt2 = rkT((LS.get('lvl', {}) || {}).lv || 1); r.meFrN = String(mt2); r.meFrCls = mt2 >= 10 ? 'frx' : ''; }   // 1.47: öz çarçuwam
       r.pfBgImg = bgUrl(s.pbg); r.hasBg = !!s.pbg; r.onBg = this.onBg; r.delBg = this.delBg;
       r.stOn = !!s.stOn; r.stToggle = this.stToggle; r.stickers = STICKERS.map((e) => ({ e, pick: () => this.pickSticker(e) }));
       // emoji: ýazga goşulýar (Telegram ýaly); stiker: uly bolup gidýär
@@ -706,7 +707,7 @@
           blockT: st === 'blk' ? '✅ ' + tx.dm_unblk : '🚫 ' + tx.dm_blk, block: () => this.blockDm(d) });
         let ul = mine ? (LS.get('lvl', {}) || {}).lv || 0 : 0;   // derejesi: Global chatdaky iň soňky habaryndan
         if (!mine) { G.forEach((q) => { if (q.i === d && q.lv) ul = q.lv; }); ul = lvOf(d, ul); lvAsk([d]); }
-        Object.assign(r.up, { hasRk: (ul >= 1 || roleOf(d) === 'o') && !a.isO, rkT: String(rkT(ul)), rkName: tx['rk_n' + rkT(ul)], rkNcls: rkNc(rkT(ul)) });
+        Object.assign(r.up, { hasRk: (ul >= 1 || roleOf(d) === 'o') && !a.isO, rkT: String(rkT(ul)), frCls: rkT(ul) >= 10 ? 'frx' : '', rkName: tx['rk_n' + rkT(ul)], rkNcls: rkNc(rkT(ul)) });
         // 1.21: sessiz; eýesine — ID we bal/dereje bermek
         const own = myRole === 'o' || admMe().role === 'f', canGive = !!(s.admOn && isF), au2 = (A && A.us && A.us[d]) || null, ux = UPX[d];
         const xpK = ux ? ux.xp : au2 && au2.xp != null ? au2.xp : null, lvK = ux ? ux.lv : xpK != null ? RK_L.filter((q) => xpK >= q).length : ul;
@@ -957,7 +958,7 @@
       r.dgLbl = r.dgCls === 'on' ? tx.dg_btnOff : tx.dg_btn;
       r.dgOnI = r.dgCls === 'on'; r.dgOffI = !r.dgOnI; r.dgW = String((DGW[s.lang] || DGW.tk)[r.dgOnI ? 1 : 0]);
       // 1.22: derejäni synap görmek (chatda we baş sahypada)
-      { const mt = rkT(r.rkmT); r.rkmFr = mt >= 3 ? 'fr' + mt : ''; r.rkmNm = rkNm(mt); r.rkmMe = this.meName || '…'; r.rkmIni = ini(this.meName || '?'); r.rkmBg = '#E0B04A'; r.rkmHasB = mt >= 2; }
+      { const mt = rkT(r.rkmT); r.rkmFr = ''; r.rkmFrCls = mt >= 10 ? 'frx' : ''; r.rkmNm = rkNm(mt); r.rkmMe = this.meName || '…'; r.rkmIni = ini(this.meName || '?'); r.rkmBg = '#E0B04A'; r.rkmHasB = mt >= 2; }
       // 1.46.7: biletleriň hemmesini ýapmak; admin log (diňe eýesi)
       { const opN = ((A && A.tk) || []).filter((t) => t.st !== 'closed').length; r.tkAllOn = !!s.admOn && opN > 0; r.tkAllT = tx.tk_all + ' (' + opN + ')'; r.tkCloseAll = this.tkCloseAll;
         const me4 = admMe(); r.alogOn = me4.role === 'f' && !me4.o2;   // 1.47: owner 2 admin logyny görmeýär r.alogGo = () => { act('alog'); this.say(tx.k_wait); };

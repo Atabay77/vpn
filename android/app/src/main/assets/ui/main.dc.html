@@ -231,7 +231,16 @@ html .glass.row.sv-prem,html[class*=ph-] .glass.row.sv-prem{animation:none!impor
 @keyframes rkfr15{0%,100%{box-shadow:0 0 0 2px #7FF0DF,0 0 0 4px #FFA6E8,0 0 12px rgba(183,155,255,.8)}50%{box-shadow:0 0 0 2px #FFA6E8,0 0 0 5px #7FF0DF,0 0 18px rgba(183,155,255,1)}}
 .rkp15 .rkpn,.nm15{background:linear-gradient(90deg,#FFA6E8,#fff,#7FF0DF,#FFA6E8);background-size:300% 100%;-webkit-background-clip:text;background-clip:text;color:transparent!important;animation:rkbord2 2.3s linear infinite}
 @keyframes rkfr15{0%,100%{box-shadow:0 0 0 2px #FFE08A,0 0 0 4px #FFA6E8,0 0 14px rgba(255,166,232,.9),0 0 26px rgba(127,240,223,.5)}33%{box-shadow:0 0 0 2px #FFE08A,0 0 0 4px #8C7BFF,0 0 18px rgba(140,123,255,1),0 0 30px rgba(255,214,102,.5)}66%{box-shadow:0 0 0 2px #FFE08A,0 0 0 4px #7FF0DF,0 0 18px rgba(127,240,223,1),0 0 30px rgba(255,166,232,.5)}}
-</style>
+
+/* 1.47: dereje çarçuwalary (surat) */
+.avw{position:relative;display:inline-flex;flex-shrink:0;align-self:flex-start;cursor:pointer}
+.avfr{position:absolute;left:50%;top:50%;width:232%;height:232%;transform:translate(-50%,-50%);pointer-events:none;z-index:2;max-width:none}
+.avfrb{position:absolute;left:50%;top:50%;width:236px;height:236px;transform:translate(-50%,-50%);pointer-events:none;z-index:2;max-width:none}
+.gm .avw{margin:6px 10px 0 22px}
+label[for="pfph"]{z-index:3}
+.frx{animation:frglow 2.6s ease-in-out infinite}
+@keyframes frglow{0%,100%{filter:drop-shadow(0 0 2px rgba(255,220,140,.5)) brightness(1)}50%{filter:drop-shadow(0 0 7px rgba(255,220,140,.95)) brightness(1.15)}}
+
 </helmet>
 <div style="width:390px;height:var(--H);position:relative;overflow:hidden;background:#06100B;color:#F3E7D0;font-family:'Manrope',system-ui,sans-serif">
   <div class="c-bg" style="position:absolute;left:0;top:0;width:390px;height:var(--H)" aria-hidden="true"></div>
@@ -879,10 +888,10 @@ html .glass.row.sv-prem,html[class*=ph-] .glass.row.sv-prem{animation:none!impor
   <sc-if value="{{isUprof}}" hint-placeholder-val="{{false}}">
     <div class="pg" style="position:absolute;left:16px;right:16px;top:94px;bottom:0;overflow-y:auto;display:flex;flex-direction:column;gap:10px;padding-bottom:24px">
       <div class="glass" style="border-radius:22px;padding:24px 16px 18px;display:flex;flex-direction:column;align-items:center;gap:8px;text-align:center;flex-shrink:0;background-image:{{up.bgImg}};background-size:cover;background-position:center">
-        <button onClick="{{up.zoom}}" aria-label="{{up.name}}" style="border:none;background:transparent;padding:0;cursor:zoom-in">
+        <button onClick="{{up.zoom}}" aria-label="{{up.name}}" style="position:relative;border:none;background:transparent;padding:0;cursor:zoom-in">
           <sc-if value="{{up.hasPh}}" hint-placeholder-val="{{false}}"><img src="{{up.photo}}" alt="" class="avbig" style="object-fit:cover;display:block"></sc-if>
           <sc-if value="{{up.noPh}}" hint-placeholder-val="{{true}}"><div class="avbig" style="background:{{up.bg}};display:flex;align-items:center;justify-content:center;font-size:34px;font-weight:800;color:#0B2117">{{up.ini}}</div></sc-if>
-        </button>
+        <sc-if value="{{up.hasRk}}" hint-placeholder-val="{{false}}"><img class="avfrb {{up.frCls}}" src="img/fr/f{{up.rkT}}.webp" alt=""></sc-if></button>
         <div class="{{up.ncls}}" style="font-size:21px;font-weight:800;margin-top:4px">{{up.name}}</div>
         <sc-if value="{{up.hasRk}}" hint-placeholder-val="{{false}}"><div class="uprk"><span class="rk t{{up.rkT}} lite" style="--s:44px"><i class="rk-au"></i><i class="rk-ry"></i><img class="rk-im" src="img/rk/b{{up.rkT}}.webp" alt=""><i class="rk-sh" style="-webkit-mask-image:url(img/rk/b{{up.rkT}}.webp);mask-image:url(img/rk/b{{up.rkT}}.webp)"></i><i class="rk-sp s1"></i><i class="rk-sp s2"></i><i class="rk-sp s3"></i><i class="rk-em e1"></i><i class="rk-em e2"></i><i class="rk-em e3"></i><i class="rk-or"></i></span><span class="{{up.rkNcls}}">{{up.rkName}}</span><span class="rkpl">{{up.rkT}}</span></div></sc-if>
         <sc-if value="{{up.isO}}" hint-placeholder-val="{{false}}"><span class="bdg-o big">👑 OWNER</span></sc-if>
@@ -1066,7 +1075,8 @@ html .glass.row.sv-prem,html[class*=ph-] .glass.row.sv-prem{animation:none!impor
         <div style="position:relative;width:104px;height:104px">
           <sc-if value="{{me.hasPh}}" hint-placeholder-val="{{false}}"><img src="{{me.photo}}" alt="{{me.name}}" class="avbig" style="object-fit:cover;display:block"></sc-if>
           <sc-if value="{{me.noPh}}" hint-placeholder-val="{{true}}"><div class="avbig" style="background:{{me.bg}};display:flex;align-items:center;justify-content:center;font-size:34px;font-weight:800;color:#0B2117">{{me.ini}}</div></sc-if>
-          <label for="pfph" aria-label="{{tx.pf_photo}}" class="tap" style="position:absolute;right:-2px;bottom:-2px;width:34px;height:34px;border-radius:17px;background:#E0B04A;border:3px solid #0B2117;display:flex;align-items:center;justify-content:center;cursor:pointer;box-sizing:border-box">
+          <img class="avfrb {{meFrCls}}" src="img/fr/f{{meFrN}}.webp" alt="">
+           <label for="pfph" aria-label="{{tx.pf_photo}}" class="tap" style="position:absolute;right:-2px;bottom:-2px;width:34px;height:34px;border-radius:17px;background:#E0B04A;border:3px solid #0B2117;display:flex;align-items:center;justify-content:center;cursor:pointer;box-sizing:border-box">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#0B2117" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h3l1.5-2h7L17 8h3v11H4z"></path><circle cx="12" cy="13" r="3.5"></circle></svg>
           </label>
         </div>
@@ -1329,8 +1339,7 @@ html .glass.row.sv-prem,html[class*=ph-] .glass.row.sv-prem{animation:none!impor
       <div ref="{{chatRef}}" style="flex-grow:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:5px;padding:6px 2px 4px">
         <sc-for list="{{gMsgs}}" as="gm" hint-placeholder-count="5">
           <div class="gm {{gm.cls}}">
-            <sc-if value="{{gm.hasPh}}" hint-placeholder-val="{{false}}"><img src="{{gm.photo}}" alt="" class="av30 {{gm.fr}}" onClick="{{gm.prof}}" style="cursor:pointer"></sc-if>
-            <sc-if value="{{gm.noPh}}" hint-placeholder-val="{{true}}"><span class="av30 {{gm.fr}}" onClick="{{gm.prof}}" style="background:{{gm.bg}};cursor:pointer">{{gm.ini}}</span></sc-if>
+            <span class="avw" onClick="{{gm.prof}}"><sc-if value="{{gm.hasPh}}" hint-placeholder-val="{{false}}"><img src="{{gm.photo}}" alt="" class="av30"></sc-if><sc-if value="{{gm.noPh}}" hint-placeholder-val="{{true}}"><span class="av30" style="background:{{gm.bg}}">{{gm.ini}}</span></sc-if><sc-if value="{{gm.hasFr}}" hint-placeholder-val="{{false}}"><img class="avfr {{gm.frCls}}" src="img/fr/f{{gm.frN}}.webp" alt=""></sc-if></span>
             <div class="gcol">
               <sc-if value="{{gm.canDel}}" hint-placeholder-val="{{false}}"><button onClick="{{gm.del}}" class="gtr tap" aria-label="{{tx.g_del}}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16"></path><path d="M10 11v6M14 11v6"></path><path d="M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12"></path><path d="M9 7V4h6v3"></path></svg></button></sc-if>
               <sc-if value="{{gm.rxOpen}}" hint-placeholder-val="{{false}}"><div class="rxbar"><sc-for list="{{gm.rxPick}}" as="rq" hint-placeholder-count="5"><button onClick="{{rq.go}}" class="rxp tap" aria-label="{{rq.e}}">{{rq.e}}</button></sc-for></div></sc-if>
@@ -1745,7 +1754,7 @@ html .glass.row.sv-prem,html[class*=ph-] .glass.row.sv-prem{animation:none!impor
       <div class="rkpk" style="justify-content:center"><sc-for list="{{rkmPk}}" as="pk" hint-placeholder-count="2"><span class="rkchip {{pk.c}}">{{pk.t}}</span></sc-for></div>
       <div class="rktry">
         <div class="rktt">🧪 {{tx.rk_try}}</div>
-        <div class="rkdemo-chat tgc"><div class="gm gm-o" style="max-width:100%"><span class="av30 {{rkmFr}}" style="background:{{rkmBg}}">{{rkmIni}}</span><div class="gcol"><div class="gb gb-o"><span class="gnm" style="color:{{rkmBg}}"><span class="{{rkmNm}}">{{rkmMe}}</span><sc-if value="{{rkmHasB}}" hint-placeholder-val="{{true}}"><img class="rkmini" src="img/rk/b{{rkmT}}.webp" alt=""></sc-if></span>{{tx.rk_trySay}}<span class="bt">12:00</span></div></div></div></div>
+        <div class="rkdemo-chat tgc"><div class="gm gm-o" style="max-width:100%"><span class="avw"><span class="av30" style="background:{{rkmBg}}">{{rkmIni}}</span><img class="avfr {{rkmFrCls}}" src="img/fr/f{{rkmT}}.webp" alt=""></span><div class="gcol"><div class="gb gb-o"><span class="gnm" style="color:{{rkmBg}}"><span class="{{rkmNm}}">{{rkmMe}}</span><sc-if value="{{rkmHasB}}" hint-placeholder-val="{{true}}"><img class="rkmini" src="img/rk/b{{rkmT}}.webp" alt=""></sc-if></span>{{tx.rk_trySay}}<span class="bt">12:00</span></div></div></div></div>
         <span class="rkpill rkdemo rkp{{rkmT}}"><span class="rk t{{rkmT}} lite" style="--s:30px"><i class="rk-au"></i><i class="rk-ry"></i><img class="rk-im" src="img/rk/b{{rkmT}}.webp" alt=""><i class="rk-sh" style="-webkit-mask-image:url(img/rk/b{{rkmT}}.webp);mask-image:url(img/rk/b{{rkmT}}.webp)"></i><i class="rk-sp s1"></i><i class="rk-sp s2"></i><i class="rk-sp s3"></i><i class="rk-em e1"></i><i class="rk-em e2"></i><i class="rk-em e3"></i><i class="rk-or"></i></span><span class="rkpn">{{rkmName}}</span><span class="rkpl">{{rkmT}}</span></span>
       </div>
       <button onClick="{{rkmX}}" class="tap rkmb">{{rkmBtn}}</button>

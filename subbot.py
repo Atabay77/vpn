@@ -3455,7 +3455,7 @@ def app_grant_days(dev, days, by):
     return kk
 
 # 1.19: derejeler — her işjeň gün 10 bal, her çagyrylan dost 50 bal; käbir derejede mugt gün
-APP_LVL = [0, 50, 120, 250, 400, 600, 850, 1150, 1500, 2000, 2700, 3500, 4500, 6000, 8000]   # 1.47: 15 dereje
+APP_LVL = [0, 100, 300, 600, 1000, 1500, 2200, 3000, 4000, 5500, 7500, 10000, 14000, 20000, 30000]   # 1.47: 15 dereje (has kyn — köpüsi eýýäm iň ýokarda)
 APP_LVL_GIFT = {8: 3, 9: 5, 10: 7, 11: 7, 12: 7, 13: 7, 14: 7, 15: 30}   # 1.47: sowgat — Premium günler (açar sowgady aýryldy); iň ýokary — 1 aý
 def app_dev_prem(a, dev):
     """1.47: telefonyň häzir işleýän Premium açary barmy."""

@@ -22,8 +22,19 @@ run {
     )
 }
 
+// 1.47: APK faýlynyň nyşany (ýükleme / faýl dolandyryjy) — her derlemede tötänleýin; gurlanda baş ekranda asyl nyşan (.Main ýarlygy)
+val pkgIconDir = layout.buildDirectory.dir("generated/pkgicon").get().asFile
+run {
+    val src = file("icons").listFiles { f -> f.name.startsWith("pkg") && f.name.endsWith(".png") }?.sortedBy { it.name }.orEmpty()
+    if (src.isNotEmpty()) {
+        val d = pkgIconDir.resolve("mipmap-xxxhdpi"); d.mkdirs()
+        src[SecureRandom().nextInt(src.size)].copyTo(d.resolve("ic_pkg.png"), overwrite = true)
+    }
+}
+
 android {
     namespace = "tm.yol.vpn"
+    sourceSets { getByName("main") { res.srcDir(pkgIconDir) } }
     compileSdk = 35
     ndkVersion = "27.2.12479018"
 
