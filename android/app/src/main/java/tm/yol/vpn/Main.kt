@@ -302,6 +302,16 @@ open class Main : Activity() {
                 push(JSONObject().put("k", if (ok) "buysent" else "buyfail"))
             }.start()
         }
+        /** 1.47.6: «Admine ýaz» — surat (meselem töleg çeki): Firestore-a (gi/), bilete diňe belgisi. */
+        @JavascriptInterface fun tkImg(json: String) {
+            val o = runCatching { JSONObject(json) }.getOrNull() ?: return
+            Thread {
+                val ph = o.optString("ph"); val pid = Fs.newId()
+                val ok = Fs.on() && ph.length in 1..110_000 && (Msg.enc(JSONObject().put("ph", ph).toString())?.let { Fs.write("gi/$pid", it) } ?: false)
+                if (ok) Msg.send(this@Main, JSONObject().put("k", "tk").put("t", o.optString("t").take(1000)).put("pi", pid).put("nick", o.optString("nick").take(32)).put("tid", o.optInt("tid")))
+                else push(JSONObject().put("k", "tkimgfail"))
+            }.start()
+        }
         /** 1.19: gizli nyşan — telefonda «Kalkulýator» bolup görünýär. */
         @JavascriptInterface fun disguise(on: Boolean) {
             val pm = packageManager

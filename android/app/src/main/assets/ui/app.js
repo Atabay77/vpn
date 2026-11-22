@@ -288,6 +288,18 @@
       return INFO.dl ? (SHARE[l] || SHARE.tk).replace('{u}', INFO.dl).replace('{c}', c) : this.T()[l].r_msg.replace('{c}', c);
     };
 
+    /** 1.47.6: «Admine ýaz» — surat (töleg çeki) göni şu ýerden. */
+    P.sendTkImg = function (e) {
+      const f = e && e.target && e.target.files && e.target.files[0]; if (e && e.target) e.target.value = ''; if (!f) return;
+      if (this._isBan && this._isBan()) return;
+      const go = (max, q) => shrink(f, max, q, (d) => {
+        if (!d) return; if (d.length > 108000 && max > 500) { go(Math.round(max * 0.75), q - 0.08); return; }
+        const s = this.state, id = Date.now();
+        this.setState({ chat: s.chat.concat([{ id, who: 'u', t: '', img: d, time: this.hm(id), tick: '✓' }]), myTkSt: s.myTkSt === 'closed' || !s.myTkSt ? 'open' : s.myTkSt, aiTyping: !!INFO.ai && !s.human });
+        try { NB.tkImg(JSON.stringify({ ph: d, t: '🧾', nick: this.meName, tid: s.tkId || 0 })); } catch (e2) {}
+        clearTimeout(this.aiT); this.aiT = setTimeout(() => this.setState({ aiTyping: false }), 90000); });
+      go(1000, 0.75);
+    };
     /** Admine ýaz: habar bota gidýär (AI derrew, admin Telegramda jogap berýär). */
     P.sendMsg = function (text) {
       text = String(text || '').trim().slice(0, 1000); if (!text) return;
@@ -681,7 +693,7 @@
       });
       r.news = r.news.map((n) => Object.assign({}, n, { parts: withKeys(n.parts, this) }));
       r.msgs = r.msgs.map((m) => { const q = /^» [^\n]*\n/.exec(m.t || ''), body = q ? (m.t || '').slice(q[0].length) : m.t || '';   // 1.47: jogap (sitata)
-        return Object.assign({}, m, { rid: 'tk' + m.id, hasQ: !!q, q: q ? q[0].slice(2).trim() : '', parts: withKeys(this.lk(body), this) }); });
+        return Object.assign({}, m, { hasImg: !!m.img, img: m.img || '', rid: 'tk' + m.id, hasQ: !!q, q: q ? q[0].slice(2).trim() : '', parts: withKeys(this.lk(body), this) }); });
       r.tkRpOn = !!s.tkRp && pg === 'chat'; r.tkRpN = s.tkRp ? s.tkRp.n : ''; r.tkRpT = s.tkRp ? s.tkRp.t : '';
       r.rxWhoOn = !!(s.rxWho && s.rxWho.length); r.rxWhoX = () => this.setState({ rxWho: null });
       r.rxWhoT = ({ ru: 'Реакции', tr: 'Tepkiler' })[s.lang] || 'Tepkiler';
@@ -1416,7 +1428,7 @@
     if (now - saveAt > 2000) {
       saveAt = now;
       ['usageH', 'favs', 'read', 'chat', 'tkId', 'myTkSt', 'fb', 'human', 'photo', 'rateCount', 'rateNext', 'tkNews', 'svTab', 'uMode', 'refSet', 'invites', 'warnHidden', 'usage', 'hist2', 'seenNews']
-        .forEach((k) => LS.set(k, s2[k]));
+        .forEach((k) => LS.set(k, k === 'chat' && Array.isArray(s2.chat) ? (() => { let n = 0; return s2.chat.slice().reverse().map((m) => (m.img && ++n > 3 ? Object.assign({}, m, { img: '', t: m.t || '🧾' }) : m)).reverse(); })() : s2[k]));   // 1.47.6: iň soňky 3 surat ýatda saklanýar
     }
     if (dayKey(now) !== C._day) { C._day = dayKey(now); gift(C, false); }
   }
@@ -1610,6 +1622,8 @@
       C.say('🔄 ' + tx.fo_t.replace('{s}', e.to || ''));
     } else if (e.k === 'buysent') {
       up.buySending = false; up.buyImg = ''; up.buyN = ''; C.say('🧾 ' + tx.by_sent);
+    } else if (e.k === 'tkimgfail') {   // 1.47.6
+      C.say('⚠️ ' + (({ ru: 'Фото не отправлено — проверьте интернет и попробуйте снова', tr: 'Fotoğraf gönderilemedi — interneti kontrol edip tekrar deneyin' })[s.lang] || 'Surat iberilmedi — interneti barlap, täzeden synanyşyň'));
     } else if (e.k === 'buyfail') {
       up.buySending = false; C.say('⚠️ ' + tx.by_fail);
     } else if (e.k === 'in') {

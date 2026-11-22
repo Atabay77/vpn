@@ -3385,10 +3385,10 @@ PREMIUM SATYN ALMAK: ulanyjy hakykatdan Premium almak / satyn almak isleýändig
   👑 Premium bahalary: 1 hepde — 50 TMT · 1 aý — 100 TMT · 1 ýyl — 700 TMT (iň amatlysy)
   💳 Tölegi 61530279 belgä 0804 arkaly geçiriň.
   ✍️ Soň şu ýere pul ugradan telefon belgiňizi we haýsy möhleti alýandygyňyzy ýazyň.
-  🧾 Terminaldan geçiren bolsaňyz — çegiň suratyny iberiň: baş sahypadaky «👑 Premium» → satyjyny saýlaň → hususy habarda surat iberiň (bu ýerde surat iberilmeýär).
+  🧾 Terminaldan geçiren bolsaňyz — çegiň suratyny şu ýere iberiň (ýazgy meýdançasynyň ýanyndaky 📷 düwme).
   ✅ Pul geçenden soň Premium siziň üçin açylýar (ähli serwerler, PUBG, wagt çägi ýok).
 Diňe «Premium näme?» ýa-da «näçe?» diýip soraýana bu habary doly iberme — gysgaça bahany aýdyp, satyn almak isleseňiz ýazyň diý.
-Ulanyjy töleg edendigini, nomerini ýa-da çegiň suratyny iberse: «Sag boluň! Tölegiňiz barlanýar, pul geçenden soň Premium açylar» diýip gysga jogap ber; Premium açyldy diýme.
+Ulanyjy töleg edendigini, nomerini ýa-da çegiň suratyny iberse («🧾 [surat iberdi…]» — bu siziň görýän suratyňyz däl, diňe bellik): «Sag boluň! Tölegiňiz barlanýar, pul geçenden soň Premium açylar» diýip gysga jogap ber; Premium açyldy diýme.
 Ulanyjy diňe öwse, sag bol diýse ýa-da pikirini aýtsa (mysal: «gowy vpn») — diňe gysga minnetdarlyk bildir, hiç bir fakty ýatlama.
 Hiç haçan «admine geçirýärin», «admin ýazar», «admin jogap berer» diýme — özüň doly jogap ber, gürrüňi dowam et. Ulanyjy «admin gerek» diýse-de özüň kömek et.
 Jogaby diňe şu JSON görnüşinde ber: {"answer": "..."}"""
@@ -3477,6 +3477,17 @@ def fs_get(proj, path):
     """Bir resminamanyň «b» meýdany (hyzmat hasaby bilen)."""
     r = fs_req("GET", fs_base(proj) + "/" + path)
     return ((r.get("fields") or {}).get("b") or {}).get("stringValue")
+
+def app_gi_img(pi):
+    """1.47.6: programmanyň gi/ suraty (baýtlar) ýa-da None."""
+    a = app_cfg(load_db())
+    if not (a.get("fid") and (FSV["url"] or a.get("fs_proj"))): return None
+    try:
+        d_ = json.loads(app_dec(a["fid"], fs_get(a.get("fs_proj"), "gi/" + pi) or "") or "{}").get("ph", "")
+        m_ = re.match(r"data:image/[a-z]+;base64,(.+)$", d_, re.S)
+        return base64.b64decode(m_.group(1)) if m_ else None
+    except Exception as e:
+        log.info("gi img %s: %s", pi, e); return None
 
 def app_order_img(oid):
     """Sargydyň töleg çeki (surat baýtlary) ýa-da None."""
@@ -3701,6 +3712,8 @@ async def app_on_msg(app, fid, o):
     if dev in (a.get("ubans") or []) and k in ("tk", "human", "fb", "rate", "ref", "gift", "nick"): return   # 1.16.4: gadagan — diňe VPN (20 min)
     if k == "tk":
         text = str(o.get("t") or "").strip()[:1000]
+        pi_ = str(o.get("pi") or "") if re.fullmatch(r"[\w\-]{4,40}", str(o.get("pi") or "")) else ""   # 1.47.6: surat (töleg çeki)
+        if pi_: text = "🧾 [surat iberdi — töleg çeki]" + ("" if text in ("", "🧾") else " " + text)
         if not text: return
         mm_ = MIG_RE.search(text)
         if mm_ and len(text) < 60:   # 1.47: köne programmadan GOC- kody — göçürmek (bilet açylmaýar)
@@ -3734,7 +3747,7 @@ async def app_on_msg(app, fid, o):
                 tid = str(tid1)
                 if not tid1 or int(o.get("tid") or 0) != tid1: new = "again"   # programa bilet belgisini gaýtadan iber
             if t.get("st") == "closed": t["st"] = "open"; t["human"] = False
-            t["log"].append({"r": "u", "t": text, "ts": now}); t["log"] = t["log"][-80:]; t["lt"] = now
+            t["log"].append({"r": "u", "t": text, "ts": now, **({"pi": pi_} if pi_ else {})}); t["log"] = t["log"][-80:]; t["lt"] = now
             if len(tks) > 400:   # köne ýapyk biletler pozulýar
                 for x in sorted((x for x in tks if tks[x].get("st") == "closed"), key=lambda x: tks[x].get("lt", 0))[:len(tks) - 400]: tks.pop(x, None)
             return tid, new, t.get("human")
@@ -3750,8 +3763,14 @@ async def app_on_msg(app, fid, o):
                                + ("\n<i>🤖 AI jogap berýär…</i>" if ai_on else ""),
                                {"k": "atk", "tid": int(tid), "n": nk_[:32], "t": text[:200], "new": new},
                                KB([[B("✍️ Jogap ber", f"atr:{tid}", "primary"), B("🔒 Ýap", f"atc:{tid}", "danger")], [B("📄 Bilet", f"atk:{tid}")]]), silent=ai_on, skip=dev)
+        if pi_ and app:   # 1.47.6: suraty eýelerine Telegramda iberýäris
+            img_ = await asyncio.to_thread(app_gi_img, pi_)
+            for fid_ in ADMINS:
+                try:
+                    if img_: await app.bot.send_photo(chat_id=fid_, photo=img_, caption=f"🧾 Program bileti #{tid} — {nk_[:32]}", reply_markup=KB([[B("✍️ Jogap ber", f"atr:{tid}", "primary")]]))
+                except Exception as e: log.warning("tk photo: %s", e)
         if ai_on:
-            nt_ = re.sub(r"\W+", " ", text.casefold()).strip(); dp_ = RUN.setdefault("ai_dup", {}); pv_ = dp_.get(dev)
+            nt_ = re(r"\W+", " ", text.casefold()).strip(); dp_ = RUN.setdefault("ai_dup", {}); pv_ = dp_.get(dev)
             if pv_ and pv_[0] == nt_ and time.time() - pv_[1] < 60: ai_on = False   # 1.47.5: 1 minutda şol bir habar — AI diňe bir gezek jogap berýär
             else: dp_[dev] = (nt_, time.time())
         if ai_on: asyncio.create_task(app_ai_soon(app, tid))
