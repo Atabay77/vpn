@@ -14,10 +14,10 @@ object Cfg {
         val noFrag = uri.substringBefore('#')
         val scheme = noFrag.substringBefore("://").lowercase()
         val rest = noFrag.substringAfter("://")
-        val auth = rest.substringBefore('?').substringBefore('/')
+        val beforeQ = rest.substringBefore('?')   // 1.47.12: parolda «/» bolup biler (hysteria2://z/yI…@host:port) — ilki «@», soň «/»
         val query = if (rest.contains('?')) rest.substringAfter('?') else ""
-        val user = if (auth.contains('@')) auth.substringBeforeLast('@') else ""
-        val hp = auth.substringAfterLast('@')
+        val user = if (beforeQ.contains('@')) beforeQ.substringBeforeLast('@') else ""
+        val hp = beforeQ.substringAfterLast('@').substringBefore('/')
         val host: String; val port: Int
         if (hp.startsWith("[")) {
             host = hp.substring(1, hp.indexOf(']'))

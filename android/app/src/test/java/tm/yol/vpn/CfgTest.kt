@@ -26,6 +26,14 @@ class CfgTest {
     }
 
     /** 1.44.3: täze wersiýa salgydan (#tvul) — köne Drive setirleri bilen bile, iň täzesi saýlanýar; salgy işlemese birikmek gadagan däl. */
+    /** 1.47.12: parolda «/» (hysteria2) we xhttp «extra». */
+    @Test fun slashPasswordAndExtra() {
+        val l = Cfg.link("hysteria2://z/yIxn3sBV03PkAxbnX8rg==@137.131.177.121:20000?security=tls&sni=a.b#BR")
+        assertEquals("137.131.177.121", l.host); assertEquals(20000, l.port); assertEquals("z/yIxn3sBV03PkAxbnX8rg==", l.user)
+        val v = Cfg.link("vless://u-1@1.2.3.4:443/?type=ws&path=%2Fx#n"); assertEquals("1.2.3.4", v.host); assertEquals(443, v.port); assertEquals("u-1", v.user)
+        val x = Cfg.outbound("vless://u@1.2.3.4:443?type=xhttp&security=tls&path=%2F&mode=auto&extra=%7B%22mode%22%3A%22packet-up%22%7D#n").getJSONObject("streamSettings")
+        assertEquals("packet-up", x.getJSONObject("xhttpSettings").getJSONObject("extra").getString("mode"))
+    }
     @Test fun linkUpdate() {
         Sub.meta("#tvuall: 1.28.1 1BPHB4lyAUA6QAfpSzddTiS8rVoPpu7OR\n#tvul: 1.44.5 http://203.0.113.5:8091/TurkmenVPN-1.44.5.apk")
         assertEquals("1.44.5" to "http://203.0.113.5:8091/TurkmenVPN-1.44.5.apk", Upd.available("1.44.3"))

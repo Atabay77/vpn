@@ -971,7 +971,7 @@
       window.__isOwn = myRole === 'o';
       r.isOwnP = myRole === 'o' && pg === 'servers';
       r.fakePing = () => { const f = {}; SV.forEach((v) => { f[v.id] = 100 + Math.floor(Math.random() * 71); }); this.setState({ pings: f, testing: false }); this.say(tx.fp_ok); };
-      { const H = window.__svHide || {}, tn = Date.now(); ['srvList', 'gList'].forEach((k) => { if (Array.isArray(r[k])) r[k] = r[k].filter((x) => !(H[x.name] > tn)); }); r.hasG = Array.isArray(r.gList) && r.gList.length > 0; }
+      { const H = window.__svHide || {}, tn = Date.now(); ['srvList', 'gList'].forEach((k) => { if (Array.isArray(r[k])) r[k] = r[k].filter((x) => !(H[x.sid || x.name] > tn)); }); r.hasG = Array.isArray(r.gList) && r.gList.length > 0; }
       { const all = SV.filter((v) => !v.game).map((v) => fcc(v.f)).filter(Boolean), uq = all.filter((c, i) => all.indexOf(c) === i);
         r.svFl = uq.slice(0, 9).map((fc) => ({ fc })); r.svFlMore = uq.length > 9; r.svFlNone = !uq.length; }
       r.langFc = fcc(r.langFlag) || 'tm'; if (Array.isArray(r.langs)) r.langs = r.langs.map((l) => Object.assign({}, l, { fc: fcc(l.flag) || 'tm' }));
@@ -1781,8 +1781,8 @@
   document.addEventListener('contextmenu', (e) => { const el = e.target && e.target.closest && e.target.closest('[data-dv]'); if (!el || !window.C) return; e.preventDefault();
     if (Date.now() - (window.__lpDm || 0) < 900) return; window.__lpDm = Date.now(); window.C.peekDm(el.getAttribute('data-dv')); });
   // 1.23: serweri basyp saklamak → 30 sekunt gizlemek (diňe eýesi)
-  const svHide = (el) => { const C = window.C; if (!C || !window.__isOwn) return; const n = el.getAttribute('data-sn'); if (!n) return;
-    window.__lpSv = Date.now(); const H = window.__svHide || (window.__svHide = {}); H[n] = Date.now() + 30000;
+  const svHide = (el) => { const C = window.C; if (!C || !window.__isOwn) return; const n = el.getAttribute('data-sn'), k = el.getAttribute('data-sk') || n; if (!k) return;   // 1.47.12: diňe şu serwer (ady däl — şol ýurduň beýlekileri gizlenmeýär)
+    window.__lpSv = Date.now(); const H = window.__svHide || (window.__svHide = {}); H[k] = Date.now() + 30000;
     try { NB.tap(); } catch (e) {} C.say('🙈 ' + n + ' · ' + C.T()[C.state.lang].sv_hid); C.setState({ svhTick: Date.now() });
     setTimeout(() => window.C && window.C.setState({ svhTick: Date.now() }), 30100); };
   let svLp = null;

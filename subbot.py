@@ -1007,7 +1007,9 @@ def app_left(exp):
 # bir koddan yzly-yzyna 3 gezek jogap gelmese (we soňky 6 sagatda hiç kim işledip bilmese) — kod pozulýar.
 APP_X_PROTOS = ("vless://", "ss://", "hysteria2://", "hy2://")   # programyň goldaýan kodlary
 APP_TG_DEFAULT = ["supervpntm", "happvpn"]   # 1.46.7: happvpn — abuna salgylaryny paýlaşýar
+APP_TGS_DEAD = 6 * 3600   # 1.47.12: işlemedik kanal kody 6 sagatdan soň gaýtadan synanylýar
 APP_TGS_MAX, APP_TGS_EVERY = 60, 900   # kanaldaky abunadan iň köp 60 kod; abuna 15 minutda bir täzeden okalýar (täze salgy gelse — derrew)
+APP_X_PHONES = 5   # 1.47.12: kod aýrylmazdan öň şonça dürli telefonda synalýar
 APP_TG_EVERY, APP_TG_MAX, APP_X_DEAD = 60, 20, 3   # 1.44.2: kanal her minutda barlanýar (täze kod — derrew programa)
 TG_CODE_RE = re.compile(r"(?:vless|ss|hysteria2|hy2)://[^\s<>\"']+", re.I)
 
@@ -1098,7 +1100,7 @@ def app_tg_subs(chs):
             for c in cs:
                 k = code_key(c)
                 if k in xs: xs[k]["seen"] = nw; continue
-                if k in dead or app_x_hp(c) in have_: continue   # öň işlemedik — gaýtadan goşulmaýar
+                if (k in dead and nw - int(dead[k]) < APP_TGS_DEAD) or app_x_hp(c) in have_: continue   # öň işlemedik — 6 sagat goşulmaýar (1.47.12: öň 14 gün)
                 xs[k] = {"c": c, "src": "tgs", "ch": ch, "ts": nw, "seen": nw, "ok": 0, "bad": 0, "ms": 0}; added += 1
         return added
     n_ = app_mut(f)
@@ -1158,14 +1160,10 @@ def app_x_report(dev, pr):
                 except Exception: continue
                 if ms > 0: v.update({"ok": now, "bad": 0, "ms": ms}); v.pop("bf", None)
                 elif own_: continue
-                elif v.get("src") == "tgs":   # 1.47.9: kanal kody — 2 sagatda iň az 3 dürli telefonda işlemese aýrylýar (bir telefonyň interneti däl)
+                elif v.get("src") != "m":   # 1.47.12: 2 sagatda iň az 5 dürli telefonda işlemese aýrylýar (bir telefonyň interneti däl); elle goşulan (m) hiç aýrylmaýar
                     bf = {d_: t_ for d_, t_ in (v.get("bf") or {}).items() if now - int(t_) < 7200}; bf[dev] = now
                     v["bf"] = dict(sorted(bf.items(), key=lambda kv: -kv[1])[:10]); v["bad"] = len(v["bf"])
-                    if len(v["bf"]) >= 3 and now - int(v.get("ok") or 0) >= 1800 and k not in gone: gone.append(k)
-                else:
-                    v["bad"] = int(v.get("bad") or 0) + 1
-                    fresh_ = v.get("src") == "tgs" and now - int(v.get("ok") or 0) < 1800   # 1.46.8: soňky 30 minutda bir telefonda işledi — başga operatorda işlemese-de aýrylmaýar
-                    if v.get("src") not in ("tg", "m") and not fresh_ and v["bad"] >= (2 if v.get("src") == "tgs" else APP_X_DEAD) and k not in gone: gone.append(k)
+                    if len(v["bf"]) >= APP_X_PHONES and now - int(v.get("ok") or 0) >= 1800 and k not in gone: gone.append(k)
         hm = x.setdefault("hp_ms", {})   # 1.43.2: ähli kodlaryň soňky pingi (mugt serwerleri işleýänlerden saýlamak üçin)
         for hp, ms in list(pr.items())[:400]:
             if own_ and str(ms).lstrip("-").isdigit() and int(ms) <= 0: continue   # 1.47.9: eýesiniň telefonynda işlemese hasaba alynmaýar
@@ -1175,13 +1173,12 @@ def app_x_report(dev, pr):
         if len(hm) > 1500:
             for hp in sorted(hm, key=lambda h_: hm[h_][1])[:len(hm) - 1500]: hm.pop(hp, None)
         for k in gone:
-            tg_ = (xs.get(k) or {}).get("src") == "tgs"
-            xs.pop(k, None); x.setdefault("xdead", {})[k] = now - (14 * 86400 - 6 * 3600 if tg_ else 0)   # 1.47.9: kanal kody 6 sagatdan soň gaýtadan synanylýar
+            xs.pop(k, None); x.setdefault("xdead", {})[k] = now   # kanal kody (tgs) 6 sagatdan soň gaýtadan synanylýar — app_tg_subs
         dd = x.get("xdead") or {}
         for k in [k for k, t in dd.items() if now - t > 14 * 86400]: dd.pop(k, None)
         return len(gone)
     n_ = app_mut(f)
-    if n_: vlog(f"🗑 {n_} kod işlemedi (3 gezek ms ýok) — aýryldy"); RUN["app_dirty"] = True
+    if n_: vlog(f"🗑 {n_} kod 5 dürli telefonda işlemedi — aýryldy"); RUN["app_dirty"] = True
     try:   # 1.46.8: mugt serwer işlemedi — mugt sanaw derrew barlansyn (minutda iň köp bir gezek)
         fr_ = set(RUN.get("free_hps") or ())
         if fr_ and any(str(h) in fr_ and int(m) <= 0 for h, m in list(pr.items())[:400]) and time.time() - RUN.get("free_chk", 0) > 60:
@@ -1226,8 +1223,10 @@ def app_prem_fill(codes, free_, cfg, lo=15, hi=20, keep_free=3):
 def app_free_pubg(codes, free_, hpms=None, add=False):
     """1.47: mugtda PUBG ýok (add=False — aýyrýar). add=True: Premium-da 2+ PUBG serwer bar bolsa iň çalt biri mugta goşulýar."""
     hpms = hpms or {}
-    gh = list(dict.fromkeys(h for h in (app_x_hp(c) for c in codes if app_is_game(c)) if h))
-    out = [h for h in free_ if h not in set(gh)]
+    tmg = lambda c: bool(re.search(r"(?:·|🎮) tm$", orig_name(c).strip()))   # 1.47.12: kanaldan alnan PUBG / Russiýa serwerleri — göni mugta
+    chg = list(dict.fromkeys(h for h in (app_x_hp(c) for c in codes if app_is_game(c) and tmg(c)) if h))
+    gh = [h for h in dict.fromkeys(h for h in (app_x_hp(c) for c in codes if app_is_game(c) and not tmg(c)) if h) if h not in set(chg)]
+    out = [h for h in free_ if h not in set(gh)] + [h for h in chg if h not in set(free_)]
     if add and len(gh) >= 2:
         msf = lambda h: int(hpms[h][0]) if h in hpms and int(hpms[h][0]) > 0 else 99999
         out.append(min(gh, key=msf))
@@ -1979,7 +1978,7 @@ def hunt_parse(body):
     out, seen_ = [], set()
     def take(txt):
         for m in HUNT_CODE_RE.finditer(txt):
-            c = m.group(0).strip().rstrip(".,;)")
+            c = m.group(0).strip().rstrip(".,;)").replace("&amp;", "&")   # 1.47.12: Telegram sahypasyndaky HTML «&amp;»
             if c not in seen_: seen_.add(c); out.append(c)
     take(body)
     if not out and body.lstrip()[:1] in ("[", "{"): take("\n".join(hunt_json_codes(body)))   # 1.46.7: JSON abuna
