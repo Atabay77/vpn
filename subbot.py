@@ -1146,10 +1146,9 @@ def app_tg_refresh(force=False):
 def app_x_report(dev, pr):
     """Programdan ping netijeleri: {host:port: ms (-1 = jogap ýok)}."""
     if not isinstance(pr, dict): return
-    try: any_ok = any(int(m) > 0 for m in list(pr.values())[:400])
-    except Exception: any_ok = False
     def f(x):
         xs = x.get("xcodes") or {}; now = int(time.time()); gone = []
+        own_ = dev in set(app_founder_devs(x))   # 1.47.9: eýesiniň telefony kod aýyrmaýar (onuň interneti hasaba alynmaýar)
         byhp = {}
         for k, v in xs.items(): byhp.setdefault(app_x_hp(v["c"]), []).append(k)
         for hp, ms in list(pr.items())[:400]:   # 1.47: 80 → 400 (Premium sanawy uly — galanlary hasaba alynmaýardy, işlemeýänler sanawda galýardy)
@@ -1157,21 +1156,27 @@ def app_x_report(dev, pr):
                 v = xs[k]
                 try: ms = int(ms)
                 except Exception: continue
-                if ms > 0: v.update({"ok": now, "bad": 0, "ms": ms})
+                if ms > 0: v.update({"ok": now, "bad": 0, "ms": ms}); v.pop("bf", None)
+                elif own_: continue
+                elif v.get("src") == "tgs":   # 1.47.9: kanal kody — 2 sagatda iň az 3 dürli telefonda işlemese aýrylýar (bir telefonyň interneti däl)
+                    bf = {d_: t_ for d_, t_ in (v.get("bf") or {}).items() if now - int(t_) < 7200}; bf[dev] = now
+                    v["bf"] = dict(sorted(bf.items(), key=lambda kv: -kv[1])[:10]); v["bad"] = len(v["bf"])
+                    if len(v["bf"]) >= 3 and now - int(v.get("ok") or 0) >= 1800 and k not in gone: gone.append(k)
                 else:
                     v["bad"] = int(v.get("bad") or 0) + 1
                     fresh_ = v.get("src") == "tgs" and now - int(v.get("ok") or 0) < 1800   # 1.46.8: soňky 30 minutda bir telefonda işledi — başga operatorda işlemese-de aýrylmaýar
                     if v.get("src") not in ("tg", "m") and not fresh_ and v["bad"] >= (2 if v.get("src") == "tgs" else APP_X_DEAD) and k not in gone: gone.append(k)
-                    if v.get("src") == "tgs" and any_ok and not fresh_ and k not in gone: gone.append(k)   # 1.46.8: telefon başga koda ýetdi, bu koda ýetmedi — derrew aýrylýar   # 1.46.7: kanal abunasynyň kody — 2 gezek n/a   # 1.45.2: elle goşulan (m) we kanal kodlary aýrylmaýar   # admin kody: yzly-yzyna 3 gezek ms ýok — aýrylýar (kanal kody täze kod gelýänçä durýar)
         hm = x.setdefault("hp_ms", {})   # 1.43.2: ähli kodlaryň soňky pingi (mugt serwerleri işleýänlerden saýlamak üçin)
         for hp, ms in list(pr.items())[:400]:
+            if own_ and str(ms).lstrip("-").isdigit() and int(ms) <= 0: continue   # 1.47.9: eýesiniň telefonynda işlemese hasaba alynmaýar
             try: old_ = hm.get(str(hp)[:80]) or []; hm[str(hp)[:80]] = [int(ms), now, now if int(ms) > 0 else (old_[2] if len(old_) > 2 else 0)]   # [soňky ms, wagty, soňky işlän wagty]
             except Exception: pass
         for hp in [h_ for h_, v in hm.items() if now - int(v[1]) > 3 * 86400]: hm.pop(hp, None)
         if len(hm) > 1500:
             for hp in sorted(hm, key=lambda h_: hm[h_][1])[:len(hm) - 1500]: hm.pop(hp, None)
         for k in gone:
-            xs.pop(k, None); x.setdefault("xdead", {})[k] = now
+            tg_ = (xs.get(k) or {}).get("src") == "tgs"
+            xs.pop(k, None); x.setdefault("xdead", {})[k] = now - (14 * 86400 - 6 * 3600 if tg_ else 0)   # 1.47.9: kanal kody 6 sagatdan soň gaýtadan synanylýar
         dd = x.get("xdead") or {}
         for k in [k for k, t in dd.items() if now - t > 14 * 86400]: dd.pop(k, None)
         return len(gone)
@@ -2431,8 +2436,9 @@ def app_sync(force=False):
                 if code_key(c) not in keys: keys.add(code_key(c)); codes.append(c)
         plast = {k_: v_ for k_, v_ in plast.items() if k_ in {hashlib.md5(u.encode()).hexdigest()[:8] for u in psubs}}
         free_ = app_free_all(codes, php, cfg.get("hp_ms")) if php else app_free_pick(codes, base1, cfg.get("hp_ms"))
-        try: free_ = app_prem_fill(codes, free_, app_cfg(load_db()))   # 1.47: @happvpn — Free we Premium; Premium-da 15–20 serwer
-        except Exception as e: log.info("prem fill: %s", e)
+        if not cfg.get("prem_own"):   # 1.47.9: eýesiniň «Premium» düwmesi açyk — Premium diňe öz abunasyndan, mugtdan hiç kod almaýar
+          try: free_ = app_prem_fill(codes, free_, app_cfg(load_db()))   # 1.47: @happvpn — Free we Premium; Premium-da 15–20 serwer
+          except Exception as e: log.info("prem fill: %s", e)
         free_ = app_free_pubg(codes, free_)   # 1.47: mugt adaty serwerlerde PUBG ýok
         try: free_, fb_ = app_free_borrow(codes, free_, app_cfg(load_db())); RUN["free_hps"] = list(free_)   # 1.46.8: mugtlar bloklananda Premium-dan biri wagtlaýyn
         except Exception as e: fb_ = cfg.get("fborrow"); log.info("free borrow: %s", e)
@@ -2441,7 +2447,7 @@ def app_sync(force=False):
         codes = app_brand_names(codes)   # 1.29: abunanyň atlary görünmesin
         meta = app_meta(cfg) + (["#tvfree: " + ",".join(free_)] if free_ else [])
         both_ = sorted({app_x_hp(v["c"]) for v in (cfg.get("xcodes") or {}).values() if v.get("src") in ("tg", "tgs")} & set(free_))
-        if both_: meta.append("#tvboth: " + ",".join(both_))   # 1.47: kanal kodlary Premium-da hem (Premium awtomatik we sanaw)
+        if both_ and not cfg.get("prem_own"): meta.append("#tvboth: " + ",".join(both_))   # 1.47: kanal kodlary Premium-da hem (Premium awtomatik we sanaw)
         mv_ = app_min_ver(cfg)
         if mv_ and cfg.get("fid") and codes:   # 1.47: diňe iň täze wersiýa — kodlar şifrli; köne programmalar diňe «täze wersiýany gurnaň» görýär
             meta.append(f"#tvx: {mv_} {app_enc(cfg['fid'], chr(10).join(codes))}"); codes = [APP_OLD_STUB]
@@ -4279,6 +4285,7 @@ def app_adm_snap(a, e, dev):
         out["aiCount"] = sum(1 for t in (a.get("tickets") or {}).values() for x in t.get("log", []) if x.get("r") == "ai" and x.get("ts", 0) >= today)
         if F1: out["sysOn"] = not os.path.exists(STOP_FLAG)
         out["pgf"] = not a.get("pubg_free_off")   # 1.47: mugt PUBG serweri açyk
+        out["pown"] = bool(a.get("prem_own"))   # 1.47.9: Premium diňe eýesiniň abunasyndan
         out["next"] = int(RUN["next"] - now) if RUN.get("next") else 0
         out["logs"] = "\n".join(short(_plain(l), 90) for l in tail(VIP_LOG, 40)[::-1])
         src = [["🔗", src_label(u), "", True] for u in a.get("subs", [])]
@@ -4462,6 +4469,10 @@ async def app_adm(app, dev, o):
                 msg = "kdel" if act == "kdel" else "kok"
                 if not f_: await notify_founders(app, f"🛠 <b>{esc(who)}</b> açary {'pozdy' if act == 'kdel' else 'üýtgetdi'}: <code>{k_}</code>", silent=True)
             else: err = "açar tapylmady"
+        elif act == "premown" and f_:   # 1.47.9: Premium diňe eýesiniň abunasyndan (mugtdan kod almaýar)
+            on_ = bool(r.get("on")); app_mut(lambda x: x.__setitem__("prem_own", True) if on_ else x.pop("prem_own", None)); RUN["app_dirty"] = True
+            msg = "premown:" + ("1" if on_ else "0")
+            if not F1: await notify_founders(app, f"👑 {esc(who)}: Premium — {'diňe öz abunasy' if on_ else 'garyşyk (mugtdan hem)'}", silent=True)
         elif act == "pubgfree" and f_:   # 1.47: mugt PUBG serwerini öçürmek / açmak (trafik köp bolanda)
             on_ = bool(r.get("on")); app_mut(lambda x: x.pop("pubg_free_off", None) if on_ else x.__setitem__("pubg_free_off", True)); RUN["app_dirty"] = True
             msg = "pubgfree:" + ("1" if on_ else "0")

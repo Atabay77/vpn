@@ -85,7 +85,8 @@ object Cfg {
                     "ws" -> st.put("wsSettings", JSONObject().put("path", l.q["path"] ?: "/").put("host", l.q["host"] ?: ""))
                     "grpc" -> st.put("grpcSettings", JSONObject().put("serviceName", l.q["serviceName"] ?: ""))
                     "xhttp" -> st.put("xhttpSettings", JSONObject().put("path", l.q["path"] ?: "/")
-                        .put("host", l.q["host"] ?: "").put("mode", l.q["mode"] ?: "auto"))
+                        .put("host", l.q["host"] ?: "").put("mode", l.q["mode"] ?: "auto")
+                        .also { x -> l.q["extra"]?.let { e -> runCatching { x.put("extra", JSONObject(e)) } } })   // 1.47.9: xhttp «extra» (packet-up, xmux) — JSON abunalaryndan
                     "httpupgrade" -> st.put("httpupgradeSettings", JSONObject().put("path", l.q["path"] ?: "/").put("host", l.q["host"] ?: ""))
                 }
                 // 1.44.2: TLS ClientHello bölekleýin (DPI-den geçmek üçin) — «fm» (finalmask) ýa-da köne «fragment=uzynlyk,wagt,paketler»

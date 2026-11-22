@@ -342,6 +342,11 @@
         const pgf = !!A.pgf; r.botTiles = r.botTiles.concat([{ i: '🎮', t: (({ ru: 'Free PUBG: ', tr: 'Free PUBG: ' })[s.lang] || 'Mugt PUBG: ') + (pgf ? '🟢' : '🔴'), st: pgf ? 'border-color:rgba(111,219,156,.7)' : 'border-color:rgba(255,138,120,.6)',
           go: () => this.confirm(pgf ? (({ ru: 'Отключить бесплатный сервер PUBG? Подключённые перейдут на другой сервер.', tr: 'Ücretsiz PUBG sunucusu kapatılsın mı? Bağlı olanlar başka sunucuya geçer.' })[s.lang] || 'Mugt PUBG serweri öçürilsinmi? Birikenler başga serwere geçer.') : (({ ru: 'Включить бесплатный сервер PUBG?', tr: 'Ücretsiz PUBG sunucusu açılsın mı?' })[s.lang] || 'Mugt PUBG serweri açylsynmy?'),
             pgf ? '🔴' : '🟢', () => { act('pubgfree', { on: !pgf }); A.pgf = !pgf; this.setState({ gTick: (this.state.gTick || 0) + 1 }); }, false) }]); }
+      if (Array.isArray(r.botTiles) && A && A.pown != null) {   // 1.47.9: Premium diňe eýesiniň abunasyndan (açyk bolsa mugtdan kod almaýar)
+        const po = !!A.pown; r.botTiles = r.botTiles.concat([{ i: '👑', t: 'Premium: ' + (po ? (({ ru: 'только моя подписка', tr: 'sadece abonelik' })[s.lang] || 'diňe abuna') : (({ ru: 'смешанный', tr: 'karışık' })[s.lang] || 'garyşyk')) + (po ? ' 🟢' : ' 🔴'), st: po ? 'border-color:rgba(255,200,90,.8)' : 'border-color:rgba(255,255,255,.2)',
+          go: () => this.confirm(po ? (({ ru: 'Выключить? Premium снова будет дополняться бесплатными кодами и кодами каналов.', tr: 'Kapatılsın mı? Premium yine ücretsiz ve kanal kodlarıyla doldurulur.' })[s.lang] || 'Öçürilsinmi? Premium ýene mugt we kanal kodlary bilen doldurylar.')
+            : (({ ru: 'Включить? Premium будет только из вашей подписки, бесплатные коды не берутся.', tr: 'Açılsın mı? Premium sadece sizin aboneliğinizden olur, ücretsiz kodlar alınmaz.' })[s.lang] || 'Açylsynmy? Premium diňe siziň abunaňyzdan bolar, mugt kodlar alynmaz.'),
+            po ? '🔴' : '🟢', () => { act('premown', { on: !po }); A.pown = !po; this.setState({ gTick: (this.state.gTick || 0) + 1 }); }, false) }]); }
       // 1.47: köne programmadan göçmek — birikmekden öň hökmany «Işlet» penjiresi (köne programma «Admine ýaz»-da açylýar, kod göçürilen)
       { let M = this._mig; if (!M) { try { M = this._mig = J(NB.mig(), {}); } catch (e) { M = this._mig = {}; } }
         if (M.old && !M.done && !this._migSent) { this._migSent = true; try { NB.migSend(); } catch (e) {} }
@@ -366,8 +371,9 @@
         r.pgCls = s.pubg ? 'mpg mpg-on tap' : 'mpg tap';
         r.pgGo = () => { const on = !s.pubg; if (on && !gN) { this.say('⚠️ ' + L2[0]); return; } try { NB.pubg(on); } catch (e) {} this.setState({ pubg: on }); };
         r.pmOn = PRm;
-        r.pmCls = s.pick < 0 && s.autoP ? 'on' : ''; r.frCls = s.pick < 0 && !s.autoP ? 'on' : ''; r.msegCls = s.pick < 0 ? (s.autoP ? 'mp' : 'mf') : '';   // 1.47.2: sülük ýaly süýşýän fon
-        r.pmGo = () => this.setState({ pick: -1, autoP: true }); r.frGo = () => this.setState({ pick: -1, autoP: false }); }
+        const md_ = s.pick >= 0 ? -1 : s.autoB ? 1 : s.autoP ? 0 : 2;   // 1.47.9: Premium · Auto (ikisinden iň çalt) · Free
+        r.pmCls = md_ === 0 ? 'on' : ''; r.bhCls = md_ === 1 ? 'on' : ''; r.frCls = md_ === 2 ? 'on' : ''; r.msegCls = md_ < 0 ? 'mx' : 'm' + md_; 
+        r.pmGo = () => this.setState({ pick: -1, autoP: true, autoB: false }); r.bhGo = () => this.setState({ pick: -1, autoP: false, autoB: true }); r.frGo = () => this.setState({ pick: -1, autoP: false, autoB: false }); }
       r.showUpd = !!s.upd && !s.menu;
       r.updTxt = s.dl >= 0 ? tx.u_dl.replace('{p}', String(s.dl)) : 'Türkmen VPN ' + s.upd;
       r.updBtn = s.dl >= 0 ? '…' : tx.u_btn; r.doUpd = () => NB.update();
@@ -717,7 +723,7 @@
       if (r.isUprof) {
         const d = s.upDev, p = P2[d], st = (DMS[d] || {}).st || '', a = ava(d), mine = d === me1;
         const canDm = !mine && st !== 'blk' && ((p && p.dm) || !!DMS[d]);
-        r.up = Object.assign(a, { tag: tagOf(d) ? '@' + tagOf(d) : '', photo: (p && p.ph) || a.photo, hasPh: !!((p && p.ph) || a.photo), noPh: !((p && p.ph) || a.photo), bgImg: bgUrl(p && p.bg),
+        r.up = Object.assign(a, { tag: tagOf(d) ? '@' + tagOf(d) : '', cpTag: () => { const t_ = tagOf(d); if (!t_) return; NB.copy('@' + t_); this.say('✓ @' + t_); }, photo: (p && p.ph) || a.photo, hasPh: !!((p && p.ph) || a.photo), noPh: !((p && p.ph) || a.photo), bgImg: bgUrl(p && p.bg),
           sub: a.isO ? tx.vip_o : a.isA ? tx.vip_a : '', canDm, noDm: !canDm, notMe: !mine,
           why: mine ? tx.dm_me : st === 'blk' ? tx.dm_blocked : !p ? tx.nk_wait : tx.dm_noKey,
           write: () => this.openDm(d), zoom: () => this.setState({ zoom: (p && p.ph) || a.photo || '' }),
@@ -756,7 +762,7 @@
         const R = s.dmSR && s.dmSR.q === q.trim() ? s.dmSR.l : null;
         r.dmSOn = q.trim().length >= 2; r.dmSWait = r.dmSOn && !R; r.dmSNone = r.dmSOn && !!R && !R.length;
         r.dmSWaitT = ({ ru: 'Поиск…', tr: 'Aranıyor…' })[s.lang] || 'Gözlenýär…'; r.dmSNoneT = tx.us_none;
-        r.dmSRows = r.dmSOn && R ? R.map((u) => Object.assign(ava(u.d), { name: u.n || '?', tag: u.t ? '@' + u.t : '', lv: String(rkT(u.lv || 1)), open: () => { this.setState({ dmQ: '' }); this.openProf(u.d); } })) : [];
+        r.dmSRows = r.dmSOn && R ? R.map((u) => Object.assign(ava(u.d), { name: u.n || '?', tag: u.t ? '@' + u.t : '', cp: (e) => { if (e && e.stopPropagation) e.stopPropagation(); if (!u.t) return; NB.copy('@' + u.t); this.say('✓ @' + u.t); }, lv: String(rkT(u.lv || 1)), open: () => { this.setState({ dmQ: '' }); this.openProf(u.d); } })) : [];
         r.dmQph = ({ ru: '🔎 Ник или @метка…', tr: '🔎 Takma ad veya @etiket…' })[s.lang] || '🔎 Nik ýa-da @belgi…';
         { const mt = tagOf(me1); r.meTag = mt ? '@' + mt : ''; r.cpMyTag = () => { if (!mt) return; NB.copy('@' + mt); this.say('✓ @' + mt); }; } }
       const rows = Object.keys(DMS).filter((d) => d !== me1).sort((a, b) => (DMS[b].lt || 0) - (DMS[a].lt || 0));
@@ -853,7 +859,7 @@
           r.autoSel = here; r.autoFree = PF ? !PR : tab === 'free'; r.autoCls = (here ? 'sv-sel' : '') + (r.autoFree ? ' autohot' : '');   // 1.47.2: mugt «Awtomatik» — has göze görünýän
           r.autoFreeS = ({ ru: 'Бесплатный код — нажмите и подключайтесь', tr: 'Ücretsiz kod — dokun ve bağlan' })[s.lang] || 'Mugt kod — basyň we birikiň';
           // 1.46.8: Premium ýok — «Awtomatik» iň gowy mugt serwere; Premium bar — iň gowy Premium serwere
-          r.autoPick = () => this.setState({ pick: -1, autoP: PF ? PR : tab !== 'free', page: 'main' }); }
+          r.autoPick = () => this.setState({ pick: -1, autoP: PF ? PR : tab !== 'free', autoB: false, page: 'main' }); }
         r.premOpen = () => { INFO = J(NB.info(), INFO); this.setState({ psh: true, pstep: 1, menu: false }); };
         r.premPillOn = pg === 'main' && (PF || PR); r.premPillCls = PR ? 'ppill-on' : '';
         r.premPillT = PR ? (pexp <= 0 ? 'Premium ♾' : 'Premium · ' + dlT) : tx.pr_buy; r.premPillS = PR ? (pexp <= 0 ? '♾' : dlT) : '';   // 1.46.6: möhletsiz (eýesi) — ♾, «0 gün» däl   // 1.44: «satyn al» ýazgysy aýryldy
@@ -1376,7 +1382,7 @@
     else C.say('🎁 ' + tx.g_ok.replace('{n}', String(7 - streak)));
   }
 
-  let saveAt = 0, lastPick = null, lastLang = null, lastPage = null, lastDmW = null, lastAutoP = null;
+  let saveAt = 0, lastPick = null, lastLang = null, lastPage = null, lastDmW = null, lastAutoP = null, lastAutoB = null;
   function poll(C, first) {
     const s = C.state, now = Date.now(), up = {};
     const n = J(NB.state(), null);
@@ -1386,7 +1392,7 @@
       const idx = (k) => (k ? SV.findIndex((v) => v.id === k) : -1);
       up.st = st; up.ms = n.ms > 0 ? n.ms : 0; up.testing = n.testing; up.ks = !!n.ks; up.dead = !!n.dead; up.pubg = !!n.pubg;
       up.si = Math.max(0, idx(n.act) >= 0 ? idx(n.act) : (idx(n.sel) >= 0 ? idx(n.sel) : 0));
-      if (lastPick === null || (lastPick === s.pick && lastAutoP === !!s.autoP)) { up.pick = idx(n.sel); lastPick = up.pick; up.autoP = !!n.selp; lastAutoP = up.autoP; }
+      if (lastPick === null || (lastPick === s.pick && lastAutoP === !!s.autoP && lastAutoB === !!s.autoB)) { up.pick = idx(n.sel); lastPick = up.pick; up.autoP = !!n.selp; lastAutoP = up.autoP; up.autoB = !!n.selb; lastAutoB = up.autoB; }
       up.hasKey = n.left < 0 && !n.nolim; up.nolim = !!n.nolim; if (n.sess != null && n.sess !== SESS) { SESS = +n.sess; up.sessTick = (s.sessTick || 0) + 1; } up.left = n.left >= 0 ? n.left : 0; up.kexp = n.kexp; up.upd = n.upd; up.dl = n.dl;
       up.dn = n.dn / 1024; up.up = n.up / 1024; up.tot = n.rxT / 1024; up.totUp = n.txT / 1024; up.onAt = n.onAt;
       if (st === 'on') {
@@ -1413,7 +1419,7 @@
     if (chg || now - (C._rAt || 0) > 5000) { C._rAt = now; C.setState(up); }
     // UI → Kotlin
     const s2 = C.state;
-    if (lastPick !== null && (s2.pick !== lastPick || (s2.pick < 0 && !!s2.autoP !== lastAutoP))) { lastPick = s2.pick; lastAutoP = !!s2.autoP; const v = SV[s2.pick]; NB.select(v ? v.id : (s2.autoP ? 'auto:p' : '')); }
+    if (lastPick !== null && (s2.pick !== lastPick || (s2.pick < 0 && (!!s2.autoP !== lastAutoP || !!s2.autoB !== lastAutoB)))) { lastPick = s2.pick; lastAutoP = !!s2.autoP; lastAutoB = !!s2.autoB; const v = SV[s2.pick]; NB.select(v ? v.id : (s2.autoB ? 'auto:b' : s2.autoP ? 'auto:p' : '')); }
     if (lastLang !== s2.lang) { if (lastLang !== null) { NB.lang(s2.lang); INFO = J(NB.info(), INFO); } lastLang = s2.lang; }
     if (lastPage !== s2.page) { NB.gwatch(s2.page === 'global'); NB.dmPage(s2.page === 'dms'); lastPage = s2.page; alogPush('p', s2.page + (s2.page === 'uprof' ? ' ' + (nameOf(s2.upDev) || s2.upDev || '') : s2.page === 'dm' ? ' ' + (nameOf(s2.dmPeer) || '') : '')); }
     const dmW = s2.page === 'dm' ? (s2.dmPeer || '') : '';
@@ -1558,7 +1564,7 @@
     } else if (e.k === 'fb') {   // 1.47: PUBG / Premium-da işleýän kod ýok — adaty (mugt) koda birikdirildi, düwme özi öçdi
       C.say('⚠️ ' + (e.w === 'pubg' ? ({ ru: 'Серверы PUBG сейчас не работают — подключено к обычному', tr: 'PUBG sunucuları şu anda çalışmıyor — normal sunucuya bağlandı' }[s.lang] || 'PUBG serwerleri häzir işlemeýär — adaty serwere birikdirildi')
         : ({ ru: 'Коды Premium сейчас обновляются — подключено к бесплатному', tr: 'Premium kodları şu anda yenileniyor — ücretsiz koda bağlandı' }[s.lang] || 'Premium kodlar häzir täzelenýär — mugt koda birikdirildi')));
-      if (e.w === 'pubg') up.pubg = false; else { up.autoP = false; up.pick = -1; }
+      if (e.w === 'pubg') up.pubg = false; else { up.autoP = false; up.autoB = false; up.pick = -1; }
     } else if (e.k === 'pgna') {   // 1.47.2: PUBG serwerleri N/A — düwme özi öçdi, birikme üýtgemedi
       up.pubg = false; C.say('⚠️ ' + ({ ru: 'Серверы PUBG сейчас не отвечают (N/A) — кнопка выключена, попробуйте позже', tr: 'PUBG sunucuları şu an yanıt vermiyor (N/A) — düğme kapatıldı, sonra tekrar deneyin' }[s.lang] || 'PUBG serwerleri häzir jogap bermeýär (N/A) — düwme öçürildi, soňrak synanyşyň'));
     } else if (e.k === 'plock') {   // 1.43: Premium serwer saýlandy (Premium ýok)

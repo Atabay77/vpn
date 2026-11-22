@@ -103,7 +103,7 @@ open class Main : Activity() {
         }
         Sub.load(this)
         runCatching { Upd.clean(this, Msg.ver(this)) }   // gurnalan wersiýanyň (ýa-da könäniň) ýüklemesi galmasyn
-        if (b == null && State.now != State.ON && State.now != State.WAIT) State.select(this, null, State.selKey(this) == "auto:p")
+        if (b == null && State.now != State.ON && State.now != State.WAIT) State.selectSameAuto(this)
         if (Build.VERSION.SDK_INT >= 33) requestPermissions(arrayOf("android.permission.POST_NOTIFICATIONS"), 2)
         web.loadUrl("https://$HOST/index.html" + (if (intent?.action == CHAT) "#chat" else ""))
         Thread {
@@ -230,7 +230,7 @@ open class Main : Activity() {
             val q = Upd.query(c)
             return JSONObject()
                 .put("st", when (State.now) { State.ON -> "on"; State.WAIT -> "wait"; State.FAIL -> "fail"; else -> "off" }).put("ks", State.hold).put("dead", State.dead && State.now == State.ON)
-                .put("act", State.active?.key ?: "").put("sel", State.selected(c)?.key ?: "").put("selp", State.selKey(c) == "auto:p").put("pubg", State.pubg(c))
+                .put("act", State.active?.key ?: "").put("sel", State.selected(c)?.key ?: "").put("selp", State.selKey(c) == "auto:p").put("selb", State.selKey(c) == "auto:b").put("pubg", State.pubg(c))
                 .put("ms", State.ms).put("left", if (left == null) -1 else left / 1000).put("kexp", if (exp == null) -1 else exp / 1000)
                 .put("nolim", exp == null && Lic.unlim(c)).put("sess", Sub.sess)
                 .put("dn", dRate).put("up", uRate).put("rxT", rxSum).put("txT", txSum).put("onAt", State.onAt)
@@ -269,9 +269,9 @@ open class Main : Activity() {
         @JavascriptInterface fun select(key: String) {
             val s = Sub.list.firstOrNull { it.key == key }
             if (s != null && !State.allowed(this@Main, s)) { Msg.events.add(JSONObject().put("k", "plock")); return }   // 1.43: Premium serwer
-            val want = s?.key ?: if (key == "auto:p") "auto:p" else "auto"   // 1.46.4: Premium awtomatik
+            val want = s?.key ?: if (key == "auto:p" || key == "auto:b") key else "auto"   // 1.46.4: Premium awtomatik (1.47.9: auto:b — ikisi)
             if (State.selKey(this@Main) == want) return
-            State.select(this@Main, s, key == "auto:p")
+            State.select(this@Main, s, key == "auto:p", key == "auto:b")
             ui { if (State.now == State.ON || State.now == State.WAIT) startVpn() }
         }
         /** 1.47: baş sahypadaky PUBG düwmesi (birikme bar bolsa derrew täzeden birikýär). */
@@ -287,7 +287,7 @@ open class Main : Activity() {
                 pool.shutdown(); pool.awaitTermination(12, java.util.concurrent.TimeUnit.SECONDS)
                 if (!State.pubg(this@Main)) return@Thread
                 if (!ok.get()) { State.setPubg(this@Main, false); push(JSONObject().put("k", "pgna")); return@Thread }
-                State.select(this@Main, null, State.selKey(this@Main) == "auto:p")
+                State.selectSameAuto(this@Main)
                 ui { if (State.now == State.ON || State.now == State.WAIT) startVpn() }
             }.start()
         }
@@ -411,6 +411,7 @@ open class Main : Activity() {
             if (!(Upd.isLink(u.second) && Upd.linkFail == u.first)) { askUpdate(true); return }
             toast(t("Täze wersiýany ýükläp bolmady — häzirki wersiýa bilen birigýär", "Не удалось загрузить новую версию — подключаемся текущей", "Yeni sürüm indirilemedi — mevcut sürümle bağlanılıyor"))
         }
+        if (State.now == State.OFF && State.warming()) { toast(t("Birneme garaşyň — 1 minutdan täzeden synanyşyň", "Подождите немного — попробуйте через минуту", "Biraz bekleyin — 1 dakika sonra tekrar deneyin")); return }   // 1.47.9: açylyşdaky barlag gutarýança
         if (otherVpn()) toast(t("Telefonda başga VPN açyk — Türkmen VPN birikende ol öçýär", "В телефоне включён другой VPN — при подключении он отключится", "Telefonda başka VPN açık — bağlanınca o kapanır"))   // 1.47
         val i = VpnService.prepare(this)
         if (i != null) startActivityForResult(i, 1) else startVpn()

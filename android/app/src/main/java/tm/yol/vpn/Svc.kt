@@ -42,11 +42,15 @@ object State {
         val k = ctx.getSharedPreferences("p", 0).getString("sel", AUTO)
         return if (k == null || k.startsWith(AUTO)) null else Sub.list.firstOrNull { it.key == k }?.takeIf { allowed(ctx, it) }   // 1.43: Premium gutarsa — awtomatik (mugt)
     }
-    fun select(ctx: Context, s: Server?, prem: Boolean = false) =
-        ctx.getSharedPreferences("p", 0).edit().putString("sel", s?.key ?: if (prem) AUTO_P else AUTO).apply()
+    fun select(ctx: Context, s: Server?, prem: Boolean = false, both: Boolean = false) =
+        ctx.getSharedPreferences("p", 0).edit().putString("sel", s?.key ?: if (both) AUTO_B else if (prem) AUTO_P else AUTO).apply()
+    /** 1.47.9: häzirki awtomatik görnüşi saklap saýlawy arassalamak. */
+    fun selectSameAuto(ctx: Context) { val k = selKey(ctx); select(ctx, null, k == AUTO_P, k == AUTO_B) }
     fun selKey(ctx: Context): String = ctx.getSharedPreferences("p", 0).getString("sel", AUTO) ?: AUTO
     /** 1.46.4: awtomatik — Premium bölüminden saýlanan bolsa diňe Premium serwerler, Free-den bolsa diňe mugtlar. */
     private fun autoPrem(ctx: Context) = selKey(ctx) == AUTO_P && Lic.prem(ctx)
+    /** 1.47.9: «Auto» — Premium we Free serwerleriň iň çaltysy. */
+    private fun autoBoth(ctx: Context) = selKey(ctx) == AUTO_B && Lic.prem(ctx)
     /** 1.47: baş sahypadaky PUBG düwmesi — awtomatik diňe PUBG serwerlerinden saýlaýar. */
     fun pubg(ctx: Context) = ctx.getSharedPreferences("p", 0).getBoolean("pubg", false)
     fun setPubg(ctx: Context, on: Boolean) = ctx.getSharedPreferences("p", 0).edit().putBoolean("pubg", on).apply()
@@ -55,10 +59,11 @@ object State {
         best(ctx)?.let { return it }
         if (noNet) return null
         if (pubg(ctx)) { setPubg(ctx, false); Msg.events.add(org.json.JSONObject().put("k", "fb").put("w", "pubg")); best(ctx)?.let { return it } }
-        if (autoPrem(ctx)) { select(ctx, null, false); Msg.events.add(org.json.JSONObject().put("k", "fb").put("w", "prem")); best(ctx)?.let { return it } }
+        if (autoPrem(ctx) || autoBoth(ctx)) { select(ctx, null, false); Msg.events.add(org.json.JSONObject().put("k", "fb").put("w", "prem")); best(ctx)?.let { return it } }
         return null
     }
     private const val AUTO_P = "auto:p"
+    private const val AUTO_B = "auto:b"
     private const val AUTO = "auto"
 
     // ---- ping önbelleği: açılışta ve «Barla»da ölçülür, bağlanırken bekletmez ----
@@ -71,6 +76,7 @@ object State {
         if (c != null && pubg(c)) return Sub.list.filter { it.game && allowed(c, it) }   // 1.47: PUBG düwmesi
         val base = Sub.list.filter { !it.ru && !it.game && allowed(c, it) }.ifEmpty { Sub.list.filter { !it.ru && allowed(c, it) } }
         if (c == null || Sub.free.isEmpty() || !Lic.prem(c)) return base
+        if (autoBoth(c)) return base   // 1.47.9: Auto — ikisinden iň gowy ms
         return if (autoPrem(c)) base.filter { it.hp !in Sub.free || it.hp in Sub.both } else base.filter { it.hp in Sub.free }.ifEmpty { base }   // 1.46.4 (1.47: Premium-da kod ýok — bestFb mugta geçirýär)
     }
 
@@ -78,8 +84,14 @@ object State {
         .getOrDefault(-1L).let { if (it > 0) it else -1L }.also { pings[s.key] = it }
 
     /** Arka planda bütün adayları ölçer (açılışta). */
+    @Volatile var warmAt = 0L   // 1.47.9: açylyşdaky barlag dowam edýär (iň köp 30 s) — şol wagt birikmek garaşdyrylýar
+    fun warming() = System.currentTimeMillis() - warmAt < 30_000L
     fun warm() {
         val c = cands(); if (c.isEmpty()) return
+        warmAt = System.currentTimeMillis()
+        try { warm0(c) } finally { warmAt = 0L }
+    }
+    private fun warm0(c: List<Server>) {
         val pool = java.util.concurrent.Executors.newFixedThreadPool(minOf(c.size, 8))
         c.forEach { s -> pool.execute { ping(s) } }
         pool.shutdown(); pool.awaitTermination(15, java.util.concurrent.TimeUnit.SECONDS)
@@ -190,15 +202,17 @@ class Svc : VpnService() {
             // 1 sagat dolunca (key yoksa) VPN durur; kullanıcı elle yeniden başlatır
             if (want && State.now == State.ON && Lic.left(this@Svc) == 0L) { stop(); expired(); return }
             // 1.46.8: awtomatik saýlawda bagly serwer jogap bermeýär — 25 sn soň sanaw derrew täzelenýär we işleýän serwere geçilýär
-            if (want && State.now == State.ON && State.dead && State.selected(this@Svc) == null && deadAt > 0 && now0 - deadAt > 25_000 && now0 - movedAt > 90_000) {
+            if (AUTO_SWITCH && want && State.now == State.ON && State.dead && State.selected(this@Svc) == null && deadAt > 0 && now0 - deadAt > 25_000 && now0 - movedAt > 90_000) {   // 1.47.9: öçürildi (eýesiniň islegi)
                 movedAt = now0
                 Thread { runCatching { Sub.refresh(this@Svc, 8000) }; runCatching { startService(Intent(this@Svc, Svc::class.java)) } }.start()
             }
             // 1.46.8: bagly serwer sanawdan aýryldy ýa-da indi Premium (mugt wagtlaýyn berlen serwer yzyna alyndy) — başga mugt serwere geçilýär
             val act = State.active
             if (want && State.now == State.ON && act != null && Sub.list.isNotEmpty() && now0 - movedAt > 60_000 && now0 - State.onAt > 20_000
-                && (Sub.list.none { it.hp == act.hp } || !State.allowed(this@Svc, act))) {
-                movedAt = now0; if (State.selected(this@Svc)?.hp == act.hp) State.select(this@Svc, null)
+                && ((AUTO_SWITCH && Sub.list.none { it.hp == act.hp }) || !State.allowed(this@Svc, act))) {
+                movedAt = now0
+                if (!AUTO_SWITCH) { stop(); return }   // 1.47.9: awtomatik geçiş ýok — rugsat ýok serwer (Premium gutardy) diňe öçürilýär
+                if (State.selected(this@Svc)?.hp == act.hp) State.select(this@Svc, null)
                 runCatching { startService(Intent(this@Svc, Svc::class.java)) }
             }
             if (want && State.now == State.ON && System.currentTimeMillis() - beatAt > 5 * 60_000) {
@@ -208,6 +222,7 @@ class Svc : VpnService() {
         }
     }
 
+    private val AUTO_SWITCH = false   // 1.47.9: birikme wagtynda başga serwere awtomatik geçmek öçürildi
     @Volatile private var wasOn = false   // 1.28: şu gezek birikme bolupdy (kill switch diňe şonda petikleýär)
 
     private fun health() {
