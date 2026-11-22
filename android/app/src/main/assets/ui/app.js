@@ -711,7 +711,7 @@
         const own = myRole === 'o' || admMe().role === 'f', canGive = !!(s.admOn && isF), au2 = (A && A.us && A.us[d]) || null, ux = UPX[d];
         const xpK = ux ? ux.xp : au2 && au2.xp != null ? au2.xp : null, lvK = ux ? ux.lv : xpK != null ? RK_L.filter((q) => xpK >= q).length : ul;
         Object.assign(r.up, { hasMute: !mine && !!DMS[d], muteT: MUTE[d] ? tx.dm_unmute : tx.dm_mute, mute: () => this.muteDm(d),
-          isOwnV: own && !mine, code: own && !mine && typeof NB.codeOf === 'function' ? NB.codeOf(d) || '—' : '—', cpId: () => { NB.copy(r.up.code); this.say('✓ ' + tx.copied); },
+          isOwnV: own && !mine && canGive,   // 1.47: diňe admin paneline girende code: own && !mine && typeof NB.codeOf === 'function' ? NB.codeOf(d) || '—' : '—', cpId: () => { NB.copy(r.up.code); this.say('✓ ' + tx.copied); },
           lvNow: lvK ? tx.gv_now.replace('{n}', tx['rk_n' + rkT(lvK)]).replace('{l}', String(rkT(lvK))).replace('{x}', xpK != null ? String(xpK) : '?') : tx.gv_unk,
           canGive, needAdm: own && !mine && !canGive, goAdm: () => this.setState({ page: 'admin' }),
           giveX: () => { const x = parseInt(this.state.gvX, 10); if (!x) { this.say('⚠️ ' + tx.gv_bad); return; }
@@ -722,7 +722,7 @@
       // 1.28.1: eýesi öz profilinde özüne bal / dereje berýär
       { const own = myRole === 'o' || admMe().role === 'f', canGive = !!(s.admOn && isF), L = LS.get('lvl', null), ux = UPX[me1];
         const xpK = ux ? ux.xp : L ? +L.xp || 0 : null, lvK = ux ? ux.lv : L ? rkT(L.lv) : 0;
-        r.mg = { on: own && pg === 'profile', canGive, needAdm: own && !canGive, goAdm: () => this.setState({ page: 'admin' }),
+        r.mg = { on: own && pg === 'profile' && canGive, canGive,   // 1.47: admin paneline girmedik bolsa kart görünmeýär needAdm: own && !canGive, goAdm: () => this.setState({ page: 'admin' }),
           lvNow: lvK ? tx.gv_now.replace('{n}', tx['rk_n' + rkT(lvK)]).replace('{l}', String(rkT(lvK))).replace('{x}', xpK != null ? String(xpK) : '?') : tx.gv_unk,
           giveX: () => { const x = parseInt(this.state.gvX, 10); if (!x) { this.say('⚠️ ' + tx.gv_bad); return; }
             this.confirm(tx.gv_qX.replace('{n}', this.meName).replace('{x}', String(x)), '✅ ' + tx.gv_btn, () => { act('xpgive', { dev: me1, x }); this.setState({ gvX: '' }); }, false); },
@@ -894,7 +894,7 @@
           const give = (n) => this.confirm(tx.pr_qGive.replace('{n}', r.up.name || '?').replace('{p}', n === 7 ? ({ ru: '1 неделя', tr: '1 hafta' }[s.lang] || '1 hepde') : n === 30 ? tx.pr_m : n === 365 ? tx.pr_y : n === 0 ? '♾' : n + ' ' + tx.pr_days), '👑 ' + tx.pr_giveBtn,
             () => { act('prem', { dev: d, d: n }); this.setState({ pDays: '' }); }, false);
           const selIs = roleOf(d) === 's', nmU = r.up.name || '?';
-          Object.assign(r.up, { premAct: actP, premNeed: canP && !s.admOn, premGoAdm: () => this.setState({ page: 'admin' }),
+          Object.assign(r.up, { premAct: actP, premNeed: false,   // 1.47: «admin paneline giriň» ýok premGoAdm: () => this.setState({ page: 'admin' }),
             selOn: actP && isF2 && d !== me1, selCls: selIs ? 'sel-off' : '', selT: selIs ? tx.sl_off : tx.sl_on,
             selTog: () => this.confirm((selIs ? tx.sl_qOff : tx.sl_qOn).replace('{n}', nmU), selIs ? tx.sl_off : tx.sl_on, () => act('mksel', { dev: d, on: !selIs }), false) });
           const CD = ((A && A.codes) || []).find((c) => c.u === d && c.role !== 'f'), curP = CD ? CD.perm : '', isOwnD = roleOf(d) === 'o';
@@ -902,7 +902,7 @@
             selOn: actP && isF2 && d !== me1 && !isOwnD,
             roles: [['', tx.rp_none], ['sel', tx.rp_sel], ['chat', tx.rp_chat], ['tk', tx.rp_tk], ['all', tx.rp_all]].concat(isF2 && !am2.o2 ? [['own2', '👑 Owner 2']] : []).map((q) => ({ t: q[1], cls: curP === q[0] ? 'chip-on' : '', p: curP === q[0] ? 'true' : 'false',
               pick: () => { if (curP === q[0]) return; this.confirm(tx.rp_q.replace('{n}', nmU).replace('{r}', q[1]), '✅ ' + q[1], () => { act('setperm', { dev: d, perm: q[0] }); if (CD) CD.perm = q[0]; }, false); } })) });
-          Object.assign(r.up, { canPrem: canP, premOwn: actP && isF2, premNow: tx.pr_now.replace('{v}', px ? px.left : isPrem(d) ? '✓' : tx.pr_none),
+          Object.assign(r.up, { canPrem: canP && !!s.admOn, premOwn: actP && isF2, premNow: tx.pr_now.replace('{v}', px ? px.left : isPrem(d) ? '✓' : tx.pr_none),
             premW: () => give(7), premWT: ({ ru: '1 неделя', tr: '1 hafta' }[s.lang] || '1 hepde'),
             premM: () => give(30), premY: () => give(365), premD: () => { const n = parseInt(this.state.pDays, 10); if (!(n >= 0)) { this.say('⚠️ ' + tx.gv_bad); return; } give(n); } });
         } else if (r.up) Object.assign(r.up, { canPrem: false, premOwn: false, premNow: '', premAct: false, premNeed: false, selOn: false, rmOn: false });
@@ -934,7 +934,7 @@
         { const ownR = isF2 || roleOf(me1) === 'o', px = PL.find((x) => x.dev === me1);
           const give = (n) => this.confirm(tx.pr_qGive.replace('{n}', this.meName || '?').replace('{p}', n === 7 ? ({ ru: '1 неделя', tr: '1 hafta' }[s.lang] || '1 hepde') : n === 30 ? tx.pr_m : n === 365 ? tx.pr_y : n === 0 ? '♾' : n + ' ' + tx.pr_days), '👑 ' + tx.pr_giveBtn,
             () => { act('prem', { dev: me1, d: n }); this.setState({ pDays: '' }); }, false);
-          r.mp = { on: pg === 'profile' && ownR, act: !!s.admOn, needAdm: !s.admOn, goAdm: () => this.setState({ page: 'admin' }),
+          r.mp = { on: pg === 'profile' && ownR && !!s.admOn, act: !!s.admOn,   // 1.47: «admin paneline giriň» ýazgysy ýok needAdm: !s.admOn, goAdm: () => this.setState({ page: 'admin' }),
             canRm: !!s.admOn && isF2 && !!px, rm: () => this.confirm(tx.pr_qRm.replace('{n}', this.meName || '?'), tx.pr_rm, () => act('punprem', { dev: me1 }), false),
             now: tx.pr_now.replace('{v}', px ? px.left : PR ? (pexp === 0 ? '♾' : dlT) : tx.pr_none),
             premW: () => give(7), premWT: ({ ru: '1 неделя', tr: '1 hafta' }[s.lang] || '1 hepde'),
@@ -1040,7 +1040,7 @@
               on: () => { try { NB.vpnSettings(); } catch (e) {} } }); } } }
       // 1.28: açar sowgat etmek
       { const kl = s.hasKey && s.kexp > 0 ? Math.floor((s.kexp - Date.now() / 1000) / 86400) : 0, gd = s.gfD || 1;
-        r.gfOn = kl >= 2; r.gfSub = tx.gf_sub.replace('{d}', String(kl));
+        r.gfOn = false;   // 1.47: «Açar sowgat et» aýryldy r.gfSub = tx.gf_sub.replace('{d}', String(kl));
         r.gfDays = [1, 3, 7, 15].filter((d2) => d2 <= kl - 1).map((d2) => ({ t: tx.wk_d.replace('{d}', String(d2)), cls: d2 === gd ? 'chip-on' : '', pick: () => this.setState({ gfD: d2 }) }));
         r.gfTo = s.gfTo || ''; r.onGfTo = (e) => this.setState({ gfTo: String(e.target.value || '').toUpperCase().slice(0, 9) }); r.gfBtn = tx.gf_btn.replace('{d}', String(gd));
         r.gfGo = () => { let to = String(this.state.gfTo || '').toUpperCase().replace(/[^A-Z0-9]/g, ''); if (/^TM[A-Z0-9]{5}$/.test(to)) to = 'TM-' + to.slice(2); else { this.say('⚠️ ' + tx.gf_e_id); return; }
