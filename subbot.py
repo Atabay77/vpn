@@ -1,4 +1,4 @@
-import os, sys, io, re, json, html, uuid, base64, asyncio, types, zipfile, shutil, fcntl, logging, datetime, time, socket, random, hashlib, hmac, warnings, unicodedata, threading
+import os, sys, io, re, json, marshal, html, uuid, base64, asyncio, types, zipfile, shutil, fcntl, logging, datetime, time, socket, random, hashlib, hmac, warnings, unicodedata, threading
 import urllib.request, urllib.parse, urllib.error
 from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor
@@ -93,9 +93,17 @@ def db_lock():
         try: fcntl.flock(fp, fcntl.LOCK_UN)
         finally: fp.close()
 
-def load_db():
-    if not os.path.exists(DB_FILE):
-        return json.loads(json.dumps(DEFAULT_DB))
+# 1.47: baza her okalanda faýl täzeden açylmaýar — üýtgemedik bolsa (wagt, ölçeg) ýatdaky nusga (bot haýallaýardy:
+# programmadan gelen her habarda baza 6–10 gezek okalýardy)
+_DBC = {"key": None, "blob": None, "ro": None}
+_DBC_LOCK = threading.Lock()
+def _db_key():
+    st_ = os.stat(DB_FILE); return (st_.st_mtime_ns, st_.st_size, st_.st_ino)
+
+def _db_fill():
+    k_ = _db_key()
+    with _DBC_LOCK:
+        if _DBC["key"] == k_ and _DBC["blob"] is not None: return _DBC["blob"]
     try:
         with open(DB_FILE, encoding="utf-8") as f: db = json.load(f)
         if not isinstance(db, dict): raise ValueError("root is not an object")
@@ -105,12 +113,31 @@ def load_db():
         raise RuntimeError(f"subbot.json bozuk, kopyası: {bak} ({e})")
     for k, v in DEFAULT_DB.items():
         db.setdefault(k, json.loads(json.dumps(v)))
-    return db
+    blob = marshal.dumps(db)
+    with _DBC_LOCK: _DBC.update(key=k_, blob=blob, ro=None)
+    return blob
+
+def load_db():
+    if not os.path.exists(DB_FILE):
+        return json.loads(json.dumps(DEFAULT_DB))
+    return marshal.loads(_db_fill())   # özbaşdak nusga (üýtgetmek bolýar)
+
+def load_db_ro():
+    """1.47: diňe okamak üçin (üýtgetmeli däl!) — iň çalt: ýatdaky umumy nusga."""
+    if not os.path.exists(DB_FILE): return json.loads(json.dumps(DEFAULT_DB))
+    blob = _db_fill()
+    with _DBC_LOCK:
+        if _DBC["blob"] is blob and _DBC["ro"] is not None: return _DBC["ro"]
+    ro = marshal.loads(blob)
+    with _DBC_LOCK:
+        if _DBC["blob"] is blob: _DBC["ro"] = ro
+    return ro
 
 def save_db(db):
     tmp = DB_FILE + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f: json.dump(db, f, ensure_ascii=False, separators=(",", ":"))   # 1.47: gysga — baza uly, her ýazgy çalt bolsun
     os.replace(tmp, DB_FILE)
+    with _DBC_LOCK: _DBC.update(key=None, blob=None, ro=None)
 
 def mutate(fn):
     with db_lock():
@@ -2494,6 +2521,8 @@ async def app_online_loop(app):
     """1.47: onlaýn sany her minut — VPS-e («…on» mowzugy); programma açyk wagty minutda bir okaýar."""
     await asyncio.sleep(30); last_ = (None, 0)
     while True:
+        try: await asyncio.to_thread(app_out_flush, True)   # 1.47: giden habarlaryň nobaty
+        except Exception as e: log.info("out flush: %s", e)
         try:
             fid = app_cfg(load_db()).get("fid")
             if fid and app_relay():
@@ -2945,9 +2974,34 @@ service cloud.firestore {
 }"""
 
 
+_MUTQ = []; _MUTQ_LOCK = threading.Lock()
 def app_mut(fn):
-    """db["app"] içinde değişiklik (kilitli)."""
-    return mutate(lambda d: fn(d.setdefault("app", {})))
+    """db["app"] içinde değişiklik (kilitli). 1.47: garaşýan toplumlaýyn ýazgylar (app_mut_later) hem şol bir ýazgyda."""
+    with _MUTQ_LOCK: q_ = _MUTQ[:]; _MUTQ.clear()
+    def g(d):
+        a_ = d.setdefault("app", {})
+        for f_ in q_:
+            try: f_(a_)
+            except Exception as e: log.info("mutq: %s", e)
+        return fn(a_)
+    try: return mutate(g)
+    except Exception:
+        with _MUTQ_LOCK: _MUTQ[:0] = q_   # ýitmesin
+        raise
+
+def app_mut_later(fn):
+    """1.47: gyssagly däl ýazgy (telefonyň hasaba alynmagy we ş.m.) — 2 sekuntda bir toplumlaýyn (her habarda tutuş baza ýazylmasyn)."""
+    with _MUTQ_LOCK: _MUTQ.append(fn)
+
+def app_mut_flush():
+    with _MUTQ_LOCK: any_ = bool(_MUTQ)
+    if any_: app_mut(lambda a_: None)
+
+async def app_mutq_loop(app):
+    while True:
+        await asyncio.sleep(2)
+        try: await asyncio.to_thread(app_mut_flush)
+        except Exception as e: log.info("mutq loop: %s", e)
 
 # ───── 1.38: FCM — telefona «täze zat bar» bildirişi (programma Firestore-y ýygy barlamasyn) ─────
 _FCM_TOK = {"tok": None, "exp": 0}
@@ -2962,7 +3016,7 @@ def fcm_token():
 
 def fcm_push(dev, data):
     """Bir telefona maglumat bildirişi (data). Belgi ýok bolsa False; belgi köne bolsa pozulýar."""
-    a = app_cfg(load_db()); tok = (a.get("fcm") or {}).get(dev); proj = a.get("fs_proj")
+    a = app_cfg(load_db_ro()); tok = (a.get("fcm") or {}).get(dev); proj = a.get("fs_proj")
     if not tok or not proj or not a.get("fcm_app"): return False
     body = json.dumps({"message": {"token": tok, "data": {k: str(v) for k, v in data.items()}, "android": {"priority": "high", "ttl": "3600s"}}}).encode()
     req = urllib.request.Request(f"https://fcm.googleapis.com/v1/projects/{proj}/messages:send", data=body, method="POST",
@@ -2988,19 +3042,48 @@ def fcm_bg(dev, data):
         FCM_POOL = concurrent.futures.ThreadPoolExecutor(4)
     FCM_POOL.submit(lambda: fcm_push(dev, data))
 
+# 1.47: telefonlara gidýän habarlaryň nobaty — aýry faýlda (öň her habarda tutuş baza okalyp ýazylýardy — bot haýallaýardy)
+OUT_FILE = os.path.join(os.path.dirname(DB_FILE) or ".", "app_out.json")
+_OUTQ = {"d": None, "dirty": False, "at": 0.0}
+_OUT_LOCK = threading.Lock()
+def _outq():
+    if _OUTQ["d"] is None:
+        d_ = {}
+        try:
+            with open(OUT_FILE, encoding="utf-8") as f: d_ = json.load(f)
+        except Exception: pass
+        old_ = (app_cfg(load_db_ro()).get("out") or {})
+        if old_:   # köne bazadan göçürmek (bir gezek)
+            for k_, v_ in old_.items():
+                if k_ not in d_ or int(v_.get("seq") or 0) > int(d_[k_].get("seq") or 0): d_[k_] = v_
+            try: app_mut(lambda a_: a_.pop("out", None))
+            except Exception: pass
+            _OUTQ["dirty"] = True
+        _OUTQ["d"] = d_
+    return _OUTQ["d"]
+
+def app_out_flush(force=False):
+    with _OUT_LOCK:
+        if not _OUTQ["dirty"] or (not force and time.time() - _OUTQ["at"] < 5): return
+        s_ = json.dumps(_OUTQ["d"], ensure_ascii=False, separators=(",", ":")); _OUTQ["dirty"] = False; _OUTQ["at"] = time.time()
+    tmp = OUT_FILE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f: f.write(s_)
+    os.replace(tmp, OUT_FILE)
+
 def app_send(dev, o):
     """Telefona habar (sıra numarasıyla; program kaçırırsa bir sonraki mesajında yeniden gönderilir)."""
-    def f(a):
-        ob = a.setdefault("out", {}).setdefault(dev, {"seq": 0, "items": []})
-        ob["seq"] += 1; o["seq"] = ob["seq"]
-        ob["items"] = (ob["items"] + [o])[-30:]
-        return a.get("fid")
-    fid = app_mut(f)
+    with _OUT_LOCK:
+        q_ = _outq(); ob = q_.setdefault(dev, {"seq": 0, "items": []})
+        ob["seq"] = int(ob.get("seq") or 0) + 1; o["seq"] = ob["seq"]
+        ob["items"] = (list(ob.get("items") or []) + [o])[-20:]
+        _OUTQ["dirty"] = True
+    try: app_out_flush()
+    except Exception as e: log.info("out flush: %s", e)
+    a_ = app_cfg(load_db_ro()); fid = a_.get("fid")
     if fid:
         body = app_enc(fid, json.dumps(o, ensure_ascii=False))
         try: ntfy_pub(app_topic(fid) + "d" + dev, body)
         except Exception as e: log.info("app send %s: %s", dev, e)
-        a_ = app_cfg(load_db())
         if a_.get("fs_ok") and a_.get("fs_proj"):
             try:
                 fs_write(a_["fs_proj"], f"d/{dev}/i/{o['seq']:010d}", body)
@@ -3010,11 +3093,12 @@ def app_send(dev, o):
 
 def app_resend(fid, dev, ack):
     """Program son aldığı sıra numarasını bildirir; eksik kalanlar yeniden gider (10 dakikada bir en çok)."""
-    a = app_cfg(load_db()); ob = (a.get("out") or {}).get(dev) or {}
-    if not ob or ob.get("seq", 0) <= ack: return
-    if time.time() - ob.get("rs", 0) < 600: return
-    app_mut(lambda a_: a_.setdefault("out", {}).setdefault(dev, {}).__setitem__("rs", time.time()))
-    for o in ob.get("items", []):
+    with _OUT_LOCK:
+        ob = _outq().get(dev) or {}
+        if not ob or ob.get("seq", 0) <= ack: return
+        if time.time() - ob.get("rs", 0) < 600: return
+        ob["rs"] = time.time(); _OUTQ["dirty"] = True; items_ = list(ob.get("items", []))
+    for o in items_:
         if o.get("seq", 0) > ack:
             try: ntfy_pub(app_topic(fid) + "d" + dev, app_enc(fid, json.dumps(o, ensure_ascii=False)))
             except Exception: break
@@ -3209,13 +3293,13 @@ MIG_ERR = {"same": "bu şol bir telefon", "done": "bu köne telefon eýýäm gö
 
 def app_founder_devs(a=None):
     """Eýesiniň (esasy admin) telefonlary."""
-    a = a if a is not None else app_cfg(load_db())
+    a = a if a is not None else app_cfg(load_db_ro())
     return list(dict.fromkeys(d_ for x in (a.get("apw") or {}).values() if x.get("role") == "f" and apw_valid(x)
                               for d_ in ([x["dev"]] if x.get("dev") else []) + (x.get("hist") or [])[-1:]))
 
 def app_seller_devs(a=None):
     """1.43: Premium satýanlar (eýesi + «sel» rugsatly adminler): telefon → at."""
-    a = a if a is not None else app_cfg(load_db()); out = {}
+    a = a if a is not None else app_cfg(load_db_ro()); out = {}
     for x in (a.get("apw") or {}).values():
         if not apw_valid(x) or not (x.get("role") == "f" or x.get("perm") == "sel"): continue
         for d_ in ([x["dev"]] if x.get("dev") else []) + (x.get("hist") or []): out.setdefault(d_, x.get("name") or "")
@@ -3400,7 +3484,7 @@ def app_lvl(xp): return sum(1 for t_ in APP_LVL if xp >= t_)
 
 def app_lvl_check(dev, tell=False):
     """Dereje täzelenýär; täze dereje — sowgat günler; telefona häzirki dereje iberilýär."""
-    a = app_cfg(load_db()); xp, inv = app_xp(a, dev); lv = app_lvl(xp)
+    a = app_cfg(load_db_ro()); xp, inv = app_xp(a, dev); lv = app_lvl(xp)
     u_ = (a.get("devs") or {}).get(dev) or {}
     old = int(u_.get("lv") or 1); top_ = max(old, int(u_.get("lgm") or 1))   # lgm: sowgat berlen iň ýokary dereje (iki gezek berilmesin)
     gift = sum(d_ for l_, d_ in APP_LVL_GIFT.items() if top_ < l_ <= lv)
@@ -3473,18 +3557,18 @@ async def app_on_msg(app, fid, o):
             u["ld"] = day_; u["ad"] = int(u.get("ad") or 0) + 1; RUN.setdefault("lvl_q", set()).add(dev)   # 1.19: işjeň gün
             if app_dev_prem(a, dev): u["pb"] = int(u.get("pb") or 0) + 10   # 1.47: Premium — bal 2 esse
         if not u.get("mvto"): a.setdefault("codes", {})[app_ref_code(dev)] = dev   # 1.47: göçürilen köne telefon kody täzesinde galýar
-    a0_ = app_cfg(load_db()); u0_ = (a0_.get("devs") or {}).get(dev)   # 1.47: hiç zat üýtgemedik bolsa baza ýazylmaýar (her habarda ýazmak — bot haýallaýardy)
+    a0_ = app_cfg(load_db_ro()); u0_ = (a0_.get("devs") or {}).get(dev)   # 1.47: hiç zat üýtgemedik bolsa baza ýazylmaýar (her habarda ýazmak — bot haýallaýardy)
     if (u0_ is None or u0_.get("ld") != tm_now().strftime("%Y-%m-%d") or now - int(u0_.get("l") or 0) > 300 or app_ref_code(dev) not in (a0_.get("codes") or {})
             or any(o.get(f_) and str(o[f_])[:40] != u0_.get(f_) for f_ in ("nick", "model", "ver", "lang"))
             or (o.get("vpn") and (u0_.get("vld") != tm_now().strftime("%Y-%m-%d") or now - int(u0_.get("vl") or 0) > 1800))):
-        await asyncio.to_thread(app_mut, reg)
+        app_mut_later(reg)   # 1.47: toplumlaýyn (2 sn)
     try: await asyncio.to_thread(app_resend, fid, dev, int(o.get("ack") or 0))
     except Exception: pass
     if dev in RUN.get("lvl_q", set()):
         RUN["lvl_q"].discard(dev)
         try: await asyncio.to_thread(app_lvl_check, dev, True)
         except Exception as e: log.info("lvl: %s", e)
-    a = app_cfg(load_db())
+    a = app_cfg(load_db_ro())   # 1.47: diňe okamak (çalt)
     if k == "adm": await app_adm(app, dev, o); return
     if k == "pr": await asyncio.to_thread(app_x_report, dev, o.get("p")); return
     if k == "alog": await asyncio.to_thread(alog_add, dev, o.get("e")); return   # 1.47: admin log
@@ -3513,7 +3597,7 @@ async def app_on_msg(app, fid, o):
                 q_ = x.setdefault("mig_q", {}); q_[c_] = {"dev": dev, "ts": now}
                 if len(q_) > 3000:
                     for k2 in sorted(q_, key=lambda k3: q_[k3].get("ts", 0))[:len(q_) - 3000]: q_.pop(k2, None)
-            await asyncio.to_thread(app_mut, fm)
+            app_mut_later(fm)
         return
     if k == "preq":   # 1.43: «Premium satyn al» — satyja (ýa-da eýesine) haýyş; diňe olar görýär
         sl_ = app_seller_devs(a); to_ = str(o.get("to") or "")
@@ -3578,11 +3662,11 @@ async def app_on_msg(app, fid, o):
         if new: await asyncio.to_thread(app_send, dev, {"k": "tko", "tid": int(tid)})
         new = new is True
         ai_on = bool(ai_key()) and load_db().get("ai_sup", True)   # 1.16.4: «admin gerek» diýse-de AI jogap berýär
-        la_ = app_adm_last((app_cfg(load_db()).get("tickets") or {}).get(tid))
+        la_ = app_adm_last((app_cfg(load_db_ro()).get("tickets") or {}).get(tid))
         hold_ = ai_on and int(time.time()) - la_ < APP_AI_HOLD   # 1.31: admin ýaňy ýazdy — AI garaşýar
         if hold_: ai_on = False
-        nk_ = ((app_cfg(load_db()).get("devs") or {}).get(dev) or {}).get("nick") or "?"
-        await app_staff_notify(app, f"🎫 <b>Program bileti #{tid}</b>{' (täze)' if new else ''}\n<blockquote>{app_who(app_cfg(load_db()), dev)}\n👤 {esc(text)[:900]}</blockquote>"
+        nk_ = ((app_cfg(load_db_ro()).get("devs") or {}).get(dev) or {}).get("nick") or "?"
+        await app_staff_notify(app, f"🎫 <b>Program bileti #{tid}</b>{' (täze)' if new else ''}\n<blockquote>{app_who(app_cfg(load_db_ro()), dev)}\n👤 {esc(text)[:900]}</blockquote>"
                                + ("\n<i>🤖 AI jogap berýär…</i>" if ai_on else ""),
                                {"k": "atk", "tid": int(tid), "n": nk_[:32], "t": text[:200], "new": new},
                                KB([[B("✍️ Jogap ber", f"atr:{tid}", "primary"), B("🔒 Ýap", f"atc:{tid}", "danger")], [B("📄 Bilet", f"atk:{tid}")]]), silent=ai_on, skip=dev)
@@ -3908,7 +3992,7 @@ async def app_relay_loop(app):
     await asyncio.sleep(15)
     while True:
         try:
-            a = app_cfg(load_db()); fid = a.get("fid")
+            a = app_cfg(load_db_ro()); fid = a.get("fid")
             if not (fid and app_relay()): await asyncio.sleep(5); continue
             t0_ = time.time()
             got = await asyncio.to_thread(ntfy_poll, app_topic(fid) + "m", a.get("msg_since") or "2h", 25)
@@ -4132,7 +4216,7 @@ async def app_adm(app, dev, o):
     now = time.time()
     fl = APW_FAIL.get(dev, [0, 0])
     if fl[1] > now and o.get("aid"): await asyncio.to_thread(app_adm_out, dev, None, {"err": "lock", "s": int(fl[1] - now)}); return
-    a = app_cfg(load_db()); aid = str(o.get("aid") or "")
+    a = app_cfg(load_db_ro()); aid = str(o.get("aid") or "")
     e = (a.get("apw") or {}).get(aid)
     pt = app_dec("adm|" + e["pw"], o.get("x") or "") if e else None
     if e and pt and not apw_valid(e):   # açar söz dogry, emma möhleti geçdi: jogap şifrli (başga biri admini çykaryp bilmesin)
@@ -4972,6 +5056,7 @@ async def post_init(app):
     app.bot_data["apptg"] = asyncio.create_task(app_tg_loop())
     app.bot_data["hunt"] = asyncio.create_task(hunt_loop(app))   # 1.46: kod awy
     app.bot_data["online"] = asyncio.create_task(app_online_loop(app))   # 1.47: onlaýn sany her minut
+    app.bot_data["mutq"] = asyncio.create_task(app_mutq_loop(app))   # 1.47: toplumlaýyn ýazgylar
     try: app_mut(lambda x: x.pop("fs_fast", None))   # 1.47: «çalt rejim» aýryldy
     except Exception: pass
     try:
@@ -11913,6 +11998,8 @@ def check_new_bot(path):
 
 def restart_self():
     """Aynı süreçte yeni dosyayla yeniden başlar (systemd için PID değişmez)."""
+    try: app_out_flush(True); app_mut_flush()   # 1.47: giden habarlaryň nobaty / garaşýan ýazgylar ýitmesin
+    except Exception: pass
     os.execv(sys.executable, [sys.executable, SELF])
 
 def send_tmtest_to_phone(code_text):
