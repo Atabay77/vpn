@@ -209,7 +209,7 @@ class Svc : VpnService() {
             // 1.46.8: bagly serwer sanawdan aýryldy ýa-da indi Premium (mugt wagtlaýyn berlen serwer yzyna alyndy) — başga mugt serwere geçilýär
             val act = State.active
             if (want && State.now == State.ON && act != null && Sub.list.isNotEmpty() && now0 - movedAt > 60_000 && now0 - State.onAt > 20_000
-                && ((AUTO_SWITCH && Sub.list.none { it.hp == act.hp }) || !State.allowed(this@Svc, act))) {
+                && ((AUTO_SWITCH && (Sub.list.none { it.hp == act.hp } || !State.allowed(this@Svc, act))) || (premAtOn && !Lic.prem(this@Svc) && !State.allowed(this@Svc, act)))) {   // 1.47.13: mugt sanaw üýtgände birikme kesilmeýär — diňe Premium gutaranda
                 movedAt = now0
                 if (!AUTO_SWITCH) { stop(); return }   // 1.47.9: awtomatik geçiş ýok — rugsat ýok serwer (Premium gutardy) diňe öçürilýär
                 if (State.selected(this@Svc)?.hp == act.hp) State.select(this@Svc, null)
@@ -222,6 +222,7 @@ class Svc : VpnService() {
         }
     }
 
+    @Volatile private var premAtOn = false   // birikende Premium-dy
     private val AUTO_SWITCH = false   // 1.47.9: birikme wagtynda başga serwere awtomatik geçmek öçürildi
     @Volatile private var wasOn = false   // 1.28: şu gezek birikme bolupdy (kill switch diňe şonda petikleýär)
 
@@ -298,7 +299,7 @@ class Svc : VpnService() {
             State.socks = port
             if (!want || g != gen) { stopCore(); return }
             if (Lic.start(this) == 0L) Lic.setStart(this, System.currentTimeMillis())   // 1 sagat bağlanınca başlar
-            State.onAt = System.currentTimeMillis()
+            State.onAt = System.currentTimeMillis(); premAtOn = Lic.prem(this)
             State.set(State.ON); wasOn = true
             Msg.start(applicationContext); Msg.kick()
             runCatching { getSystemService(NotificationManager::class.java).notify(1, note(s)) }   // bildirim: «Birikdirildi · ülke»
