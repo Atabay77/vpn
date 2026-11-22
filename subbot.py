@@ -4867,12 +4867,120 @@ def apw_restore_from_backups():
         return n_
     return app_mut(f)
 
+RELAY_DATA = os.environ.get("RELAY_DATA", "/var/lib/tvrelay")
+RETIRED_FLAG = "/root/subbot.retired"
+START_TS = int(time.time())
+_NODE = {}
+def node_id():
+    """1.47: bu VPS-iň kimligi (host ady + machine-id) — iki VPS-de bot bir wagtda işlemesin."""
+    if not _NODE:
+        mid = ""
+        for p_ in ("/etc/machine-id", "/var/lib/dbus/machine-id"):
+            try: mid = open(p_).read().strip()[:10]; break
+            except Exception: pass
+        _NODE["id"] = re.sub(r"\s+", "_", socket.gethostname()[:20] + "-" + (mid or "x"))
+    return _NODE["id"]
+
+def restore_backup(data):
+    """1.47: ätiýaçlyk zip-den dikeltmek (VPS çalşylanda). Bot faýly (subbot.py) üýtgedilmeýär; env.txt diňe ýok bolsa.
+    Dönüş: (dikeldilen faýllar, relay faýl sany)."""
+    zf = zipfile.ZipFile(io.BytesIO(data)); names = zf.namelist()
+    dbn = os.path.basename(DB_FILE)
+    if dbn not in names: raise RuntimeError("zip-de subbot.json ýok")
+    if not isinstance(json.loads(zf.read(dbn).decode("utf-8")), dict): raise RuntimeError("subbot.json bozuk")
+    m_ = {os.path.basename(p_): p_ for p_ in [DB_FILE, SA_FILE, VIP_LOG, AUDIT_LOG, USERS_LOG, GEO_FILE, EXIT_FILE, "/root/sohbet.txt", BANNER_FILE, OUT_FILE, ALOG_FILE]}
+    if not os.path.exists(ENV_FILE): m_[os.path.basename(ENV_FILE)] = ENV_FILE
+    if os.path.exists(DB_FILE): shutil.copy(DB_FILE, DB_FILE + ".pre-restore")
+    def put(path, b):
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        with open(path + ".tmp", "wb") as f: f.write(b)
+        os.replace(path + ".tmp", path)
+    done, rn = [], 0
+    rroot = os.path.realpath(RELAY_DATA)
+    for n_ in names:
+        if n_.endswith("/"): continue
+        if n_ in m_: put(m_[n_], zf.read(n_)); done.append(n_)
+        elif n_.startswith("ai_chats/") and n_.endswith(".json") and "/" not in n_[9:]: put(os.path.join(AI_DIR, n_[9:]), zf.read(n_)); done.append(n_)
+        elif n_.startswith("relay/"):
+            dst = os.path.realpath(os.path.join(RELAY_DATA, n_[6:]))
+            if dst.startswith(rroot + os.sep): put(dst, zf.read(n_)); rn += 1
+    with _DBC_LOCK: _DBC.update(key=None, blob=None, ro=None)
+    with _OUT_LOCK: _OUTQ["d"] = None
+    return done, rn
+
+def db_is_fresh():
+    a_ = app_cfg(load_db()); return not a_.get("fid") and len(a_.get("devs") or {}) < 5
+
+async def leader_loop(app):
+    """1.47: diňe bir VPS-de bot — täze VPS-de açylan bot özüni «lider» edýär (Telegram-da gizlin ýazgy);
+    köne VPS muny görse: soňky ätiýaçlygy iberýär (täze VPS özi alyp dikeldýär) we durýar (Conflict ýalňyşlygy bolmasyn)."""
+    me = node_id()
+    try: await app.bot.set_my_short_description(short_description=f"L {me} {START_TS}", language_code="zu")
+    except Exception as e: log.info("leader set: %s", e)
+    while True:
+        await asyncio.sleep(30)
+        try:
+            p_ = ((await app.bot.get_my_short_description(language_code="zu")).short_description or "").split()
+            if len(p_) >= 3 and p_[0] == "L" and p_[1] != me and int(p_[2]) > START_TS:
+                await leader_retire(app, p_[1]); return
+            if time.time() - START_TS < 1800: await handoff_check(app)
+        except Exception as e: log.info("leader: %s", e)
+
+async def leader_retire(app, newnode):
+    with open(RETIRED_FLAG, "w") as f: f.write(newnode)
+    log.warning("Täze VPS (%s) işe başlady — bu VPS durýar", newnode)
+    try:
+        await asyncio.to_thread(app_out_flush, True); await asyncio.to_thread(app_mut_flush)
+        data = (await asyncio.to_thread(make_backup)).getvalue(); fid_ = None
+        for uid in ORIG_ADMINS:
+            try:
+                m_ = await app.bot.send_document(chat_id=uid, document=io.BytesIO(data), filename=f"Backup_{datetime.datetime.now():%Y-%m-%d_%H%M}_handoff.zip",
+                                                 caption=f"🔁 <b>Bot täze VPS-e geçdi</b> ({esc(newnode)}). Bu köne VPS ({esc(node_id())}) durdy.\n"
+                                                         "Täze VPS boş bolsa maglumatlar özi geçirilýär. Ýogsa bu faýly täze bota iberiň.\n"
+                                                         f"<i>Köne VPS-i gaýtadan işletmek üçin: rm {RETIRED_FLAG} we boty täzeden açyň.</i>", parse_mode="HTML")
+                fid_ = fid_ or m_.document.file_id
+            except Exception as e: log.info("handoff send: %s", e)
+        if fid_: await app.bot.set_my_description(description=f"H {fid_} {node_id()} {int(time.time())}", language_code="zu")
+    except Exception as e: log.warning("retire: %s", e)
+    app.stop_running()
+
+async def handoff_check(app):
+    """Täze VPS: köne VPS ätiýaçlygy goýdy — baza boş bolsa awtomatik dikeldilýär, doly bolsa eýesinden soralýar."""
+    p_ = ((await app.bot.get_my_description(language_code="zu")).description or "").split()
+    if len(p_) < 4 or p_[0] != "H" or p_[2] == node_id() or RUN.get("handoff_seen") == p_[1] or load_db().get("handoff_done") == p_[1]: return
+    RUN["handoff_seen"] = p_[1]
+    if await asyncio.to_thread(db_is_fresh):
+        f_ = await app.bot.get_file(p_[1]); data = bytes(await f_.download_as_bytearray())
+        done, rn = await asyncio.to_thread(restore_backup, data)
+        mutate(lambda d: d.__setitem__("handoff_done", p_[1]))
+        await notify_founders(app, f"✅ <b>Köne VPS-iň maglumatlary geçirildi</b> ({len(done)} faýl" + (f", habar serweri {rn}" if rn else "") + "). Bot täzeden açylýar…"
+                              + ("\n<i>Habar serweri hem şu VPS-de bolsa: systemctl restart tvrelay</i>" if rn else ""))
+        asyncio.get_running_loop().call_later(3, restart_self)
+    else:
+        STATE_HANDOFF["fid"] = p_[1]
+        for uid in ORIG_ADMINS:
+            try: await app.bot.send_message(uid, "🔁 Köne VPS-iň ätiýaçlygy bar, ýöne bu VPS-de eýýäm maglumat bar. Köne maglumatlar bilen çalşylsynmy?",
+                                            reply_markup=KB([[B("♻️ Hawa, dikelt", "rst_h", "danger")]]))
+            except Exception: pass
+STATE_HANDOFF = {}
+
 def make_backup():
     """Botun bütün verisi: ayarlar, veritabanı, loglar, banner'lar, ülke önbellekleri, AI sohbet kayıtları."""
     buf = io.BytesIO(); n = 0
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for f in [DB_FILE, SA_FILE, ENV_FILE, VIP_LOG, AUDIT_LOG, USERS_LOG, GEO_FILE, EXIT_FILE, "/root/sohbet.txt", os.path.abspath(__file__), BANNER_FILE]:
             if os.path.exists(f): zf.write(f, os.path.basename(f)); n += 1
+        for f in [OUT_FILE, ALOG_FILE]:   # 1.47: giden habarlaryň nobaty, admin logy
+            if os.path.exists(f): zf.write(f, os.path.basename(f)); n += 1
+        if os.path.isdir(RELAY_DATA):   # 1.47: öz VPS habar serweri (chat, profil, habarlar) — iň köp 35 MB
+            tot_ = 0
+            for root_, _, fns_ in os.walk(RELAY_DATA):
+                for fn_ in sorted(fns_):
+                    fp_ = os.path.join(root_, fn_)
+                    try: sz_ = os.path.getsize(fp_)
+                    except Exception: continue
+                    if tot_ + sz_ > 35_000_000: continue
+                    zf.write(fp_, "relay/" + os.path.relpath(fp_, RELAY_DATA)); tot_ += sz_; n += 1
         if os.path.isdir(AI_DIR):   # 🤖 kullanıcıların AI sohbetleri
             for fn in sorted(os.listdir(AI_DIR)):
                 fp = os.path.join(AI_DIR, fn)
@@ -4981,19 +5089,21 @@ async def watchdog(app):
         # her gün 03:00 otomatik yedek (gün diske yazılır: bot yeniden açılsa da günde bir kez)
         try:
             now = datetime.datetime.now(); d = now.strftime("%Y-%m-%d")
-            if now.hour == 3 and load_db().get("backup_last") != d:
-                mutate(lambda x: x.__setitem__("backup_last", d))
+            slot_ = f"{d}-{now.hour // 6}"   # 1.47: 6 sagatda bir (öň günde bir)
+            if load_db().get("backup_last") != slot_ and now.minute < 30:
+                mutate(lambda x: x.__setitem__("backup_last", slot_))
                 data = (await asyncio.to_thread(make_backup)).getvalue()
                 fn = f"Backup_{now:%Y-%m-%d_%H%M}.zip"
                 os.makedirs(BACKUP_DIR, exist_ok=True)
                 try: os.chmod(BACKUP_DIR, 0o700)
                 except Exception: pass
                 with open(os.path.join(BACKUP_DIR, fn), "wb") as f: f.write(data)
-                for old in sorted(os.listdir(BACKUP_DIR))[:-7]:
+                for old in sorted(os.listdir(BACKUP_DIR))[:-12]:
                     try: os.remove(os.path.join(BACKUP_DIR, old))
                     except Exception: pass
-                for fid in ADMINS:
-                    try: await app.bot.send_document(chat_id=fid, document=io.BytesIO(data), filename=fn, caption=f"🗄 Günlük otomatik yedek · {RUN.get('backup_n', '?')} dosya")
+                for fid in ORIG_ADMINS:   # 1.47: diňe asyl eýesine (owner 2-ä däl)
+                    try: await app.bot.send_document(chat_id=fid, document=io.BytesIO(data), filename=fn, disable_notification=True,
+                                                     caption=f"🗄 Otomatik yedek · {RUN.get('backup_n', '?')} dosya\n<i>Yeni VPS'te: bu dosyayı bota gönder → «♻️ Geri yükle».</i>", parse_mode="HTML")
                     except Exception as e: log.warning("auto-backup send: %s", e)
         except Exception: log.exception("watchdog backup")
 
@@ -5089,6 +5199,7 @@ async def post_init(app):
     app.bot_data["hunt"] = asyncio.create_task(hunt_loop(app))   # 1.46: kod awy
     app.bot_data["online"] = asyncio.create_task(app_online_loop(app))   # 1.47: onlaýn sany her minut
     app.bot_data["mutq"] = asyncio.create_task(app_mutq_loop(app))   # 1.47: toplumlaýyn ýazgylar
+    app.bot_data["leader"] = asyncio.create_task(leader_loop(app))   # 1.47: diňe bir VPS-de bot
     try: app_mut(lambda x: x.pop("fs_fast", None))   # 1.47: «çalt rejim» aýryldy
     except Exception: pass
     try:
@@ -7679,6 +7790,19 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
         STATE[uid] = {"action": "src_add"}
         t, kb = prompt("➕ <b>Abonelik ekle</b>", "Abonelik linklerini gönder (her satıra bir tane).", "sources")
         await safe_edit(q, t, kb)
+
+    elif a == "rst_h":   # 1.47: ätiýaçlykdan dikeltmek
+        if uid not in ORIG_ADMINS or not STATE_HANDOFF.get("fid"): return
+        fid_ = STATE_HANDOFF.pop("fid")
+        try:
+            f_ = await c.bot.get_file(fid_); data = bytes(await f_.download_as_bytearray())
+            done, rn = await asyncio.to_thread(restore_backup, data)
+            audit(uid, f"restore {len(done)} files")
+            await safe_edit(q, f"✅ Geri yüklendi: {len(done)} dosya" + (f", mesaj sunucusu {rn} (systemctl restart tvrelay)" if rn else "") + ". Bot yeniden açılıyor…", None)
+            asyncio.get_running_loop().call_later(3, restart_self)
+        except Exception as e:
+            await safe_edit(q, f"❌ Geri yüklenemedi: {esc(str(e)[:200])}", None)
+        return
 
     elif a == "get_zip":
         buf = await asyncio.to_thread(make_backup)
@@ -12135,6 +12259,12 @@ async def doc_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
         await m.edit_text(f"✅ <b>Yeni sürüm kuruldu</b> <code>{sha}</code>\n<i>Bot birkaç saniye içinde yeniden açılıyor...</i>", parse_mode="HTML")
         asyncio.get_running_loop().call_later(2, restart_self)
 
+    elif fn.startswith("backup_") and fn.endswith(".zip"):   # 1.47: ätiýaçlykdan dikeltmek (diňe asyl eýesi)
+        if uid not in ORIG_ADMINS: return
+        STATE_HANDOFF["fid"] = d.file_id
+        await u.message.reply_text("♻️ <b>Bu yedekten geri yüklensin mi?</b>\n<blockquote>Şimdiki veritabanı <code>subbot.json.pre-restore</code> olarak saklanır, sonra bot yeniden açılır.</blockquote>",
+                                   parse_mode="HTML", reply_markup=KB([[B("♻️ Evet, geri yükle", "rst_h", "danger")]]))
+
     elif fn.endswith(".apk"):
         if not is_fo(uid): return
         mv = re.search(r"(\d+(?:\.\d+)+)", fn)
@@ -12205,6 +12335,9 @@ def main():
         print("SELFTEST OK"); return
     token = os.environ.get("BOT_TOKEN", "")
     if not token: raise SystemExit("BOT_TOKEN bulunamadı (/root/env.txt)")
+    if os.path.exists(RETIRED_FLAG):   # 1.47: bot täze VPS-e geçdi — bu VPS-de işlemeýär (systemd gaýtadan açsa-da)
+        log.warning("Bu VPS durduryldy (bot täze VPS-de: %s). Gaýtadan işletmek: rm %s", open(RETIRED_FLAG).read().strip(), RETIRED_FLAG)
+        while os.path.exists(RETIRED_FLAG): time.sleep(60)
     if not ADMINS: log.warning("ADMIN_IDS yok: kimse giriş yapamaz.")
     app = ApplicationBuilder().token(token).concurrent_updates(True).post_init(post_init).build()
     app.add_handler(MessageHandler(filters.PHOTO, app_photo), group=-2)   # kurucunun reklam resmi
