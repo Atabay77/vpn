@@ -28,6 +28,11 @@ data class Server(val flag: String, val country: String, val title: String, val 
 
 object Sub {
     @Volatile var list: List<Server> = emptyList()
+    /** 1.47.13: bagly serwer täze sanawda ýok bolsa-da (bot aýyrdy) birikme gutarýança sanawda galýar — ekranda başga serwer görünmesin. */
+    private fun keepActive(l: List<Server>): List<Server> {
+        val a = State.active ?: return l
+        return if ((State.now == State.ON || State.now == State.WAIT) && l.none { it.key == a.key }) l + a else l
+    }
     @Volatile var keys: Map<String, Long> = emptyMap()                 // key özeti → bitiş (sn, 0 = süresiz)
     @Volatile var upd: Map<String, Pair<String, String>> = emptyMap()  // "64"/"32"/"all" → (sürüm, Drive dosyası)
     @Volatile var ad: Pair<String, String>? = null                     // reklam: (resim Drive dosyası, link)
@@ -169,7 +174,7 @@ object Sub {
         val t = if (System.currentTimeMillis() - at > 3 * 3600_000L) null else g?.first?.let { Msg.dec(it) ?: it }   // diňe bot ýazyp bilýär (n/); şifrsiz hem kabul
         val l = t?.let { parse(it) }.orEmpty()
         if (t == null || l.isEmpty()) { vpsBadUntil = System.currentTimeMillis() + 120_000L; return false }
-        meta(t); list = l; okAt = System.currentTimeMillis(); src = "vps"
+        meta(t); list = keepActive(l); okAt = System.currentTimeMillis(); src = "vps"
         runCatching { Box.write(ctx, t) }
         return true
     }
@@ -187,7 +192,7 @@ object Sub {
                 val l = parse(t)
                 meta(t)   // key / sürüm / reklam satırları sunucu olmasa da okunur
                 if (l.isEmpty()) return@runCatching false
-                list = l; okAt = System.currentTimeMillis(); src = "drive"
+                list = keepActive(l); okAt = System.currentTimeMillis(); src = "drive"
                 Box.write(ctx, t)
                 true
             } finally { c.disconnect() }
