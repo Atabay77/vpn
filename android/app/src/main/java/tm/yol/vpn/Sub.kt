@@ -89,8 +89,15 @@ object Sub {
     }
 
     /** Abonelik metnini sunucu listesine çevirir (desteklenmeyen satırlar atlanır). */
+    @Volatile var needUpd = false   // 1.47: bot diňe has täze wersiýa rugsat berýär (#tvx) — sanaw ýok, täzelemeli
     fun parse(text: String): List<Server> {
-        val body = body(text)
+        val body0 = body(text)
+        // 1.47: kodlar şifrli (#tvx: iň_pes_wersiýa şifr) — köne programmalar görmeýär; bu wersiýa has köne bolsa — sanaw boş
+        val xl = body0.lineSequence().map { it.trim() }.firstOrNull { it.startsWith("#tvx:") }
+        val body = if (xl == null) body0 else {
+            val p = xl.split(Regex("\\s+")); val own = State.app?.let { Msg.ver(it) } ?: "0"
+            if (p.size >= 3 && (own == "0" || !Upd.newer(p[1], own))) { needUpd = false; Msg.dec(p[2]) ?: "" } else { needUpd = true; "" }
+        }
         return body.lineSequence().map { it.trim() }
             .filter { it.isNotEmpty() && !it.startsWith("#") }
             .mapNotNull { line ->

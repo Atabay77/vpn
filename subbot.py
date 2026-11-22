@@ -935,7 +935,8 @@ def app_meta(cfg):
     try: ai_on = bool(ai_key()) and load_db().get("ai_sup", True)
     except Exception: ai_on = False
     if ai_on: out.append("#tvai: 1")
-    if cfg.get("gbans"): out.append("#tvban: " + ",".join(cfg["gbans"][-200:]))
+    mv_ = [d_ for d_, u_ in (cfg.get("devs") or {}).items() if u_.get("mvto")][-1500:]   # 1.47: täze programma geçirilen köne telefonlar — Global chatda görünmeýär
+    if cfg.get("gbans") or mv_: out.append("#tvban: " + ",".join(list(cfg.get("gbans") or [])[-200:] + mv_))
     if cfg.get("ubans"): out.append("#tvuban: " + ",".join(cfg["ubans"][-200:]))
     seen_, devs_ = set(), cfg.get("devs") or {}
     for x in sorted((cfg.get("apw") or {}).values(), key=lambda x: x.get("role") != "f"):   # 1.16: 👑 Owner / 🛡 Admin
@@ -2441,6 +2442,9 @@ def app_sync(force=False):
         if (fb_ or {}).get("hp") != (cfg.get("fborrow") or {}).get("hp"): vlog(f"🔁 Mugt serwer: {'Premium-dan wagtlaýyn ' + fb_['hp'] if fb_ else 'wagtlaýyn Premium serwer yzyna alyndy'}")   # 1.43.2: mugt — her ýurtdan iň gowy işleýän bir kod + kanal + 2 PUBG
         codes = app_brand_names(codes)   # 1.29: abunanyň atlary görünmesin
         meta = app_meta(cfg) + (["#tvfree: " + ",".join(free_)] if free_ else [])
+        mv_ = app_min_ver(cfg)
+        if mv_ and cfg.get("fid") and codes:   # 1.47: diňe iň täze wersiýa — kodlar şifrli; köne programmalar diňe «täze wersiýany gurnaň» görýär
+            meta.append(f"#tvx: {mv_} {app_enc(cfg['fid'], chr(10).join(codes))}"); codes = [APP_OLD_STUB]
         dig = hashlib.sha256("\n".join(meta + codes).encode()).hexdigest()[:16]
         svc = new_service()
         if not svc: raise RuntimeError("drive-sa.json bulunamadı")
@@ -2531,6 +2535,19 @@ async def app_online_loop(app):
                     await asyncio.to_thread(ntfy_pub, app_topic(fid) + "on", app_enc(fid, json.dumps({"on": n, "ts": int(time.time())}))); last_ = (n, time.time())
         except Exception as e: log.info("online: %s", e)
         await asyncio.sleep(60)
+
+APP_OLD_STUB = "vless://00000000-0000-4000-8000-000000000000@127.0.0.1:9?type=tcp&security=none#" + urllib.parse.quote("⚠️ Täze wersiýany gurnaň")
+APP_XVER = "1.47.0"   # şifrli sanawy okap bilýän ilkinji wersiýa
+def _vk(v): return [int(x) if x.isdigit() else 0 for x in str(v or "0").split(".")]
+def app_min_ver(cfg):
+    """1.47: iň pes rugsat berilýän wersiýa — ýaýradylan iň täze wersiýa (diňe 1.47.0+ bolsa; ondan köne wersiýalar şifrli sanawy okap bilmeýär).
+    «minv» = "0" — öçük (hemme wersiýa işleýär)."""
+    if str(cfg.get("minv") or "") == "0": return None
+    vs = [str(u.get("ver") or "") for u in (cfg.get("upd") or {}).values()] + [str((cfg.get("upd_link") or {}).get("ver") or "")]
+    vs = [v for v in vs if re.fullmatch(r"\d+(\.\d+)+", v)]
+    if not vs: return None
+    top = max(vs, key=_vk)
+    return top if _vk(top) >= _vk(APP_XVER) else None
 
 def app_upd_link_check():
     """1.45.4: VPS-e täze APK goýulsa — sabit salgydaky wersiýa özi täzelenýär (link üýtgemeýär). Dönüş: täze wersiýa ýa-da None."""
@@ -3569,6 +3586,13 @@ async def app_on_msg(app, fid, o):
         try: await asyncio.to_thread(app_lvl_check, dev, True)
         except Exception as e: log.info("lvl: %s", e)
     a = app_cfg(load_db_ro())   # 1.47: diňe okamak (çalt)
+    if (u0_ or {}).get("mvto") and not (k == "tk" and MIG_RE.search(str(o.get("t") or ""))):   # 1.47: bu köne programma täze programma geçirildi — hiç zat edip bilmeýär (diňe GOC kody: täze programma gaýtadan gurlan bolsa)
+        rl_ = RUN.setdefault("mv_at", {})
+        if time.time() - rl_.get(dev, 0) > 600:
+            rl_[dev] = time.time()
+            await asyncio.to_thread(app_send, dev, {"k": "uban", "on": True})
+            if k == "tk": await asyncio.to_thread(app_send, dev, {"k": "tk", "who": "a", "t": "✅ Siziň hasabyňyz täze programma geçirildi. Bu köne programma indi işlemeýär — täze programmany ulanyň we muny pozuň.", "tid": int(o.get("tid") or 0)})
+        return
     if k == "adm": await app_adm(app, dev, o); return
     if k == "pr": await asyncio.to_thread(app_x_report, dev, o.get("p")); return
     if k == "alog": await asyncio.to_thread(alog_add, dev, o.get("e")); return   # 1.47: admin log
@@ -3626,7 +3650,9 @@ async def app_on_msg(app, fid, o):
         if not text: return
         mm_ = MIG_RE.search(text)
         if mm_ and len(text) < 60:   # 1.47: köne programmadan GOC- kody — göçürmek (bilet açylmaýar)
-            new_ = ((a.get("mig_q") or {}).get("GOC-" + mm_.group(1).upper()) or {}).get("dev")
+            await asyncio.to_thread(app_mut_flush)   # garaşýan ýazgylar (migreq / täze telefon)
+            cg_ = "GOC-" + mm_.group(1).upper(); a = app_cfg(load_db_ro())
+            new_ = ((a.get("mig_q") or {}).get(cg_) or {}).get("dev") or next((d_ for d_ in (a.get("devs") or {}) if d_ != dev and app_mig_code(d_) == cg_), None)   # 1.47: migreq gelmedik bolsa hem
             if not new_: msg_ = "⚠️ Kod tapylmady. Täze programmany açyp interneti birikdiriň, 1 minut garaşyň we kody gaýtadan ýazyň."
             else:
                 res_ = await asyncio.to_thread(app_migrate, dev, new_, "app")
@@ -6058,6 +6084,17 @@ async def cmd_fcm(u: Update, c: ContextTypes.DEFAULT_TYPE):
         + f"Gönderilen: ✅ {st['ok']} · ❌ {st['bad']}" + (f"\nSon hata: <code>{esc(st['err'])}</code>" if st.get("err") else "")
         + "".join(f"\n📱 Telefon hatası ({ago(x['t'])}, v{esc(x.get('ver', ''))}, Play hizmetleri {esc(x.get('gms') or '?')}): <code>{esc(x['e'][:200])}</code>" for x in (a_.get("fcm_perr") or [])[-3:])
         + "</blockquote>\n<i>Telefonlar yeni sürüme geçip abonelik dosyasını yenileyince kaydolur.</i>", parse_mode="HTML")
+
+async def cmd_minver(u: Update, c: ContextTypes.DEFAULT_TYPE):
+    """1.47: /minver — sadece en yeni sürüm (otomatik) · /minver kapat — bütün sürümler çalışır · /minver ac — tekrar otomatik."""
+    uid = u.effective_user.id
+    if not is_fo(uid): return
+    a_ = (c.args or [""])[0].lower()
+    if a_ in ("kapat", "off", "0"): app_mut(lambda x: x.__setitem__("minv", "0")); RUN["app_dirty"] = True
+    elif a_ in ("ac", "aç", "on", "auto"): app_mut(lambda x: x.pop("minv", None)); RUN["app_dirty"] = True
+    mv_ = app_min_ver(app_cfg(load_db()))
+    await c.bot.send_message(uid, "🔒 <b>Sürüm kilidi</b>\n<blockquote>" + (f"Sadece <b>{esc(mv_)}</b> ve daha yeni sürümler sunucu görür. Eski programlar «Täze wersiýany gurnaň» görür." if mv_
+        else "Kapalı — bütün sürümler çalışır (1.47.0 yayınlanınca kendiliğinden açılır).") + "</blockquote>\n<code>/minver kapat</code> · <code>/minver ac</code>", parse_mode="HTML")
 
 async def cmd_owner2(u: Update, c: ContextTypes.DEFAULT_TYPE):
     """1.47: /owner2 <Telegram ID> — owner 2 ekle / kaldır (sadece asıl kurucu). Argümansız: liste.
@@ -12169,6 +12206,7 @@ def main():
     app.add_handler(CommandHandler("fcm", cmd_fcm))
     app.add_handler(CommandHandler("gocur", cmd_gocur))
     app.add_handler(CommandHandler("owner2", cmd_owner2))
+    app.add_handler(CommandHandler("minver", cmd_minver))
     app.add_handler(MessageHandler(filters.COMMAND, other_cmd))
     app.add_handler(CallbackQueryHandler(cb))
     app.add_handler(InlineQueryHandler(inline_ad))
