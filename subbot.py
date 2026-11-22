@@ -3235,6 +3235,27 @@ async def app_mig_finish(app, old, new, res):
     except Exception as e: log.info("mig lvl: %s", e)
     RUN["app_dirty"] = True
 
+TAG_ABC = "abcdefghijklmnopqrstuvwxyz"
+def app_tag_make(a, d):
+    """1.47.4: her ulanyja 5 harply iňlis @belligi (meselem @kvrom) — gaýtalanmaýar, bir gezek berilýär."""
+    used = {str(u.get("tg")) for u in (a.get("devs") or {}).values() if u.get("tg")}
+    for i in range(200):
+        h = hashlib.sha256(f"tag:{d}:{i}".encode()).digest(); t = "".join(TAG_ABC[b % 26] for b in h[:5])
+        if t not in used: return t
+    return ""
+
+def app_tag_get(d):
+    """Belgi ýok bolsa döredilýär we bazada saklanýar."""
+    a = app_cfg(load_db_ro()); u_ = (a.get("devs") or {}).get(d)
+    if not u_: return ""
+    if u_.get("tg"): return u_["tg"]
+    def f(x):
+        uu = (x.get("devs") or {}).get(d)
+        if uu is None: return ""
+        if not uu.get("tg"): uu["tg"] = app_tag_make(x, d)
+        return uu["tg"]
+    return app_mut(f) or ""
+
 def app_user_find(a, q, me=""):
     """1.47: nik boýunça gözleg (doly gabat gelýän → başlaýan → içinde bar), TM-kod hem; gadagan edilenler we göçürilen köne telefonlar ýok."""
     q = re.sub(r"\s+", " ", str(q or "")).strip().lstrip("@")[:32]; ql = q.casefold()
@@ -3245,15 +3266,16 @@ def app_user_find(a, q, me=""):
         if d_ == me or d_ in bans or u_.get("mvto"): continue
         nk_ = str(u_.get("nk") or u_.get("nick") or ""); nl = nk_.casefold()
         if cq.startswith("TM-") and app_ref_code(d_) == cq: sc = 0
+        elif u_.get("tg") and u_["tg"] == ql: sc = 0   # 1.47.4: @belgi
         elif not nk_ or nk_ == "?": continue
         elif nl == ql: sc = 1
         elif nl.startswith(ql): sc = 2
         elif any(w.startswith(ql) for w in re.split(r"[\s._\-]+", nl)): sc = 3
         elif ql in nl: sc = 4
         else: continue
-        hits.append((sc, -float(u_.get("l") or 0), d_, nk_ or "?", int(u_.get("lv") or 1)))
+        hits.append((sc, -float(u_.get("l") or 0), d_, nk_ or "?", int(u_.get("lv") or 1), str(u_.get("tg") or "")))
     hits.sort()
-    return [{"d": d_, "n": n_, "lv": lv_} for _, _, d_, n_, lv_ in hits[:20]]
+    return [{"d": d_, "n": n_, "lv": lv_, "t": t_} for _, _, d_, n_, lv_, t_ in hits[:20]]
 
 def app_user_info(a, dv):
     """1.47: ulanyjy maglumaty (eýesi / doly admin): goşulan, soňky gezek, VPN ulanan günleri, çagyranlary, işjeňligi."""
@@ -3615,6 +3637,14 @@ async def app_on_msg(app, fid, o):
         if time.time() - RUN.setdefault("usq_at", {}).get(dev, 0) < 1.5: return
         RUN["usq_at"][dev] = time.time()
         await asyncio.to_thread(app_send, dev, {"k": "usr", "q": str(o.get("q") or "")[:32], "l": app_user_find(a, o.get("q"), dev)}); return
+    if k == "utag":   # 1.47.4: @belgi (öz belgisi ýa-da başga adamyňky)
+        rl_ = RUN.setdefault("utag_at", {})
+        if time.time() - rl_.get(dev, 0) < 0.4: return
+        rl_[dev] = time.time(); d_ = str(o.get("d") or dev)
+        if not DEV_RE.match(d_): return
+        t_ = await asyncio.to_thread(app_tag_get, d_)
+        if t_: await asyncio.to_thread(app_send, dev, {"k": "utag", "d": d_, "t": t_})
+        return
     if k == "migreq":   # 1.47: täze programma — göçmek kody (köne programmada ýazylanda tanalsyn)
         c_ = app_mig_code(dev)
         if str(o.get("c") or "").upper() == c_ and not (a.get("mig_q") or {}).get(c_):

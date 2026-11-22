@@ -148,6 +148,8 @@ html.ph-s .c-bg{background-image:var(--bgS,url(img/bg0_s.jpg))!important}
 .autohot{min-height:68px!important;border:1.5px solid #6FDB9C!important;background:linear-gradient(135deg,rgba(43,191,122,.30),rgba(11,33,23,.75))!important;animation:ahot 2s ease-in-out infinite}
 @keyframes ahot{0%,100%{box-shadow:0 0 0 0 rgba(111,219,156,.55),0 6px 18px rgba(0,0,0,.35)}50%{box-shadow:0 0 0 6px rgba(111,219,156,0),0 0 22px rgba(111,219,156,.45)}}
 .afree{font-size:10px;font-weight:900;letter-spacing:.04em;padding:2px 8px;border-radius:999px;background:linear-gradient(180deg,#8CF5B5,#2BBF7A);color:#06210F;box-shadow:0 2px 8px rgba(43,191,122,.5)}
+.utag{font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;color:#7CC4FF}
+.utagb{font-size:13px;margin-top:-4px;padding:2px 10px;border:none;border-radius:10px;background:rgba(124,196,255,.12);cursor:pointer}
 .mpg-on{color:#F3E7D0;border-color:transparent;position:relative;isolation:isolate}
 /* 1.47.2: PUBG açyk — gutynyň daşyndan aýlanýan çyzyk */
 .mpg-on::before{content:"";position:absolute;inset:-1.5px;border-radius:inherit;padding:1.5px;background:conic-gradient(from var(--pga,0deg),transparent 0 62%,#6FDB9C 78%,#E8FFD9 86%,transparent 92%);-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude;animation:pgspin 2.2s linear infinite;pointer-events:none;z-index:-1}
@@ -920,6 +922,7 @@ label[for="pfph"]{z-index:3}
           <sc-if value="{{up.noPh}}" hint-placeholder-val="{{true}}"><div class="avbig" style="background:{{up.bg}};display:flex;align-items:center;justify-content:center;font-size:34px;font-weight:800;color:#0B2117">{{up.ini}}</div></sc-if>
         <sc-if value="{{up.hasRk}}" hint-placeholder-val="{{false}}"><img class="avfrb {{up.frCls}}" src="img/fr/f{{up.rkT}}.webp" alt=""></sc-if></button>
         <div class="{{up.ncls}}" style="font-size:21px;font-weight:800;margin-top:18px">{{up.name}}</div>
+        <sc-if value="{{up.tag}}" hint-placeholder-val="{{false}}"><span class="utag utagb">{{up.tag}}</span></sc-if>
         <sc-if value="{{up.hasRk}}" hint-placeholder-val="{{false}}"><div class="uprk"><span class="rk t{{up.rkT}} lite" style="--s:44px"><i class="rk-au"></i><i class="rk-ry"></i><img class="rk-im" src="img/rk/b{{up.rkT}}.webp" alt=""><i class="rk-sh" style="-webkit-mask-image:url(img/rk/b{{up.rkT}}.webp);mask-image:url(img/rk/b{{up.rkT}}.webp)"></i><i class="rk-sp s1"></i><i class="rk-sp s2"></i><i class="rk-sp s3"></i><i class="rk-em e1"></i><i class="rk-em e2"></i><i class="rk-em e3"></i><i class="rk-or"></i></span><span class="{{up.rkNcls}}">{{up.rkName}}</span><span class="rkpl">{{up.rkT}}</span></div></sc-if>
         <sc-if value="{{up.isO}}" hint-placeholder-val="{{false}}"><span class="bdg-o big">👑 OWNER</span></sc-if>
         <sc-if value="{{up.isA}}" hint-placeholder-val="{{false}}"><span class="bdg-a big">🛡 ADMIN</span></sc-if><sc-if value="{{up.isS}}" hint-placeholder-val="{{false}}"><span class="bdg-s big">💎 SATYJY</span></sc-if><sc-if value="{{up.isP}}" hint-placeholder-val="{{false}}"><span class="bdg-p big">👑 PREMIUM</span></sc-if>
@@ -973,7 +976,7 @@ label[for="pfph"]{z-index:3}
         <sc-for list="{{dmSRows}}" as="sr" hint-placeholder-count="0">
           <button onClick="{{sr.open}}" class="glass row tap" style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:14px;color:#F3E7D0;text-align:left;cursor:pointer;flex-shrink:0">
             <sc-if value="{{sr.hasPh}}" hint-placeholder-val="{{false}}"><img src="{{sr.photo}}" alt="" style="width:40px;height:40px;border-radius:20px;object-fit:cover;flex-shrink:0"></sc-if><sc-if value="{{sr.noPh}}" hint-placeholder-val="{{true}}"><span style="width:40px;height:40px;border-radius:20px;background:{{sr.bg}};display:flex;align-items:center;justify-content:center;font-weight:800;flex-shrink:0">{{sr.ini}}</span></sc-if>
-            <span class="{{sr.ncls}}" style="flex-grow:1;font-size:14px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{sr.name}}</span>
+            <span style="flex-grow:1;display:flex;flex-direction:column;min-width:0"><span class="{{sr.ncls}}" style="font-size:14px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{sr.name}}</span><span class="utag">{{sr.tag}}</span></span>
             <img src="img/rk/b{{sr.lv}}.webp" alt="" style="width:28px;height:28px;flex-shrink:0">
           </button>
         </sc-for>
@@ -1109,6 +1112,7 @@ label[for="pfph"]{z-index:3}
         </div>
         <input id="pfph" type="file" accept="image/*" onChange="{{onPhoto}}" style="display:none">
         <div class="{{meNcls}}" style="font-size:21px;font-weight:800;margin-top:18px">{{me.name}}</div>
+        <sc-if value="{{meTag}}" hint-placeholder-val="{{false}}"><button onClick="{{cpMyTag}}" class="tap utag utagb">{{meTag}} 📋</button></sc-if>
         <sc-if value="{{isOwner}}" hint-placeholder-val="{{false}}"><span class="bdg-o big">👑 OWNER</span></sc-if>
         <sc-if value="{{isAdminR}}" hint-placeholder-val="{{false}}"><span class="bdg-a big">🛡 ADMIN</span></sc-if>
         <div class="nkrow"><input class="kin" value="{{nkIn}}" onChange="{{onNk}}" maxlength="20" placeholder="{{tx.pf_nickPh}}" aria-label="{{tx.pf_nickPh}}" autocomplete="off"><button onClick="{{saveNk}}" class="tap nkbtn">{{tx.pf_nickSave}}</button></div>
@@ -1611,7 +1615,20 @@ label[for="pfph"]{z-index:3}
   <sc-if value="{{menu}}" hint-placeholder-val="{{false}}">
     <button class="scrim" onClick="{{closeMenu}}" aria-label="{{tx.close}}" style="position:absolute;left:0;top:0;width:390px;height:var(--H);border:none;background:rgba(0,0,0,.55);z-index:20;cursor:pointer"></button>
     <div class="drawer" style="position:absolute;left:0;top:0;width:292px;height:var(--H);display:flex;z-index:21;background:rgba(7,20,14,.97);box-shadow:12px 0 40px rgba(0,0,0,.6)">
-      <div style="flex-grow:1;padding:26px 12px 18px 16px;display:flex;flex-direction:column;gap:4px">
+      <div style="flex-grow:1;padding:22px 12px 18px 16px;display:flex;flex-direction:column;gap:4px;min-height:0;overflow-y:auto">
+        <input class="kin" value="{{dmQ}}" onChange="{{onDmQ}}" placeholder="{{dmQph}}" aria-label="{{dmQph}}" autocomplete="off" spellcheck="false" style="flex-shrink:0;height:40px;margin:0 0 8px;border-radius:13px;padding:0 12px;font-size:13px;border:1px solid rgba(224,176,74,.42);background:rgba(8,24,17,.78);color:#F3E7D0;outline:none;text-align:left">
+        <sc-if value="{{dmSOn}}" hint-placeholder-val="{{false}}">
+          <sc-if value="{{dmSWait}}" hint-placeholder-val="{{false}}"><div style="font-size:12px;color:#8E9C93;padding:0 4px 6px">{{dmSWaitT}}</div></sc-if>
+          <sc-if value="{{dmSNone}}" hint-placeholder-val="{{false}}"><div style="font-size:12px;color:#8E9C93;padding:0 4px 6px">{{dmSNoneT}}</div></sc-if>
+          <sc-for list="{{dmSRows}}" as="sr" hint-placeholder-count="0">
+            <button onClick="{{sr.open}}" class="tap" style="display:flex;align-items:center;gap:10px;padding:6px 8px;border-radius:12px;border:none;background:rgba(255,255,255,.05);color:#F3E7D0;text-align:left;cursor:pointer;flex-shrink:0">
+              <sc-if value="{{sr.hasPh}}" hint-placeholder-val="{{false}}"><img src="{{sr.photo}}" alt="" style="width:34px;height:34px;border-radius:17px;object-fit:cover;flex-shrink:0"></sc-if><sc-if value="{{sr.noPh}}" hint-placeholder-val="{{true}}"><span style="width:34px;height:34px;border-radius:17px;background:{{sr.bg}};display:flex;align-items:center;justify-content:center;font-weight:800;font-size:12px;color:#0B2117;flex-shrink:0">{{sr.ini}}</span></sc-if>
+              <span style="flex-grow:1;display:flex;flex-direction:column;min-width:0"><span class="{{sr.ncls}}" style="font-size:13px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{sr.name}}</span><span class="utag">{{sr.tag}}</span></span>
+              <img src="img/rk/b{{sr.lv}}.webp" alt="" style="width:24px;height:24px;flex-shrink:0">
+            </button>
+          </sc-for>
+          <div style="height:8px;flex-shrink:0"></div>
+        </sc-if>
         <button onClick="{{goProfile}}" class="tap" style="display:flex;align-items:center;gap:12px;padding:8px 10px;margin:0 0 10px;border-radius:16px;border:1px solid rgba(224,176,74,.4);background:rgba(255,255,255,.04);cursor:pointer;text-align:left">
           <sc-if value="{{me.hasPh}}" hint-placeholder-val="{{false}}"><img src="{{me.photo}}" alt="" style="width:46px;height:46px;border-radius:23px;object-fit:cover;flex-shrink:0;border:2px solid #E0B04A;box-sizing:border-box"></sc-if><sc-if value="{{me.noPh}}" hint-placeholder-val="{{true}}"><span style="width:46px;height:46px;border-radius:23px;background:{{me.bg}};display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:800;color:#0B2117;flex-shrink:0;border:2px solid #E0B04A;box-sizing:border-box">{{me.ini}}</span></sc-if>
           <span style="flex-grow:1;display:flex;flex-direction:column;min-width:0"><span style="font-size:14px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{me.name}}</span><span style="font-size:11px;color:#C9BFA8">{{tx.pf_open}}</span></span>

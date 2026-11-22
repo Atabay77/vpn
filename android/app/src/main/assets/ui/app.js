@@ -65,6 +65,10 @@
   const admMe = () => (A && A.me) || INFO.admMe || {};
 
   // ---- 1.16: profil, hususy habarlar, nyşanlar ----
+  const TAGS = LS.get('tags', {}) || {}, TAGQ = {};   // 1.47.4: telefon → 5 harply @belgi (bot berýär)
+  const tagOf = (d) => { if (!d) return ''; if (TAGS[d]) return TAGS[d]; const tn = Date.now();
+    if (!TAGQ[d] || tn - TAGQ[d] > 60000) { TAGQ[d] = tn; try { NB.send(JSON.stringify({ k: 'utag', d })); } catch (e) {} } return ''; };
+  const tagPut = (d, t) => { if (!d || !/^[a-z]{5}$/.test(t || '') || TAGS[d] === t) return; TAGS[d] = t; const ks = Object.keys(TAGS); if (ks.length > 800) delete TAGS[ks[0]]; LS.set('tags', TAGS); };
   const P2 = {};          // telefon → {th, ph, bg, n, dm} (doly profil)
   const DMS = {};         // garşydaş → {st, msgs: [], un, n, lt}
   const MUTE = LS.get('dmMute', {}) || {};   // 1.21: sessize alnanlar (sanalmaýar, duýduryş ýok)
@@ -701,7 +705,7 @@
       if (r.isUprof) {
         const d = s.upDev, p = P2[d], st = (DMS[d] || {}).st || '', a = ava(d), mine = d === me1;
         const canDm = !mine && st !== 'blk' && ((p && p.dm) || !!DMS[d]);
-        r.up = Object.assign(a, { photo: (p && p.ph) || a.photo, hasPh: !!((p && p.ph) || a.photo), noPh: !((p && p.ph) || a.photo), bgImg: bgUrl(p && p.bg),
+        r.up = Object.assign(a, { tag: tagOf(d) ? '@' + tagOf(d) : '', photo: (p && p.ph) || a.photo, hasPh: !!((p && p.ph) || a.photo), noPh: !((p && p.ph) || a.photo), bgImg: bgUrl(p && p.bg),
           sub: a.isO ? tx.vip_o : a.isA ? tx.vip_a : '', canDm, noDm: !canDm, notMe: !mine,
           why: mine ? tx.dm_me : st === 'blk' ? tx.dm_blocked : !p ? tx.nk_wait : tx.dm_noKey,
           write: () => this.openDm(d), zoom: () => this.setState({ zoom: (p && p.ph) || a.photo || '' }),
@@ -740,7 +744,9 @@
         const R = s.dmSR && s.dmSR.q === q.trim() ? s.dmSR.l : null;
         r.dmSOn = q.trim().length >= 2; r.dmSWait = r.dmSOn && !R; r.dmSNone = r.dmSOn && !!R && !R.length;
         r.dmSWaitT = ({ ru: 'Поиск…', tr: 'Aranıyor…' })[s.lang] || 'Gözlenýär…'; r.dmSNoneT = tx.us_none;
-        r.dmSRows = r.dmSOn && R ? R.map((u) => Object.assign(ava(u.d), { name: u.n || '?', lv: String(rkT(u.lv || 1)), open: () => { this.setState({ dmQ: '' }); this.openProf(u.d); } })) : []; }
+        r.dmSRows = r.dmSOn && R ? R.map((u) => Object.assign(ava(u.d), { name: u.n || '?', tag: u.t ? '@' + u.t : '', lv: String(rkT(u.lv || 1)), open: () => { this.setState({ dmQ: '' }); this.openProf(u.d); } })) : [];
+        r.dmQph = ({ ru: '🔎 Ник или @метка…', tr: '🔎 Takma ad veya @etiket…' })[s.lang] || '🔎 Nik ýa-da @belgi…';
+        { const mt = tagOf(me1); r.meTag = mt ? '@' + mt : ''; r.cpMyTag = () => { if (!mt) return; NB.copy('@' + mt); this.say('✓ @' + mt); }; } }
       const rows = Object.keys(DMS).filter((d) => d !== me1).sort((a, b) => (DMS[b].lt || 0) - (DMS[a].lt || 0));
       r.dmEmpty = !rows.length;
       r.dmRows = rows.map((d, i) => { const x = DMS[d], m = x.msgs.filter((q) => !isCtl(q)).pop(), av = ava(d);
@@ -1635,7 +1641,8 @@
         if (m.up) { up.rkm = { t: rkT(m.lv), up: true, days: m.days || 0 }; C.party('⭐ ' + tx.lv_up.replace('{n}', String(m.lv)) + (m.days ? ' · +' + m.days + ' ' + tx.days : '')); }
       } else if (m.k === 'gmen') {   // 1.47: Global chatda jogap / @agzamak
         if (s.page !== 'global') C.say('💬 ' + (m.n || '?') + ' · ' + (m.rp ? ({ ru: 'ответил(а) вам', tr: 'size yanıt verdi' }[s.lang] || 'size jogap berdi') : ({ ru: 'упомянул(а) вас', tr: 'sizden bahsetti' }[s.lang] || 'sizi agzady')) + (m.t ? ': ' + m.t.slice(0, 60) : ''));
-      } else if (m.k === 'usr') { up.dmSR = { q: m.q || '', l: m.l || [] };   // 1.47: ulanyjy gözleginiň netijesi
+      } else if (m.k === 'usr') { up.dmSR = { q: m.q || '', l: m.l || [] }; (m.l || []).forEach((u) => tagPut(u.d, u.t));   // 1.47: ulanyjy gözleginiň netijesi
+      } else if (m.k === 'utag') { tagPut(m.d, m.t); up.tagTick = t;   // 1.47.4: @belgi
       } else if (m.k === 'top') { LS.set('top', m.l || []); up.payTick = t; }
       else if (m.k === 'lvs') { const tn = Date.now(); Object.keys(m.m || {}).forEach((d) => { LVB[d] = [+m.m[d] || 0, tn]; }); LS.set('lvb', LVB); up.gTick = (s.gTick || 0) + 1; }
       else if (m.k === 'kgift') { if (m.ok) { C.say(tx.gf_ok.replace('{n}', m.to || '?').replace('{d}', String(m.d || 1))); up.gfTo = ''; try { NB.refresh(); } catch (e2) {} } else C.say('⚠️ ' + (tx['gf_e_' + m.why] || tx.gf_e_notfound)); }
