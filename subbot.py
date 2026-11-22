@@ -2477,6 +2477,32 @@ def apk_head_ver(url):
     except Exception as e:
         log.info("apk head %s: %s", url, e); return None
 
+def app_online_now(fid):
+    """1.47: soňky 10 minutda VPN-i işleýänler (ntfy.sh signallary — diňe 11 minutlyk, ýeňil)."""
+    url = f"https://ntfy.sh/{app_topic(fid)}/json?poll=1&since=11m"
+    with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "subbot"}), timeout=15) as r:
+        lines = r.read().decode("utf-8", "ignore").splitlines()
+    now = time.time(); on = set()
+    for l in lines:
+        try: j = json.loads(l)
+        except Exception: continue
+        p_ = str(j.get("message", "")).split()
+        if len(p_) >= 5 and p_[0] == "hb" and p_[4] == "1" and now - float(j.get("time") or 0) < 600: on.add(p_[1][:16])
+    return len(on)
+
+async def app_online_loop(app):
+    """1.47: onlaýn sany her minut — VPS-e («…on» mowzugy); programma açyk wagty minutda bir okaýar."""
+    await asyncio.sleep(30); last_ = (None, 0)
+    while True:
+        try:
+            fid = app_cfg(load_db()).get("fid")
+            if fid and app_relay():
+                n = await asyncio.to_thread(app_online_now, fid); RUN["app_on"] = n
+                if n != last_[0] or time.time() - last_[1] > 300:
+                    await asyncio.to_thread(ntfy_pub, app_topic(fid) + "on", app_enc(fid, json.dumps({"on": n, "ts": int(time.time())}))); last_ = (n, time.time())
+        except Exception as e: log.info("online: %s", e)
+        await asyncio.sleep(60)
+
 def app_upd_link_check():
     """1.45.4: VPS-e täze APK goýulsa — sabit salgydaky wersiýa özi täzelenýär (link üýtgemeýär). Dönüş: täze wersiýa ýa-da None."""
     ul_ = app_cfg(load_db()).get("upd_link") or {}
@@ -4945,6 +4971,7 @@ async def post_init(app):
     app.bot_data["appsync"] = asyncio.create_task(app_loop(app))
     app.bot_data["apptg"] = asyncio.create_task(app_tg_loop())
     app.bot_data["hunt"] = asyncio.create_task(hunt_loop(app))   # 1.46: kod awy
+    app.bot_data["online"] = asyncio.create_task(app_online_loop(app))   # 1.47: onlaýn sany her minut
     try: app_mut(lambda x: x.pop("fs_fast", None))   # 1.47: «çalt rejim» aýryldy
     except Exception: pass
     try:

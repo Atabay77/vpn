@@ -709,11 +709,10 @@ html .glass.row.sv-prem,html[class*=ph-] .glass.row.sv-prem{animation:none!impor
       </sc-if>
       <sc-for list="{{news}}" as="nw" hint-placeholder-count="3">
         <div class="glass row {{nw.cls}}" style="animation-delay:{{nw.d}}s;width:100%;box-sizing:border-box;min-width:0;border-radius:18px;padding:14px;display:flex;flex-direction:column;gap:6px;flex-shrink:0">
-          <button onClick="{{nw.open}}" style="display:flex;align-items:center;gap:8px;width:100%;min-width:0;border:none;background:transparent;padding:0;color:#F3E7D0;cursor:pointer;text-align:left">
-            <sc-if value="{{nw.unread}}" hint-placeholder-val="{{false}}"><span class="dotnew" aria-hidden="true"></span></sc-if>
-            <span class="{{nw.tcls}}" style="font-size:14px;font-weight:800;flex-grow:1;min-width:0;overflow-wrap:anywhere">{{nw.title}}</span>
-            <sc-if value="{{nw.isO}}" hint-placeholder-val="{{false}}"><span class="bdg-o">👑 OWNER</span></sc-if>
-            <span style="font-size:10px;color:#8E9C93;white-space:nowrap">{{nw.date}}</span>
+          <button onClick="{{nw.open}}" style="display:flex;flex-direction:column;align-items:stretch;gap:4px;width:100%;min-width:0;border:none;background:transparent;padding:0;color:#F3E7D0;cursor:pointer;text-align:left">
+            <span style="display:flex;align-items:flex-start;gap:8px;min-width:0"><sc-if value="{{nw.unread}}" hint-placeholder-val="{{false}}"><span class="dotnew" aria-hidden="true" style="margin-top:5px"></span></sc-if>
+            <span class="{{nw.tcls}}" style="font-size:14px;font-weight:800;flex-grow:1;min-width:0;overflow-wrap:anywhere;line-height:1.35">{{nw.title}}</span></span>
+            <span style="display:flex;align-items:center;gap:6px;font-size:10px;color:#8E9C93"><sc-if value="{{nw.isO}}" hint-placeholder-val="{{false}}"><span class="bdg-o" style="margin-left:0">👑 OWNER</span></sc-if><span style="white-space:nowrap">{{nw.date}}</span></span>
           </button>
           <sc-if value="{{nw.canDel}}" hint-placeholder-val="{{false}}"><button onClick="{{nw.del}}" class="tap nbtn" style="align-self:flex-end;height:30px;padding:0 10px;border-color:rgba(255,138,120,.6);background:rgba(255,90,74,.12);color:#FFB0A6">🗑 {{tx.cf_yes}}</button></sc-if>
           <span class="sel" style="font-size:12px;color:#C9BFA8;line-height:1.5;overflow-wrap:anywhere;word-break:break-word;min-width:0;white-space:pre-line"><sc-for list="{{nw.parts}}" as="np" hint-placeholder-count="1"><sc-if value="{{np.isL}}" hint-placeholder-val="{{false}}"><a href="{{np.href}}" target="_blank" rel="noopener noreferrer" class="nlink">{{np.t}}</a></sc-if><sc-if value="{{np.isT}}" hint-placeholder-val="{{true}}"><span>{{np.t}}</span></sc-if><sc-if value="{{np.isK}}" hint-placeholder-val="{{false}}"><button onClick="{{np.cp}}" class="kchip tap">{{np.t}} 📋</button><button onClick="{{np.use}}" class="kuse tap">✍️ {{tx.k_use}}</button></sc-if></sc-for></span>

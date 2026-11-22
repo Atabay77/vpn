@@ -121,6 +121,7 @@ object State {
     @Volatile var dead = false     // 1.36: bagly serwer jogap bermeýär (2 gezek yzly-yzyna) — baş sahypada gyzyl duýduryş
     @Volatile var noPing = false   // son otomatik denemede hiçbir kod yanıt vermedi
     @Volatile var noNet = false    // telefonun interneti yok / çalışmıyor
+    @Volatile var err = ""         // 1.47: soňky birikme ýalňyşlygy («izin yok» — başga VPN bilen çaknyşyk)
 
     /** İnternet var mı: ağ bağlı mı ve Google'a (Türkmenistan'da açık olan googleapis.com) ulaşılıyor mu. */
     fun online(ctx: Context): Boolean {
@@ -290,6 +291,7 @@ class Svc : VpnService() {
         } catch (e: Throwable) {
             if (!want || g != gen) { stopLoop(); return }   // kullanıcı iptal etti ya da yeni bağlantı istendi
             if (wasOn && Lic.kill(this)) { holdBlock(); return }   // 1.28: kill switch — internet ýapyk galýar
+            State.err = e.message ?: ""
             stopCore()
             State.set(State.FAIL)
             stopForeground(STOP_FOREGROUND_REMOVE)

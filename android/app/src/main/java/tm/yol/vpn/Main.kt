@@ -170,6 +170,7 @@ open class Main : Activity() {
     override fun onActivityResult(req: Int, res: Int, data: Intent?) {
         super.onActivityResult(req, res, data)
         if (req == 1 && res == RESULT_OK) startVpn()
+        if (req == 1 && res != RESULT_OK) vpnConflict()   // 1.47: rugsat berilmedi — köplenç başga VPN «hemişe açyk»
         if (req == 7) { fileCb?.onReceiveValue(if (res == RESULT_OK && data?.data != null) arrayOf(data.data!!) else null); fileCb = null }
     }
 
@@ -179,6 +180,7 @@ open class Main : Activity() {
         if (lastState == State.WAIT && st == State.ON) { Snd.play(this, R.raw.on); msAt = System.currentTimeMillis() - 8000; msFails = 0 }
         if (lastState == State.WAIT && st == State.FAIL && State.noNet) { State.noNet = false; info(noNet()) }
         if (lastState == State.WAIT && st == State.FAIL && State.noPing) { State.noPing = false; info(noCodes()) }
+        if (lastState == State.WAIT && st == State.FAIL && State.err == "izin yok") { State.err = ""; vpnConflict() }   // 1.47
         if (lastState == State.ON && st == State.OFF) Snd.play(this, R.raw.off)
         if (st != State.ON) { lastRx = -1; rx0 = -1; dRate = 0; uRate = 0 }
         lastState = st
@@ -388,6 +390,7 @@ open class Main : Activity() {
             if (!(Upd.isLink(u.second) && Upd.linkFail == u.first)) { askUpdate(true); return }
             toast(t("Täze wersiýany ýükläp bolmady — häzirki wersiýa bilen birigýär", "Не удалось загрузить новую версию — подключаемся текущей", "Yeni sürüm indirilemedi — mevcut sürümle bağlanılıyor"))
         }
+        if (otherVpn()) toast(t("Telefonda başga VPN açyk — Türkmen VPN birikende ol öçýär", "В телефоне включён другой VPN — при подключении он отключится", "Telefonda başka VPN açık — bağlanınca o kapanır"))   // 1.47
         val i = VpnService.prepare(this)
         if (i != null) startActivityForResult(i, 1) else startVpn()
     }
@@ -493,6 +496,18 @@ open class Main : Activity() {
     private fun noNet() = t("Internetiňiz ýok. Telefonyň internetini (Wi-Fi ýa-da mobil internet) barlaň.",
         "Нет интернета. Проверьте Wi-Fi или мобильный интернет.", "İnternetiniz yok. Wi-Fi'yi ya da mobil veriyi kontrol edin.")
     private fun toast(s: String) = Toast.makeText(this, s, Toast.LENGTH_LONG).show()
+    /** 1.47: başga VPN programmasy bilen çaknyşyk — näme etmelidigi we VPN sazlamalaryna düwme. */
+    private fun vpnConflict() = ask(t("VPN açylmady. Telefonda başga VPN programmasy açyk ýa-da «Hemişe açyk VPN» edilen bolmagy mümkin.\n\nSazlamalar → VPN bölüminde başga VPN-iň «Hemişe açyk» we «VPN-siz birikmeleri petiklemek» sazlamalaryny öçüriň, soň täzeden birigiň.",
+        "VPN не включился. Возможно, в телефоне включён другой VPN или для него стоит «Постоянный VPN».\n\nВ Настройки → VPN отключите «Постоянный VPN» и «Блокировать соединения без VPN» у другого VPN, затем подключитесь снова.",
+        "VPN açılmadı. Telefonda başka bir VPN açık ya da «Her zaman açık VPN» yapılmış olabilir.\n\nAyarlar → VPN bölümünde diğer VPN'in «Her zaman açık» ve «VPN'siz bağlantıları engelle» ayarlarını kapatın, sonra tekrar bağlanın."),
+        t("VPN sazlamalary", "Настройки VPN", "VPN ayarları"), t("Ýap", "Закрыть", "Kapat")) {
+        runCatching { startActivity(Intent(android.provider.Settings.ACTION_VPN_SETTINGS)) }.onFailure { runCatching { startActivity(Intent(android.provider.Settings.ACTION_WIRELESS_SETTINGS)) } }
+    }
+    /** 1.47: telefonda başga VPN açyk (biziňki däl). */
+    private fun otherVpn(): Boolean = State.now != State.ON && runCatching {
+        val cm = getSystemService(android.net.ConnectivityManager::class.java)
+        @Suppress("DEPRECATION") cm.allNetworks.any { cm.getNetworkCapabilities(it)?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN) == true }
+    }.getOrDefault(false)
     private fun info(msg: String) = ask(msg, "OK", null) {}
     private fun ask(msg: String, yes: String, no: String?, onYes: () -> Unit) {
         if (isFinishing || isDestroyed) return

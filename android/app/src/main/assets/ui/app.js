@@ -1183,6 +1183,16 @@
       else if (s0.page === 'dm' && s0.dmPeer) { const x = DMS[s0.dmPeer], m = x && x.msgs.find((q) => q.id === id); if (m && !m.sys) C.setState({ dmRp: rpOf(m, m.f === INFO.dev ? C.meName : nameOf(s0.dmPeer)) }); }
     };
     C.rpX = () => C.setState({ gRp: null, dmRp: null, tkRp: null });
+    C.pullRefresh = () => {   // 1.47: aşak çekip täzelemek — sahypa görä
+      const s0 = C.state, tx = C.T()[s0.lang];
+      try { NB.refresh(); } catch (e) {}
+      try { if (s0.page === 'global') NB.gwatch(true); } catch (e) {}
+      try { if (s0.admOn) act('get'); } catch (e) {}
+      if (s0.page === 'servers' && C.runTest) C.runTest();
+      if (s0.page === 'rank' || s0.page === 'profile') NB.send(JSON.stringify({ k: 'lvlq' }));
+      setTimeout(() => { try { INFO = J(NB.info(), INFO); } catch (e) {} C.setState({ payTick: Date.now(), gTick: (C.state.gTick || 0) + 1 }); }, 2500);
+      C.say('⟳ ' + (({ ru: 'Обновляется…', tr: 'Yenileniyor…' })[s0.lang] || 'Täzelenýär…'));
+    };
     C.rxWho = (key) => {   // 1.47: tepki goýanlaryň hemmesi
       const s0 = C.state, map = s0.page === 'dm' && s0.dmPeer && DMS[s0.dmPeer] ? rxAgg(DMS[s0.dmPeer].msgs) : rxAgg(G.concat(LRX)), x = map[key] || {};
       if (!Object.keys(x).length) return; try { NB.tap(); } catch (e) {} C.setState({ rxWho: Object.keys(x).map((d) => ({ d, e: x[d] })) }); };
@@ -1514,6 +1524,8 @@
       LS.set('stViews', SV); up.gTick = (s.gTick || 0) + 1;
     } else if (e.k === 'probe') {   // 1.46
       up.probeRun = false; C.say(e.n < 0 ? '⚠️ ' + tx.pb_none : tx.pb_done.replace('{n}', String(e.n)).replace('{ok}', String(e.ok)));
+    } else if (e.k === 'online') {   // 1.47: onlaýn sany her minut
+      INFO.online = +e.n || 0; up.gTick = (s.gTick || 0) + 1;
     } else if (e.k === 'mig') {   // 1.47: birikmek isledi — ilki göçmek
       up.migGate = true; if (!s.migStep || s.migStep === 2) up.migStep = 0;
     } else if (e.k === 'fb') {   // 1.47: PUBG / Premium-da işleýän kod ýok — adaty (mugt) koda birikdirildi, düwme özi öçdi
@@ -1743,6 +1755,21 @@
   document.addEventListener('touchend', svEnd, { passive: true }); document.addEventListener('touchcancel', svEnd, { passive: true });
   document.addEventListener('contextmenu', (e) => { const el = e.target && e.target.closest && e.target.closest('[data-sn]'); if (!el || !window.__isOwn) return; e.preventDefault(); if (Date.now() - (window.__lpSv || 0) > 900) svHide(el); });
   document.addEventListener('click', (e) => { if (Date.now() - (window.__lpSv || 0) < 900 && e.target && e.target.closest && e.target.closest('[data-sn]')) { e.stopPropagation(); e.preventDefault(); } }, true);
+  // 1.47: aşak çekip täzelemek — ähli sahypalarda (sahypa ýokarsynda bolsa)
+  let ptr = null; const ptrEl = document.createElement('div');
+  ptrEl.style.cssText = 'position:fixed;left:50%;top:70px;width:40px;height:40px;margin-left:-20px;border-radius:20px;background:rgba(8,24,17,.92);border:1px solid rgba(224,176,74,.6);color:#FFD27A;display:none;align-items:center;justify-content:center;font-size:20px;z-index:90;box-shadow:0 6px 18px rgba(0,0,0,.5);pointer-events:none';
+  ptrEl.textContent = '⟳'; document.body.appendChild(ptrEl);
+  const scTop = (el) => { for (let x = el; x && x !== document.body; x = x.parentElement) { const cs = getComputedStyle(x); if (/(auto|scroll)/.test(cs.overflowY) && x.scrollHeight > x.clientHeight + 4) return x.scrollTop; } return 0; };
+  document.addEventListener('touchstart', (e) => { const C = window.C; if (!C || e.touches.length !== 1) { ptr = null; return; }
+    const tg = e.target; if (tg && tg.closest && tg.closest('input,textarea,canvas,[data-rp],[data-rxk],.scrim,[role="dialog"]')) { ptr = null; return; }
+    if (scTop(tg) > 0) { ptr = null; return; } const t = e.touches[0]; ptr = { x: t.clientX, y: t.clientY, d: 0 }; }, { passive: true });
+  document.addEventListener('touchmove', (e) => { if (!ptr) return; const t = e.touches[0], dy = t.clientY - ptr.y, dx = t.clientX - ptr.x;
+    if (dy <= 0 || Math.abs(dx) > dy) { if (ptr.d) ptrEl.style.display = 'none'; ptr = dy < -6 ? null : ptr; return; }
+    ptr.d = dy; const k = Math.min(1, dy / 90); ptrEl.style.display = 'flex'; ptrEl.style.opacity = String(k); ptrEl.style.transform = 'translateY(' + Math.min(60, dy / 2) + 'px) rotate(' + Math.round(dy * 3) + 'deg)'; }, { passive: true });
+  const ptrEnd = () => { if (!ptr) return; const d = ptr.d; ptr = null;
+    if (d > 90 && window.C) { ptrEl.style.transition = 'transform .6s linear'; ptrEl.style.transform = 'translateY(45px) rotate(720deg)'; try { NB.tap(); } catch (e) {} window.C.pullRefresh();
+      setTimeout(() => { ptrEl.style.display = 'none'; ptrEl.style.transition = ''; }, 900); } else ptrEl.style.display = 'none'; };
+  document.addEventListener('touchend', ptrEnd, { passive: true }); document.addEventListener('touchcancel', ptrEnd, { passive: true });
   // 1.47: tepkiniň üstüne basyp saklamak → tepki goýanlaryň hemmesi
   let rxLp = null;
   document.addEventListener('touchstart', (e) => { const el = e.target && e.target.closest && e.target.closest('[data-rxk]'); if (!el) { rxLp = null; return; }
