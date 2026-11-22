@@ -125,7 +125,8 @@ html.ph-s .c-bg{background-image:var(--bgS,url(img/bg0_s.jpg))!important}
 .mpg{display:flex;align-items:center;gap:8px;height:38px;padding:0 5px 0 12px;border-radius:999px;background:rgba(8,24,17,.78);border:1px solid rgba(224,176,74,.42);-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);box-shadow:0 4px 14px rgba(0,0,0,.4);color:#C9BFA8;font-size:12px;font-weight:800;cursor:pointer}
 .mpg .sw{position:relative;width:36px;height:22px;border-radius:11px;background:rgba(255,255,255,.14);transition:background .25s}
 .mpg .sw i{position:absolute;left:3px;top:3px;width:16px;height:16px;border-radius:8px;background:#C9BFA8;transition:left .25s,background .25s}
-.mpg-on{color:#F3E7D0;border-color:#6FDB9C}.mpg-on .sw{background:#2BBF7A}.mpg-on .sw i{left:17px;background:#fff}
+.mpg-on{color:#F3E7D0;border-color:#6FDB9C}
+.pgs{font-size:8.5px;font-weight:700;opacity:.75;letter-spacing:.02em}.pgs-ok{color:#6FDB9C;opacity:1}.pgs-no{color:#FF9A8A}.mpg-on .sw{background:#2BBF7A}.mpg-on .sw i{left:17px;background:#fff}
 .mg-dlg{position:absolute;left:20px;right:20px;top:170px;z-index:63;border-radius:20px;padding:20px 18px;background:rgba(10,28,20,.98);border:1px solid rgba(224,176,74,.6);box-shadow:0 20px 50px rgba(0,0,0,.6);display:flex;flex-direction:column;gap:12px;text-align:center}
 .mg-btn{height:46px;border-radius:14px;border:none;background:linear-gradient(90deg,#FFD27A,#E0B04A);color:#06100B;font-size:15px;font-weight:900;cursor:pointer}
 .mg-sub{height:38px;border-radius:12px;border:1px solid rgba(224,176,74,.45);background:transparent;color:#F3E7D0;font-size:12px;font-weight:800;cursor:pointer}
@@ -302,7 +303,7 @@ html .glass.row.sv-prem,html[class*=ph-] .glass.row.sv-prem{animation:none!impor
           <sc-if value="{{pmOn}}" hint-placeholder-val="{{false}}">
             <span class="mseg"><button onClick="{{pmGo}}" class="{{pmCls}}">👑 Premium</button><button onClick="{{frGo}}" class="{{frCls}}">Free</button></span>
           </sc-if>
-          <button onClick="{{pgGo}}" class="{{pgCls}}" aria-label="PUBG"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 11h4M8 9v4M15 12h.01M18 10h.01"></path><path d="M17.3 5H6.7a4 4 0 0 0-4 3.6l-.6 5.9A2.7 2.7 0 0 0 4.8 17.5c1 0 1.9-.6 2.4-1.5L8 14h8l.8 2c.5.9 1.4 1.5 2.4 1.5a2.7 2.7 0 0 0 2.7-3l-.6-5.9A4 4 0 0 0 17.3 5z"></path></svg>PUBG<span class="sw"><i></i></span></button>
+          <button onClick="{{pgGo}}" class="{{pgCls}}" aria-label="PUBG"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 11h4M8 9v4M15 12h.01M18 10h.01"></path><path d="M17.3 5H6.7a4 4 0 0 0-4 3.6l-.6 5.9A2.7 2.7 0 0 0 4.8 17.5c1 0 1.9-.6 2.4-1.5L8 14h8l.8 2c.5.9 1.4 1.5 2.4 1.5a2.7 2.7 0 0 0 2.7-3l-.6-5.9A4 4 0 0 0 17.3 5z"></path></svg><span style="display:flex;flex-direction:column;align-items:flex-start;line-height:1.05">PUBG<small class="pgs {{pgSubCls}}">{{pgSub}}</small></span><span class="sw"><i></i></span></button>
         </div>
       </sc-if>
     </div>

@@ -2438,14 +2438,14 @@ def app_sync(force=False):
         free_ = app_free_pubg(codes, free_)   # 1.47: mugt adaty serwerlerde PUBG ýok
         try: free_, fb_ = app_free_borrow(codes, free_, app_cfg(load_db())); RUN["free_hps"] = list(free_)   # 1.46.8: mugtlar bloklananda Premium-dan biri wagtlaýyn
         except Exception as e: fb_ = cfg.get("fborrow"); log.info("free borrow: %s", e)
-        free_ = app_free_pubg(codes, free_, cfg.get("hp_ms"), add=True)   # 1.47: Premium-da 2+ PUBG bolsa biri mugta (baş sahypadaky PUBG düwmesi)
+        free_ = app_free_pubg(codes, free_, cfg.get("hp_ms"), add=not cfg.get("pubg_free_off"))   # 1.47: Premium-da 2+ PUBG bolsa biri mugta (eýesi öçürip bilýär — trafik köp bolanda)
         if (fb_ or {}).get("hp") != (cfg.get("fborrow") or {}).get("hp"): vlog(f"🔁 Mugt serwer: {'Premium-dan wagtlaýyn ' + fb_['hp'] if fb_ else 'wagtlaýyn Premium serwer yzyna alyndy'}")   # 1.43.2: mugt — her ýurtdan iň gowy işleýän bir kod + kanal + 2 PUBG
         codes = app_brand_names(codes)   # 1.29: abunanyň atlary görünmesin
         meta = app_meta(cfg) + (["#tvfree: " + ",".join(free_)] if free_ else [])
         mv_ = app_min_ver(cfg)
         if mv_ and cfg.get("fid") and codes:   # 1.47: diňe iň täze wersiýa — kodlar şifrli; köne programmalar diňe «täze wersiýany gurnaň» görýär
             meta.append(f"#tvx: {mv_} {app_enc(cfg['fid'], chr(10).join(codes))}"); codes = [APP_OLD_STUB]
-        dig = hashlib.sha256("\n".join(meta + codes).encode()).hexdigest()[:16]
+        dig = hashlib.sha256("\n".join(meta + codes).encode()).hexdigest()[:16]; RUN["sub_dig"] = dig   # 1.47: programmalar her minut barlaýar — üýtgän badyna täzeleýär
         svc = new_service()
         if not svc: raise RuntimeError("drive-sa.json bulunamadı")
         fid = cfg.get("fid")
@@ -2531,8 +2531,9 @@ async def app_online_loop(app):
             fid = app_cfg(load_db()).get("fid")
             if fid and app_relay():
                 n = await asyncio.to_thread(app_online_now, fid); RUN["app_on"] = n
-                if n != last_[0] or time.time() - last_[1] > 300:
-                    await asyncio.to_thread(ntfy_pub, app_topic(fid) + "on", app_enc(fid, json.dumps({"on": n, "ts": int(time.time())}))); last_ = (n, time.time())
+                sv_ = RUN.get("sub_dig") or ""
+                if n != last_[0] or sv_ != (last_[2] if len(last_) > 2 else "") or time.time() - last_[1] > 300:
+                    await asyncio.to_thread(ntfy_pub, app_topic(fid) + "on", app_enc(fid, json.dumps({"on": n, "sv": sv_, "ts": int(time.time())}))); last_ = (n, time.time(), sv_)
         except Exception as e: log.info("online: %s", e)
         await asyncio.sleep(60)
 
@@ -4200,6 +4201,7 @@ def app_adm_snap(a, e, dev):
         out["aiOn"] = bool(db.get("ai_sup", True)); out["aiKey"] = bool(ai_key())
         out["aiCount"] = sum(1 for t in (a.get("tickets") or {}).values() for x in t.get("log", []) if x.get("r") == "ai" and x.get("ts", 0) >= today)
         if F1: out["sysOn"] = not os.path.exists(STOP_FLAG)
+        out["pgf"] = not a.get("pubg_free_off")   # 1.47: mugt PUBG serweri açyk
         out["next"] = int(RUN["next"] - now) if RUN.get("next") else 0
         out["logs"] = "\n".join(short(_plain(l), 90) for l in tail(VIP_LOG, 40)[::-1])
         src = [["🔗", src_label(u), "", True] for u in a.get("subs", [])]
@@ -4371,6 +4373,10 @@ async def app_adm(app, dev, o):
                 msg = "kdel" if act == "kdel" else "kok"
                 if not f_: await notify_founders(app, f"🛠 <b>{esc(who)}</b> açary {'pozdy' if act == 'kdel' else 'üýtgetdi'}: <code>{k_}</code>", silent=True)
             else: err = "açar tapylmady"
+        elif act == "pubgfree" and f_:   # 1.47: mugt PUBG serwerini öçürmek / açmak (trafik köp bolanda)
+            on_ = bool(r.get("on")); app_mut(lambda x: x.pop("pubg_free_off", None) if on_ else x.__setitem__("pubg_free_off", True)); RUN["app_dirty"] = True
+            msg = "pubgfree:" + ("1" if on_ else "0")
+            if not F1: await notify_founders(app, f"🎮 {esc(who)}: mugt PUBG serweri {'açdy' if on_ else 'öçürdi'}", silent=True)
         elif act == "xadd" and f_:
             n_ = app_x_add(r.get("t"), who)
             try: RUN.__setitem__("app_dirty", True)   # 1.47: fonda (admin jogaby garaşmasyn)
@@ -6084,6 +6090,16 @@ async def cmd_fcm(u: Update, c: ContextTypes.DEFAULT_TYPE):
         + f"Gönderilen: ✅ {st['ok']} · ❌ {st['bad']}" + (f"\nSon hata: <code>{esc(st['err'])}</code>" if st.get("err") else "")
         + "".join(f"\n📱 Telefon hatası ({ago(x['t'])}, v{esc(x.get('ver', ''))}, Play hizmetleri {esc(x.get('gms') or '?')}): <code>{esc(x['e'][:200])}</code>" for x in (a_.get("fcm_perr") or [])[-3:])
         + "</blockquote>\n<i>Telefonlar yeni sürüme geçip abonelik dosyasını yenileyince kaydolur.</i>", parse_mode="HTML")
+
+async def cmd_pubgfree(u: Update, c: ContextTypes.DEFAULT_TYPE):
+    """1.47: /pubgfree kapat · /pubgfree ac — Free'deki PUBG sunucusu (bağlı olanlar da başka sunucuya geçer)."""
+    uid = u.effective_user.id
+    if not is_fo(uid): return
+    a_ = (c.args or [""])[0].lower()
+    if a_ in ("kapat", "off", "0"): app_mut(lambda x: x.__setitem__("pubg_free_off", True)); RUN["app_dirty"] = True
+    elif a_ in ("ac", "aç", "on", "1"): app_mut(lambda x: x.pop("pubg_free_off", None)); RUN["app_dirty"] = True
+    off_ = bool(app_cfg(load_db()).get("pubg_free_off"))
+    await c.bot.send_message(uid, f"🎮 <b>Free PUBG sunucusu:</b> {'🔴 kapalı' if off_ else '🟢 açık'}\n<code>/pubgfree kapat</code> · <code>/pubgfree ac</code>\n<i>Kapatınca bağlı olanlar 1–2 dakikada başka sunucuya geçer.</i>", parse_mode="HTML")
 
 async def cmd_minver(u: Update, c: ContextTypes.DEFAULT_TYPE):
     """1.47: /minver — sadece en yeni sürüm (otomatik) · /minver kapat — bütün sürümler çalışır · /minver ac — tekrar otomatik."""
@@ -12207,6 +12223,7 @@ def main():
     app.add_handler(CommandHandler("gocur", cmd_gocur))
     app.add_handler(CommandHandler("owner2", cmd_owner2))
     app.add_handler(CommandHandler("minver", cmd_minver))
+    app.add_handler(CommandHandler("pubgfree", cmd_pubgfree))
     app.add_handler(MessageHandler(filters.COMMAND, other_cmd))
     app.add_handler(CallbackQueryHandler(cb))
     app.add_handler(InlineQueryHandler(inline_ad))

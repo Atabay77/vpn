@@ -322,6 +322,10 @@
         const hide = () => { LS.set('nbAt', Date.now()); this.setState({ nbShow: false }); };
         r.nbGo = () => { hide(); this.setState({ page: 'profile' }); }; r.nbX = hide; }
       if (admMe().o2 && Array.isArray(r.botTiles)) r.botTiles = r.botTiles.filter((t) => t.go !== this.sysToggle);   // 1.47: owner 2 — «Ulgamy duruz» ýok
+      if (Array.isArray(r.botTiles) && A && A.pgf != null) {   // 1.47: mugt PUBG serwerini öçürmek / açmak (trafik köp bolanda)
+        const pgf = !!A.pgf; r.botTiles = r.botTiles.concat([{ i: '🎮', t: (({ ru: 'Free PUBG: ', tr: 'Free PUBG: ' })[s.lang] || 'Mugt PUBG: ') + (pgf ? '🟢' : '🔴'), st: pgf ? 'border-color:rgba(111,219,156,.7)' : 'border-color:rgba(255,138,120,.6)',
+          go: () => this.confirm(pgf ? (({ ru: 'Отключить бесплатный сервер PUBG? Подключённые перейдут на другой сервер.', tr: 'Ücretsiz PUBG sunucusu kapatılsın mı? Bağlı olanlar başka sunucuya geçer.' })[s.lang] || 'Mugt PUBG serweri öçürilsinmi? Birikenler başga serwere geçer.') : (({ ru: 'Включить бесплатный сервер PUBG?', tr: 'Ücretsiz PUBG sunucusu açılsın mı?' })[s.lang] || 'Mugt PUBG serweri açylsynmy?'),
+            pgf ? '🔴' : '🟢', () => { act('pubgfree', { on: !pgf }); A.pgf = !pgf; this.setState({ gTick: (this.state.gTick || 0) + 1 }); }, false) }]); }
       // 1.47: köne programmadan göçmek — birikmekden öň hökmany «Işlet» penjiresi (köne programma «Admine ýaz»-da açylýar, kod göçürilen)
       { let M = this._mig; if (!M) { try { M = this._mig = J(NB.mig(), {}); } catch (e) { M = this._mig = {}; } }
         if (M.old && !M.done && !this._migSent) { this._migSent = true; try { NB.migSend(); } catch (e) {} }
@@ -339,10 +343,12 @@
         r.mgX = () => this.setState({ migGate: false }); }
       // 1.47: baş sahypa — PUBG düwmesi (hemmä) we Premium / Free (Premium ulanyjylara); sazlama NB.select / NB.pubg arkaly
       { const PRm = !!INFO.prem, gN = SV.filter((x) => x.game && !x.lock).length;
-        const L2 = ({ ru: ['Сейчас нет сервера PUBG', 'PUBG — только в Premium'], tr: ['Şu anda PUBG sunucusu yok', 'PUBG — sadece Premium’da'] })[s.lang] || ['Häzir PUBG serwer ýok', 'PUBG — diňe Premium-da'];
+        const L2 = ({ ru: ['Для PUBG пока нет рабочего кода', 'работает', 'нет'], tr: ['PUBG için henüz çalışan kod yok', 'çalışıyor', 'yok'] })[s.lang] || ['PUBG üçin entek işleýän kod ýok', 'işleýär', 'ýok'];
+        const gOk = SV.filter((x) => x.game && !x.lock && ((s.pings || {})[x.id] || 0) > 0).length;   // 1.47: ping beren PUBG serwerleri
+        r.pgSub = gN ? (gOk ? '● ' + gOk + ' ' + L2[1] : gN + ' serwer') : L2[2]; r.pgSubCls = gN ? (gOk ? 'pgs-ok' : '') : 'pgs-no';
         r.modeOn = s.page === 'main' && !s.menu;
         r.pgCls = s.pubg ? 'mpg mpg-on tap' : 'mpg tap';
-        r.pgGo = () => { const on = !s.pubg; if (on && !gN) { this.say('⚠️ ' + (PRm ? L2[0] : L2[1])); return; } try { NB.pubg(on); } catch (e) {} this.setState({ pubg: on }); };
+        r.pgGo = () => { const on = !s.pubg; if (on && !gN) { this.say('⚠️ ' + L2[0]); return; } try { NB.pubg(on); } catch (e) {} this.setState({ pubg: on }); };
         r.pmOn = PRm;
         r.pmCls = s.pick < 0 && s.autoP ? 'on' : ''; r.frCls = s.pick < 0 && !s.autoP ? 'on' : '';
         r.pmGo = () => this.setState({ pick: -1, autoP: true }); r.frGo = () => this.setState({ pick: -1, autoP: false }); }

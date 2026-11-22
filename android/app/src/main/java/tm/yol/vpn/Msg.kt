@@ -45,11 +45,15 @@ object Msg {
     fun topicG() = base?.let { it + "g" }
     fun topicOn() = base?.let { it + "on" }   // 1.47: onlaýn sany (bot her minut)
     @Volatile private var onAt = 0L
+    @Volatile private var lastSv = ""
     private fun onlineNow() {
         val tp = topicOn() ?: return
         val last = poll(tp, "6m")?.lastOrNull() ?: return
-        val n = dec(last.optString("message"))?.let { runCatching { JSONObject(it).optInt("on", -1) }.getOrNull() } ?: return
+        val j = dec(last.optString("message"))?.let { runCatching { JSONObject(it) }.getOrNull() } ?: return
+        val n = j.optInt("on", -1)
         if (n >= 0) { Sub.online = n; events.add(JSONObject().put("k", "online").put("n", n)) }
+        val sv = j.optString("sv")   // 1.47: sanaw üýtgedi (meselem mugt PUBG öçürildi) — derrew täzele
+        if (sv.isNotEmpty()) { if (lastSv.isNotEmpty() && sv != lastSv) subDue = true; lastSv = sv }
     }
 
     /** Telefonyň kimligi (programmany pozup gaýtadan gurnanda hem üýtgemeýär). */
@@ -291,7 +295,7 @@ object Msg {
             val gEvery = if (watchG) (if (fast) 1_500L else if (rel) 3_000L else if (Fs.on()) (if (now - gNewAt < 120_000L) 5_000L else 12_000L) else 8_000L) else if (fast) 20_000L else if (rel) 30_000L else if (push) 300_000L else 120_000L
             if (visible && !(rel && watchG) && now - gAt > gEvery) { gAt = now; runCatching { global() } }   // 1.40.1: chat açyk + VPS — relGLoop
             runCatching { Chat.poll(c, visible, dmPage) }
-            if (visible && relOn() && now - onAt > 60_000L) { onAt = now; runCatching { onlineNow() } }   // 1.47: onlaýn sany her minut
+            if ((visible || on) && relOn() && now - onAt > 60_000L) { onAt = now; runCatching { onlineNow() } }   // 1.47: onlaýn sany / sanaw üýtgedimi — her minut
             if (visible || on) runCatching { State.pingExtra(c) }
             if (visible) runCatching { Probe.run(c) }   // 1.46: bot tapan kodlary Türkmenistanyň interneti bilen synamak
             else if (on) runCatching { Probe.run(c, 10, every = 30 * 60_000L) }   // 1.46.3: VPN açyk — fonda hem (30 minutda 10 kod, az trafik)
