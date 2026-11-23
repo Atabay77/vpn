@@ -1210,7 +1210,7 @@ def app_x_report(dev, pr):
     for h, m in list(pr.items())[:400]:
         try: items.append((str(h)[:80], int(m)))
         except Exception: pass
-    try: hunt_report(dev, items)
+    try: hunt_report(dev, items, dev in set(app_founder_devs(app_cfg(load_db_ro()))))
     except Exception as e: log.info("hunt report: %s", e)
 
 TM_CNAME = {"nl": "Niderlandlar", "fi": "Finlýandiýa", "gb": "Beýik Britaniýa", "de": "Germaniýa", "ch": "Şweýsariýa", "pl": "Polşa", "tr": "Türkiýe", "fr": "Fransiýa",
@@ -2269,11 +2269,11 @@ def hunt_listed(v, now=None):
     return (g >= 3 or (g >= 2 and len(v.get("d") or []) >= 2)) and not v.get("sf") and int(v.get("tl") or 0) <= int(v.get("ta") or 0) \
         and now - float(v.get("ta") or 0) < 3 * 3600 and 0 < int(v.get("tm") or 0) <= HUNT_TM_MS
 
-def hunt_report(dev, items):
+def hunt_report(dev, items, own=False):
     """Türkmenistandaky telefonyň netijeleri ([(host:port, ms)]). Işlän — tassyk; işlemedik — derrew aýrylýar we hiç gaýtadan barlanmaýar
     (diňe öň işläp, häzir hiç bir kod işlemedik telefon — interneti ýok bolup biler: sanawdan çykýar, ýene bir gezek synalýar). Dönüş: sanaw üýtgedimi."""
     if not items: return False
-    any_ok = any(m > 0 for _, m in items); now = int(time.time()); gone, chg = [], False
+    now = int(time.time()); gone, chg = [], False
     with HUNT_SL:
         S = hunt_st(); pool = S["pool"]
         for hp, ms in items:
@@ -2282,7 +2282,7 @@ def hunt_report(dev, items):
             was = hunt_listed(v, now)
             if ms > 0:
                 if not v.get("g"): hunt_rate_add(S, v["c"], v.get("src") or "", 1)
-                v["g"] = int(v.get("g") or 0) + 1; v["ta"] = v["tl"] = now; v["tm"] = int(ms); v.pop("sf", None)
+                v["g"] = int(v.get("g") or 0) + 1; v["ta"] = v["tl"] = now; v["tm"] = int(ms); v.pop("sf", None); v.pop("bf", None)
                 d = v.setdefault("d", [])
                 if dev and dev not in d: d.append(str(dev)[:24]); del d[:-4]
                 if hunt_listed(v, now) and not v.get("L"):   # ilkinji gezek programa — çeşmä bal
@@ -2291,12 +2291,16 @@ def hunt_report(dev, items):
                     elif src.startswith("gh:"):
                         for e in S["gh"].values():
                             if e.get("id") == src[3:]: e["ok"] = int(e.get("ok") or 0) + 1; break
-            else:
+            elif v.get("g"):   # 1.47.15: öň işlän kod — 2 sagatda 5 dürli telefonda işlemese aýrylýar (bir telefonyň interneti däl); eýesiniňki sanalmaýar
+                if own: continue
+                bf = {d_: t_ for d_, t_ in (v.get("bf") or {}).items() if now - int(t_) < 7200}; bf[str(dev)[:24]] = now
+                v["bf"] = dict(sorted(bf.items(), key=lambda kv: -kv[1])[:10])
+                if len(v["bf"]) >= APP_X_PHONES and now - int(v.get("ta") or 0) >= 1800:
+                    v["tl"] = now; pool.pop(hp, None); gone.append(hp)
+            else:   # hiç işlemedik täze kod — öňki ýaly derrew aýrylýar
                 v["tl"] = now
-                if any_ok or not v.get("g") or v.get("sf"):
-                    if not v.get("g"): hunt_rate_add(S, v["c"], v.get("src") or "", 0)
-                    pool.pop(hp, None); gone.append(hp)
-                else: v["sf"] = now
+                hunt_rate_add(S, v["c"], v.get("src") or "", 0)
+                pool.pop(hp, None); gone.append(hp)
             if was != (hp in pool and hunt_listed(pool[hp], now)): chg = True
         hunt_dirty()
         if gone: hunt_seen().add(gone)
