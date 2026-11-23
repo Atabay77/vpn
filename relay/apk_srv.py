@@ -1,22 +1,39 @@
 # 1.44.3: APK paylamak (Google Drive bloklasa). Ulanylyşy: python3 apk_srv.py [port]  →  ýüklemek: http://IP:8091/up , ýüklemek linki: http://IP:8091/<ady>.apk
 # Açar sözsiz: bar faýlyň üstüne ýazmak bolmaýar (başga biri siziň APK-ňyzy çalşyp bilmez), iň köp 80 MB, iň köp 20 faýl.
-import http.server, os, sys, urllib.parse
+import http.server, os, sys, urllib.parse, re, time, glob
 D = os.environ.get("APK_DIR", "/root/apk"); PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8091; UP = "/up"
 os.makedirs(D, exist_ok=True)
-DIRS = [D] + [x for x in os.environ.get("APK_MORE", "/root").split(":") if x and os.path.isdir(x) and os.path.abspath(x) != os.path.abspath(D)]   # 1.45.4: /root-a ýüklenen APK hem
 LATEST = ("/turkmenvpn.apk", "/latest.apk")   # 1.45.4: hemişe iň täze APK (link üýtgemeýär)
+def dirs():
+    """1.47.17: /root/apk, /root we her ulanyjynyň öý bukjasy (Termius / SFTP bilen _gdsh ýaly ulanyjy ýükleýär)."""
+    more = os.environ.get("APK_MORE", "/root").split(":") + sorted(glob.glob("/home/*")) + sorted(glob.glob("/home/*/Downloads"))
+    out = [D]
+    for x in more:
+        if x and os.path.isdir(x) and os.path.abspath(x) not in [os.path.abspath(y) for y in out]: out.append(x)
+    return out
 def apks():
     out = {}
-    for d_ in DIRS:
+    for d_ in dirs():
         try: names = os.listdir(d_)
         except Exception: continue
         for x in names:
             f = os.path.join(d_, x)
             if x.lower().endswith(".apk") and os.path.isfile(f) and x not in out: out[x] = f
     return out
+def vkey(name):
+    m = re.search(r"(\d+)\.(\d+)(?:\.(\d+))?", name)
+    return tuple(int(g or 0) for g in m.groups()) if m else ()
 def newest():
-    a = apks()
-    return max(a.items(), key=lambda kv: os.path.getmtime(kv[1]), default=(None, None))
+    """1.47.17: iň täze — faýl adyndaky wersiýa boýunça (SFTP köne senäni saklap bilýär); ýaňy ýazylýan (90 s) faýl alynmaýar (ýarym ýüklenen bolmasyn)."""
+    now = time.time(); a = {}
+    for n, f in apks().items():
+        try: st = os.stat(f)
+        except Exception: continue
+        if now - st.st_ctime < 90 or st.st_size < 1_000_000: continue
+        a[n] = (vkey(n), st.st_mtime, f)
+    if not a: return (None, None)
+    n = max(a, key=lambda k: (a[k][0], a[k][1]))
+    return (n, a[n][2])
 PAGE = ("<meta name=viewport content='width=device-width'><h3>APK yukle</h3><input type=file id=f><br><br><button onclick='u()'>Yukle</button><pre id=o></pre>"
         "<script>async function u(){const f=document.getElementById('f').files[0];if(!f)return;const o=document.getElementById('o');o.textContent='yuklenyar...';"
         "const r=await fetch(location.pathname+'?n='+encodeURIComponent(f.name),{method:'POST',body:f});o.textContent=await r.text();}</script>").encode()
