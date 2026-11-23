@@ -837,7 +837,8 @@
         const dl = pexp > 0 ? Math.max(1, Math.ceil((pexp - Date.now()) / 86400000)) : 0, dlT = dl + ' ' + tx.pr_days;
         const nm2 = (d, fb) => { const n = nameOf(d); return n && n !== '?' ? n : (fb || '?'); };
         const OWV = isF2 || roleOf(INFO.dev) === 'o';   // 1.47: Free serwerleri diňe eýeleri görýär
-        const tab = PF && !OWV ? (s.svTab === 'pubg' ? 'pubg' : 'prem') : (['free', 'prem', 'pubg'].indexOf(s.svTab) >= 0 ? s.svTab : (PR ? 'prem' : 'free'));   // 1.46.8: Free bölümi ýok (diňe «Awtomatik»)
+        const FHID = false;   // 1.47.16: Free serwerler hemmelere görünýär (çeşmesi diňe eýesine)
+        const tab = FHID ? (s.svTab === 'pubg' ? 'pubg' : 'prem') : (['free', 'prem', 'pubg'].indexOf(s.svTab) >= 0 ? s.svTab : (PR ? 'prem' : 'free'));   // 1.46.8: Free bölümi ýok (diňe «Awtomatik»)
         const ng = SV.filter((v) => !v.game), gg = SV.filter((v) => v.game);
         const mark = (x, v, premTab) => { const lock = !!(v && v.lock), isFree = !v || v.free !== false;
           const o = Object.assign(x, { pcls: premTab ? 'sv-prem' : '', tag: lock ? '🔒' : '', crown: premTab && !lock, tagCls: lock ? 'svlock' : 'svcrown' });   // 1.47.5: Premium bölüminde ähli serwerler (mugtlar hem) — täç
@@ -850,10 +851,10 @@
         if (Array.isArray(r.srvList)) r.srvList = tab === 'pubg' ? [] : r.srvList.map((x, j) => ({ x, v: ng[j] })).filter((q) => inTab(q, tab === 'prem')).map((q) => mark(q.x, q.v, tab === 'prem'));
         if (Array.isArray(r.gList)) r.gList = r.gList.map((x, j) => ({ x, v: gg[j] })).filter((q) => inTab(q, tab !== 'free')).map((q) => mark(q.x, q.v, tab !== 'free'));
         if (tab === 'pubg') r.svEmpty = false;
-        if (tab === 'free' && PF && !OWV) { r.srvList = []; r.gList = []; r.svEmpty = false; }
-        r.svOwnNote = tab === 'free' && PF && OWV ? ({ ru: '👁 Бесплатные серверы видите только вы (владелец). Пользователи видят только «Авто».', tr: '👁 Ücretsiz sunucuları sadece siz (sahip) görüyorsunuz. Kullanıcılar sadece «Otomatik» görür.' }[s.lang]
+        if (tab === 'free' && FHID) { r.srvList = []; r.gList = []; r.svEmpty = false; }
+        r.svOwnNote = tab === 'free' && FHID ? ({ ru: '👁 Бесплатные серверы видите только вы (владелец). Пользователи видят только «Авто».', tr: '👁 Ücretsiz sunucuları sadece siz (sahip) görüyorsunuz. Kullanıcılar sadece «Otomatik» görür.' }[s.lang]
           || '👁 Mugt serwerleri diňe siz (eýesi) görýärsiňiz. Ulanyjylar diňe «Awtomatik» görýär.') : '';   // 1.46.7: mugt serwerler görünmeýär — diňe «Awtomatik» (basanda iň gowusyna birikýär)
-        r.svTabs = (PF && !OWV ? [['prem', '👑 Premium', 'seg-prem'], ['pubg', '👑 PUBG', 'seg-prem']] : PF ? [['free', 'Free 👁', ''], ['prem', '👑 Premium', 'seg-prem'], ['pubg', '👑 PUBG', 'seg-prem']] : [['free', 'Free', ''], ['prem', '👑 Premium', 'seg-prem'], ['pubg', '👑 PUBG', 'seg-prem']]).map((q) => ({ t: q[1], cls: (tab === q[0] ? 'seg-on' : 'seg-off') + ' ' + q[2], p: tab === q[0] ? 'true' : 'false', pick: () => this.setState({ svTab: q[0] }) }));
+        r.svTabs = (FHID ? [['prem', '👑 Premium', 'seg-prem'], ['pubg', '👑 PUBG', 'seg-prem']] : PF ? [['free', 'Free', ''], ['prem', '👑 Premium', 'seg-prem'], ['pubg', '👑 PUBG', 'seg-prem']] : [['free', 'Free', ''], ['prem', '👑 Premium', 'seg-prem'], ['pubg', '👑 PUBG', 'seg-prem']]).map((q) => ({ t: q[1], cls: (tab === q[0] ? 'seg-on' : 'seg-off') + ' ' + q[2], p: tab === q[0] ? 'true' : 'false', pick: () => this.setState({ svTab: q[0] }) }));
         r.svPremBan = !PR && PF && tab !== 'free';
         // 1.46.4: awtomatik — Free bölüminde diňe mugt serwerler, Premium bölüminde diňe Premium serwerler
         { const autoP = !!s.autoP && PR, here = s.pick < 0 && (PF ? (PR ? autoP : true) : (tab === 'free' ? !autoP : autoP));
