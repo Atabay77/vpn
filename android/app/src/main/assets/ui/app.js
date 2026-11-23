@@ -841,6 +841,7 @@
         const ng = SV.filter((v) => !v.game), gg = SV.filter((v) => v.game);
         const mark = (x, v, premTab) => { const lock = !!(v && v.lock), isFree = !v || v.free !== false;
           const o = Object.assign(x, { pcls: premTab ? 'sv-prem' : '', tag: lock ? '🔒' : '', crown: premTab && !lock, tagCls: lock ? 'svlock' : 'svcrown' });   // 1.47.5: Premium bölüminde ähli serwerler (mugtlar hem) — täç
+          if (OWV && A && A.hsrc && v) { const src_ = A.hsrc[String(v.id || '').split('|').pop()]; if (src_ && String(o.sub || '').indexOf(src_) < 0) o.sub = (o.sub ? o.sub + ' · ' : '') + src_; }   // 1.47.15: serweriň çeşmesi — diňe eýesine (admin maglumatyndan)
           if (lock) { o.pick = () => { this.say('👑 ' + tx.pr_lock); this.setState({ psh: true, pstep: 1 }); };
             const off = 'rgba(243,231,208,.18)'; Object.assign(o, { ms: '—', msCls: '', c1: off, c2: off, c3: off, c4: off, best: false }); }   // 1.46.2: Premium ýok — ping ölçenmeýär
           return o; };

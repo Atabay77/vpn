@@ -2456,6 +2456,17 @@ def app_sync(force=False):
                 if hp_: php.add(hp_)
                 if code_key(c) not in keys: keys.add(code_key(c)); codes.append(c)
         plast = {k_: v_ for k_, v_ in plast.items() if k_ in {hashlib.md5(u.encode()).hexdigest()[:8] for u in psubs}}
+        try:   # 1.47.15: her serweriň çeşmesi (diňe eýesiniň admin panelinde görünýär — ulanyjylara gitmeýär)
+            hs_ = {}
+            for u in subs:
+                for c in last.get(hashlib.md5(u.encode()).hexdigest()[:8], []): hs_.setdefault(app_x_hp(c), "🔗 " + src_label(u))
+            for v in (app_cfg(load_db()).get("xcodes") or {}).values():
+                hs_[app_x_hp(v["c"])] = ("📡 @" + str(v["ch"])) if v.get("ch") else ("✍️ elle" if v.get("src") == "m" else "📡 " + str(v.get("src") or "?"))
+            for u in psubs:
+                for c in plast.get(hashlib.md5(u.encode()).hexdigest()[:8], []): hs_[app_x_hp(c)] = "👑 " + src_label(u)
+            for c in codes: hs_.setdefault(app_x_hp(c), "🔎 kod awy")
+            hs_.pop("", None); RUN["hp_src"] = hs_
+        except Exception as e: log.info("hp src: %s", e)
         free_ = app_free_all(codes, php, cfg.get("hp_ms")) if php else app_free_pick(codes, base1, cfg.get("hp_ms"))
         if not cfg.get("prem_own"):   # 1.47.9: eýesiniň «Premium» düwmesi açyk — Premium diňe öz abunasyndan, mugtdan hiç kod almaýar
           try: free_ = app_prem_fill(codes, free_, app_cfg(load_db()))   # 1.47: @happvpn — Free we Premium; Premium-da 15–20 serwer
@@ -4321,6 +4332,7 @@ def app_adm_snap(a, e, dev):
                       "ok": app_hm(v.get("ok")) if v.get("ok") else "", "ms": int(v.get("ms") or 0), "bad": int(v.get("bad") or 0), "at": app_hm(v.get("ts"))}
                      for k_, v in sorted((a.get("xcodes") or {}).items(), key=lambda kv: -kv[1].get("ts", 0))[:300]]
         out["tgsrc"] = a.get("tgsrc", APP_TG_DEFAULT)
+        out["hsrc"] = dict(list((RUN.get("hp_src") or {}).items())[:600])   # 1.47.15: serweriň çeşmesi (diňe eýesine)
         out["qsubs"] = [{"u": u_, "label": src_label(u_), **({"pct": v_["pct"], "t": app_quota_txt(v_), "exp": v_.get("exp", 0)} if (v_ := (a.get("quota") or {}).get(hashlib.md5(u_.encode()).hexdigest()[:8])) else {})} for u_ in a.get("qsubs", [])]
         out["qal"] = [{"id": h, "t": app_quota_txt(v), "at": (a.get("quota_al") or {}).get(h, 0)} for h, v in (a.get("quota") or {}).items() if (a.get("quota_al") or {}).get(h)]
         out["news"] = [{"t": n_["t"], "x": n_["x"], "time": app_hm(n_.get("ts")), "img": n_.get("img", "")} for n_ in (a.get("news") or [])]
@@ -4332,7 +4344,7 @@ def snap_fit(snap, lim=170_000):   # VPS habar serweri: «d» mowzugy 256 KB (ş
     for keep in (10, 6, 3, 1):
         if size() <= lim: return
         for t in snap.get("tk") or []: t["msgs"] = t["msgs"][-keep:]
-    for k_, n_ in (("xc", 100), ("us", 150), ("tk", 60), ("prem", 150), ("xc", 0)):
+    for k_, n_ in (("xc", 100), ("hsrc", 250), ("us", 150), ("tk", 60), ("prem", 150), ("xc", 0), ("hsrc", 0)):
         if size() <= lim: return
         v = snap.get(k_)
         if isinstance(v, list): snap[k_] = v[:n_]
