@@ -2472,8 +2472,7 @@ def app_sync(force=False):
           try: free_ = app_prem_fill(codes, free_, app_cfg(load_db()))   # 1.47: @happvpn — Free we Premium; Premium-da 15–20 serwer
           except Exception as e: log.info("prem fill: %s", e)
         free_ = app_free_pubg(codes, free_)   # 1.47: mugt adaty serwerlerde PUBG ýok
-        try: free_, fb_ = app_free_borrow(codes, free_, app_cfg(load_db())); RUN["free_hps"] = list(free_)   # 1.46.8: mugtlar bloklananda Premium-dan biri wagtlaýyn
-        except Exception as e: fb_ = cfg.get("fborrow"); log.info("free borrow: %s", e)
+        fb_ = None; RUN["free_hps"] = list(free_)   # 1.47.15: Premium-dan mugta wagtlaýyn serwer berilmeýär (eýesiniň islegi) — diňe PUBG/Russiýa düzgüni (aşakda) galýar
         free_ = app_free_pubg(codes, free_, cfg.get("hp_ms"), add=not cfg.get("pubg_free_off"))   # 1.47: Premium-da 2+ PUBG bolsa biri mugta (eýesi öçürip bilýär — trafik köp bolanda)
         if (fb_ or {}).get("hp") != (cfg.get("fborrow") or {}).get("hp"): vlog(f"🔁 Mugt serwer: {'Premium-dan wagtlaýyn ' + fb_['hp'] if fb_ else 'wagtlaýyn Premium serwer yzyna alyndy'}")   # 1.43.2: mugt — her ýurtdan iň gowy işleýän bir kod + kanal + 2 PUBG
         codes = app_brand_names(codes)   # 1.29: abunanyň atlary görünmesin
