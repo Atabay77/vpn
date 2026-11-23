@@ -1071,24 +1071,46 @@ def tg_channel_subs(page):
         if not newest or t_ >= newest - APP_TG_BATCH: out += [u for u in ls if u not in out]
     return out[-6:]
 
+def tg_channel_sub_batches(page, n=3):
+    """1.47.15: abuna salgylary toparlara bölünýär (iň täzesi birinji; bir topar — 90 minutyň içinde paýlaşylanlar). Iň täze toparda kod ýok bolsa öňküsi synalýar."""
+    posts = []
+    for b in re.split(r'(?=<div class="tgme_widget_message_wrap)', page):
+        ls = hunt_sub_links(b)
+        if not ls: continue
+        t_ = re.search(r'datetime="([^"]+)"', b)
+        try: ts_ = datetime.datetime.fromisoformat(t_.group(1)).timestamp() if t_ else 0
+        except Exception: ts_ = 0
+        posts.append((ts_, ls))
+    posts.sort(key=lambda p_: -p_[0]); out = []
+    for t_, ls in posts:
+        if out and out[-1][0] - t_ <= APP_TG_BATCH: out[-1][1].extend(u for u in ls if u not in out[-1][1])
+        elif len(out) < n: out.append([t_, list(ls)])
+        else: break
+    return [b_[1][-6:] for b_ in out]
+
 def app_tg_subs(chs):
     """1.46.7: kanalda paýlaşylan abunalaryň kodlary → programa (src=tgs). Işlemeýänler telefon hasabatynda aýrylýar we gaýtadan goşulmaýar."""
     got, now = [], time.time(); st = RUN.setdefault("tgs_st", {})
     for ch in chs:
-        links = tg_channel_subs((RUN.get("tg_page") or {}).get(ch) or "")
-        if not links: continue
+        batches = tg_channel_sub_batches((RUN.get("tg_page") or {}).get(ch) or "")
+        if not batches: continue
+        links = [u for b_ in batches for u in b_]
         o = st.get(ch) or {}
         if o.get("l") == links and now - o.get("at", 0) < APP_TGS_EVERY: continue
-        cs, ok_ = [], False
-        for u in links:
-            r_ = hunt_sub_codes(u)
-            if r_ is not None: ok_ = True; cs += [c for c in r_ if c not in cs]
-        if not ok_: continue   # ýetip bolmady — indiki minutda ýene
+        uniq, reached = [], False
+        for b_ in batches:   # 1.47.15: iň täze toparda kod ýok bolsa (mahabat, surat…) — öňki abuna
+            cs = []
+            for u in b_:
+                r_ = hunt_sub_codes(u)
+                if r_ is not None: reached = True; cs += [c for c in r_ if c not in cs]
+            seen_ = set(); uniq = []
+            for c in cs:   # 1.47.15: gaýtalanma kod boýunça (bir CDN IP:port-da dürli serwerler bolýar — SNI / host başga)
+                hp_ = app_x_hp(c); k_ = code_key(c)
+                if hp_ and k_ not in seen_ and hunt_host_ok(hp_.rsplit(":", 1)[0]): seen_.add(k_); uniq.append(c)
+            if uniq: break
+        if not reached: continue   # ýetip bolmady — indiki minutda ýene
         st[ch] = {"l": links, "at": now}
-        hps, uniq = set(), []
-        for c in cs:
-            hp_ = app_x_hp(c)
-            if hp_ and hp_ not in hps and hunt_host_ok(hp_.rsplit(":", 1)[0]): hps.add(hp_); uniq.append(c)
+        if not uniq: continue   # 1.47.15: içinden kod çykmadyk salgylar (surat / wideo / boş) — kanalyň öňki kodlary pozulmaýar
         got.append((ch, uniq[:APP_TGS_MAX]))
     if not got: return 0
     def f(x):
@@ -1096,11 +1118,10 @@ def app_tg_subs(chs):
         for ch, cs in got:
             keep = {code_key(c) for c in cs}
             for k in [k for k, v in xs.items() if v.get("src") == "tgs" and str(v.get("ch", "")).lower() == ch.lower() and k not in keep]: xs.pop(k, None)   # täze abuna — köne kodlar aýrylýar
-            have_ = {app_x_hp(v["c"]) for v in xs.values()}
             for c in cs:
                 k = code_key(c)
                 if k in xs: xs[k]["seen"] = nw; continue
-                if (k in dead and nw - int(dead[k]) < APP_TGS_DEAD) or app_x_hp(c) in have_: continue   # öň işlemedik — 6 sagat goşulmaýar (1.47.12: öň 14 gün)
+                if k in dead and nw - int(dead[k]) < APP_TGS_DEAD: continue   # öň işlemedik — 6 sagat goşulmaýar (1.47.12: öň 14 gün)
                 xs[k] = {"c": c, "src": "tgs", "ch": ch, "ts": nw, "seen": nw, "ok": 0, "bad": 0, "ms": 0}; added += 1
         return added
     n_ = app_mut(f)
@@ -1808,7 +1829,7 @@ def hunt_tg(ch, pages=1):
         except Exception: pass
     return {"ok": True, "codes": codes[-800:], "refs": sorted(refs)[:60], "tm": hunt_tm_score(txt), "lp": lp, "sub": sub, "subl": hunt_sub_links(page)}
 
-HUNT_SUB_SKIP = re.compile(r"^https?://(?:[\w-]+\.)*(?:t\.me|telegram\.(?:org|me|dog)|telegra\.ph|w3\.org|google\.com|googleapis\.com|apple\.com|youtube\.com|youtu\.be|instagram\.com|tiktok\.com|"
+HUNT_SUB_SKIP = re.compile(r"^https?://(?:[\w-]+\.)*(?:t\.me|telegram\.(?:org|me|dog)|telegra\.ph|telesco\.pe|w3\.org|google\.com|googleapis\.com|apple\.com|youtube\.com|youtu\.be|instagram\.com|tiktok\.com|"
                            r"facebook\.com|twitter\.com|x\.com|github\.com|wikipedia\.org|play\.google\.com|apps\.apple\.com|inside\.ad|cdn[\w-]*\.\w+)(?:[:/?#]|$)", re.I)
 
 def hunt_sub_links(page):
@@ -1816,7 +1837,8 @@ def hunt_sub_links(page):
     out = []
     for u in re.findall(r"https?://[^\s\"'<>]{8,600}", html.unescape(re.sub(r"<br\s*/?>", "\n", page))):
         u = u.rstrip(".,;)»")
-        if HUNT_SUB_SKIP.match(u) or re.search(r"\.(?:png|jpe?g|gif|webp|svg|mp4|apk|css|js|ico)(?:\?|$)", u, re.I) or u in out: continue
+        gd_ = bool(re.match(r"^https?://(?:www\.)?googleapis\.com/drive/v3/files/[\w-]{10,}", u))   # 1.47.15: Google Drive abuna faýly (kanalda açyk paýlaşylan)
+        if (HUNT_SUB_SKIP.match(u) and not gd_) or re.search(r"\.(?:png|jpe?g|gif|webp|svg|mp4|apk|css|js|ico)(?:\?|$)", u, re.I) or u in out: continue
         out.append(u)
     return out[-20:]
 
