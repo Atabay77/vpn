@@ -15,6 +15,10 @@ import javax.crypto.spec.GCMParameterSpec
 object N {
     init { System.loadLibrary("yolsec") }
     @JvmStatic external fun u(): String
+    /** 1.47.16: #tvy sanawyny açýar — açar programmanyň gol şahadatnamasyna bagly (mod açyp bilmeýär). */
+    @JvmStatic external fun d(ctx: Context?, salt: String, mask: String, blob: String): ByteArray?
+    /** 1.47.16: gorag ýagdaýy ("faýl8.pm8.flags") — bot modlary tanamak üçin. */
+    @JvmStatic external fun s(ctx: Context?): String
 }
 
 /** Abonelikteki bir sunucu. uri yalnız bellekte ve şifreli önbellekte durur, ekranda gösterilmez. */
@@ -97,14 +101,81 @@ object Sub {
 
     /** Abonelik metnini sunucu listesine çevirir (desteklenmeyen satırlar atlanır). */
     @Volatile var needUpd = false   // 1.47: bot diňe has täze wersiýa rugsat berýär (#tvx) — sanaw ýok, täzelemeli
-    fun parse(text: String): List<Server> {
-        val body0 = body(text)
-        // 1.47: kodlar şifrli (#tvx: iň_pes_wersiýa şifr) — köne programmalar görmeýär; bu wersiýa has köne bolsa — sanaw boş
-        val xl = body0.lineSequence().map { it.trim() }.firstOrNull { it.startsWith("#tvx:") }
-        val body = if (xl == null) body0 else {
-            val p = xl.split(Regex("\\s+")); val own = State.app?.let { Msg.ver(it) } ?: "0"
-            if (p.size >= 3 && (own == "0" || !Upd.newer(p[1], own))) { needUpd = false; Msg.dec(p[2]) ?: "" } else { needUpd = true; "" }
+    private fun bsha(s: String) = java.security.MessageDigest.getInstance("SHA-256").digest(s.toByteArray(Charsets.UTF_8))
+    private fun bhex(b: ByteArray) = b.joinToString("") { "%02x".format(it) }
+    private fun bhmac(k: ByteArray, d: ByteArray) = javax.crypto.Mac.getInstance("HmacSHA256").run { init(javax.crypto.spec.SecretKeySpec(k, "HmacSHA256")); doFinal(d) }
+    private fun b64u(s: String) = android.util.Base64.decode(s, android.util.Base64.URL_SAFE or android.util.Base64.NO_PADDING or android.util.Base64.NO_WRAP)
+    private fun normKey(k: String) = k.uppercase().filter { it.isLetterOrDigit() }.chunked(4).joinToString("-")
+
+    /** 1.47.16: Premium zarpyny (#tvpk/#tvpb) açary / eýe açar sözi bilen açýar — açyp bolmasa kilitli at. */
+    private fun openPrem(creds: List<Pair<String, String>>, pk: String, pb: String): String? {
+        val sp = pk.trim().split(Regex("\\s+")); if (sp.isEmpty()) return null
+        val ks = sp[0]; val wraps = if (sp.size > 1) sp[1] else "-"
+        for ((p, c) in creds) {
+            val id = bhex(bhmac(bsha(p + "i|" + c), ks.toByteArray())).substring(0, 12)
+            for (w in wraps.split(",")) {
+                val dot = w.indexOf('.'); if (dot < 0 || w.substring(0, dot) != id) continue
+                val wb = runCatching { b64u(w.substring(dot + 1)) }.getOrNull() ?: continue
+                if (wb.size < 32) continue
+                val unk = bhmac(bsha(p + "w|" + c), ks.toByteArray())
+                val ck = ByteArray(32) { (wb[it].toInt() xor unk[it].toInt()).toByte() }
+                Msg.decK(bhex(ck), pb)?.let { return it }
+            }
         }
+        return null
+    }
+
+    /** #tvy-niň içindäki Premium zarpyny hakyky kodlara (açar bolsa) ýa kilitli atlara öwürýär. */
+    private fun expandPrem(dec: String): String {
+        val lines = dec.lineSequence().map { it.trim() }.toList()
+        val pv = lines.firstOrNull { it.startsWith("#tvpv:") }?.substringAfter(" ")?.trim() ?: return dec
+        val pk = lines.firstOrNull { it.startsWith("#tvpk:") }?.substringAfter("#tvpk:")?.trim()
+        val pb = lines.firstOrNull { it.startsWith("#tvpb:") }?.substringAfter(" ")?.trim()
+        val ctx = State.app
+        if (pk != null && pb != null && ctx != null) {
+            val creds = ArrayList<Pair<String, String>>()
+            Lic.saved(ctx)?.let { creds.add("tvp" to normKey(it)) }
+            if (roles[Msg.dev(ctx)]?.first == "o") Msg.admPw(ctx)?.let { creds.add("tva" to it.replace(Regex("\\s+"), "").uppercase()) }
+            if (creds.isNotEmpty()) openPrem(creds, pk, pb)?.let { return dec + "\n" + it }
+        }
+        val sb = StringBuilder(dec)
+        runCatching {
+            val arr = org.json.JSONArray(String(b64u(pv), Charsets.UTF_8))
+            for (i in 0 until arr.length()) {
+                val e = arr.getJSONArray(i); val scheme = e.getString(0).ifEmpty { "vless" }
+                sb.append("\n").append(scheme).append("://x@10.255.255.255:").append(900 + i).append("#").append(e.getString(1))
+            }
+        }
+        return sb.toString()
+    }
+
+    /** 1.47.16: #tvy (gol şahadatnamasyna bagly) ýa köne #tvx şifrini açyp düz sanawa öwürýär. */
+    fun decode(text: String): String {
+        val raw = body(text); val lines = raw.lines()
+        fun outer() = lines.filterNot { val t = it.trim(); t.startsWith("#tvy:") || t.startsWith("#tvx:") }.joinToString("\n")
+        val own = State.app?.let { Msg.ver(it) } ?: "0"
+        val yl = lines.firstOrNull { it.trim().startsWith("#tvy:") }?.trim()
+        val xl = lines.firstOrNull { it.trim().startsWith("#tvx:") }?.trim()
+        if (yl != null) {
+            val p = yl.split(Regex("\\s+"))
+            if (p.size >= 5 && (own == "0" || !Upd.newer(p[1], own))) {
+                val dec = runCatching { N.d(State.app, p[2], p[3], p[4]) }.getOrNull()?.let { String(it, Charsets.UTF_8) }
+                if (dec != null) { needUpd = false; return outer() + "\n" + expandPrem(dec) }
+            }
+        }
+        if (xl != null) {
+            val p = xl.split(Regex("\\s+"))
+            if (p.size >= 3 && (own == "0" || !Upd.newer(p[1], own))) {
+                val dec = Msg.dec(p[2])
+                if (dec != null) { needUpd = false; return outer() + "\n" + dec }
+            }
+        }
+        if (yl != null || xl != null) { needUpd = true; return outer() }
+        return raw
+    }
+
+    fun parse(text: String): List<Server> {
+        val body = body(text)
         return body.lineSequence().map { it.trim() }
             .filter { it.isNotEmpty() && !it.startsWith("#") }
             .mapNotNull { line ->
@@ -172,9 +243,10 @@ object Sub {
             .apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }.parse(ts.take(19))?.time }.getOrNull() } ?: 0L
         // bot her 30 minutda täzeden ýazýar — 3 sagatdan köne bolsa (bot VPS-e ýazyp bilmeýär) Drive-dan alynýar
         val t = if (System.currentTimeMillis() - at > 3 * 3600_000L) null else g?.first?.let { Msg.dec(it) ?: it }   // diňe bot ýazyp bilýär (n/); şifrsiz hem kabul
-        val l = t?.let { parse(it) }.orEmpty()
-        if (t == null || l.isEmpty()) { vpsBadUntil = System.currentTimeMillis() + 120_000L; return false }
-        meta(t); list = keepActive(l); okAt = System.currentTimeMillis(); src = "vps"
+        val exp = t?.let { decode(it) }
+        val l = exp?.let { parse(it) }.orEmpty()
+        if (exp == null || l.isEmpty()) { vpsBadUntil = System.currentTimeMillis() + 120_000L; return false }
+        meta(exp); list = keepActive(l); okAt = System.currentTimeMillis(); src = "vps"
         runCatching { Box.write(ctx, t) }
         return true
     }
@@ -189,8 +261,9 @@ object Sub {
             try {
                 if (c.responseCode != 200) return@runCatching false
                 val t = c.inputStream.use { it.readBytes() }.toString(Charsets.UTF_8)
-                val l = parse(t)
-                meta(t)   // key / sürüm / reklam satırları sunucu olmasa da okunur
+                val exp = decode(t)
+                val l = parse(exp)
+                meta(exp)   // key / sürüm / reklam satırları sunucu olmasa da okunur
                 if (l.isEmpty()) return@runCatching false
                 list = keepActive(l); okAt = System.currentTimeMillis(); src = "drive"
                 Box.write(ctx, t)
@@ -206,7 +279,12 @@ object Sub {
 
     fun load(ctx: Context) {
         if (list.isNotEmpty()) return
-        Box.read(ctx)?.let { list = parse(it); meta(it) }
+        Box.read(ctx)?.let { val exp = decode(it); list = parse(exp); meta(exp) }
+    }
+
+    /** 1.47.16: açar / admin girişinden soň Premium-y ýatdaky sanawdan derrew açmak (tor garaşmazdan). */
+    fun recheck(ctx: Context) {
+        Box.read(ctx)?.let { val exp = decode(it); val l = parse(exp); if (l.isNotEmpty()) { meta(exp); list = keepActive(l) } }
     }
 }
 

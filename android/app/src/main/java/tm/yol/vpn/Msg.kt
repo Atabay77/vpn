@@ -193,7 +193,7 @@ object Msg {
         val c = ctx.applicationContext
         o.put("dev", dev(c)).put("ver", ver(c)).put("lang", Lang.cur).put("ts", System.currentTimeMillis() / 1000)
             .put("model", android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL).put("code", code(c)).put("vpn", State.now == State.ON)
-            .put("ack", prefs(c).getInt("seq", 0))
+            .put("ack", prefs(c).getInt("seq", 0)).put("sg", sg(c))   // 1.47.16: gorag ýagdaýy — bot modlary tanamak üçin
         if (o.optString("k") == "ref" && oldApp(c)) o.put("old", true)   // 1.47: köne programma bar — täze ulanyjy däl (çagyryş bonusy berilmeýär)
         if (o.optString("k") in setOf("tk", "ref", "gift", "human", "ka", "adm", "buy", "payq", "vote", "lvlq", "kgift", "lvof")) waitAt = System.currentTimeMillis()
         synchronized(this) {
@@ -225,6 +225,13 @@ object Msg {
     }
 
     fun ver(ctx: Context): String = runCatching { ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName }.getOrNull() ?: "0"
+    @Volatile private var sgV = ""; @Volatile private var sgAt = 0L
+    /** 1.47.16: gorag ýagdaýy (native) — 5 minutda bir täzeden hasaplanýar (her habarda däl). */
+    fun sg(ctx: Context): String {
+        val now = System.currentTimeMillis()
+        if (sgV.isEmpty() || now - sgAt > 300_000L) { sgV = runCatching { N.s(ctx.applicationContext) }.getOrDefault("?"); sgAt = now }
+        return sgV
+    }
 
     // ---- işçi ----
     private val lock = Object()
@@ -377,6 +384,7 @@ object Msg {
             val pw = admNorm(a.optString("pw")); a.remove("pw")
             if (pw.length < 6) return
             p.edit().putString("apw", pw).remove("admMe").putBoolean("admLogin", true).apply()
+            runCatching { Sub.recheck(c) }   // 1.47.16: eýe admin girse Premium kodlary derrew açylsyn
         }
         val pw = admPw(c) ?: return
         val ts = maxOf(System.currentTimeMillis(), p.getLong("admTs", 0) + 1)

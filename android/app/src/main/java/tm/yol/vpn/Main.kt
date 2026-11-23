@@ -398,6 +398,7 @@ open class Main : Activity() {
         if (st == "ok") {
             val first = Lic.saved(this) != k
             Lic.save(this, k)
+            Sub.recheck(this)   // 1.47.16: Premium kodlary derrew açylsyn (gol zarpyndan)
             if (first || Msg.dev(this) !in Lic.devs(Lic.hash(k))) Msg.send(this, JSONObject().put("k", "ka").put("h", Lic.hash(k)))
         }
         return st
@@ -428,7 +429,7 @@ open class Main : Activity() {
         val list = Sub.list.filter { State.allowed(this, it) }   // 1.46.2: Premium ýok — Premium serwerleriň pingi ölçenmeýär
         if (list.isEmpty()) return
         testing = true; State.pings.clear(); push(JSONObject().put("k", "srv"))
-        val pool = Executors.newFixedThreadPool(4)
+        val pool = Executors.newFixedThreadPool(12)   // 1.47.16: has köp paralel — çalt ölçeg
         var left = list.size
         for (s in list) pool.execute {
             State.ping(s)

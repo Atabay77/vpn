@@ -80,8 +80,14 @@ object State {
         return if (autoPrem(c)) base.filter { it.hp !in Sub.free || it.hp in Sub.both } else base.filter { it.hp in Sub.free }.ifEmpty { base }   // 1.46.4 (1.47: Premium-da kod ýok — bestFb mugta geçirýär)
     }
 
-    fun ping(s: Server): Long = runCatching { Libv2ray.measureOutboundDelay(Cfg.full(s.uri, false), PING) }
-        .getOrDefault(-1L).let { if (it > 0) it else -1L }.also { pings[s.key] = it }
+    /** 1.47.16: işlemeýän kodlar (n/a) üçin ilki çalt TCP barlagy — Xray-iň 12 s garaşmagyny tygşytlaýar (Hysteria UDP — barlaman). */
+    private fun tcpOk(s: Server, ms: Int): Boolean = runCatching {
+        val l = Cfg.link(s.uri)
+        java.net.Socket().use { it.connect(java.net.InetSocketAddress(l.host, l.port), ms); true }
+    }.getOrDefault(false)
+    fun ping(s: Server): Long = runCatching {
+        if (s.proto != "Hysteria" && !tcpOk(s, 1400)) -1L else Libv2ray.measureOutboundDelay(Cfg.full(s.uri, false), PING)
+    }.getOrDefault(-1L).let { if (it > 0) it else -1L }.also { pings[s.key] = it }
 
     /** Arka planda bütün adayları ölçer (açılışta). */
     @Volatile var warmAt = 0L   // 1.47.9: açylyşdaky barlag dowam edýär (iň köp 30 s) — şol wagt birikmek garaşdyrylýar
@@ -92,7 +98,7 @@ object State {
         try { warm0(c) } finally { warmAt = 0L }
     }
     private fun warm0(c: List<Server>) {
-        val pool = java.util.concurrent.Executors.newFixedThreadPool(minOf(c.size, 8))
+        val pool = java.util.concurrent.Executors.newFixedThreadPool(minOf(c.size, 12))
         c.forEach { s -> pool.execute { ping(s) } }
         pool.shutdown(); pool.awaitTermination(15, java.util.concurrent.TimeUnit.SECONDS)
         pingAt = System.currentTimeMillis()
@@ -158,7 +164,7 @@ object State {
         val c = cands()
         if (c.isEmpty()) return null
         val got = ConcurrentHashMap<Server, Long>()
-        val pool = java.util.concurrent.Executors.newFixedThreadPool(minOf(c.size, 8))
+        val pool = java.util.concurrent.Executors.newFixedThreadPool(minOf(c.size, 12))
         c.forEach { s -> pool.execute { ping(s).takeIf { it > 0 }?.let { got[s] = it } } }
         pool.shutdown()
         val end = System.currentTimeMillis() + 9000

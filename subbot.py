@@ -2515,12 +2515,25 @@ def app_sync(force=False):
         free_ = app_free_pubg(codes, free_, cfg.get("hp_ms"), add=not cfg.get("pubg_free_off"))   # 1.47: Premium-da 2+ PUBG bolsa biri mugta (eýesi öçürip bilýär — trafik köp bolanda)
         if (fb_ or {}).get("hp") != (cfg.get("fborrow") or {}).get("hp"): vlog(f"🔁 Mugt serwer: {'Premium-dan wagtlaýyn ' + fb_['hp'] if fb_ else 'wagtlaýyn Premium serwer yzyna alyndy'}")   # 1.43.2: mugt — her ýurtdan iň gowy işleýän bir kod + kanal + 2 PUBG
         codes = app_brand_names(codes)   # 1.29: abunanyň atlary görünmesin
-        meta = app_meta(cfg) + (["#tvfree: " + ",".join(free_)] if free_ else [])
-        both_ = sorted({app_x_hp(v["c"]) for v in (cfg.get("xcodes") or {}).values() if v.get("src") in ("tg", "tgs")} & set(free_))
-        if both_ and not cfg.get("prem_own"): meta.append("#tvboth: " + ",".join(both_))   # 1.47: kanal kodlary Premium-da hem (Premium awtomatik we sanaw)
+        free_set = set(free_)
+        both_ = sorted({app_x_hp(v["c"]) for v in (cfg.get("xcodes") or {}).values() if v.get("src") in ("tg", "tgs")} & free_set)
         mv_ = app_min_ver(cfg)
-        if mv_ and cfg.get("fid") and codes:   # 1.47: diňe iň täze wersiýa — kodlar şifrli; köne programmalar diňe «täze wersiýany gurnaň» görýär
-            meta.append(f"#tvx: {mv_} {app_enc(cfg['fid'], chr(10).join(codes))}"); codes = [APP_OLD_STUB]
+        meta = app_meta(cfg)
+        if mv_ and cfg.get("fid") and codes:   # 1.47.16: kodlar programmanyň gol şahadatnamasyna bagly şifrlenýär (#tvy); Premium aýratyn zarpda (#tvpb)
+            all_codes = list(codes)
+            ysec = app_ysec(cfg)
+            fcodes = [c for c in codes if app_x_hp(c) in free_set]
+            pcodes = [c for c in codes if app_x_hp(c) not in free_set]
+            inner = (["#tvfree: " + ",".join(free_)] if free_ else [])
+            if both_ and not cfg.get("prem_own"): inner.append("#tvboth: " + ",".join(both_))   # kanal kodlary Premium-da hem
+            inner += app_prem_env(cfg, pcodes, ysec)
+            meta.append(app_y_line(cfg, APP_YVER, fcodes, inner, ysec))
+            if not cfg.get("xoff"):   # geçiş döwri: 1.47.0–1.47.15 köne şifr (#tvx) bilen işleýär — eýesi /koruma bilen öçürende diňe asyl 1.47.16+ işleýär
+                meta.append(f"#tvx: {APP_XVER} {app_enc(cfg['fid'], chr(10).join(all_codes))}")
+            codes = [APP_OLD_STUB]
+        else:
+            meta += (["#tvfree: " + ",".join(free_)] if free_ else [])
+            if both_ and not cfg.get("prem_own"): meta.append("#tvboth: " + ",".join(both_))
         dig = hashlib.sha256("\n".join(meta + codes).encode()).hexdigest()[:16]; RUN["sub_dig"] = dig   # 1.47: programmalar her minut barlaýar — üýtgän badyna täzeleýär
         svc = new_service()
         if not svc: raise RuntimeError("drive-sa.json bulunamadı")
@@ -2848,6 +2861,88 @@ def app_dec(fid, s):
     if not hmac.compare_digest(hmac.new(_sha("tvmac|" + fid), n + c, hashlib.sha256).digest()[:16], tag): return None
     try: return _xs(_sha("tvmsg|" + fid), n, c).decode("utf-8")
     except Exception: return None
+
+# ---- 1.47.16: gorag — #tvy (programmanyň gol şahadatnamasy bilen baglanyşykly şifr) we Premium zarfy ----
+APP_YVER = "1.47.16"   # #tvy okap bilýän ilkinji wersiýa
+APP_CERT = os.environ.get("APP_CERT", "38d5322270903011bdb246c0e6299ea79348e4f62a5f2bd490fd7f5f7ddcae26")   # programmanyň gol şahadatnamasynyň SHA-256-sy (açyk maglumat, APK-dan okalýar)
+APP_YMASK = 0x13E   # zäherleýän barlaglar: debugger, Frida, inode, möhür, gol bloklary, paket ady (programmada sec.c)
+APP_YFLAGS = [(0x001, "şahadatnama okalmady"), (0x002, "debugger"), (0x004, "Frida"), (0x008, "inode"), (0x010, "möhür bozuk"),
+              (0x020, "gol bloklary deň däl"), (0x040, "ýol / proses ady"), (0x100, "paket ady"), (0x200, "möhür barlanmady"), (0x400, "maps okalmady")]
+
+def _b64u(b): return base64.urlsafe_b64encode(b).decode().rstrip("=")
+
+def app_y_key(fid, salt, mask, cert=None):
+    """Programmanyň native bölegi bilen birmeňzeş: açar = hex(SHA-256("tvy1|fid|salt|mask|şahadatnama"))."""
+    return hashlib.sha256(f"tvy1|{fid}|{salt}|{mask}|{cert or APP_CERT}".encode()).hexdigest()
+
+def app_ysec(cfg):
+    """Botuň gizlin duzy (salt / nonce / CK kesgitli bolsun — mazmun üýtgemese faýl hem üýtgemesin)."""
+    s = cfg.get("ysec")
+    if not (isinstance(s, str) and re.fullmatch(r"[0-9a-f]{64}", s)):
+        s_new = os.urandom(32).hex()
+        s = mutate(lambda d: d.setdefault("app", {}).setdefault("ysec", s_new))
+    return bytes.fromhex(s)
+
+def app_norm_key(k):
+    s = "".join(ch for ch in str(k).upper() if ch.isalnum())
+    return "-".join(s[i:i + 4] for i in range(0, len(s), 4))
+
+def app_prem_creds(cfg):
+    """Premium zarfyny açyp bilýänler: Premium açarlary we eýesiniň admin açar sözi."""
+    out = set()
+    for k, v in app_keys_live(cfg).items():
+        if app_key_prem(v): out.add(("tvp", app_norm_key(k)))
+    for x in (cfg.get("apw") or {}).values():
+        if x.get("role") == "f" and x.get("pw") and apw_valid(x): out.add(("tva", apw_norm(x["pw"])))
+    return sorted(out)
+
+def app_prem_env(cfg, pcodes, ysec):
+    """1.47.16: Premium kodlary diňe hakyky Premium açary (ýa-da eýesiniň admin açar sözi) bolan telefon açyp bilýär.
+    #tvpv — atlar (gulply görkezmek üçin), #tvpk — her açar üçin CK örtügi, #tvpb — CK bilen şifrlenen kodlar."""
+    if not pcodes: return []
+    names = [[c.split("://", 1)[0].lower(), c.split("#", 1)[1] if "#" in c else ""] for c in pcodes]
+    out = ["#tvpv: " + _b64u(json.dumps(names, ensure_ascii=False, separators=(",", ":")).encode())]
+    body = "\n".join(pcodes); creds = app_prem_creds(cfg)
+    ks = _b64u(hmac.new(ysec, ("ks|" + hashlib.sha256(body.encode()).hexdigest() + "|" + ",".join(p + ":" + hashlib.sha256(c.encode()).hexdigest()[:16] for p, c in creds)).encode(), hashlib.sha256).digest()[:9])
+    ck = hmac.new(ysec, ("ck|" + ks).encode(), hashlib.sha256).digest()
+    wr = []
+    for p, c in creds:
+        i_ = hmac.new(_sha(p + "i|" + c), ks.encode(), hashlib.sha256).digest()[:6].hex()
+        w_ = bytes(x ^ y for x, y in zip(ck, hmac.new(_sha(p + "w|" + c), ks.encode(), hashlib.sha256).digest()))
+        wr.append(i_ + "." + _b64u(w_))
+    out.append("#tvpk: " + ks + " " + (",".join(wr) or "-"))
+    out.append("#tvpb: " + app_enc(ck.hex(), body, n=hmac.new(ysec, ("pn|" + ks).encode(), hashlib.sha256).digest()[:12]))
+    return out
+
+def app_y_line(cfg, mv, fcodes, extra, ysec):
+    """#tvy: <iň pes wersiýa> <salt> <mask> <şifr> — açar programmanyň goluna bagly (diňe asyl APK açyp bilýär)."""
+    payload = "\n".join(list(fcodes) + list(extra))
+    salt = _b64u(hmac.new(ysec, ("s|" + hashlib.sha256(payload.encode()).hexdigest()).encode(), hashlib.sha256).digest()[:9])
+    mask = str(int(cfg.get("ymask", APP_YMASK)))
+    n = hmac.new(ysec, ("y|" + salt + "|" + mask).encode(), hashlib.sha256).digest()[:12]
+    return f"#tvy: {mv} {salt} {mask} {app_enc(app_y_key(cfg['fid'], salt, mask), payload, n=n)}"
+
+def app_y_stats(cfg, days=3):
+    """Soňky günlerde işjeň telefonlar: asyl (açýar) / mod (başga gol) / açyp bilmeýär / köne wersiýa."""
+    now = time.time(); r = {"ok": 0, "mod": 0, "bad": 0, "old": 0, "mods": [], "flags": {}}
+    for d, u in (cfg.get("devs") or {}).items():
+        if u.get("mvto") or now - float(u.get("l") or 0) > days * 86400: continue
+        if _vk(u.get("ver") or "0") < _vk(APP_YVER): r["old"] += 1; continue
+        p_ = str(u.get("sg") or "").split(".")
+        f8 = p_[0] if p_ and p_[0] else "-"
+        fl = int(p_[2], 16) if len(p_) > 2 and re.fullmatch(r"[0-9a-f]{1,4}", p_[2]) else 0
+        if fl & APP_YMASK:
+            for bit, nm in APP_YFLAGS:
+                if fl & bit & APP_YMASK: r["flags"][nm] = r["flags"].get(nm, 0) + 1
+        if f8 == "-":
+            r["bad"] += 1
+        elif f8.lower() == APP_CERT[:len(f8)].lower() and not (fl & APP_YMASK):
+            r["ok"] += 1
+        else:
+            r["mod"] += 1
+            if len(r["mods"]) < 20:
+                r["mods"].append({"code": app_ref_code(d), "nick": str(u.get("nick") or "?"), "cert": f8, "fl": fl, "ver": u.get("ver") or "?"})
+    return r
 
 def app_ref_code(dev):
     h = _sha("tvref|" + dev)
@@ -3696,7 +3791,7 @@ async def app_on_msg(app, fid, o):
     k = o.get("k"); now = int(time.time())
     def reg(a):
         u = a.setdefault("devs", {}).setdefault(dev, {"f": now})
-        for f_ in ("nick", "model", "ver", "lang"):
+        for f_ in ("nick", "model", "ver", "lang", "sg"):
             if o.get(f_): u[f_] = str(o[f_])[:40]
         u["l"] = now
         day_ = tm_now().strftime("%Y-%m-%d")
@@ -3709,7 +3804,7 @@ async def app_on_msg(app, fid, o):
         if not u.get("mvto"): a.setdefault("codes", {})[app_ref_code(dev)] = dev   # 1.47: göçürilen köne telefon kody täzesinde galýar
     a0_ = app_cfg(load_db_ro()); u0_ = (a0_.get("devs") or {}).get(dev)   # 1.47: hiç zat üýtgemedik bolsa baza ýazylmaýar (her habarda ýazmak — bot haýallaýardy)
     if (u0_ is None or u0_.get("ld") != tm_now().strftime("%Y-%m-%d") or now - int(u0_.get("l") or 0) > 300 or app_ref_code(dev) not in (a0_.get("codes") or {})
-            or any(o.get(f_) and str(o[f_])[:40] != u0_.get(f_) for f_ in ("nick", "model", "ver", "lang"))
+            or any(o.get(f_) and str(o[f_])[:40] != u0_.get(f_) for f_ in ("nick", "model", "ver", "lang", "sg"))
             or (o.get("vpn") and (u0_.get("vld") != tm_now().strftime("%Y-%m-%d") or now - int(u0_.get("vl") or 0) > 1800))):
         app_mut_later(reg)   # 1.47: toplumlaýyn (2 sn)
     try: await asyncio.to_thread(app_resend, fid, dev, int(o.get("ack") or 0))
@@ -3846,7 +3941,7 @@ async def app_on_msg(app, fid, o):
                     if img_: await app.bot.send_photo(chat_id=fid_, photo=img_, caption=f"🧾 Program bileti #{tid} — {nk_[:32]}", reply_markup=KB([[B("✍️ Jogap ber", f"atr:{tid}", "primary")]]))
                 except Exception as e: log.warning("tk photo: %s", e)
         if ai_on:
-            nt_ = re(r"\W+", " ", text.casefold()).strip(); dp_ = RUN.setdefault("ai_dup", {}); pv_ = dp_.get(dev)
+            nt_ = re.sub(r"\W+", " ", text.casefold()).strip(); dp_ = RUN.setdefault("ai_dup", {}); pv_ = dp_.get(dev)
             if pv_ and pv_[0] == nt_ and time.time() - pv_[1] < 60: ai_on = False   # 1.47.5: 1 minutda şol bir habar — AI diňe bir gezek jogap berýär
             else: dp_[dev] = (nt_, time.time())
         if ai_on: asyncio.create_task(app_ai_soon(app, tid))
@@ -6395,6 +6490,27 @@ async def cmd_minver(u: Update, c: ContextTypes.DEFAULT_TYPE):
     mv_ = app_min_ver(app_cfg(load_db()))
     await c.bot.send_message(uid, "🔒 <b>Sürüm kilidi</b>\n<blockquote>" + (f"Sadece <b>{esc(mv_)}</b> ve daha yeni sürümler sunucu görür. Eski programlar «Täze wersiýany gurnaň» görür." if mv_
         else "Kapalı — bütün sürümler çalışır (1.47.0 yayınlanınca kendiliğinden açılır).") + "</blockquote>\n<code>/minver kapat</code> · <code>/minver ac</code>", parse_mode="HTML")
+
+async def cmd_koruma(u: Update, c: ContextTypes.DEFAULT_TYPE):
+    """1.47.16: /koruma — modlanan (değiştirilmiş) programları izle; /koruma kati — eski şifreyi kapat (sadece asıl 1.47.16+ çalışır); /koruma yumusak — geçiş (eskiler de çalışır)."""
+    uid = u.effective_user.id
+    if not is_fo(uid): return
+    a_ = (c.args or [""])[0].lower()
+    if a_ in ("kati", "katı", "siki", "off", "xoff"): app_mut(lambda x: x.__setitem__("xoff", True)); RUN["app_dirty"] = True
+    elif a_ in ("yumusak", "yumuşak", "gecis", "geçiş", "on"): app_mut(lambda x: x.pop("xoff", None)); RUN["app_dirty"] = True
+    cfg = app_cfg(load_db()); st = app_y_stats(cfg); xoff = bool(cfg.get("xoff"))
+    txt = ["🛡 <b>Ultra gorag</b> (1.47.16)",
+           f"<blockquote>Asyl programma: <b>{st['ok']}</b>\nModlanan (üýtgedilen): <b>{st['mod']}</b>\nAçyp bilmeýär: <b>{st['bad']}</b>\nKöne wersiýa: <b>{st['old']}</b></blockquote>",
+           ("🔴 <b>Katı mod AÇIK</b> — sadece asıl 1.47.16+ sunucu görür. Modlar ve eski sürümler «güncelle» görür." if xoff
+            else "🟡 <b>Geçiş modu</b> — eski sürümler de çalışır (modlar dahil). Çoğu kişi 1.47.16'ya geçince <code>/koruma kati</code> yaz.")]
+    if st["flags"]: txt.append("⚠️ " + " · ".join(f"{k}: {v}" for k, v in sorted(st["flags"].items(), key=lambda x: -x[1])))
+    if st["mods"]:
+        txt.append("<b>Modlanan telefonlar:</b>")
+        for m in st["mods"][:12]:
+            fls = ", ".join(nm for bit, nm in APP_YFLAGS if m["fl"] & bit & APP_YMASK)
+            txt.append(f"• <code>{esc(m['code'])}</code> {esc(m['nick'])} · {esc(m['ver'])} · gol <code>{esc(m['cert'])}</code>" + (f" · {esc(fls)}" if fls else ""))
+    txt.append("\n<code>/koruma kati</code> · <code>/koruma yumusak</code>")
+    await c.bot.send_message(uid, "\n".join(txt), parse_mode="HTML")
 
 async def cmd_owner2(u: Update, c: ContextTypes.DEFAULT_TYPE):
     """1.47: /owner2 <Telegram ID> — owner 2 ekle / kaldır (sadece asıl kurucu). Argümansız: liste.
@@ -12529,6 +12645,7 @@ def main():
     app.add_handler(CommandHandler("gocur", cmd_gocur))
     app.add_handler(CommandHandler("owner2", cmd_owner2))
     app.add_handler(CommandHandler("minver", cmd_minver))
+    app.add_handler(CommandHandler("koruma", cmd_koruma))
     app.add_handler(CommandHandler("pubgfree", cmd_pubgfree))
     app.add_handler(MessageHandler(filters.COMMAND, other_cmd))
     app.add_handler(CallbackQueryHandler(cb))
