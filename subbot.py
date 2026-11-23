@@ -1221,6 +1221,7 @@ TM_CNAME = {"nl": "Niderlandlar", "fi": "Finlýandiýa", "gb": "Beýik Britaniý
 
 def app_is_game(c):
     """Oýun (PUBG) kody: adynda 🎮 ýa-da pubg/gaming/oýun/game."""
+    if str(c).strip().lower().startswith("vless://"): return False   # 1.47.16: PUBG-da vless ýok (diňe ss, hy2 we beýlekiler) — adaty serwer bolýar
     nm = orig_name(c)
     return "🎮" in nm or "🇷🇺" in nm or "🇺🇿" in nm or "🇰🇿" in nm or bool(re.search(r"pubg|gaming|oýun|game|uzbek|kazak", nm, re.I))   # 1.45.2: Russiýa serwerleri — PUBG bölüminde (1.47: Özbegistan / Gazagystan hem)
 
