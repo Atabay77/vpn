@@ -153,6 +153,7 @@ object Sub {
     fun decode(text: String): String {
         val raw = body(text); val lines = raw.lines()
         fun outer() = lines.filterNot { val t = it.trim(); t.startsWith("#tvy:") || t.startsWith("#tvx:") }.joinToString("\n")
+        fun outerMeta() = lines.filter { val t = it.trim(); t.startsWith("#") && !t.startsWith("#tvy:") && !t.startsWith("#tvx:") }.joinToString("\n")   // 1.47.17: köne programmalar üçin «Täze wersiýany gurnaň» setiri görünmesin
         val own = State.app?.let { Msg.ver(it) } ?: "0"
         val yl = lines.firstOrNull { it.trim().startsWith("#tvy:") }?.trim()
         val xl = lines.firstOrNull { it.trim().startsWith("#tvx:") }?.trim()
@@ -160,14 +161,14 @@ object Sub {
             val p = yl.split(Regex("\\s+"))
             if (p.size >= 5 && (own == "0" || !Upd.newer(p[1], own))) {
                 val dec = runCatching { N.d(State.app, p[2], p[3], p[4]) }.getOrNull()?.let { String(it, Charsets.UTF_8) }
-                if (dec != null) { needUpd = false; return outer() + "\n" + expandPrem(dec) }
+                if (dec != null) { needUpd = false; return outerMeta() + "\n" + expandPrem(dec) }
             }
         }
         if (xl != null) {
             val p = xl.split(Regex("\\s+"))
             if (p.size >= 3 && (own == "0" || !Upd.newer(p[1], own))) {
                 val dec = Msg.dec(p[2])
-                if (dec != null) { needUpd = false; return outer() + "\n" + dec }
+                if (dec != null) { needUpd = false; return outerMeta() + "\n" + dec }
             }
         }
         if (yl != null || xl != null) { needUpd = true; return outer() }

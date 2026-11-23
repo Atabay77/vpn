@@ -458,13 +458,15 @@ open class Main : Activity() {
     private fun askUpdate(vpn: Boolean) {
         val u = Upd.available(Msg.ver(this)) ?: return
         Upd.clean(this, Msg.ver(this), u.first)
-        if (Upd.ready(this, u.first)) { installHint(); Upd.install(this, u.first); return }
-        if (Upd.busy(this)) { toast(t("Täze wersiýa ýüklenýär, garaşyň", "Новая версия загружается, подождите", "Yeni sürüm iniyor, bekleyin")); return }
-        val msg = if (vpn) t("VPN-i işletmek üçin VPN-iň täze wersiýasyny ýüklemeli! Size täze wersiýany ýükläýinmi?",
-            "Чтобы пользоваться VPN, нужно загрузить новую версию! Загрузить новую версию?",
-            "VPN'i kullanmak için yeni sürümü indirmelisiniz! Yeni sürüm indirilsin mi?")
-        else t("Täze wersiýa ${u.first} bar. Ýükläýinmi?", "Доступна версия ${u.first}. Загрузить?", "Yeni sürüm ${u.first} var. İndirilsin mi?")
-        ask(msg, t("Hawa", "Да", "Evet"), t("Ýok", "Нет", "Hayır")) { startUpdate(u) }
+        // 1.47.17: täze wersiýa programmanyň içinden däl — turkmenvpn.ru saýtyndan ýüklenýär (VPN-siz açylýar)
+        val msg = if (vpn) t("VPN-i işletmek üçin täze wersiýany gurnamaly! turkmenvpn.ru saýtyndan ýükläň (VPN-siz açylýar).",
+            "Чтобы пользоваться VPN, установите новую версию! Скачайте с сайта turkmenvpn.ru (открывается без VPN).",
+            "VPN'i kullanmak için yeni sürümü kurmalısınız! turkmenvpn.ru sitesinden indirin (VPN'siz açılır).")
+        else t("Täze wersiýa ${u.first} bar. turkmenvpn.ru saýtyndan ýükläň (VPN-siz açylýar).", "Доступна версия ${u.first}. Скачайте с сайта turkmenvpn.ru (открывается без VPN).",
+            "Yeni sürüm ${u.first} var. turkmenvpn.ru sitesinden indirin (VPN'siz açılır).")
+        ask(msg, t("Saýty aç", "Открыть сайт", "Siteyi aç"), t("Ýok", "Нет", "Hayır")) {
+            runCatching { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://turkmenvpn.ru")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+        }
     }
 
     private fun startUpdate(u: Pair<String, String>) {
