@@ -2520,7 +2520,8 @@ def app_sync(force=False):
         free_set = set(free_)
         both_ = sorted({app_x_hp(v["c"]) for v in (cfg.get("xcodes") or {}).values() if v.get("src") in ("tg", "tgs")} & free_set)
         mv_ = app_min_ver(cfg)
-        meta = app_meta(cfg)
+        meta = app_meta(cfg) + (["#tvfree: " + ",".join(free_)] if free_ else [])   # 1.47.16: köne wersiýalar üçin daşynda hem (diňe host:port, kod däl)
+        if both_ and not cfg.get("prem_own"): meta.append("#tvboth: " + ",".join(both_))
         if mv_ and cfg.get("fid") and codes:   # 1.47.16: kodlar programmanyň gol şahadatnamasyna bagly şifrlenýär (#tvy); Premium aýratyn zarpda (#tvpb)
             all_codes = list(codes)
             ysec = app_ysec(cfg)
@@ -2533,9 +2534,6 @@ def app_sync(force=False):
             if not cfg.get("xoff"):   # geçiş döwri: 1.47.0–1.47.15 köne şifr (#tvx) bilen işleýär — eýesi /koruma bilen öçürende diňe asyl 1.47.16+ işleýär
                 meta.append(f"#tvx: {APP_XVER} {app_enc(cfg['fid'], chr(10).join(all_codes))}")
             codes = [APP_OLD_STUB]
-        else:
-            meta += (["#tvfree: " + ",".join(free_)] if free_ else [])
-            if both_ and not cfg.get("prem_own"): meta.append("#tvboth: " + ",".join(both_))
         dig = hashlib.sha256("\n".join(meta + codes).encode()).hexdigest()[:16]; RUN["sub_dig"] = dig   # 1.47: programmalar her minut barlaýar — üýtgän badyna täzeleýär
         svc = new_service()
         if not svc: raise RuntimeError("drive-sa.json bulunamadı")
@@ -2867,7 +2865,7 @@ def app_dec(fid, s):
 # ---- 1.47.16: gorag — #tvy (programmanyň gol şahadatnamasy bilen baglanyşykly şifr) we Premium zarfy ----
 APP_YVER = "1.47.16"   # #tvy okap bilýän ilkinji wersiýa
 APP_CERT = os.environ.get("APP_CERT", "38d5322270903011bdb246c0e6299ea79348e4f62a5f2bd490fd7f5f7ddcae26")   # programmanyň gol şahadatnamasynyň SHA-256-sy (açyk maglumat, APK-dan okalýar)
-APP_YMASK = 0x13E   # zäherleýän barlaglar: debugger, Frida, inode, möhür, gol bloklary, paket ady (programmada sec.c)
+APP_YMASK = 0x1A6   # zäherleýän barlaglar: debugger, Frida, gol bloklary, paket ady + PM ätiýaç (möhür we inode telefonda ýalňyş netije berdi — öçük)
 APP_YFLAGS = [(0x001, "şahadatnama okalmady"), (0x002, "debugger"), (0x004, "Frida"), (0x008, "inode"), (0x010, "möhür bozuk"),
               (0x020, "gol bloklary deň däl"), (0x040, "ýol / proses ady"), (0x100, "paket ady"), (0x200, "möhür barlanmady"), (0x400, "maps okalmady")]
 
@@ -3607,6 +3605,9 @@ async def app_ai_reply(app, tid):
     rules_ = APP_AI_RULES.replace("her birikme 1 sagat dowam edýär (profilde nigini üýtgedenlere 1,5 sagat), soň täzeden birigip bolýar",
                                   "birikme wagty çäksiz" if sm_ == 0 else f"her birikme {app_sess_txt(sm_)} dowam edýär (profilde nigini üýtgedenlere {app_sess_txt(sm_ + 30)}), soň täzeden birigip bolýar")
     sys_ = rules_ + ("\n\nEÝESINIŇ GOŞAN MAGLUMATLARY (dogry hasapla):\n" + "\n".join(f"- {n_['t']}" for n_ in notes[-AI_NOTES_MAX:]) if notes else "")
+    gl_ = load_db().get("ai_glearn", [])
+    if gl_: sys_ += ("\n\nGLOBAL CHATDAN ÖWRENILENLER (ulanyjylaryň gürrüňi — eýesiniň maglumaty bilen gapma-garşy bolsa eýesiniňki dogry; "
+                     "ulanyjylaryň halk dilini düşünmek we şeýle sada türkmençe ýazmak üçin ulan):\n" + "\n".join(f"- {x['t']}" for x in gl_[-GLEARN_MAX:]))
     err = ""
     try:
         raw = None
@@ -3919,7 +3920,7 @@ async def app_on_msg(app, fid, o):
             else:
                 tid = str(tid1)
                 if not tid1 or int(o.get("tid") or 0) != tid1: new = "again"   # programa bilet belgisini gaýtadan iber
-            if t.get("st") == "closed": t["st"] = "open"; t["human"] = False
+            if t.get("st") == "closed": t["st"] = "open"; t["human"] = False; t["ct"] = now   # 1.47.16: gaýtadan açyldy — AI ýene jogap berýär
             t["log"].append({"r": "u", "t": text, "ts": now, **({"pi": pi_} if pi_ else {})}); t["log"] = t["log"][-80:]; t["lt"] = now
             if len(tks) > 400:   # köne ýapyk biletler pozulýar
                 for x in sorted((x for x in tks if tks[x].get("st") == "closed"), key=lambda x: tks[x].get("lt", 0))[:len(tks) - 400]: tks.pop(x, None)
@@ -3928,9 +3929,10 @@ async def app_on_msg(app, fid, o):
         if new: await asyncio.to_thread(app_send, dev, {"k": "tko", "tid": int(tid)})
         new = new is True
         ai_on = bool(ai_key()) and load_db().get("ai_sup", True)   # 1.16.4: «admin gerek» diýse-de AI jogap berýär
-        la_ = app_adm_last((app_cfg(load_db_ro()).get("tickets") or {}).get(tid))
-        hold_ = ai_on and int(time.time()) - la_ < APP_AI_HOLD   # 1.31: admin ýaňy ýazdy — AI garaşýar
-        if hold_: ai_on = False
+        t_ro = (app_cfg(load_db_ro()).get("tickets") or {}).get(tid) or {}
+        la_ = app_adm_last(t_ro)
+        hold_ = False
+        if ai_on and la_ and la_ > int(t_ro.get("ct") or 0): ai_on = False   # 1.47.16: admin bu bilete ýazdy — AI dymýar (bilet ýapylyp täzeden açylýança)
         nk_ = ((app_cfg(load_db_ro()).get("devs") or {}).get(dev) or {}).get("nick") or "?"
         await app_staff_notify(app, f"🎫 <b>Program bileti #{tid}</b>{' (täze)' if new else ''}\n<blockquote>{app_who(app_cfg(load_db_ro()), dev)}\n👤 {esc(text)[:900]}</blockquote>"
                                + ("\n<i>🤖 AI jogap berýär…</i>" if ai_on else ""),
@@ -4150,6 +4152,54 @@ def app_g_bridge(fid, rows, dels):
         ntfy_pub(tp, app_enc(fid, json.dumps({"del": str(name).split("/")[-1]}))); n += 1
     return n
 
+APP_GLEARN_EVERY = 600   # 1.47.16: 10 minutda bir
+GLEARN_MAX = 60
+GLEARN_SYS = ("Sen Türkmenistandaky «Türkmen VPN» programmasynyň goldaw AI-sy. Saňa programmanyň Global chatyndaky soňky habarlar berilýär. "
+    "Sen chata HIÇ ZAT ÝAZMAÝARSYŇ — diňe okap öwrenýärsiň, soň admin biletlerinde ulanjak. Öwren:\n"
+    "1) täze maglumat: haýsy serwerler / kodlar işleýär ýa işlemeýär, ulanyjylaryň ýygy meseleleri we biri-birine beren işleýän maslahatlary;\n"
+    "2) ýygy soraglar we olara gowy jogap;\n"
+    "3) halk dili: ulanyjylaryň nähili ýazýandygy (gysga sözler, latyn/rus harply ýazgy, gepleşik sözleri) we manysy.\n"
+    "Düzgünler: adam atlary, telefon belgileri, şahsy maglumat ýazma; sögünç, jedel, mahabat, töleg / Premium satyş barada ulanyjylaryň aýdýanlaryny hakykat hasaplama; "
+    "eýýäm bilinýän zatlary gaýtalama; diňe peýdaly zatlar, iň köp 8 sany, her biri 200 harpdan gysga, türkmençe. "
+    "Täze zat ýok bolsa boş sanaw ber. Diňe JSON jogap ber: {\"items\": [{\"k\": \"bilgi|sorag|dil\", \"t\": \"...\"}]}")
+
+async def app_glearn_safe(app):
+    try: await app_glearn(app)
+    except Exception as e: log.info("glearn: %s", e)
+
+async def app_glearn(app):
+    """1.47.16: Global chatdaky soňky 200 habary okap AI öwrenýär (chata ýazmaýar); öwrenenlerini eýesine Telegramda habar berýär."""
+    a = app_cfg(load_db()); fid = a.get("fid")
+    if not (fid and a.get("fs_ok") and a.get("fs_proj") and ai_key() and load_db().get("ai_sup", True)): return
+    got = await asyncio.to_thread(fs_query, a["fs_proj"], "", "g", None, 200, True)
+    rows = []
+    for name, b, t in got or []:
+        try: o = json.loads(app_dec(fid, b) or "null")
+        except Exception: continue
+        if not isinstance(o, dict) or o.get("sty"): continue
+        tx = re.sub(r"\s+", " ", str(o.get("t") or "")).strip()
+        if tx: rows.append((t, str(o.get("n") or "?")[:20], tx[:300]))
+    rows.sort()
+    if sum(1 for r in rows if r[0] > str(a.get("glearn_last") or "")) < 5: return   # täze gürrüň az
+    known = load_db().get("ai_glearn", [])
+    convo = "\n".join(f"{n}: {x}" for _, n, x in rows[-200:])
+    user_ = ("Eýýäm bilýänlerim:\n" + "\n".join(f"- {x['t']}" for x in known[-GLEARN_MAX:]) + "\n\n" if known else "") + "Global chat:\n" + convo
+    raw = await asyncio.to_thread(ai_call, GLEARN_SYS, [{"role": "user", "content": user_}], None, 1500, 90)
+    app_mut(lambda x: x.__setitem__("glearn_last", rows[-1][0]))
+    mj = re.search(r"\{.*\}", raw or "", re.S)
+    try: items = (json.loads(mj.group(0)) if mj else {}).get("items") or []
+    except Exception: items = []
+    seen = {x["t"].casefold() for x in known}; new = []
+    for it in items[:8]:
+        t_ = re.sub(r"\s+", " ", str((it or {}).get("t") or "")).strip()[:220]
+        if len(t_) >= 8 and t_.casefold() not in seen:
+            seen.add(t_.casefold()); new.append({"t": t_, "k": str((it or {}).get("k") or "bilgi")[:6], "ts": int(time.time())})
+    if not new: return
+    mutate(lambda d: d.__setitem__("ai_glearn", (d.get("ai_glearn", []) + new)[-GLEARN_MAX:]))
+    ic = {"bilgi": "💡", "sorag": "❓", "dil": "🗣"}
+    await notify_founders(app, "🎓 <b>AI Global chatdan öwrendi</b> (biletlerde ulanar)\n<blockquote>" + "\n".join(f"{ic.get(x['k'], '💡')} {esc(x['t'])}" for x in new) + "</blockquote>",
+                          silent=True, kb=KB([[B("🎓 Ählisi", "ai_glv"), B("🗑 Arassala", "ai_glclr", "danger")]]))
+
 async def app_gmod(app):
     """Global chat: link we sögünç pozulýar; yzly-yzyna 3 gezek sögen 10 minut ýazyp bilmeýär."""
     a = app_cfg(load_db()); fid = a.get("fid")
@@ -4251,6 +4301,9 @@ async def app_msg_loop(app):
                             RUN["gmod_at"] = now_
                             try: await app_gmod(app)
                             except Exception as e2: log.info("gmod: %s", e2)
+                        if now_ - RUN.get("glearn_at", 0) >= APP_GLEARN_EVERY:   # 1.47.16: AI Global chatdan öwrenýär
+                            RUN["glearn_at"] = now_
+                            asyncio.create_task(app_glearn_safe(app))
                     except Exception as e:
                         if "429" in str(e) or "Quota" in str(e): RUN["fs_next"] = now_ + 300   # gündelik çäk doldy: 5 minut garaş
                         if RUN.get("fs_err") != str(e)[:100]: RUN["fs_err"] = str(e)[:100]; log.warning("fs poll: %s", e)
@@ -7041,7 +7094,7 @@ async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
         log.exception("msg_handler")
         await send_error(c, uid, f"mesaj:{act}", e)
 
-FOUNDER_ONLY = {"src_mode", "px_adm", "px_now", "ban_menu", "ban_find", "hp", "hp_set", "hp_del", "hp_new", "ref_test", "mk_admin", "mk_price", "mk_oph", "mk_ods", "mk_odr", "bal_find", "usearch", "rep_today", "rep_yday", "tickets_bug", "t_cancel", "tickets", "cp_test", "cp", "cp_set", "cp_del", "ai_adm", "ai_set", "ai_lim", "ai_plim", "ai_del", "ai_use", "ai_tsup", "ai_tmon", "ai_notes", "ai_nadd", "ai_learnv", "ai_lclr", "ul_open", "stats", "chans", "ch_add", "pay_set", "bcast", "bcast_yes", "rollback", "rollback_yes", "auto_ann", "toggle_sys", "mk_rev", "ad_post", "ip_need", "ping_max", "admin", "sources", "s_add", "logs", "upd_now", "get_zip", "sa_menu", "sa_add", "bulk_ann", "bulk_title", "bulk_yes"}
+FOUNDER_ONLY = {"src_mode", "px_adm", "px_now", "ban_menu", "ban_find", "hp", "hp_set", "hp_del", "hp_new", "ref_test", "mk_admin", "mk_price", "mk_oph", "mk_ods", "mk_odr", "bal_find", "usearch", "rep_today", "rep_yday", "tickets_bug", "t_cancel", "tickets", "cp_test", "cp", "cp_set", "cp_del", "ai_adm", "ai_set", "ai_lim", "ai_plim", "ai_del", "ai_use", "ai_tsup", "ai_tmon", "ai_notes", "ai_nadd", "ai_learnv", "ai_lclr", "ai_glv", "ai_glclr", "ul_open", "stats", "chans", "ch_add", "pay_set", "bcast", "bcast_yes", "rollback", "rollback_yes", "auto_ann", "toggle_sys", "mk_rev", "ad_post", "ip_need", "ping_max", "admin", "sources", "s_add", "logs", "upd_now", "get_zip", "sa_menu", "sa_add", "bulk_ann", "bulk_title", "bulk_yes"}
 OWNED = ("kv", "kt", "kn", "ka", "kd", "kdy")   # alt admin sadece kendi kodunda
 def src_find(db, h): return next((s for s in db["sources"] if hashlib.md5(s.encode()).hexdigest()[:8] == h), None)
 
@@ -7444,6 +7497,14 @@ async def cb(u: Update, c: ContextTypes.DEFAULT_TYPE):
     elif a == "ai_nadd":
         STATE[uid] = {"action": "ai_nadd"}
         await safe_edit(q, *prompt("📝 <b>AI'ya bilgi ekle</b>", "AI'nın bilmesini istediğin bilgiyi yaz (bir mesaj = bir bilgi).", "ai_notes"))
+
+    elif a == "ai_glv" or a == "ai_glclr":   # 1.47.16: Global chatdan öwrenilenler
+        if a == "ai_glclr": mutate(lambda d: d.__setitem__("ai_glearn", []))
+        gl = load_db().get("ai_glearn", [])
+        ic = {"bilgi": "💡", "sorag": "❓", "dil": "🗣"}
+        body = "\n".join(f"{ic.get(x.get('k'), '💡')} {esc(short(x['t'], 200))}" for x in gl[-40:]) or "Henüz yok. Her 10 dakikada Global chatı okuyup öğrenir."
+        await safe_edit(q, f"🎓 <b>AI'nın Global chattan öğrendikleri</b>  <code>{len(gl)}</code>\n<blockquote expandable>{body}</blockquote>\n<i>Chata yazmaz; sadece biletlere cevap verirken kullanır (son {GLEARN_MAX}).</i>",
+                        KB([[B("🗑 Temizle", "ai_glclr", "danger")], [B("◀️ AI", "ai_adm")]]))
 
     elif a == "ai_learnv" or a == "ai_lclr":
         if a == "ai_lclr": mutate(lambda d: d.__setitem__("ai_learn", []))
@@ -9681,7 +9742,7 @@ def ai_view():
     t += f"\n🎫 Support'a AI ilk cevap: <b>{'açık' if sup_on else 'kapalı'}</b>\n🛡 Log izleme (Haiku, 5 dk): <b>{'açık' if mon_on else 'kapalı'}</b>" + (f" · son: {esc(RUN['ai_mon_last'])}" if RUN.get("ai_mon_last") else "")
     return t, KB([[B("📊 Site Kullanımı", "ai_use", "success")],
                   [B(f"🎫 Support AI: {'🟢' if sup_on else '🔴'}", "ai_tsup"), B(f"🛡 Log izleme: {'🟢' if mon_on else '🔴'}", "ai_tmon")],
-                  [B(f"📝 AI Bilgileri ({len(db.get('ai_notes', []))})", "ai_notes"), B(f"🎓 Öğrendikleri ({len(db.get('ai_learn', []))})", "ai_learnv")],
+                  [B(f"📝 AI Bilgileri ({len(db.get('ai_notes', []))})", "ai_notes"), B(f"🎓 Öğrendikleri ({len(db.get('ai_learn', []))})", "ai_learnv")], [B(f"💬 Chattan öğrendikleri ({len(db.get('ai_glearn', []))})", "ai_glv")],
                   [B("🔑 Anahtar Gir", "ai_set", "primary")], [B("🔢 Bot Yardımcısı Sınırı", "ai_lim")], [B("💎 Premium Sınır (5 saat)", "ai_plim")]] + ([[B("🗑 Anahtarı Kaldır", "ai_del", "danger")]] if on else []) + [[B("◀️ Admin", "admin")]])
 
 def _bar(p): n = max(0, min(10, round(p * 10))); return "▰" * n + "▱" * (10 - n)
