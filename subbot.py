@@ -1488,6 +1488,7 @@ HUNT_TG_READ = 150         # her aýlawda okalýan belli kanal
 HUNT_NEW_CH = 100          # her aýlawda synalýan täze kanal ady
 HUNT_GH_FILES = 60         # her aýlawda barlanýan GitHub faýly
 HUNT_TM_MS = 2500          # Türkmenistanda şundan haýal kod sanawa goşulmaýar
+HUNT_COOL = 6 * 3600       # 1.47.15: programmanyň sanawynda bolan kod aýrylsa — hemişelik gadagan däl, 6 sagatdan soň ýene bir gezek telefonda synalýar
 HUNT_FILE = os.path.join(os.path.dirname(DB_FILE) or ".", "hunt.json")
 HUNT_BAD_FILE = os.path.join(os.path.dirname(DB_FILE) or ".", "hunt_bad.txt")   # 1.46 sanawy — bir gezek okalyp hunt_seen.bin-e geçirilýär
 HUNT_URL = os.environ.get("HUNT_URL", "https://www.gstatic.com/generate_204")
@@ -1663,6 +1664,12 @@ def hunt_keys(c, src=""):
     if src: ks.append("s:" + src[:40])
     return ks
 
+def hunt_cool(S, hp, c, now):
+    """1.47.15: Türkmenistanda sanawda bolan (subutnamaly) kod aýrylanda — 6 sagatlyk garaşyş (soň VPS-siz göni telefon synagyna)."""
+    cool = S.setdefault("cool", {}); cool[hp] = [int(now), c or ""]
+    if len(cool) > 3000:
+        for k in sorted(cool, key=lambda k_: cool[k_][0])[:len(cool) - 2500]: cool.pop(k, None)
+
 def hunt_rate_add(S, c, src, ok):
     """Kodyň Türkmenistandaky ilkinji netijesi statistika goşulýar."""
     rate = S["rate"]; now = int(time.time())
@@ -1681,6 +1688,7 @@ def hunt_score(S, c, src, own=()):
         e = S["ch"].get(src[3:]) or {}
         s *= (5.0 if src[3:] in own else 3.0 if float(e.get("tm") or 0) >= 0.4 else 1.0) * (1 + min(5, int(e.get("ok") or 0)) * 0.5)
     elif src.startswith(("url:", "sub:")): s *= 2.0
+    elif src == "cool": s *= 5.0   # 1.47.15: Türkmenistanda öň sanawda bolan kod — ilki synalýar
     return s
 
 # ---------- bot barlagy (Xray) ----------
@@ -1718,7 +1726,12 @@ def hunt_outbound(link, tag):
                 st["realitySettings"] = {"serverName": q.get("sni", ""), "fingerprint": q.get("fp", "chrome"), "publicKey": q.get("pbk", ""), "shortId": q.get("sid", ""), "spiderX": q.get("spx", "")}
             if net == "ws": st["wsSettings"] = {"path": q.get("path", "/"), "host": q.get("host", "")}
             elif net == "grpc": st["grpcSettings"] = {"serviceName": q.get("serviceName", "")}
-            elif net == "xhttp": st["xhttpSettings"] = {"path": q.get("path", "/"), "host": q.get("host", ""), "mode": q.get("mode", "auto")}
+            elif net == "xhttp":
+                xh = {"path": q.get("path", "/"), "host": q.get("host", ""), "mode": q.get("mode", "auto")}
+                if q.get("extra"):   # 1.47.15: programma (Cfg.kt) ýaly — packet-up / xmux (bolmasa bu kodlar ýalňyşlykda taşlanýardy)
+                    try: xh["extra"] = json.loads(q["extra"])
+                    except Exception: pass
+                st["xhttpSettings"] = xh
             elif net == "httpupgrade": st["httpupgradeSettings"] = {"path": q.get("path", "/"), "host": q.get("host", "")}
             fm(st)
             if not q.get("fm") and q.get("fragment"):
@@ -2068,7 +2081,7 @@ def hunt_run(force_gh=False):
             new_ = list(dict.fromkeys(new_ + ghl))[:HUNT_NEW_CH]
             jobs += [(n, 1, 1) for n in new_]
             ghfiles = sorted([(u, e.get("e") or "", e.get("h") or "") for u, e in gh.items() if not e.get("dead") and now - float(e.get("a") or 0) >= 1200],
-                             key=lambda x: (bool(gh[x[0]].get("a")), -int(gh[x[0]].get("y") or 0)))[:HUNT_GH_FILES]
+                             key=lambda x: (bool(gh[x[0]].get("a")), -int(gh[x[0]].get("ok") or 0), -int(gh[x[0]].get("y") or 0)))[:HUNT_GH_FILES]   # 1.47.15: Türkmenistanda işlän kod beren faýllar öňde
             ghst = {k: pst.get(k) for k in ("ghi", "gh_wait")}; ghr = dict(S["ghr"])
         # 2) Telegram (gulp ýok)
         res_tg, stop = [], {"n": 0.0}
@@ -2141,13 +2154,28 @@ def hunt_run(force_gh=False):
                 for k in sorted(S["ghr"], key=lambda k_: S["ghr"][k_]["a"])[:500]: S["ghr"].pop(k, None)
             for u, full in gh_new:
                 if u not in gh: gh[u] = {"f": full, "t": int(now)}
-            is_new = lambda hp: hp not in pool and hp not in q and hp not in have and hp not in seen
+            cool = S.setdefault("cool", {})
+            if not pst.get("rcv1"):   # 1.47.15 (bir gezek): köne düzgünler bilen ýalňyş aýrylan — soňky 3 günde Türkmenistanda işlän kodlar gaýtadan tapylsa goşulýar
+                for hp_, v_ in (a.get("hp_ms") or {}).items():
+                    try:
+                        if len(v_) > 2 and v_[2] and now - float(v_[2]) < 3 * 86400 and hp_ not in pool: cool.setdefault(hp_, [int(now - HUNT_COOL), ""])
+                    except Exception: pass
+                pst["rcv1"] = 1
+            for hp_, cv_ in list(cool.items()):   # garaşyş gutardy — kod belli bolsa göni telefon synagyna (VPS Russiýada — Türkmenistan üçin ölçeg däl)
+                if not (isinstance(cv_, list) and len(cv_) == 2 and isinstance(cv_[0], (int, float))): cool.pop(hp_, None); continue   # bozuk ýazgy — aw aýlawy saklanmasyn
+                t_, c_ = cv_
+                if now - t_ < HUNT_COOL: continue
+                if c_ and hp_ not in pool and hp_ not in have: cool.pop(hp_, None); q.pop(hp_, None); pool[hp_] = {"c": c_, "src": "cool", "ts": int(now), "ok": int(now), "ms": 0}
+                elif not c_ and now - t_ > 7 * 86400: cool.pop(hp_, None)
+            is_new = lambda hp: hp not in pool and hp not in q and hp not in have and ((now - cool[hp][0] >= HUNT_COOL) if hp in cool else hp not in seen)
             added, found, ch_new, tm_hit = {}, 0, 0, 0
             def enq(hps, src):
                 n_ = 0
                 for hp, c in hps.items():
                     if hp in added or not is_new(hp): continue
-                    added[hp] = 1; q[hp] = [c, src, int(now)]; n_ += 1
+                    added[hp] = 1; n_ += 1
+                    if hp in cool: cool.pop(hp, None); pool[hp] = {"c": c, "src": "cool", "ts": int(now), "ok": int(now), "ms": 0}   # Türkmenistanda öň işlän — göni telefon synagyna
+                    else: q[hp] = [c, src, int(now)]
                 return n_
             for (n, pg, isnew), r, hps in tg_hp:
                 e = ch.setdefault(n, {"f": "guess"} if isnew else {})
@@ -2185,12 +2213,12 @@ def hunt_run(force_gh=False):
                     continue
                 e.pop("err", None)
                 if stt == "same":
-                    if now - float(e.get("chg") or e.get("t") or now) > 48 * 3600: e["dead"] = "stale"; gh_dead += 1   # 2 gün üýtgemedi
+                    if now - float(e.get("chg") or e.get("t") or now) > (7 * 86400 if e.get("ok") else 48 * 3600): e["dead"] = "stale"; gh_dead += 1   # 2 gün üýtgemedi (1.47.15: Türkmenistanda işlän kod beren — 7 gün)
                     continue
                 if not e.get("id"): e["id"] = hashlib.md5(u.encode()).hexdigest()[:8]
                 e["h"] = h2; e["chg"] = int(now); e["n"] = len(hps); found += len(hps)
                 y = enq(hps, "gh:" + e["id"]); e["y"] = y; e["tot"] = int(e.get("tot") or 0) + y
-                if not y: e["dead"] = "no-new"; gh_dead += 1   # 1.47: bu gezek täze serwer ýok — bu faýla hiç gaýtadan seredilmeýär
+                if not y and not e.get("ok"): e["dead"] = "no-new"; gh_dead += 1   # 1.47: bu gezek täze serwer ýok — bu faýla hiç gaýtadan seredilmeýär (1.47.15: Türkmenistanda işlän kod beren faýl — yzarlanýar)
             sreg = S.setdefault("subs", {})
             for u, cs, hps in sub_hp:
                 e = sreg.setdefault(u, {"f": nsub.get(u, ""), "t": int(now)}); e["a"] = int(now)
@@ -2225,7 +2253,7 @@ def hunt_run(force_gh=False):
             for hp in order[HUNT_Q_MAX:]: q.pop(hp, None); drop.append(hp)
             seen.add(drop)
             test_new = [(hp, q[hp][0], q[hp][1]) for hp in order[:HUNT_MAX_TEST] if hp in q]
-            test_old = [(hp, v["c"]) for hp, v in pool.items() if hunt_listed(v, now) or now - float(v.get("ok") or 0) > (3 if v.get("g") else 8) * 3600]
+            test_old = [(hp, v["c"]) for hp, v in pool.items() if not v.get("g") and now - float(v.get("ok") or 0) > 8 * 3600]   # 1.47.15: Türkmenistanda işlän kod VPS-de (Russiýa) gaýtadan barlanmaýar — ol barada diňe telefonlar karar berýär
             S["_qdirty"] = True; hunt_dirty()
         # 5) Xray barlagy (gulp ýok)
         cand = [c for _, c in test_old] + [c for _, c, _ in test_new]
@@ -2245,7 +2273,9 @@ def hunt_run(force_gh=False):
                 elif c not in ok: bad.append(hp)
             # howuz: telefonda 24 sagat synalmadyk / 12 sagat tassyklanmadyk — taşlanýar; artykmajy (iň pes ähtimallyk) — taşlanýar
             for hp in [hp for hp, v in pool.items() if (not v.get("g") and now - float(v.get("ts") or now) > 24 * 3600) or (v.get("g") and now - float(v.get("ta") or 0) > 12 * 3600)]:
-                pool.pop(hp, None); bad.append(hp)
+                v_ = pool.pop(hp, None)
+                if v_ and v_.get("L"): hunt_cool(S, hp, v_["c"], now)   # 1.47.15: sanawda bolan kod — hemişelik gadagan däl
+                else: bad.append(hp)
             if len(pool) > HUNT_POOL:
                 low = sorted([hp for hp, v in pool.items() if not v.get("g")], key=lambda hp: hunt_score(S, pool[hp]["c"], pool[hp].get("src") or "", own))
                 for hp in low[:len(pool) - HUNT_POOL]: pool.pop(hp, None); bad.append(hp)
@@ -2270,8 +2300,9 @@ def hunt_listed(v, now=None):
         and now - float(v.get("ta") or 0) < 3 * 3600 and 0 < int(v.get("tm") or 0) <= HUNT_TM_MS
 
 def hunt_report(dev, items, own=False):
-    """Türkmenistandaky telefonyň netijeleri ([(host:port, ms)]). Işlän — tassyk; işlemedik — derrew aýrylýar we hiç gaýtadan barlanmaýar
-    (diňe öň işläp, häzir hiç bir kod işlemedik telefon — interneti ýok bolup biler: sanawdan çykýar, ýene bir gezek synalýar). Dönüş: sanaw üýtgedimi."""
+    """Türkmenistandaky telefonyň netijeleri ([(host:port, ms)]). Işlän — tassyk. Işlemedik: hiç işlemedik täze kod — derrew aýrylýar (hemişelik);
+    öň işlän kod — 2 sagatda dürli telefonlarda işlemese (sanawda bolan — 5, beýlekiler — 2) aýrylýar; sanawda bolan kod 6 sagatdan soň ýene synalýar.
+    Eýesiniň telefony «işlemedi» diýse hasaba alynmaýar. Dönüş: sanaw üýtgedimi."""
     if not items: return False
     now = int(time.time()); gone, chg = [], False
     with HUNT_SL:
@@ -2291,12 +2322,15 @@ def hunt_report(dev, items, own=False):
                     elif src.startswith("gh:"):
                         for e in S["gh"].values():
                             if e.get("id") == src[3:]: e["ok"] = int(e.get("ok") or 0) + 1; break
-            elif v.get("g"):   # 1.47.15: öň işlän kod — 2 sagatda 5 dürli telefonda işlemese aýrylýar (bir telefonyň interneti däl); eýesiniňki sanalmaýar
-                if own: continue
+            elif own: continue   # 1.47.15: eýesiniň telefony — «işlemedi» hasaba alynmaýar
+            elif v.get("g"):   # 1.47.15: öň işlän kod — bir telefonyň interneti däl, birnäçe dürli telefon gerek
                 bf = {d_: t_ for d_, t_ in (v.get("bf") or {}).items() if now - int(t_) < 7200}; bf[str(dev)[:24]] = now
                 v["bf"] = dict(sorted(bf.items(), key=lambda kv: -kv[1])[:10])
-                if len(v["bf"]) >= APP_X_PHONES and now - int(v.get("ta") or 0) >= 1800:
-                    v["tl"] = now; pool.pop(hp, None); gone.append(hp)
+                prov = bool(v.get("L") or was)   # sanawda bolan (ýa-da häzir sanawda) — subutnamaly
+                if len(v["bf"]) >= (APP_X_PHONES if prov else 2) and now - int(v.get("ta") or 0) >= 1800:
+                    v["tl"] = now; pool.pop(hp, None)
+                    if prov: hunt_cool(S, hp, v["c"], now)
+                    else: gone.append(hp)
             else:   # hiç işlemedik täze kod — öňki ýaly derrew aýrylýar
                 v["tl"] = now
                 hunt_rate_add(S, v["c"], v.get("src") or "", 0)
