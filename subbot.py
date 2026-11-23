@@ -2495,6 +2495,8 @@ def app_sync(force=False):
                 if hp_: php.add(hp_)
                 if code_key(c) not in keys: keys.add(code_key(c)); codes.append(c)
         plast = {k_: v_ for k_, v_ in plast.items() if k_ in {hashlib.md5(u.encode()).hexdigest()[:8] for u in psubs}}
+        codes = [c for c in codes if not app_is_game(c) or app_x_hp(c) in php]   # 1.47.16: PUBG/oýun serwerleri diňe Premium abunasyndan (kanaldan / kod awyndan tapylan PUBG däl)
+        keys = {code_key(c) for c in codes}
         try:   # 1.47.15: her serweriň çeşmesi (diňe eýesiniň admin panelinde görünýär — ulanyjylara gitmeýär)
             hs_ = {}
             for u in subs:
