@@ -6763,7 +6763,7 @@ async def cmd_koruma(u: Update, c: ContextTypes.DEFAULT_TYPE):
     if a_ in ("kati", "katı", "siki", "off", "xoff"): app_mut(lambda x: x.__setitem__("xoff", True)); RUN["app_dirty"] = True
     elif a_ in ("yumusak", "yumuşak", "gecis", "geçiş", "on"): app_mut(lambda x: x.pop("xoff", None)); RUN["app_dirty"] = True
     cfg = app_cfg(load_db()); st = app_y_stats(cfg); xoff = bool(cfg.get("xoff"))
-    txt = ["🛡 <b>Ultra gorag</b> (1.47.16)",
+    txt = ["🛡 <b>Ultra gorag</b> (1.47.16 we täzeler — 1.47.19 hem)",
            f"<blockquote>Asyl programma: <b>{st['ok']}</b>\nModlanan (üýtgedilen): <b>{st['mod']}</b>\nAçyp bilmeýär: <b>{st['bad']}</b>\nKöne wersiýa: <b>{st['old']}</b></blockquote>",
            ("🔴 <b>Katı mod AÇIK</b> — sadece asıl 1.47.16+ sunucu görür. Modlar ve eski sürümler «güncelle» görür." if xoff
             else "🟡 <b>Geçiş modu</b> — eski sürümler de çalışır (modlar dahil). Çoğu kişi 1.47.16'ya geçince <code>/koruma kati</code> yaz.")]
