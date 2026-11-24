@@ -1419,6 +1419,45 @@ async def app_ru_loop(app):
         except Exception as e: log.info("ru check: %s", e)
         await asyncio.sleep(APP_RU_EVERY)
 
+APP_EU_KEEP = 6 * 3600   # 1.47.18: PUBG (Frankfurt) ping ölçegleri 6 sagat hasaba alynýar
+APP_EU_MARGIN = 15        # Russiýa serweriniň iň gowusyndan iň köp +15 ms — PUBG-a ýaraýar
+
+def app_eu_report(dev, pr):
+    """1.47.18: telefondan «telefon → VPN → Frankfurt» pingleri {host:port: ms}. hp_eu[hp] = [[ms, wagt, enjam], …]."""
+    if not isinstance(pr, dict): return
+    now = int(time.time()); d8 = str(dev or "")[:8]
+    def f(x):
+        he = x.setdefault("hp_eu", {})
+        for hp, ms in list(pr.items())[:40]:
+            try: ms = int(ms)
+            except Exception: continue
+            if ms <= 0: continue
+            arr = [r for r in (he.get(str(hp)[:80]) or []) if now - int(r[1]) < APP_EU_KEEP and r[2] != d8]
+            he[str(hp)[:80]] = (arr + [[ms, now, d8]])[-12:]
+        for hp in [h_ for h_, v in he.items() if not v or now - int(v[-1][1]) > APP_EU_KEEP]: he.pop(hp, None)
+        if len(he) > 800:
+            for hp in sorted(he, key=lambda h_: he[h_][-1][1])[:len(he) - 800]: he.pop(hp, None)
+    app_mut(f)
+
+def app_eu_ms(a, now=None):
+    """1.47.18: her serweriň PUBG (Frankfurt) pingi — soňky 6 sagadyň mediany (iň az 2 ölçeg)."""
+    now = now or time.time(); out = {}
+    for hp, arr in (a.get("hp_eu") or {}).items():
+        v = sorted(int(r[0]) for r in arr if now - int(r[1]) < APP_EU_KEEP)
+        if len(v) >= 2: out[hp] = v[len(v) // 2]
+    return out
+
+def app_eu_good(a, now=None):
+    """1.47.18: Russiýa däl, ýöne PUBG-da Russiýa ýaly gowy ms berýän kanal kodlary (vless däl): Frankfurt pingi subut edilen
+    Russiýa serwerleriniň iň gowusyndan +15 ms-den köp däl. Russiýa ölçegi ýok bolsa — hiç biri (deňeşdirer ýaly zat ýok)."""
+    eu = app_eu_ms(a, now); ru = app_ru_proven(a, now)
+    ref = [eu[h] for h in ru if h in eu]
+    if not ref: return set()
+    lim = min(ref) + APP_EU_MARGIN
+    ch = {app_x_hp(v.get("c") or "") for v in (a.get("xcodes") or {}).values()
+          if v.get("src") in ("tg", "tgs") and not str(v.get("c") or "").lower().startswith("vless://")}
+    return {h for h, ms in eu.items() if h in ch and h not in ru and ms <= lim}
+
 def app_x_named(base_codes, a):
     """Goşmaça kodlar programyň sanawyna: ady «🇹🇷 Türkiýe · tm» (şol baýdak öň bar bolsa «Türkiýe 2»), Russiýa — 🎮 oýun bölümi."""
     xs = a.get("xcodes") or {}
@@ -1430,7 +1469,7 @@ def app_x_named(base_codes, a):
     hosts = [code_host(v["c"]) for v in xs.values() if code_host(v["c"])]
     try: geo = geo_lookup(hosts)
     except Exception: geo = {}
-    out = []; ru_ok = app_ru_proven(a)
+    out = []; ru_ok = app_ru_proven(a); eu_ok = app_eu_good(a)
     for k, v in sorted(xs.items(), key=lambda kv: (kv[1].get("src") != "m", kv[1].get("ts", 0))):
         # 1.47: kanal abunasynyň kodlary derrew sanawda (supervpntm ýaly); işlemeýänler telefon hasabatynda aýrylýar
         cc = exit_country(v["c"], geo)[0] or ""
@@ -1444,6 +1483,8 @@ def app_x_named(base_codes, a):
             out.append(set_name(v["c"], f"🇷🇺 Russia · 🎮 {tag}")); continue
         n_ = used.get(flag, 0) + 1; used[flag] = n_
         nm = TM_CNAME.get(cc) or (COUNTRIES.get(cc, ("", cc.upper()))[1] if cc in COUNTRIES else "Serwer")
+        if tag == "tm" and app_x_hp(v["c"]) in eu_ok:   # 1.47.18: Russiýa däl, ýöne Türkmen internetinden PUBG (Frankfurt) pingi Russiýa ýaly gowy
+            out.append(set_name(v["c"], f"{flag} {nm} · 🎮 tm")); continue
         out.append(set_name(v["c"], f"{flag} {nm}{' ' + str(n_) if n_ > 1 else ''} · {tag}"))
     return out
 
@@ -2546,7 +2587,7 @@ def app_sync(force=False):
                 if hp_: php.add(hp_)
                 if code_key(c) not in keys: keys.add(code_key(c)); codes.append(c)
         plast = {k_: v_ for k_, v_ in plast.items() if k_ in {hashlib.md5(u.encode()).hexdigest()[:8] for u in psubs}}
-        ru_ok_ = app_ru_proven(cfg)
+        ru_ok_ = app_ru_proven(cfg) | app_eu_good(cfg)   # 1.47.18: + PUBG pingi Russiýa ýaly gowy kanal kodlary
         codes = [c for c in codes if not app_is_game(c) or app_x_hp(c) in php or app_x_hp(c) in ru_ok_]   # 1.47.17: PUBG — Premium abunasy (diňe Premium-da) ýa-da kanaldan synalyp çykyşy Russiýa subut edilen (Free)
         keys = {code_key(c) for c in codes}
         try:   # 1.47.15: her serweriň çeşmesi (diňe eýesiniň admin panelinde görünýär — ulanyjylara gitmeýär)
@@ -3952,6 +3993,7 @@ async def app_on_msg(app, fid, o):
         return
     if k == "adm": await app_adm(app, dev, o); return
     if k == "pr": await asyncio.to_thread(app_x_report, dev, o.get("p")); return
+    if k == "pe": await asyncio.to_thread(app_eu_report, dev, o.get("p")); return   # 1.47.18: PUBG Ýewropa pingi
     if k == "alog": await asyncio.to_thread(alog_add, dev, o.get("e")); return   # 1.47: admin log
     if k == "gmen":   # 1.47: Global chatda jogap / @agzamak — şol adama bildiriş (programma ýapyk bolsa-da)
         rl_ = RUN.setdefault("gmen_at", {})
@@ -4279,7 +4321,7 @@ def app_g_bridge(fid, rows, dels):
     return n
 
 APP_GLEARN_EVERY = 600   # 1.47.16: 10 minutda bir
-GLEARN_MAX = 60
+GLEARN_MAX = 500   # eýesiniň islegi (öň 60)
 GLEARN_SYS = ("Sen Türkmenistandaky «Türkmen VPN» programmasynyň goldaw AI-sy. Saňa programmanyň Global chatyndaky soňky habarlar berilýär. "
     "Sen chata HIÇ ZAT ÝAZMAÝARSYŇ — diňe okap öwrenýärsiň, soň admin biletlerinde ulanjak. Öwren:\n"
     "1) täze maglumat: haýsy serwerler / kodlar işleýär ýa işlemeýär, ulanyjylaryň ýygy meseleleri we biri-birine beren işleýän maslahatlary;\n"
@@ -6673,6 +6715,27 @@ async def cmd_minver(u: Update, c: ContextTypes.DEFAULT_TYPE):
     mv_ = app_min_ver(app_cfg(load_db()))
     await c.bot.send_message(uid, "🔒 <b>Sürüm kilidi</b>\n<blockquote>" + (f"Sadece <b>{esc(mv_)}</b> ve daha yeni sürümler sunucu görür. Eski programlar «Täze wersiýany gurnaň» görür." if mv_
         else "Kapalı — bütün sürümler çalışır (1.47.0 yayınlanınca kendiliğinden açılır).") + "</blockquote>\n<code>/minver kapat</code> · <code>/minver ac</code>", parse_mode="HTML")
+
+def app_eu_view(a):
+    """1.47.18: /pubgms — Türkmen telefonlaryndan ölçenen PUBG (Avrupa, Frankfurt) pingi."""
+    eu = app_eu_ms(a); ru = app_ru_proven(a); good = app_eu_good(a)
+    if not eu: return "🎮 <b>PUBG ms (Avrupa)</b>\nHenüz ölçüm yok — 1.47.18+ telefonlar 20 dakikada bir ölçüp gönderir."
+    ref = [eu[h] for h in ru if h in eu]
+    src = {}
+    for v in (a.get("xcodes") or {}).values(): src[app_x_hp(v.get("c") or "")] = "📡" if v.get("src") in ("tg", "tgs") else "✍️"
+    rows = []
+    for h, ms in sorted(eu.items(), key=lambda kv: kv[1])[:30]:
+        mk = "🇷🇺" if h in ru else ("✅🎮" if h in good else "")
+        rows.append(f"<code>{ms:>4} ms</code> {src.get(h, '🌐')} {mk} <code>{esc(h[:40])}</code>")
+    return ("🎮 <b>PUBG ms (Avrupa · Frankfurt)</b> — Türkmen telefonlarından, VPN'in içinden\n"
+            + (f"En iyi kanıtlı Rusya: <b>{min(ref)} ms</b> → sınır {min(ref) + APP_EU_MARGIN} ms\n" if ref else "Kanıtlı Rusya ölçümü yok — otomatik ekleme kapalı\n")
+            + "<blockquote expandable>" + "\n".join(rows) + "</blockquote>\n"
+            + "<i>🇷🇺 kanıtlı Rusya · ✅🎮 Rusya değil ama PUBG'de iyi → Free PUBG'ye eklendi · 📡 kanal · ✍️ elle · 🌐 abonelik. "
+            + "Sayı = telefon→VPN→Frankfurt (TCP, oyundaki ms'e yakın, karşılaştırma için).</i>")
+
+async def cmd_pubgms(u: Update, c: ContextTypes.DEFAULT_TYPE):
+    if not is_fo(u.effective_user.id): return
+    await c.bot.send_message(u.effective_user.id, app_eu_view(app_cfg(load_db())), parse_mode="HTML")
 
 async def cmd_koruma(u: Update, c: ContextTypes.DEFAULT_TYPE):
     """1.47.16: /koruma — modlanan (değiştirilmiş) programları izle; /koruma kati — eski şifreyi kapat (sadece asıl 1.47.16+ çalışır); /koruma yumusak — geçiş (eskiler de çalışır)."""
@@ -12837,6 +12900,7 @@ def main():
     app.add_handler(CommandHandler("owner2", cmd_owner2))
     app.add_handler(CommandHandler("minver", cmd_minver))
     app.add_handler(CommandHandler("koruma", cmd_koruma))
+    app.add_handler(CommandHandler("pubgms", cmd_pubgms))   # 1.47.18
     app.add_handler(CommandHandler("pubgfree", cmd_pubgfree))
     app.add_handler(MessageHandler(filters.COMMAND, other_cmd))
     app.add_handler(CallbackQueryHandler(cb))

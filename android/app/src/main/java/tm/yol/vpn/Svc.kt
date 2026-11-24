@@ -113,6 +113,24 @@ object State {
         repAt = now
         val o = org.json.JSONObject(); pings.forEach { (k, v) -> o.put(k.substringAfter('|'), v) }
         Msg.send(ctx, org.json.JSONObject().put("k", "pr").put("p", o))
+        pingEu(ctx)
+    }
+
+    /** 1.47.18: PUBG (Ýewropa — Frankfurt) pingi: telefon → VPN serwer → Frankfurt. Türkmen internetinden haýsy serweriň PUBG-da gowy
+     *  ms berýändigini bilmek üçin (diňe Russiýa däl). Iň çalt 20 serwer (vless däl), netije bota «pe». */
+    const val EU = "http://ec2.eu-central-1.amazonaws.com/ping"
+    private fun pingEu(ctx: Context) {
+        val xs = Sub.list.filter { it.proto != "VLESS" && (pings[it.key] ?: -1L) > 0 }.sortedBy { pings[it.key] ?: Long.MAX_VALUE }.take(20)
+        if (xs.isEmpty()) return
+        Thread {
+            val got = ConcurrentHashMap<String, Long>()
+            val pool = java.util.concurrent.Executors.newFixedThreadPool(minOf(xs.size, 6))
+            xs.forEach { s -> pool.execute { got[s.key] = runCatching { Libv2ray.measureOutboundDelay(Cfg.full(s.uri, false), EU) }.getOrDefault(-1L).let { if (it > 0) it else -1L } } }
+            pool.shutdown(); pool.awaitTermination(40, java.util.concurrent.TimeUnit.SECONDS)
+            if (got.values.none { it > 0 }) return@Thread
+            val o = org.json.JSONObject(); got.forEach { (k, v) -> o.put(k.substringAfter('|'), v) }
+            Msg.send(ctx, org.json.JSONObject().put("k", "pe").put("p", o))
+        }.start()
     }
 
     /** 1.16.7: kanal («tm») we admin («VIP») kodlary 3 minutda bir barlanýar, netije bota (3 gezek ms ýok — bot aýyrýar). */

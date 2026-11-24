@@ -93,8 +93,8 @@ android {
         applicationId = "tm.yol.app"   // 1.47: täze gol (köne açar ýitdi) — täze paket: köne programmanyň üstünden däl, ýanynda gurnalýar, göçmek kody bilen
         minSdk = 24
         targetSdk = 35
-        versionCode = 120
-        versionName = "1.47.17"
+        versionCode = 121
+        versionName = "1.47.18"
         externalNativeBuild { cmake { arguments += "-DSEC_DIR=${secDir.absolutePath}" } }
     }
 
