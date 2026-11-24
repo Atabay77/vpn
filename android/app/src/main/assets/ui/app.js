@@ -70,7 +70,12 @@
     if (!TAGQ[d] || tn - TAGQ[d] > 60000) { TAGQ[d] = tn; try { NB.send(JSON.stringify({ k: 'utag', d })); } catch (e) {} } return ''; };
   const TAGD = {}; Object.keys(TAGS).forEach((d) => { TAGD[TAGS[d]] = d; });   // 1.47.22: @belgi → telefon (basylanda profil)
   const tagPut = (d, t) => { if (!d || !/^[a-z][a-z0-9_]{4,19}$/.test(t || '') || TAGS[d] === t) return; if (TAGS[d]) delete TAGD[TAGS[d]]; TAGS[d] = t; TAGD[t] = d; const ks = Object.keys(TAGS); if (ks.length > 800) delete TAGS[ks[0]]; LS.set('tags', TAGS); };
-  const MENT_RE = /(@[A-Za-z][A-Za-z0-9_]{4,19})/, MENT_X = /^@[A-Za-z][A-Za-z0-9_]{4,19}$/;
+  // 1.47.24: diňe eýesiniň @belgileri (Telegram ýaly köp at) — basylanda eýesiniň profili
+  const OWNER_TAGS = ['turkmenvpn', 'turkmen_vpn', 'tmvpn', 'tm_vpn', 'vpn', 'turkmen', 'owner', 'admin', 'admins', 'administrator', 'moderator', 'mod', 'support', 'help', 'helpdesk', 'komek', 'goldaw', 'official', 'team', 'info', 'news', 'habar', 'habarlar', 'premium', 'vip', 'system', 'bot', 'service', 'contact', 'ceo', 'founder', 'dev', 'developer'], OT_SET = new Set(OWNER_TAGS);
+  const MENT_RE = new RegExp('(@(?:' + OWNER_TAGS.slice().sort((a, b) => b.length - a.length).join('|') + ')(?![A-Za-z0-9_])|@[A-Za-z][A-Za-z0-9_]{4,19})', 'i');
+  const MENT_X = { test: (x) => /^@[A-Za-z][A-Za-z0-9_]{4,19}$/.test(x) || (x[0] === '@' && OT_SET.has(x.slice(1).toLowerCase())) };
+  const ownerDev = () => Object.keys(INFO.roles || {}).find((d) => roleOf(d) === 'o') || '';
+  const otChips = (C) => OWNER_TAGS.map((t) => ({ t: '@' + t, cp: () => { NB.copy('@' + t); C.say('✓ @' + t); } }));
   let TAGW = null;   // 1.47.22: basylan @belgi — botdan gözlenýär
   /** 1.47.22: tekstdäki @belgiler basylýar (Global chat, Admine ýaz, hususy habarlar, habarlar) — profil açylýar. */
   function withMent(parts, C) {
@@ -753,7 +758,7 @@
       if (r.isUprof) {
         const d = s.upDev, p = P2[d], st = (DMS[d] || {}).st || '', a = ava(d), mine = d === me1;
         const canDm = !mine && st !== 'blk' && ((p && p.dm) || !!DMS[d]);
-        r.up = Object.assign(a, { tag: tagOf(d) ? '@' + tagOf(d) : '', cpTag: () => { const t_ = tagOf(d); if (!t_) return; NB.copy('@' + t_); this.say('✓ @' + t_); }, photo: (p && p.ph) || a.photo, hasPh: !!((p && p.ph) || a.photo), noPh: !((p && p.ph) || a.photo), bgImg: bgUrl(p && p.bg),
+        r.up = Object.assign(a, { otOn: isOwnShown(d), otags: isOwnShown(d) ? otChips(this) : [], tag: tagOf(d) ? '@' + tagOf(d) : '', cpTag: () => { const t_ = tagOf(d); if (!t_) return; NB.copy('@' + t_); this.say('✓ @' + t_); }, photo: (p && p.ph) || a.photo, hasPh: !!((p && p.ph) || a.photo), noPh: !((p && p.ph) || a.photo), bgImg: bgUrl(p && p.bg),
           sub: a.isO ? tx.vip_o : a.isA ? tx.vip_a : '', canDm, noDm: !canDm, notMe: !mine,
           why: mine ? tx.dm_me : st === 'blk' ? tx.dm_blocked : !p ? tx.nk_wait : tx.dm_noKey,
           write: () => this.openDm(d), zoom: () => this.setState({ zoom: (p && p.ph) || a.photo || '' }),
@@ -794,6 +799,7 @@
         r.dmSWaitT = ({ ru: 'Поиск…', tr: 'Aranıyor…' })[s.lang] || 'Gözlenýär…'; r.dmSNoneT = tx.us_none;
         r.dmSRows = r.dmSOn && R ? R.map((u) => Object.assign(ava(u.d), { name: u.n || '?', tag: u.t ? '@' + u.t : '', cp: (e) => { if (e && e.stopPropagation) e.stopPropagation(); if (!u.t) return; NB.copy('@' + u.t); this.say('✓ @' + u.t); }, lv: String(rkT(u.lv || 1)), open: () => { this.setState({ dmQ: '' }); this.openProf(u.d); } })) : [];
         r.dmQph = ({ ru: '🔎 Ник или @метка…', tr: '🔎 Takma ad veya @etiket…' })[s.lang] || '🔎 Nik ýa-da @belgi…';
+        r.meOtOn = roleOf(me1) === 'o'; r.meOtags = r.meOtOn ? otChips(this) : [];   // 1.47.24: eýesiniň ähli @atlary
         { const mt = tagOf(me1); r.meTag = mt ? '@' + mt : ''; r.cpMyTag = () => { if (!mt) return; NB.copy('@' + mt); this.say('✓ @' + mt); }; } }
       const rows = Object.keys(DMS).filter((d) => d !== me1).sort((a, b) => (DMS[b].lt || 0) - (DMS[a].lt || 0));
       r.dmEmpty = !rows.length;
@@ -1171,6 +1177,7 @@
     const tick = () => C.setState({ dmTick: (C.state.dmTick || 0) + 1 });
     C.openTag = (t0) => {   // 1.47.22: @belgi basylanda — belli bolsa profil, ýogsa botdan gözlenýär
       const t = String(t0 || '').toLowerCase(); if (!t) return;
+      if (OT_SET.has(t) && ownerDev()) { C.openProf(ownerDev()); return; }   // 1.47.24: eýesiniň atlary
       if (TAGD[t]) { C.openProf(TAGD[t]); return; }
       TAGW = { t, at: Date.now() }; try { NB.send(JSON.stringify({ k: 'usq', q: '@' + t })); } catch (e) {} C.say('🔎 @' + t);
     };

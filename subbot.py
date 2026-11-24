@@ -3653,7 +3653,11 @@ async def app_mig_finish(app, old, new, res):
 
 TAG_ABC = "abcdefghijklmnopqrstuvwxyz"
 TAG_SET_RE = re.compile(r"[a-z][a-z0-9_]{5,19}")   # 1.47.22: öz saýlan @belgi — iň az 6 harp
-TAG_RESERVED = {"admin", "admins", "owner", "support", "turkmenvpn", "tmvpn", "moderator", "system", "premium", "official"}
+# 1.47.24: diňe eýesiniň @belgileri (Telegram ýaly köp at) — başga hiç kim alyp bilmeýär; gözlände / basanda eýesiniň profili açylýar
+OWNER_TAGS = ["turkmenvpn", "turkmen_vpn", "tmvpn", "tm_vpn", "vpn", "turkmen", "owner", "admin", "admins", "administrator", "moderator", "mod",
+              "support", "help", "helpdesk", "komek", "goldaw", "official", "team", "info", "news", "habar", "habarlar", "premium", "vip",
+              "system", "bot", "service", "contact", "ceo", "founder", "dev", "developer"]
+TAG_RESERVED = set(OWNER_TAGS) | {"admin_tm", "support_tm", "turkmenvpn_admin", "turkmenvpn_support", "official_tm"}
 def app_tag_make(a, d):
     """1.47.4: her ulanyja 5 harply iňlis @belligi (meselem @kvrom) — gaýtalanmaýar, bir gezek berilýär."""
     used = {str(u.get("tg")) for u in (a.get("devs") or {}).values() if u.get("tg")}
@@ -3678,6 +3682,11 @@ def app_user_find(a, q, me=""):
     """1.47: nik boýunça gözleg (doly gabat gelýän → başlaýan → içinde bar), TM-kod hem; gadagan edilenler we göçürilen köne telefonlar ýok."""
     q = re.sub(r"\s+", " ", str(q or "")).strip().lstrip("@")[:32]; ql = q.casefold()
     if len(ql) < 2: return []
+    if ql in OWNER_TAGS:   # 1.47.24: @admin, @turkmenvpn… — eýesi
+        fd_ = [d_ for d_ in app_founder_devs(a) if d_ in (a.get("devs") or {}) and d_ != me]
+        if fd_:
+            u_ = a["devs"][fd_[0]]
+            return [{"d": fd_[0], "n": str(u_.get("nk") or u_.get("nick") or "?"), "lv": int(u_.get("lv") or 1), "t": ql}]
     bans = set(a.get("gbans") or []) | set(a.get("ubans") or []); cq = ql.upper().replace(" ", "")
     hits = []
     for d_, u_ in (a.get("devs") or {}).items():
@@ -4144,7 +4153,8 @@ async def app_on_msg(app, fid, o):
         if time.time() - rl_.get(dev, 0) < 3: return
         rl_[dev] = time.time()
         t_ = str(o.get("t") or "").strip().lstrip("@").lower()[:20]
-        if not TAG_SET_RE.fullmatch(t_) or t_ in TAG_RESERVED:
+        own_ = dev in set(app_founder_devs(a))   # 1.47.24: eýesi gadagan atlary hem alyp bilýär
+        if not (TAG_SET_RE.fullmatch(t_) and t_ not in TAG_RESERVED) and not (own_ and (t_ in OWNER_TAGS or TAG_SET_RE.fullmatch(t_))):
             await asyncio.to_thread(app_send, dev, {"k": "tagset", "ok": False, "why": "bad"}); return
         def fts(x):
             devs_ = x.get("devs") or {}
