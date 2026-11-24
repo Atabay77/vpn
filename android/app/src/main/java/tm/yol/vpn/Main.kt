@@ -247,7 +247,7 @@ open class Main : Activity() {
             return JSONObject().put("dev", Msg.dev(c)).put("code", Msg.code(c)).put("ver", Msg.ver(c)).put("lang", Lang.cur)
                 .put("snd", Snd.on(c)).put("news", nw).put("ai", Sub.ai).put("online", Sub.online).put("bans", JSONArray(Sub.bans.toList()))
                 .put("key", Lic.saved(c) ?: "").put("model", Build.MANUFACTURER + " " + Build.MODEL).put("relay", Sub.relay.isNotEmpty() || Fs.on()).put("fs", Fs.on()).put("fsb", if (Fs.vps()) Sub.fsBase else Sub.fsProj)
-                .put("prem", Lic.prem(c)).put("pexp", Lic.exp(c) ?: -1L).put("pdevs", JSONArray(Lic.premDevs().toList())).put("pfree", Sub.free.isNotEmpty())
+                .put("osel", Sub.osel).put("prem", Lic.prem(c)).put("pexp", Lic.exp(c) ?: -1L).put("pdevs", JSONArray(Lic.premDevs().toList())).put("pfree", Sub.free.isNotEmpty())
                 .put("dl", Sub.upd["l"]?.second?.takeIf { Upd.isLink(it) } ?: (Sub.upd["all"] ?: Sub.upd["64"] ?: Sub.upd["32"])?.let { runCatching { Sub.fileUrl(it.second) }.getOrNull() } ?: "")   // 1.44.3: salgy bar bolsa şol
                 .put("roles", JSONObject().apply { Sub.roles.forEach { (d, rn) -> put(d, JSONArray().put(rn.first).put(rn.second)) } })
                 .put("uban", Lic.banned(c)).put("gpin", runCatching { JSONObject(Sub.pin) }.getOrNull() ?: JSONObject.NULL)

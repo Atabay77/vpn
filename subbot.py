@@ -959,7 +959,8 @@ def app_meta(cfg):
             if u.get("fid") and u.get("ver"): out.append(f"#tvu{abi}: {u['ver']} {u['fid']}")
         ul_ = cfg.get("upd_link") or {}
         if ul_.get("ver") and ul_.get("url"): out.append(f"#tvul: {ul_['ver']} {app_ul_url(ul_)}")   # 1.44.3: göni salgy (köne programmalar okamaýar)
-    out.append(f"#tvsite: {app_site(cfg)}")   # 1.47.27: täze wersiýa sahypasy (programmada berk ýazylmaýar — bloklansa çalşyp bolýar)
+    out.append(f"#tvsite: {app_site(cfg)}")
+    if cfg.get("own_sel"): out.append("#tvosel: 1")   # 1.47.30: eýesi hem Premium satyjy   # 1.47.27: täze wersiýa sahypasy (programmada berk ýazylmaýar — bloklansa çalşyp bolýar)
     ad = cfg.get("ad") or {}
     if ad.get("fid") and ad.get("on", True): out.append(f"#tvad: {ad['fid']} {urllib.parse.quote(ad.get('link', ''), safe='')}")
     return out
@@ -4197,7 +4198,7 @@ async def app_on_msg(app, fid, o):
     if k == "preq":   # 1.43: «Premium satyn al» — satyja (ýa-da eýesine) haýyş; diňe olar görýär
         sl_ = app_seller_devs(a); to_ = str(o.get("to") or "")
         if to_ and to_ not in sl_: return
-        fd_ = set(app_founder_devs(a)); sel_only = {d_: n_ for d_, n_ in sl_.items() if d_ not in fd_}   # 1.47: diňe satyjylar (satyjy ýok bolsa — eýesi)
+        fd_ = set(app_founder_devs(a)); sel_only = {d_: n_ for d_, n_ in sl_.items() if d_ not in fd_ or a.get("own_sel")}   # 1.47: diňe satyjylar (satyjy ýok bolsa — eýesi); 1.47.30: eýesi «men hem satyjy» açsa — eýesi hem
         q0 = sorted([q for q in (a.get("preq") or {}).values() if q.get("dev") == dev and q.get("st") != "done" and now - int(q.get("ts") or 0) < 7 * 86400], key=lambda q: int(q.get("ts") or 0))
         if q0:   # 1.47: her alyjy bir haýyş — gaýtadan iberse ilkinji satyja (DM) ugradylýar
             await asyncio.to_thread(app_send, dev, {"k": "preqdup", "to": q0[0].get("to") or "", "n": sl_.get(q0[0].get("to") or "", "")}); return
@@ -4848,6 +4849,7 @@ def app_adm_snap(a, e, dev):
         out["aiCount"] = sum(1 for t in (a.get("tickets") or {}).values() for x in t.get("log", []) if x.get("r") == "ai" and x.get("ts", 0) >= today)
         if F1: out["sysOn"] = not os.path.exists(STOP_FLAG)
         out["pgf"] = not a.get("pubg_free_off")   # 1.47: mugt PUBG serweri açyk
+        out["osel"] = bool(a.get("own_sel"))   # 1.47.30
         out["pown"] = bool(a.get("prem_own"))   # 1.47.9: Premium diňe eýesiniň abunasyndan
         out["next"] = int(RUN["next"] - now) if RUN.get("next") else 0
         out["logs"] = "\n".join(short(_plain(l), 90) for l in tail(VIP_LOG, 40)[::-1])
@@ -5033,6 +5035,8 @@ async def app_adm(app, dev, o):
                 msg = "kdel" if act == "kdel" else "kok"
                 if not f_: await notify_founders(app, f"🛠 <b>{esc(who)}</b> açary {'pozdy' if act == 'kdel' else 'üýtgetdi'}: <code>{k_}</code>", silent=True)
             else: err = "açar tapylmady"
+        elif act == "ownsel" and F1:   # 1.47.30: eýesi özüne satyjy rugsady — Premium satyjylarynyň sanawynda görünýär, haýyşlar oňa hem gelýär
+            on_ = bool(r.get("on")); app_mut(lambda x: x.__setitem__("own_sel", on_)); RUN["app_dirty"] = True; msg = "ownsel:" + ("1" if on_ else "0")
         elif act == "premown" and f_:   # 1.47.9: Premium diňe eýesiniň abunasyndan (mugtdan kod almaýar)
             on_ = bool(r.get("on")); app_mut(lambda x: x.__setitem__("prem_own", True) if on_ else x.pop("prem_own", None)); RUN["app_dirty"] = True
             msg = "premown:" + ("1" if on_ else "0")

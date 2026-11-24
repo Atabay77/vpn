@@ -5,6 +5,18 @@
 <link rel="stylesheet" href="fonts.css">
 <style>
 .hid{display:none!important}
+/* 1.47.30: eýesiniň profili — ýalpyldaýan altyn */
+.own-prof{position:relative;overflow:hidden;border:1px solid rgba(255,214,120,.85)!important;box-shadow:0 0 26px rgba(255,196,80,.38),inset 0 0 34px rgba(255,200,90,.14)!important}
+.own-prof::before{content:'';position:absolute;left:-60%;top:-60%;width:220%;height:220%;background:conic-gradient(from 0deg,transparent 0 20%,rgba(255,214,120,.22) 28%,transparent 36% 70%,rgba(255,240,190,.16) 78%,transparent 86%);animation:ospin 7s linear infinite;pointer-events:none;z-index:0}
+.own-prof>*{position:relative;z-index:1}
+@keyframes ospin{to{transform:rotate(360deg)}}
+.own-name{background:linear-gradient(90deg,#E0B04A,#FFF3C4 25%,#FFD27A 50%,#FFF3C4 75%,#E0B04A);background-size:200% 100%;-webkit-background-clip:text;background-clip:text;color:transparent!important;animation:oshine 3s linear infinite;text-shadow:none;filter:drop-shadow(0 0 6px rgba(255,200,90,.45))}
+@keyframes oshine{to{background-position:-200% 0}}
+.osp{position:absolute;inset:0;pointer-events:none;z-index:0}
+.osp i{position:absolute;font-style:normal;color:#FFE29A;font-size:13px;text-shadow:0 0 8px rgba(255,214,120,.9);animation:otw 2.6s ease-in-out infinite;opacity:0}
+@keyframes otw{0%,100%{opacity:0;transform:scale(.5)}50%{opacity:1;transform:scale(1.15)}}
+.otg{font-size:11px;font-weight:800;padding:3px 9px;border-radius:10px;border:1px solid rgba(255,214,120,.75);background:linear-gradient(135deg,rgba(255,214,120,.22),rgba(140,90,20,.18));color:#FFE29A;cursor:pointer;box-shadow:0 0 8px rgba(255,200,90,.25)}
+@media (prefers-reduced-motion:reduce){.own-prof::before,.own-name,.osp i{animation:none}.osp i{opacity:.8}}
 html,body{margin:0;height:100%;background:#06100B;overflow:hidden;-webkit-tap-highlight-color:transparent;-webkit-user-select:none;user-select:none;overscroll-behavior:none}
 input,textarea{-webkit-user-select:text;user-select:text}
 #app{position:absolute;left:0;top:0;width:390px;transform-origin:0 0}

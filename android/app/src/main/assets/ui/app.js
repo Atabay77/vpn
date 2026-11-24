@@ -363,6 +363,9 @@
         const pgf = !!A.pgf; r.botTiles = r.botTiles.concat([{ i: '🎮', t: (({ ru: 'Free PUBG: ', tr: 'Free PUBG: ' })[s.lang] || 'Mugt PUBG: ') + (pgf ? '🟢' : '🔴'), st: pgf ? 'border-color:rgba(111,219,156,.7)' : 'border-color:rgba(255,138,120,.6)',
           go: () => this.confirm(pgf ? (({ ru: 'Отключить бесплатный сервер PUBG? Подключённые перейдут на другой сервер.', tr: 'Ücretsiz PUBG sunucusu kapatılsın mı? Bağlı olanlar başka sunucuya geçer.' })[s.lang] || 'Mugt PUBG serweri öçürilsinmi? Birikenler başga serwere geçer.') : (({ ru: 'Включить бесплатный сервер PUBG?', tr: 'Ücretsiz PUBG sunucusu açılsın mı?' })[s.lang] || 'Mugt PUBG serweri açylsynmy?'),
             pgf ? '🔴' : '🟢', () => { act('pubgfree', { on: !pgf }); A.pgf = !pgf; this.setState({ gTick: (this.state.gTick || 0) + 1 }); }, false) }]); }
+      if (Array.isArray(r.botTiles) && A && A.osel != null && admMe().role === 'f') {   // 1.47.30: eýesi özüne satyjy rugsady
+        const os = !!A.osel; r.botTiles = r.botTiles.concat([{ i: '💎', t: (({ ru: 'Я тоже продавец', tr: 'Ben de satıcıyım' })[s.lang] || 'Men hem satyjy') + ': ' + (os ? '🟢' : '🔴'),
+          go: () => { act('ownsel', { on: !os }); A.osel = !os; this.say('💎 ' + (!os ? (({ ru: 'Вы в списке продавцов Premium', tr: 'Premium satıcı listesindesiniz' })[s.lang] || 'Siz Premium satyjylaryň sanawynda') : (({ ru: 'Вы убраны из списка продавцов', tr: 'Satıcı listesinden çıkarıldınız' })[s.lang] || 'Satyjylaryň sanawyndan aýryldyňyz'))); this.setState({ gTick: (this.state.gTick || 0) + 1 }); }, st: '' }]); }
       if (Array.isArray(r.botTiles) && A && A.pown != null) {   // 1.47.9: Premium diňe eýesiniň abunasyndan (açyk bolsa mugtdan kod almaýar)
         const po = !!A.pown; r.botTiles = r.botTiles.concat([{ i: '👑', t: 'Premium: ' + (po ? (({ ru: 'только моя подписка', tr: 'sadece abonelik' })[s.lang] || 'diňe abuna') : (({ ru: 'смешанный', tr: 'karışık' })[s.lang] || 'garyşyk')) + (po ? ' 🟢' : ' 🔴'), st: po ? 'border-color:rgba(255,200,90,.8)' : 'border-color:rgba(255,255,255,.2)',
           go: () => this.confirm(po ? (({ ru: 'Выключить? Premium снова будет дополняться бесплатными кодами и кодами каналов.', tr: 'Kapatılsın mı? Premium yine ücretsiz ve kanal kodlarıyla doldurulur.' })[s.lang] || 'Öçürilsinmi? Premium ýene mugt we kanal kodlary bilen doldurylar.')
@@ -762,7 +765,7 @@
       if (r.isUprof) {
         const d = s.upDev, p = P2[d], st = (DMS[d] || {}).st || '', a = ava(d), mine = d === me1;
         const canDm = !mine && st !== 'blk' && ((p && p.dm) || !!DMS[d]);
-        r.up = Object.assign(a, { otOn: isOwnShown(d), otags: isOwnShown(d) ? otChips(this) : [], tag: tagOf(d) ? '@' + tagOf(d) : '', cpTag: () => { const t_ = tagOf(d); if (!t_) return; NB.copy('@' + t_); this.say('✓ @' + t_); }, photo: (p && p.ph) || a.photo, hasPh: !!((p && p.ph) || a.photo), noPh: !((p && p.ph) || a.photo), bgImg: bgUrl(p && p.bg),
+        r.up = Object.assign(a, { ownCls: isOwnShown(d) ? 'own-prof' : '', ownNm: isOwnShown(d) ? 'own-name' : '', otOn: isOwnShown(d), otags: isOwnShown(d) ? otChips(this) : [], tag: tagOf(d) ? '@' + tagOf(d) : '', cpTag: () => { const t_ = tagOf(d); if (!t_) return; NB.copy('@' + t_); this.say('✓ @' + t_); }, photo: (p && p.ph) || a.photo, hasPh: !!((p && p.ph) || a.photo), noPh: !((p && p.ph) || a.photo), bgImg: bgUrl(p && p.bg),
           sub: a.isO ? tx.vip_o : a.isA ? tx.vip_a : '', canDm, noDm: !canDm, notMe: !mine,
           why: mine ? tx.dm_me : st === 'blk' ? tx.dm_blocked : !p ? tx.nk_wait : tx.dm_noKey,
           write: () => this.openDm(d), zoom: () => this.setState({ zoom: (p && p.ph) || a.photo || '' }),
@@ -803,7 +806,7 @@
         r.dmSWaitT = ({ ru: 'Поиск…', tr: 'Aranıyor…' })[s.lang] || 'Gözlenýär…'; r.dmSNoneT = tx.us_none;
         r.dmSRows = r.dmSOn && R ? R.map((u) => Object.assign(ava(u.d), { name: u.n || '?', tag: u.t ? '@' + u.t : '', cp: (e) => { if (e && e.stopPropagation) e.stopPropagation(); if (!u.t) return; NB.copy('@' + u.t); this.say('✓ @' + u.t); }, lv: String(rkT(u.lv || 1)), open: () => { this.setState({ dmQ: '' }); this.openProf(u.d); } })) : [];
         r.dmQph = ({ ru: '🔎 Ник или @метка…', tr: '🔎 Takma ad veya @etiket…' })[s.lang] || '🔎 Nik ýa-da @belgi…';
-        r.meOtOn = roleOf(me1) === 'o'; r.meOtags = r.meOtOn ? otChips(this) : [];   // 1.47.24: eýesiniň ähli @atlary
+        r.meOtOn = roleOf(me1) === 'o'; r.meOtags = r.meOtOn ? otChips(this) : []; r.meOwnCls = r.meOtOn ? 'own-prof' : ''; r.meOwnNm = r.meOtOn ? 'own-name' : '';   // 1.47.24: eýesiniň ähli @atlary
         { const mt = tagOf(me1); r.meTag = mt ? '@' + mt : ''; r.cpMyTag = () => { if (!mt) return; NB.copy('@' + mt); this.say('✓ @' + mt); }; } }
       const rows = Object.keys(DMS).filter((d) => d !== me1).sort((a, b) => (DMS[b].lt || 0) - (DMS[a].lt || 0));
       r.dmEmpty = !rows.length;
@@ -927,7 +930,7 @@
           .map((q) => Object.assign(q, { hasOld: !!q.old, hasBadge: !!q.badge, cls: (plan === q.k ? 'pplan-on' : '') + (q.k === 'y' ? ' pplan-y' : ''), p: plan === q.k ? 'true' : 'false', pick: () => this.setState({ pplan: q.k }) }));
         const RL = INFO.roles || {};
         // 1.47: diňe satyjylar (eýesi sanawda ýok; satyjy ýok bolsa — eýesi); her alyjy bir haýyş — gaýtadan basanda ilkinji satyja (DM)
-        const slv = Object.keys(RL).filter((d) => RL[d][0] === 's' && d !== me1), PQ = LS.get('preqTo', null);
+        const slv = Object.keys(RL).filter((d) => (RL[d][0] === 's' || (INFO.osel && RL[d][0] === 'o')) && d !== me1).sort((a, b) => (RL[a][0] === 'o' ? -1 : 0) - (RL[b][0] === 'o' ? -1 : 0)), PQ = LS.get('preqTo', null);   // 1.47.30: eýesi hem satyjy (ýokarda)
         const pqOn = PQ && PQ.d && Date.now() - (PQ.at || 0) < 7 * 86400000 && !PR;
         r.pSellers = (slv.length ? slv : Object.keys(RL).filter((d) => RL[d][0] === 'o' && d !== me1))
           .map((d) => Object.assign(ava(d), { name: nm2(d, RL[d][1]), isO: RL[d][0] === 'o', isS: RL[d][0] === 's',
