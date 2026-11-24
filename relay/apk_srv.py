@@ -85,7 +85,10 @@ class H(http.server.SimpleHTTPRequestHandler):
             if part and a >= size: a, b, part = 0, size - 1, False
         s.send_response(206 if part else 200)
         s.send_header("Content-Type", "application/vnd.android.package-archive")
-        s.send_header("Accept-Ranges", "bytes"); s.send_header("ETag", etag); s.send_header("Last-Modified", lm)
+        # 1.47.19: doly (Range-siz) jogapda «Accept-Ranges» ýok — Chrome faýly 3 bölege bölüp parallel ýüklemesin (Türkmen internetinde bir bölek
+        # kesilip, ortasy 12 MB nol galýardy → «paket nädogry»). Kesilen ýükleme Range bilen dowam edýär (206) — programma we brauzer.
+        if part: s.send_header("Accept-Ranges", "bytes")
+        s.send_header("ETag", etag); s.send_header("Last-Modified", lm)
         s.send_header("Content-Disposition", 'attachment; filename="%s"' % os.path.basename(f))
         s.send_header("Content-Length", str(b - a + 1))
         if part: s.send_header("Content-Range", "bytes %d-%d/%d" % (a, b, size))
