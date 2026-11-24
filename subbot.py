@@ -2852,8 +2852,9 @@ def app_upd_link_check():
     if not v_ or vk(v_) <= vk(ul_.get("ver")): return None
     mutate(lambda d: d.setdefault("app", {}).setdefault("upd_link", {}).update({"ver": v_, "fn": fn_, "url": lu_, "auto": True, "ts": int(time.time())}))
     RUN["app_dirty"] = True; vlog(f"📦 VPS-de täze APK: {v_} — programa ýaýradyldy")
-    try: app_upd_news(v_)   # 1.47.22: «Habarlar»-a täze wersiýa habary
-    except Exception as e: log.info("upd news: %s", e)
+    if not app_cfg(load_db()).get("upd_hold", True):   # 1.47.30: diňe ýaýradylýan bolsa
+        try: app_upd_news(v_)   # 1.47.22: «Habarlar»-a täze wersiýa habary
+        except Exception as e: log.info("upd news: %s", e)
     return v_
 
 def app_publish_link(link):
@@ -2879,8 +2880,9 @@ def app_publish_link(link):
         if not mv: raise RuntimeError("Sürüm bulunamadı — dosya adında olsun (TurkmenVPN-1.44.3.apk) ya da başına yaz: «1.44.3 http://…»")
         ver_ = mv.group(1)
         mutate(lambda d: d.setdefault("app", {}).__setitem__("upd_link", {"ver": ver_, "url": url_[:400], "ts": int(time.time()), "auto": auto_}))
-        try: app_upd_news(ver_)   # 1.47.22: «Habarlar»-a täze wersiýa habary
-        except Exception as e: log.info("upd news: %s", e)
+        if not app_cfg(load_db()).get("upd_hold", True):   # 1.47.30
+            try: app_upd_news(ver_)   # 1.47.22: «Habarlar»-a täze wersiýa habary
+            except Exception as e: log.info("upd news: %s", e)
         app_sync(True)
         return ver_
     m = DRIVE_ID_RE.search(link) or re.search(r"/d/([\w-]{20,})", link) or re.search(r"[?&]id=([\w-]{20,})", link)
@@ -6971,8 +6973,16 @@ async def cmd_tazelenme(u: Update, c: ContextTypes.DEFAULT_TYPE):
     """1.47.27: /tazelenme — täze wersiýany programmalara yglan etmek (ac) ýa-da saklamak (dur); /sayt https://… — ýükleme sahypasy."""
     if not is_fo(u.effective_user.id): return
     a_ = (c.args or [""])[0].lower()
-    if a_ in ("ac", "aç", "on"): app_mut(lambda x: x.__setitem__("upd_hold", False)); RUN["app_dirty"] = True
-    elif a_ in ("dur", "off", "sakla"): app_mut(lambda x: x.__setitem__("upd_hold", True)); RUN["app_dirty"] = True
+    if a_ in ("ac", "aç", "on"):
+        app_mut(lambda x: x.__setitem__("upd_hold", False)); RUN["app_dirty"] = True
+        try: app_upd_news((app_cfg(load_db()).get("upd_link") or {}).get("ver"))   # 1.47.30: yglan — «Habarlar»-a hem
+        except Exception as e: log.info("upd news: %s", e)
+    elif a_ in ("dur", "off", "sakla"):   # 1.47.30: saklamak — awtomatik wersiýa habary hem aýrylýar
+        app_mut(lambda x: (x.__setitem__("upd_hold", True), x.__setitem__("news", [n_ for n_ in (x.get("news") or []) if n_.get("auto") != APP_UPD_NEWS])))
+        RUN["app_dirty"] = True
+    if a_:
+        try: await asyncio.to_thread(app_sync, True)   # derrew programlara
+        except Exception as e: log.info("tazelenme sync: %s", e)
     cfg = app_cfg(load_db()); hold = cfg.get("upd_hold", True); ul_ = cfg.get("upd_link") or {}
     await c.bot.send_message(u.effective_user.id,
         f"🔄 <b>Zorunlu güncelleme:</b> {'🟡 DURDURULDU (kimse kilitlenmez)' if hold else '🟢 AÇIK (eski sürümler VPN kullanamaz, siteye yönlendirilir)'}\n"
@@ -6993,12 +7003,15 @@ async def cmd_vpsip(u: Update, c: ContextTypes.DEFAULT_TYPE):
         await c.bot.send_message(u.effective_user.id, f"❌ <code>{esc(url_)}</code> cevap vermedi.\nVPS'te Caddy'de IP satırı var mı ve 80 port açık mı? (bana sor)", parse_mode="HTML"); return
     def f(x):
         x["upd_link"] = {"ver": v_, "url": url_, "fn": fn_, "auto": True, "ts": int(time.time())}
-        x["site_url"] = f"http://{ip_}"; x["upd_hold"] = False
+        x["site_url"] = f"http://{ip_}"   # 1.47.30: zorunlu täzelenme özi açylmaýar — diňe /tazelenme ac
         x["news"] = [n_ for n_ in (x.get("news") or []) if n_.get("auto") != APP_UPD_NEWS]   # habar täze salgy bilen täzeden
-    app_mut(f); app_upd_news(v_); RUN["app_dirty"] = True
+    app_mut(f); RUN["app_dirty"] = True
+    hold_ = app_cfg(load_db()).get("upd_hold", True)
+    if not hold_: app_upd_news(v_)
     try: await asyncio.to_thread(app_sync, True)
     except Exception as e: log.info("vpsip sync: %s", e)
-    await c.bot.send_message(u.effective_user.id, f"✅ Yeni sürüm <b>{esc(v_)}</b> artık <code>{esc(url_)}</code> adresinden, uygulamanın içinde iniyor (VPN'siz).\nZorunlu güncelleme: 🟢 açık · Habarlar'a duyuru eklendi.", parse_mode="HTML")
+    await c.bot.send_message(u.effective_user.id, f"✅ VPS kaydedildi: <code>{esc(url_)}</code> · sunucudaki sürüm <b>{esc(v_)}</b>\n"
+        + ("Kullanıcılara 🟡 <b>YAYINLANMADI</b>. Herkese yaymak için: <code>/tazelenme ac</code>" if hold_ else "🟢 Yayında — kullanıcılar uygulamanın içinde indiriyor. Durdurmak: <code>/tazelenme dur</code>"), parse_mode="HTML")
 
 async def cmd_sayt(u: Update, c: ContextTypes.DEFAULT_TYPE):
     if not is_fo(u.effective_user.id): return
