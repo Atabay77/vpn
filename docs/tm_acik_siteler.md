@@ -14,6 +14,14 @@ Sadece ana alan adı test edildi; alt alan adları (ör. `x.onrender.com`) ayrı
 | Rus | yandex.ru (1,51) · dzen.ru (1,97) |
 | Kısa link | da.gd (0,65) · 1url.cz (0,69) · u.to (0,97) — `da.gd/tmvpn2` → sites.google.com/view/turkmen-vpn |
 
+## 2. test (az bilinen sunucu / PaaS / gerçek zamanlı) — 24.11.2026
+| Kategori | Açılan (süre) |
+|---|---|
+| PaaS (kod çalıştırma) | clever-cloud.com (0,87) · serv00.com (1,02) · ct8.pl (1,56) · alwaysdata.com (2,29) · zeabur.app (2,71) · b4a.run (3,78 — Back4App konteyner) · choreo.dev (3,91) |
+| Gerçek zamanlı | ps.pndsn.com (1,38 — PubNub API) |
+| VPS firması | cloud.yandex.ru (0,56) · reg.ru (0,63) · ibm.com (0,77) · cloud4y.ru (0,84) · vultr.com (1,08) · euserv.com (1,18) · ps.kz (1,21) · netcup.eu (1,32) · huaweicloud.com (1,54) · sprinthost.ru (1,75) · buyvm.net (2,06) · serverspace.io (3,20) |
+Açılmayan: timeweb.cloud, beget, firstvds, selectel, aeza, vdsina, hostkey, ruvds, hoster.kz, hetzner, contabo, digitalocean, linode, ably, pusher, supabase, hf.space …
+
 ## Açılmayan önemli olanlar
 github.com, raw.githubusercontent.com (GitHub `apk` dalı linkleri TM'de VPN'siz açılmaz — VPS'e indirme için sorun yok),
 ntfy.sh, api.telegram.org, t.me, drive.google.com, docs.google.com, dropbox.com, cdn.jsdelivr.net, workers.dev, pages.dev, vercel.app,
