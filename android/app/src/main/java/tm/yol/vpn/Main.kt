@@ -142,6 +142,7 @@ open class Main : Activity() {
     private fun handle(i: Intent?) {
         when (i?.action) {
             INSTALL -> Upd.install(this)
+            UPD -> askUpdate(false)   // 1.47.28: täze wersiýa bildirişi basyldy — programmanyň içinde ýüklemek
             GO -> if (State.now != State.ON && State.now != State.WAIT) connect()
             CHAT -> push(JSONObject().put("k", "go").put("page", "chat"))
             GLOB -> push(JSONObject().put("k", "go").put("page", "global"))   // 1.47: @agzamak bildirişi
@@ -410,10 +411,9 @@ open class Main : Activity() {
         if (Msg.migNeed(this)) { push(JSONObject().put("k", "mig")); return }   // 1.47: ilki köne programmadan göçmek (hökmany)
         if (Lic.banned(this)) { push(JSONObject().put("k", "in").put("m", JSONObject().put("k", "uban").put("on", true))); return }   // 1.47.21: gadagan — VPN ýok
         if (Upd.busy(this)) { toast(t("Täze wersiýa ýüklenýär, gutarýança garaşyň", "Идёт загрузка новой версии, подождите", "Yeni sürüm iniyor, bitene kadar bekleyin")); return }
-        // 1.47.27: täze wersiýa VPN-i petiklemeýär — saýt (turkmenvpn.ru) Türkmenistanda VPN-siz açylmaýar: ilki birigýär, soň «saýty aç» soralýar
-        if (Upd.available(Msg.ver(this)) != null) {
-            val hh = android.os.Handler(mainLooper); var n = 0
-            hh.postDelayed(object : Runnable { override fun run() { if (State.now == State.ON) askUpdate(false) else if (++n < 40) hh.postDelayed(this, 1000) } }, 1500)
+        Upd.available(Msg.ver(this))?.let { u ->   // 1.47.28: zorunlu täzelenme (öňki ýaly) — programmanyň içinde VPS IP-sinden ýüklenýär; salgy işlemese birikmäge rugsat
+            if (!(Upd.isLink(u.second) && Upd.linkFail == u.first)) { askUpdate(true); return }
+            toast(t("Täze wersiýany ýükläp bolmady — häzirki wersiýa bilen birigýär", "Не удалось загрузить новую версию — подключаемся текущей", "Yeni sürüm indirilemedi — mevcut sürümle bağlanılıyor"))
         }
         if (State.now == State.OFF && State.warming()) { toast(t("Birneme garaşyň — 1 minutdan täzeden synanyşyň", "Подождите немного — попробуйте через минуту", "Biraz bekleyin — 1 dakika sonra tekrar deneyin")); return }   // 1.47.9: açylyşdaky barlag gutarýança
         if (otherVpn()) toast(t("Telefonda başga VPN açyk — Türkmen VPN birikende ol öçýär", "В телефоне включён другой VPN — при подключении он отключится", "Telefonda başka VPN açık — bağlanınca o kapanır"))   // 1.47
@@ -462,14 +462,14 @@ open class Main : Activity() {
         val u = Upd.available(Msg.ver(this)) ?: return
         Upd.clean(this, Msg.ver(this), u.first)
         // 1.47.17: täze wersiýa programmanyň içinden däl — turkmenvpn.ru saýtyndan ýüklenýär (VPN-siz açylýar)
-        val on = State.now == State.ON   // 1.47.27: saýt diňe VPN arkaly açylýar
-        val msg = if (on) t("Täze wersiýa ${u.first} bar! VPN açyk — saýty açyp ýükläň we üstünden gurnaň.", "Доступна версия ${u.first}! VPN включён — откройте сайт, скачайте и установите поверх.",
-            "Yeni sürüm ${u.first} var! VPN açık — siteyi açıp indirin ve üstüne kurun.")
-        else t("Täze wersiýa ${u.first} bar. Ilki VPN-e birigiň, soň saýty açyp ýükläň (saýt VPN-siz açylmaýar).", "Доступна версия ${u.first}. Сначала подключите VPN, затем откройте сайт (без VPN не открывается).",
-            "Yeni sürüm ${u.first} var. Önce VPN'e bağlanın, sonra siteyi açıp indirin (VPN'siz açılmıyor).")
-        ask(msg, t("Saýty aç", "Открыть сайт", "Siteyi aç"), t("Ýok", "Нет", "Hayır")) {
-            runCatching { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(Sub.site)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
-        }
+        // 1.47.28: öňki ýaly — programmanyň içinde ýüklenýär (VPS IP-sinden, VPN-siz); ýüklenmese saýt brauzerde açylýar
+        if (Upd.ready(this, u.first)) { installHint(); Upd.install(this, u.first); return }
+        if (Upd.busy(this)) { toast(t("Täze wersiýa ýüklenýär, garaşyň", "Новая версия загружается, подождите", "Yeni sürüm iniyor, bekleyin")); return }
+        val msg = if (vpn) t("VPN-i işletmek üçin VPN-iň täze wersiýasyny ýüklemeli! Size täze wersiýany ýükläýinmi?",
+            "Чтобы пользоваться VPN, нужно загрузить новую версию! Загрузить новую версию?",
+            "VPN'i kullanmak için yeni sürümü indirmelisiniz! Yeni sürüm indirilsin mi?")
+        else t("Täze wersiýa ${u.first} bar. Ýükläýinmi?", "Доступна версия ${u.first}. Загрузить?", "Yeni sürüm ${u.first} var. İndirilsin mi?")
+        ask(msg, t("Hawa", "Да", "Evet"), t("Ýok", "Нет", "Hayır")) { startUpdate(u) }
     }
 
     private fun startUpdate(u: Pair<String, String>) {
@@ -548,6 +548,7 @@ open class Main : Activity() {
     companion object {
         const val GO = "tm.yol.vpn.GO"
         const val INSTALL = "tm.yol.vpn.INSTALL"
+        const val UPD = "tm.yol.vpn.UPD"
         const val CHAT = "tm.yol.vpn.CHAT"
         const val GLOB = "tm.yol.vpn.GLOB"
         const val ADMT = "tm.yol.vpn.ADMT"

@@ -186,12 +186,12 @@ object Upd {
         val n = if (p.getString("updNv", "") == u.first) p.getInt("updNn", 0) else 0
         if (n >= 3 || (n > 0 && now - p.getLong("updNat", 0) < 24 * 3600_000L)) return
         p.edit().putString("updNv", u.first).putInt("updNn", n + 1).putLong("updNat", now).apply()
-        val text = t("Täze wersiýa ${u.first} çykdy! VPN-e birigiň, soň basyp saýtdan ýükläň.",   // 1.47.27: saýt VPN-siz açylmaýar
-            "Вышла новая версия ${u.first}! Подключите VPN, затем нажмите и скачайте с сайта.",
-            "Yeni sürüm ${u.first} çıktı! VPN'e bağlanın, sonra dokunup siteden indirin.")
+        val text = t("Täze wersiýa ${u.first} çykdy! Basyň — programmanyň içinde ýüklenýär.",   // 1.47.28: programmanyň içinde (VPS IP-sinden)
+            "Вышла новая версия ${u.first}! Нажмите — загрузится в приложении.",
+            "Yeni sürüm ${u.first} çıktı! Dokunun — uygulamanın içinde indirilir.")
         val nm = ctx.getSystemService(NotificationManager::class.java)
         if (Build.VERSION.SDK_INT >= 26) nm.createNotificationChannel(NotificationChannel("u", "Täzelenme", NotificationManager.IMPORTANCE_DEFAULT))
-        val pi = PendingIntent.getActivity(ctx, 10, Intent(Intent.ACTION_VIEW, Uri.parse(Sub.site)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+        val pi = PendingIntent.getActivity(ctx, 10, Intent(ctx, MainActivity::class.java).setAction(Main.UPD).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val b = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(ctx, "u") else Notification.Builder(ctx)
         runCatching { nm.notify(3, b.setSmallIcon(R.drawable.ic_notif).setContentTitle(ctx.getString(R.string.app_name))

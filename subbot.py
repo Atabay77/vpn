@@ -3808,7 +3808,7 @@ FAKTLAR:
 - «Dostuňy çagyr»: dostuň programmany açyp seniň kodyňy (TM-XXXXX) ýazsa, saňa 1 gün wagt çäksiz; her täze dost +1 gün (bu Premium däl).
 - «Günlük sowgat»: 7 gün yzygiderli basylsa 2 gün wagt çäksiz (Premium däl).
 - Programma pozulsa: tkmvpnn@gmail.com salgysyna «vpn» diýip hat ýaz — ýükläp almak linki geler (VPN-siz açylýar).
-- Täze wersiýa: ILKI VPN-e birigiň, soň turkmenvpn.ru saýtyny açyp ýükläň (saýt VPN-siz Türkmenistanda açylmaýar). Köne programmany pozmaň — üstünden gurnalýar, maglumatlar galýar. Täze wersiýa «Habarlar»-da yglan edilýär.
+- Täze wersiýa: programma özi soraýar — «Hawa» basyň, programmanyň içinde ýüklenýär (VPN gerek däl). Ýüklenmese «Habarlar»-daky salgyny açyň. Köne programmany pozmaň — üstünden gurnalýar, maglumatlar galýar.
 - «Global chat» — ähli ulanyjylaryň umumy çaty.
 - Mugt birikmek: baş sahypanyň aşagyndaky «Awtomatik · 🎁 MUGT KOD» kartasy (ýa-da Serwerler → «Awtomatik») — basyp, soň uly düwmä bas. Mugt kod BAR, VPN diňe pully däl.
 - Premium ulanyjylarda baş sahypada «👑 Premium / Free» saýlaýjy bar; Premium bölümindäki ähli serwerler Premium-a degişli (👑).
@@ -5360,9 +5360,9 @@ def app_upd_news(ver):
     def f(x):
         nw = [n_ for n_ in (x.get("news") or []) if n_.get("auto") != APP_UPD_NEWS]
         if any(n_.get("auto") == APP_UPD_NEWS and n_.get("v") == ver for n_ in (x.get("news") or [])): return False
-        item = {"id": news_id(nw), "ts": int(time.time()), "auto": APP_UPD_NEWS, "v": ver, "btn": ["vpn"],
+        item = {"id": news_id(nw), "ts": int(time.time()), "auto": APP_UPD_NEWS, "v": ver, "btn": ["update"],
                 "t": f"🆕 Täze wersiýa {ver} çykdy!",
-                "x": f"Türkmen VPN-iň täze wersiýasy {ver} taýýar.\n\n1️⃣ Ilki VPN-e birigiň\n2️⃣ Soň şu saýty açyň: {app_site(x)}\n3️⃣ Ýükläň we köne programmanyň üstünden gurnaň — maglumatlaryňyz galýar.\n\n⚠️ Saýt VPN-siz açylmaýar — VPN-e birigip açyň."}
+                "x": f"Türkmen VPN-iň täze wersiýasy {ver} taýýar.\n\n📥 Programma özi soraýar — «Hawa» basyň, programmanyň içinde ýüklenýär we gurnalýar (VPN gerek däl).\n\nÝüklenmese şu salgyny açyň: {app_site(x)}\n\nKöne programmanyň üstünden gurnaň — maglumatlaryňyz galýar."}
         x["news"] = ([item] + nw)[:NEWS_MAX]; return True
     ok = bool(app_mut(f))
     if ok: RUN["app_dirty"] = True; vlog(f"📰 Täze wersiýa habary: {ver}")
@@ -6975,6 +6975,26 @@ async def cmd_tazelenme(u: Update, c: ContextTypes.DEFAULT_TYPE):
         f"Sunucudaki sürüm: <code>{esc(str(ul_.get('ver') or '—'))}</code> · Site: <code>{esc(app_site(cfg))}</code>\n\n"
         "<code>/tazelenme ac</code> — açmak · <code>/tazelenme dur</code> — durdurmak\n<code>/sayt https://…</code> — indirme sitesini değiştir\n"
         "<i>Site Türkmenistan'da engelliyken AÇMA: 1.47.17–1.47.26 kullanıcıları VPN'e bağlanamaz. Yeni sürüm zaten «Habarlar»da duyurulur.</i>", parse_mode="HTML")
+
+async def cmd_vpsip(u: Update, c: ContextTypes.DEFAULT_TYPE):
+    """1.47.28: /vpsip 1.2.3.4 — täze wersiýa şu VPS IP-sinden (http, 80 port — Caddy → apk_srv) programmanyň içinde ýüklenýär; saýt hem şol IP."""
+    if not is_fo(u.effective_user.id): return
+    ip_ = (c.args or [""])[0].strip().replace("http://", "").replace("https://", "").strip("/")
+    if not re.fullmatch(r"\d{1,3}(\.\d{1,3}){3}(:\d{2,5})?", ip_):
+        ul_ = app_cfg(load_db()).get("upd_link") or {}
+        await c.bot.send_message(u.effective_user.id, f"🖥 Şu an: <code>{esc(str(ul_.get('url') or '—'))}</code> · {esc(str(ul_.get('ver') or '—'))}\nKullanım: <code>/vpsip 81.26.177.63</code>", parse_mode="HTML"); return
+    url_ = f"http://{ip_}/turkmenvpn.apk"
+    v_, fn_ = await asyncio.to_thread(apk_head_ver, url_, True)
+    if not v_:
+        await c.bot.send_message(u.effective_user.id, f"❌ <code>{esc(url_)}</code> cevap vermedi.\nVPS'te Caddy'de IP satırı var mı ve 80 port açık mı? (bana sor)", parse_mode="HTML"); return
+    def f(x):
+        x["upd_link"] = {"ver": v_, "url": url_, "fn": fn_, "auto": True, "ts": int(time.time())}
+        x["site_url"] = f"http://{ip_}"; x["upd_hold"] = False
+        x["news"] = [n_ for n_ in (x.get("news") or []) if n_.get("auto") != APP_UPD_NEWS]   # habar täze salgy bilen täzeden
+    app_mut(f); app_upd_news(v_); RUN["app_dirty"] = True
+    try: await asyncio.to_thread(app_sync, True)
+    except Exception as e: log.info("vpsip sync: %s", e)
+    await c.bot.send_message(u.effective_user.id, f"✅ Yeni sürüm <b>{esc(v_)}</b> artık <code>{esc(url_)}</code> adresinden, uygulamanın içinde iniyor (VPN'siz).\nZorunlu güncelleme: 🟢 açık · Habarlar'a duyuru eklendi.", parse_mode="HTML")
 
 async def cmd_sayt(u: Update, c: ContextTypes.DEFAULT_TYPE):
     if not is_fo(u.effective_user.id): return
@@ -13162,6 +13182,7 @@ def main():
     app.add_handler(CommandHandler("pubgms", cmd_pubgms))   # 1.47.18
     app.add_handler(CommandHandler("tazelenme", cmd_tazelenme))   # 1.47.27
     app.add_handler(CommandHandler("sayt", cmd_sayt))   # 1.47.27
+    app.add_handler(CommandHandler("vpsip", cmd_vpsip))   # 1.47.28
     app.add_handler(CommandHandler("pubgfree", cmd_pubgfree))
     app.add_handler(MessageHandler(filters.COMMAND, other_cmd))
     app.add_handler(CallbackQueryHandler(cb))
