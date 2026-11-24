@@ -60,6 +60,13 @@ object Chat {
         val all = rooms(c); val r = all.optJSONObject(room) ?: JSONObject(); f(r); all.put(room, r)
         p(c).edit().putString("rooms", all.toString()).apply()
     }
+    /** 1.47.29: söhbetleri öz tarapyňdan pozmak (köpüsini birden) — sanawdan aýrylýar; garşydaş täzeden ýazsa täze söhbet bolup gelýär. */
+    @Synchronized fun del(c: Context, peers: List<String>) {
+        val me = Msg.dev(c); val all = rooms(c)
+        peers.filter { DEV.matches(it) }.forEach { all.remove(room(me, it)) }
+        p(c).edit().putString("rooms", all.toString()).apply()
+    }
+
     fun list(c: Context): JSONArray { val a = JSONArray(); val all = rooms(c); all.keys().forEach { a.put(all.getJSONObject(it).put("room", it)) }; return a }
 
     /** Ýagdaý: acc (kabul), blk (engelle), in (täzeden garaşylýar), del (sanawdan aýyr). */
@@ -158,7 +165,10 @@ object Chat {
             rAt = now
             runCatching {
                 val pr = p(c); val me = Msg.dev(c)
-                val got = Fs.query("r/$me", "i", pr.getString("rIn", null), 30) ?: return@runCatching
+                // 1.47.29: gelen gutusy sahypa-sahypa (öň her barlagda diňe 30 — köp habar / hekaýa görüldi bolsa täze ýazanlar sagatlap gijä galýardy)
+                var pg = 0
+                while (pg++ < 20) {
+                val got = Fs.query("r/$me", "i", pr.getString("rIn", null), 100) ?: break
                 for ((_, b, t) in got) {
                     pr.edit().putString("rIn", t).apply()
                     val o = Msg.dec(b)?.let { runCatching { JSONObject(it) }.getOrNull() } ?: continue
@@ -169,6 +179,8 @@ object Chat {
                     upd(c, room) { it.put("p", f).put("n", o.optString("n").take(32)); if (it.optString("st").isEmpty()) it.put("st", "in") }
                     Msg.events.add(JSONObject().put("k", "dmreq").put("peer", f).put("n", o.optString("n").take(32)))
                     runCatching { pollRoom(c, room, false, f) }
+                }
+                if (got.size < 100) break
                 }
             }
         }

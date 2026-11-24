@@ -368,6 +368,7 @@ open class Main : Activity() {
         @JavascriptInterface fun dmPage(on: Boolean) { Msg.dmPage = on; if (on) Msg.kick() }
         @JavascriptInterface fun dmSt(peer: String, st: String) = Chat.setSt(this@Main, peer, st)
         @JavascriptInterface fun dmList(): String = Chat.list(this@Main).toString()
+        @JavascriptInterface fun dmDel(j: String) = runCatching { val a = org.json.JSONArray(j); Chat.del(this@Main, (0 until a.length()).map { a.getString(it) }) }.let { }   // 1.47.29
         @JavascriptInterface fun nickBonus() = Lic.setBonus(this@Main)
         @JavascriptInterface fun killSw(on: Boolean) = Lic.setKill(this@Main, on)   // 1.28
         @JavascriptInterface fun vpnOff() = ui { startService(Intent(this@Main, Svc::class.java).setAction(Svc.STOP)) }

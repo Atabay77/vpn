@@ -91,6 +91,7 @@
   }
   const P2 = {};          // telefon → {th, ph, bg, n, dm} (doly profil)
   const DMS = {};         // garşydaş → {st, msgs: [], un, n, lt}
+  const DMCUT = LS.get('dmCut', {}) || {};   // 1.47.29: pozulan söhbet — şu wagtdan (sekunt) öňki habarlar görkezilmeýär
   const MUTE = LS.get('dmMute', {}) || {};   // 1.21: sessize alnanlar (sanalmaýar, duýduryş ýok)
   const DGW = { tk: [108, 118], ru: [116, 106], tr: [107, 116] };   // 1.27: «VPN-i gizle» düwmesiniň giňligi (ýazga görä ölçeldi; käbir telefonda awtomatik giňlik bozulýar)
   // 1.28: eýesi hemme ýerde OWNER ýazgysy bilen ýa-da derejesi (nyşan) bilen görünýär — öz saýlawy; başgalary onuň soňky Global habaryndaky «ow» belgisinden bilýär
@@ -810,8 +811,21 @@
         return Object.assign(av, { d: (i * 0.04).toFixed(2), isReq: x.st === 'in', isBlk: x.st === 'blk', hasUn: (x.un || 0) > 0, un: String(x.un || 0),
           last: m ? dmPrev(m, tx, me1) : x.ls ? x.ls : x.st === 'in' ? tx.dm_req : '', lastCls: (x.un || 0) > 0 ? 'dmlast-un' : '',
           dev: d, muted: !!MUTE[d], unCls: MUTE[d] ? 'mut' : '',
-          open: () => { if (Date.now() - (window.__lpDm || 0) < 900) return; this.openDm(d); } }); });
+          sel: !!(s.dmSel && s.dmSel[d]), selCls: s.dmSel ? 'dmsel' : 'hid', selMk: s.dmSel && s.dmSel[d] ? '✓' : '', selBg: s.dmSel && s.dmSel[d] ? '#E0B04A' : 'transparent',
+          open: () => { if (s.dmSel) { const m2 = Object.assign({}, s.dmSel); if (m2[d]) delete m2[d]; else m2[d] = 1; this.setState({ dmSel: m2 }); return; }
+            if (Date.now() - (window.__lpDm || 0) < 900) return; this.openDm(d); } }); });
       r.dmHint = rows.length > 0;
+      { // 1.47.29: köp söhbeti birden pozmak (öz tarapyňdan)
+        const sel = s.dmSel, n = sel ? Object.keys(sel).length : 0;
+        r.dmSelOn = !!sel; r.dmSelOff = !sel && rows.length > 0; r.dmSelN = String(n);
+        r.dmSelStart = () => this.setState({ dmSel: {} }); r.dmSelX = () => this.setState({ dmSel: null });
+        r.dmSelAll = () => { const m2 = {}; if (n < rows.length) rows.forEach((d) => { m2[d] = 1; }); this.setState({ dmSel: m2 }); };
+        r.dmSelAllT = n < rows.length ? tx.dm_selAll : tx.dm_selNone;
+        r.dmSelDel = () => { if (!n) return; this.confirm(tx.dm_delQ.replace('{n}', String(n)), '🗑 ' + tx.cf_yes, () => {
+          const ds = Object.keys(sel), now = Math.floor(Date.now() / 1000);
+          ds.forEach((d) => { delete DMS[d]; DMCUT[d] = now; }); LS.set('dmCut', DMCUT);
+          try { NB.dmDel(JSON.stringify(ds)); } catch (e) {} if (this._saveMeta) this._saveMeta();
+          this.setState({ dmSel: null, dmTick: (this.state.dmTick || 0) + 1 }); this.say('🗑 ' + tx.dm_delOk.replace('{n}', String(ds.length))); }); }; }
       // 1.21: söhbeti açmazdan görmek — okaldy belligi iberilmeýär, okalmadyk san üýtgemeýär
       r.pkOn = !!s.dmPeek;
       if (r.pkOn) { const d = s.dmPeek, x = DMS[d] || { msgs: [] }, list = x.msgs.filter((q) => !isCtl(q)).slice(-15);
@@ -1591,7 +1605,9 @@
       const list = (e.list || []).map((m) => ({ id: m.id, t: m.t, f: m.f, x: m.x || '', ph: m.ph || '', st: m.st || '', sys: m.sys || '', rp: m.rp && m.rp.n ? m.rp : null, re: m.re || '', e: m.e || '', off: !!m.off, ty: m.ty || 0, rd: m.rd || 0, dl: m.dl || '', ed: m.ed || '' }));
       const same = (a, b) => a.f === b.f && (a.x || '') === (b.x || '') && (a.ph || '') === (b.ph || '') && (a.st || '') === (b.st || '') && (a.sys || '') === (b.sys || '') && (a.re || '') === (b.re || '') && (a.e || '') === (b.e || '') && !!a.off === !!b.off && (a.dl || '') === (b.dl || '') && (a.ed || '') === (b.ed || '');
       let pend = x.msgs.filter((m) => m.pend), msgs = e.full ? [] : x.msgs.filter((m) => !m.pend), fresh = 0;
+      const cut = +DMCUT[e.peer] || 0;
       for (const m of list) {
+        if (cut && (m.t || 0) <= cut) continue;   // 1.47.29: öz tarapyňdan pozulan söhbetiň köne habarlary
         if (msgs.some((q) => q.id === m.id)) continue;
         const pi = pend.findIndex((q) => same(q, m)); if (pi >= 0) pend.splice(pi, 1);
         msgs.push(m);
