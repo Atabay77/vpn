@@ -1421,6 +1421,7 @@ async def app_ru_loop(app):
         await asyncio.sleep(APP_RU_EVERY)
 
 APP_EU_KEEP = 6 * 3600   # 1.47.18: PUBG (Frankfurt) ping ölçegleri 6 sagat hasaba alynýar
+APP_EU_PHONES = 3         # 1.47.19: iň az 3 dürli telefonyň interneti (bir telefonyň çalt/haýal interneti netijäni bozmasyn)
 APP_EU_MARGIN = 15        # Russiýa serweriniň iň gowusyndan iň köp +15 ms — PUBG-a ýaraýar
 APP_EU_LIM = 120          # 1.47.19: oýundaky (çaklanan) ms 120-den az bolsa — PUBG (eýesiniň islegi); /pubgms 100 bilen üýtgeýär
 APP_EU_DIV = 2.0          # ölçeg (TCP birikme + HTTP sorag) oýundaky ms-den ~2 esse uly: oýun ms ≈ ölçeg / 2; /pubgms bol 2.5 bilen sazlanýar
@@ -1448,11 +1449,11 @@ def app_eu_report(dev, pr):
     app_mut(f)
 
 def app_eu_ms(a, now=None):
-    """1.47.18: her serweriň PUBG (Frankfurt) pingi — soňky 6 sagadyň mediany (iň az 2 ölçeg)."""
+    """1.47.18: her serweriň PUBG (Frankfurt) pingi — soňky 6 sagadyň mediany (iň az 3 dürli telefon; her telefondan soňky ölçeg)."""
     now = now or time.time(); out = {}
     for hp, arr in (a.get("hp_eu") or {}).items():
         v = sorted(int(r[0]) for r in arr if now - int(r[1]) < APP_EU_KEEP)
-        if len(v) >= 2: out[hp] = v[len(v) // 2]
+        if len(v) >= APP_EU_PHONES: out[hp] = v[len(v) // 2]
     return out
 
 def app_eu_good(a, now=None):
@@ -6726,7 +6727,7 @@ async def cmd_minver(u: Update, c: ContextTypes.DEFAULT_TYPE):
 def app_eu_view(a):
     """1.47.18: /pubgms — Türkmen telefonlaryndan ölçenen PUBG (Avrupa, Frankfurt) pingi."""
     eu = app_eu_ms(a); ru = app_ru_proven(a); good = app_eu_good(a)
-    if not eu: return "🎮 <b>PUBG ms (Avrupa)</b>\nHenüz ölçüm yok — 1.47.18+ telefonlar 20 dakikada bir ölçüp gönderir."
+    if not eu: return "🎮 <b>PUBG ms (Avrupa)</b>\nHenüz ölçüm yok — 1.47.19 telefonlar 20 dakikada bir ölçüp gönderir; bir sunucu en az 3 farklı telefonda ölçülünce görünür."
     ref = [eu[h] for h in ru if h in eu]
     src = {}
     for v in (a.get("xcodes") or {}).values(): src[app_x_hp(v.get("c") or "")] = "📡" if v.get("src") in ("tg", "tgs") else "✍️"
@@ -6735,7 +6736,7 @@ def app_eu_view(a):
         mk = "🇷🇺" if h in ru else ("✅🎮" if h in good else "")
         rows.append(f"<code>~{app_eu_game(a, ms):>3} ms</code> ({ms}) {src.get(h, '🌐')} {mk} <code>{esc(h[:40])}</code>")
     glim = int(a.get("eu_lim") or APP_EU_LIM); dv = a.get("eu_div") or APP_EU_DIV
-    return ("🎮 <b>PUBG ms (Avrupa · Frankfurt)</b> — Türkmen telefonlarından, VPN'in içinden\n"
+    return (f"🎮 <b>PUBG ms (Avrupa · Frankfurt)</b> — en az {APP_EU_PHONES} farklı Türkmen telefonundan (ortanca), VPN'in içinden\n"
             + f"Kural: oyunda ~<b>{glim} ms</b> altı" + (f" <b>veya</b> en iyi kanıtlı Rusya ({min(ref)}) +{APP_EU_MARGIN} ölçümü" if ref else "") + "\n"
             + f"<i>~ms = oyundaki tahmini ms (ölçüm ÷ {dv}); parantezde ham ölçüm.</i>\n"
             + "<blockquote expandable>" + "\n".join(rows) + "</blockquote>\n"
