@@ -34,6 +34,13 @@ class CfgTest {
         val x = Cfg.outbound("vless://u@1.2.3.4:443?type=xhttp&security=tls&path=%2F&mode=auto&extra=%7B%22mode%22%3A%22packet-up%22%7D#n").getJSONObject("streamSettings")
         assertEquals("packet-up", x.getJSONObject("xhttpSettings").getJSONObject("extra").getString("mode"))
     }
+    /** 1.47.20: DNS her sorag üçin täze TCP birikmesi (uzak DoH birikmesi 1–2 minutdan sessiz kesilýärdi); DoH diňe ätiýaç. */
+    @Test fun dnsTcpFirst() {
+        val d = JSONObject(Cfg.full(fmLink, true)).getJSONObject("dns").getJSONArray("servers")
+        assertEquals(listOf("tcp://1.1.1.1:53", "tcp://8.8.8.8:53", "https://1.1.1.1/dns-query"), (0 until d.length()).map { d.getString(it) })
+        val r = JSONObject(Cfg.full(fmLink, true)).getJSONObject("routing").getJSONArray("rules").getJSONObject(0)
+        assertEquals("dns-out", r.getString("outboundTag")); assertEquals("53", r.getString("port"))
+    }
     @Test fun linkUpdate() {
         Sub.meta("#tvuall: 1.28.1 1BPHB4lyAUA6QAfpSzddTiS8rVoPpu7OR\n#tvul: 1.44.5 http://203.0.113.5:8091/TurkmenVPN-1.44.5.apk")
         assertEquals("1.44.5" to "http://203.0.113.5:8091/TurkmenVPN-1.44.5.apk", Upd.available("1.44.3"))

@@ -106,7 +106,10 @@ object Cfg {
     fun full(uri: String, tun: Boolean, socks: Int = 0): String {
         val c = JSONObject()
         c.put("log", JSONObject().put("loglevel", "warning"))
-        c.put("dns", JSONObject().put("servers", JSONArray().put("https://1.1.1.1/dns-query").put("https://8.8.8.8/dns-query")))
+        // 1.47.20: DNS — her sorag täze TCP birikmesi (tcp://). Öň DoH bir uzak birikmäni ulanýardy: 1–2 minutdan ol sessiz kesilýär
+        // (Türkmen interneti / mugt serwer), Xray ölen birikmäni ulanyp dur — saýtlar açylmaýar, ýöne ms (serwer özi çözýär) görünýärdi.
+        c.put("dns", JSONObject().put("servers", JSONArray().put("tcp://1.1.1.1:53").put("tcp://8.8.8.8:53")
+            .put("https://1.1.1.1/dns-query")))
         if (tun) {
             val ins = JSONArray().put(JSONObject().put("tag", "tun").put("protocol", "tun")
                 .put("settings", JSONObject().put("name", "tun0").put("mtu", 1500)))
