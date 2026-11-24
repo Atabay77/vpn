@@ -3036,9 +3036,53 @@ def app_relay():
 def ntfy_base(): return app_relay() or "https://ntfy.sh"
 
 def app_relay_pub(cfg=None):
-    """1.42: telefonlaryň birikýän salgysy — «öňdäki VPS» (her gün çalşyp bolýar); bellenmedik bolsa bazanyň özi."""
+    """1.42: telefonlaryň birikýän salgysy — «öňdäki VPS» (her gün çalşyp bolýar); bellenmedik bolsa bazanyň özi.
+    1.47.17: öňdäki VPS öçse (RUN["relay_fo"]) — telefonlar wagtlaýyn bazanyň özüne (botuň VPS-i)."""
     cfg = cfg if cfg is not None else app_cfg(load_db())
-    return ((cfg.get("relay_pub") or "").strip().rstrip("/")) or (os.environ.get("RELAY_URL") or cfg.get("relay") or "").strip().rstrip("/")
+    base_ = (os.environ.get("RELAY_URL") or cfg.get("relay") or "").strip().rstrip("/")
+    pub_ = (cfg.get("relay_pub") or "").strip().rstrip("/")
+    if pub_ and base_ and RUN.get("relay_fo") == pub_: return base_
+    return pub_ or base_
+
+APP_FO_EVERY = 60; APP_FO_FAILS = 3   # 1.47.17: öňdäki VPS her minut barlanýar; 3 gezek yzly-yzyna jogap bermese — baza
+def app_relay_fo_check():
+    """1.47.17: öňdäki VPS-iň saglygy. Dönüş: "down" (baza geçildi), "up" (öňdäki VPS-e gaýdyldy) ýa-da None."""
+    cfg = app_cfg(load_db())
+    base_ = (os.environ.get("RELAY_URL") or cfg.get("relay") or "").strip().rstrip("/")
+    pub_ = (cfg.get("relay_pub") or "").strip().rstrip("/")
+    if not pub_ or not base_ or pub_ == base_:
+        RUN.pop("relay_fo", None); RUN.pop("relay_fails", None); return None
+    try: ok_ = relay_health(pub_)[0]
+    except Exception: ok_ = False
+    if ok_:
+        RUN["relay_fails"] = 0
+        if RUN.get("relay_fo"):
+            RUN.pop("relay_fo", None); RUN["app_dirty"] = True; return "up"
+        return None
+    if RUN.get("relay_fo") == pub_: return None
+    RUN["relay_fails"] = RUN.get("relay_fails", 0) + 1
+    if RUN["relay_fails"] < APP_FO_FAILS: return None
+    try: base_ok_ = relay_health(base_)[0]
+    except Exception: base_ok_ = False
+    if not base_ok_: return None   # baza hem jogap bermeýär — geçmek peýdasyz
+    RUN["relay_fo"] = pub_; RUN["app_dirty"] = True; return "down"
+
+async def app_relay_fo_loop(app):
+    """1.47.17: öňdäki VPS öçse — telefonlar özi bazanyň (botuň VPS-i) salgysyna geçýär; açylanda yzyna."""
+    await asyncio.sleep(45)
+    while True:
+        try:
+            r_ = await asyncio.to_thread(app_relay_fo_check)
+            if r_:
+                cfg_ = app_cfg(load_db()); pub_ = cfg_.get("relay_pub") or ""; base_ = os.environ.get("RELAY_URL") or cfg_.get("relay") or ""
+                vlog(f"📡 Öňdäki VPS {'öçdi — telefonlar baza geçýär' if r_ == 'down' else 'açyldy — telefonlar yzyna geçýär'}: {pub_}")
+                await notify_founders(app, (f"🔴 <b>Öňdäki VPS jogap bermeýär</b>: <code>{esc(pub_)}</code>\nTelefonlar awtomatik <b>bota (baza)</b> geçirildi: <code>{esc(base_)}</code>\n<i>Ol açylsa özi yzyna geçer. Täze öňdäki VPS: 📡 Habar serweri → 🌐 Öňdäki VPS-i çalyş.</i>"
+                                            if r_ == "down" else f"🟢 <b>Öňdäki VPS ýene işleýär</b>: <code>{esc(pub_)}</code> — telefonlar yzyna geçirildi."))
+                if app_cfg(load_db()).get("fid") or app_cfg(load_db()).get("subs"):
+                    try: await asyncio.to_thread(app_sync, bool(RUN.pop("app_dirty", None)))   # derrew ýaýrat (10 minut garaşma)
+                    except Exception as e: log.info("relay fo sync: %s", e)
+        except Exception as e: log.info("relay fo: %s", e)
+        await asyncio.sleep(APP_FO_EVERY)
 
 def relay_health(url):
     """1.42: «ok 1.42 fs <kimlik>» → (ok, wersiýa, fs bar, bazanyň kimligi)."""
@@ -3060,7 +3104,8 @@ def app_relay_view(a):
     up_ = re.sub(r"^https?://", "", st_) or "BAZA_IP:8090"
     t = ("📡 <b>Habar serweri</b>\n<blockquote>"
          f"🗄 <b>Baza</b> (hemme zat şu ýerde saklanýar): <code>{esc(st_ or '—')}</code>\n"
-         f"🌐 <b>Öňdäki VPS</b> (telefonlar şuňa birikýär): <code>{esc(pub_ or ('— (göni baza)' if st_ else '—'))}</code></blockquote>\n"
+         f"🌐 <b>Öňdäki VPS</b> (telefonlar şuňa birikýär): <code>{esc(pub_ or ('— (göni baza)' if st_ else '—'))}</code>"
+         + ("\n🔴 <b>Öňdäki VPS jogap bermeýär — telefonlar häzir bazada</b> (açylsa özi yzyna geçer)" if pub_ and RUN.get("relay_fo") == pub_.rstrip("/") else "") + "</blockquote>\n"
          "<b>Öňdäki VPS-i çalyşmak</b> (her gün bolsa-da — maglumat bazada galýar):\n"
          f"1) Täze VPS-de: <code>{RELAY_KUR} | UPSTREAM={esc(up_)} sh</code>\n"
          "2) «🌐 Öňdäki VPS-i çalyş» → täze salgy (ýa-da diňe IP).")
@@ -5602,6 +5647,7 @@ async def post_init(app):
     app.bot_data["hunt"] = asyncio.create_task(hunt_loop(app))   # 1.46: kod awy
     app.bot_data["online"] = asyncio.create_task(app_online_loop(app))   # 1.47: onlaýn sany her minut
     app.bot_data["rucheck"] = asyncio.create_task(app_ru_loop(app))   # 1.47.17: kanal kodlarynyň çykyş ýurdy
+    app.bot_data["relayfo"] = asyncio.create_task(app_relay_fo_loop(app))   # 1.47.17: öňdäki VPS öçse — baza
     app.bot_data["mutq"] = asyncio.create_task(app_mutq_loop(app))   # 1.47: toplumlaýyn ýazgylar
     app.bot_data["leader"] = asyncio.create_task(leader_loop(app))   # 1.47: diňe bir VPS-de bot
     try: app_mut(lambda x: x.pop("fs_fast", None))   # 1.47: «çalt rejim» aýryldy
