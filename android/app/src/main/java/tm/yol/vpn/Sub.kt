@@ -43,6 +43,7 @@ object Sub {
     @Volatile var okAt = 0L                                            // son başarılı güncelleme
     @Volatile var kdev: Map<String, String> = emptyMap()               // key özeti → baglanan telefon(lar), otur bilen
     @Volatile var newsFs: List<Triple<String, Long, String>>? = null   // Firestore-dan (n/list) — täzeräk, abuna faýlyndakydan öň
+    @Volatile var site = "https://turkmenvpn.ru"   // 1.47.27: täze wersiýa ýüklenýän sahypa (#tvsite — bloklansa bot çalşýar)
     @Volatile var ubans: Set<String> = emptySet()                      // doly gadagan edilenler (diňe VPN, 20 min)
     @Volatile var pin = ""   // 1.46.4: Global chatda berkidilen habar (JSON: id, n, t)
     @Volatile var roles: Map<String, Pair<String, String>> = emptyMap()   // telefon → (o = owner / a = admin, nik)
@@ -78,6 +79,7 @@ object Sub {
                 nw.add(Triple(p[1], p[2].toLong(), String(android.util.Base64.decode(p[3], android.util.Base64.URL_SAFE or android.util.Base64.NO_PADDING), Charsets.UTF_8)))
             }
             if (p.size >= 2 && p[0] == "#tvkp:") pk = HashSet(p[1].split(',').filter { it.length >= 8 })
+            if (p.size >= 2 && p[0] == "#tvsite:" && Regex("^https?://[\\w.\\-]+(:\\d+)?(/[\\w./\\-]*)?$").matches(p[1])) site = p[1]   // 1.47.27: ýükleme sahypasy (botdan)
             if (p.size >= 2 && p[0] == "#tvboth:") bo.addAll(p[1].split(',').map { it.trim() }.filter { it.contains(':') })
             if (p.size >= 2 && p[0] == "#tvfree:") fr.addAll(p[1].split(',').map { it.trim() }.filter { it.contains(':') })
             if (p.size >= 3 && p[0] == "#tvrole:" && Regex("^[0-9a-f]{12}$").matches(p[1]) && p[2] in setOf("o", "a", "s"))   // 1.43: s — Premium satyjy

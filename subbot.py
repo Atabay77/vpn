@@ -951,10 +951,15 @@ def app_meta(cfg):
     if cfg.get("fs_mode") == "vps":   # 1.41: Google ýok — täze programa VPS bazasy (#tvdb), köneler habar serweriniň konularyny ulanýar
         if rel and cfg.get("fs_ok"): out.append(f"#tvdb: {rel}")
     elif cfg.get("fs_proj") and cfg.get("fs_key") and cfg.get("fs_ok"): out.append(f"#tvfs: {cfg['fs_proj']} {cfg['fs_key']}" + (f" {cfg['fs_db']}" if cfg.get("fs_db") and cfg["fs_db"] != "(default)" else ""))
-    for abi, u in sorted((cfg.get("upd") or {}).items()):
-        if u.get("fid") and u.get("ver"): out.append(f"#tvu{abi}: {u['ver']} {u['fid']}")
-    ul_ = cfg.get("upd_link") or {}
-    if ul_.get("ver") and ul_.get("url"): out.append(f"#tvul: {ul_['ver']} {app_ul_url(ul_)}")   # 1.44.3: göni salgy (köne programmalar okamaýar)
+    # 1.47.27: «täzelenme saklanýar» (upd_hold, adaty — açyk): täze wersiýa programmalara yglan edilmeýär — 1.47.17–1.47.26 täze wersiýa
+    # görse VPN-i petikleýär we turkmenvpn.ru-ny açýar (Türkmenistanda bloklandy) — ulanyjylar ne birigip, ne täzeläp bilýärdi.
+    # Täze wersiýa «Habarlar»-da yglan edilýär (VPN-e birigip saýtdan ýüklemek). /tazelenme ac — yglan etmek.
+    if not cfg.get("upd_hold", True):
+        for abi, u in sorted((cfg.get("upd") or {}).items()):
+            if u.get("fid") and u.get("ver"): out.append(f"#tvu{abi}: {u['ver']} {u['fid']}")
+        ul_ = cfg.get("upd_link") or {}
+        if ul_.get("ver") and ul_.get("url"): out.append(f"#tvul: {ul_['ver']} {app_ul_url(ul_)}")   # 1.44.3: göni salgy (köne programmalar okamaýar)
+    out.append(f"#tvsite: {app_site(cfg)}")   # 1.47.27: täze wersiýa sahypasy (programmada berk ýazylmaýar — bloklansa çalşyp bolýar)
     ad = cfg.get("ad") or {}
     if ad.get("fid") and ad.get("on", True): out.append(f"#tvad: {ad['fid']} {urllib.parse.quote(ad.get('link', ''), safe='')}")
     return out
@@ -3803,7 +3808,7 @@ FAKTLAR:
 - «Dostuňy çagyr»: dostuň programmany açyp seniň kodyňy (TM-XXXXX) ýazsa, saňa 1 gün wagt çäksiz; her täze dost +1 gün (bu Premium däl).
 - «Günlük sowgat»: 7 gün yzygiderli basylsa 2 gün wagt çäksiz (Premium däl).
 - Programma pozulsa: tkmvpnn@gmail.com salgysyna «vpn» diýip hat ýaz — ýükläp almak linki geler (VPN-siz açylýar).
-- Täze wersiýa çykanda programma özi soraýar — «Hawa» bas: turkmenvpn.ru saýty açylýar, şol ýerden ýükläp gurnaň (köne programmany pozmaň, üstünden gurnalýar). Saýt açylmasa VPN-e birigip açyň.
+- Täze wersiýa: ILKI VPN-e birigiň, soň turkmenvpn.ru saýtyny açyp ýükläň (saýt VPN-siz Türkmenistanda açylmaýar). Köne programmany pozmaň — üstünden gurnalýar, maglumatlar galýar. Täze wersiýa «Habarlar»-da yglan edilýär.
 - «Global chat» — ähli ulanyjylaryň umumy çaty.
 - Mugt birikmek: baş sahypanyň aşagyndaky «Awtomatik · 🎁 MUGT KOD» kartasy (ýa-da Serwerler → «Awtomatik») — basyp, soň uly düwmä bas. Mugt kod BAR, VPN diňe pully däl.
 - Premium ulanyjylarda baş sahypada «👑 Premium / Free» saýlaýjy bar; Premium bölümindäki ähli serwerler Premium-a degişli (👑).
@@ -5341,6 +5346,12 @@ async def app_bc_ai(dev, t1, x1):
         try: await asyncio.to_thread(app_send, dev, {"k": "bcai", "ok": False, "e": str(e)[:120]})
         except Exception: pass
 
+def app_site(cfg=None):
+    """1.47.27: täze wersiýa ýüklenýän sahypa (eýesi /sayt bilen çalşyp bilýär)."""
+    cfg = cfg if cfg is not None else app_cfg(load_db_ro())
+    u_ = str(cfg.get("site_url") or "https://turkmenvpn.ru").strip()
+    return u_ if re.fullmatch(r"https?://[\w.\-]+(?::\d+)?/?[\w./\-]*", u_) else "https://turkmenvpn.ru"
+
 APP_UPD_NEWS = "upd"   # 1.47.22: täze wersiýa habary (awtomatik — diňe şu)
 def app_upd_news(ver):
     """1.47.22: täze wersiýa çykanda «Habarlar»-a özi habar goşýar (öňki awtomatik wersiýa habary aýrylýar)."""
@@ -5349,9 +5360,9 @@ def app_upd_news(ver):
     def f(x):
         nw = [n_ for n_ in (x.get("news") or []) if n_.get("auto") != APP_UPD_NEWS]
         if any(n_.get("auto") == APP_UPD_NEWS and n_.get("v") == ver for n_ in (x.get("news") or [])): return False
-        item = {"id": news_id(nw), "ts": int(time.time()), "auto": APP_UPD_NEWS, "v": ver, "btn": ["update"],
+        item = {"id": news_id(nw), "ts": int(time.time()), "auto": APP_UPD_NEWS, "v": ver, "btn": ["vpn"],
                 "t": f"🆕 Täze wersiýa {ver} çykdy!",
-                "x": f"Türkmen VPN-iň täze wersiýasy {ver} taýýar.\n\n📥 turkmenvpn.ru saýtyndan ýükläň we köne programmanyň üstünden gurnaň — maglumatlaryňyz galýar.\n\n⚠️ Täze wersiýany gurnamasaňyz VPN-e birigip bilmersiňiz."}
+                "x": f"Türkmen VPN-iň täze wersiýasy {ver} taýýar.\n\n1️⃣ Ilki VPN-e birigiň\n2️⃣ Soň şu saýty açyň: {app_site(x)}\n3️⃣ Ýükläň we köne programmanyň üstünden gurnaň — maglumatlaryňyz galýar.\n\n⚠️ Saýt VPN-siz açylmaýar — VPN-e birigip açyň."}
         x["news"] = ([item] + nw)[:NEWS_MAX]; return True
     ok = bool(app_mut(f))
     if ok: RUN["app_dirty"] = True; vlog(f"📰 Täze wersiýa habary: {ver}")
@@ -6951,6 +6962,28 @@ def app_eu_view(a):
             + "<i>🇷🇺 kanıtlı Rusya · ✅🎮 Rusya değil ama PUBG'de iyi → Free PUBG'ye eklendi · 🚫UDP oyun trafiğini (UDP) geçirmiyor → PUBG'ye girmez · 📡 kanal · ✍️ elle · 🌐 abonelik. "
             + "Ham ölçüm = telefon→VPN→Frankfurt bağlantı + istek (oyundaki ms'in ~2 katı).\n"
             + "<code>/pubgms 100</code> — sınırı değiştir · <code>/pubgms bol 2.5</code> — oyundaki ms ile ölçüm oranı (bir sunucuda oyunda gördüğün ms'e göre ayarla).</i>")
+
+async def cmd_tazelenme(u: Update, c: ContextTypes.DEFAULT_TYPE):
+    """1.47.27: /tazelenme — täze wersiýany programmalara yglan etmek (ac) ýa-da saklamak (dur); /sayt https://… — ýükleme sahypasy."""
+    if not is_fo(u.effective_user.id): return
+    a_ = (c.args or [""])[0].lower()
+    if a_ in ("ac", "aç", "on"): app_mut(lambda x: x.__setitem__("upd_hold", False)); RUN["app_dirty"] = True
+    elif a_ in ("dur", "off", "sakla"): app_mut(lambda x: x.__setitem__("upd_hold", True)); RUN["app_dirty"] = True
+    cfg = app_cfg(load_db()); hold = cfg.get("upd_hold", True); ul_ = cfg.get("upd_link") or {}
+    await c.bot.send_message(u.effective_user.id,
+        f"🔄 <b>Zorunlu güncelleme:</b> {'🟡 DURDURULDU (kimse kilitlenmez)' if hold else '🟢 AÇIK (eski sürümler VPN kullanamaz, siteye yönlendirilir)'}\n"
+        f"Sunucudaki sürüm: <code>{esc(str(ul_.get('ver') or '—'))}</code> · Site: <code>{esc(app_site(cfg))}</code>\n\n"
+        "<code>/tazelenme ac</code> — açmak · <code>/tazelenme dur</code> — durdurmak\n<code>/sayt https://…</code> — indirme sitesini değiştir\n"
+        "<i>Site Türkmenistan'da engelliyken AÇMA: 1.47.17–1.47.26 kullanıcıları VPN'e bağlanamaz. Yeni sürüm zaten «Habarlar»da duyurulur.</i>", parse_mode="HTML")
+
+async def cmd_sayt(u: Update, c: ContextTypes.DEFAULT_TYPE):
+    if not is_fo(u.effective_user.id): return
+    v_ = (c.args or [""])[0].strip()
+    if v_:
+        if not re.fullmatch(r"https?://[\w.\-]+(?::\d+)?/?[\w./\-]*", v_):
+            await c.bot.send_message(u.effective_user.id, "⚠️ Link şöyle olmalı: https://site.com"); return
+        app_mut(lambda x: x.__setitem__("site_url", v_)); RUN["app_dirty"] = True
+    await c.bot.send_message(u.effective_user.id, f"🌐 İndirme sitesi: <code>{esc(app_site())}</code>\n<code>/sayt https://…</code> — değiştir (1.47.27+ uygulamalar kullanır)", parse_mode="HTML")
 
 async def cmd_pubgms(u: Update, c: ContextTypes.DEFAULT_TYPE):
     if not is_fo(u.effective_user.id): return
@@ -13127,6 +13160,8 @@ def main():
     app.add_handler(CommandHandler("minver", cmd_minver))
     app.add_handler(CommandHandler("koruma", cmd_koruma))
     app.add_handler(CommandHandler("pubgms", cmd_pubgms))   # 1.47.18
+    app.add_handler(CommandHandler("tazelenme", cmd_tazelenme))   # 1.47.27
+    app.add_handler(CommandHandler("sayt", cmd_sayt))   # 1.47.27
     app.add_handler(CommandHandler("pubgfree", cmd_pubgfree))
     app.add_handler(MessageHandler(filters.COMMAND, other_cmd))
     app.add_handler(CallbackQueryHandler(cb))

@@ -33,6 +33,13 @@ class UpdNotifyTest {
         Sub.meta("#tvul: 99.0.1 https://turkmenvpn.ru/TurkmenVPN.apk")
         Upd.notifyNew(ctx); assertEquals("täze wersiýa — sanaw täzeden", 1, p.getInt("updNn", 0))
     }
+    /** 1.47.27: ýükleme sahypasy botdan (#tvsite) — bloklansa çalşyp bolýar. */
+    @Test fun siteFromBot() {
+        Sub.meta("#tvsite: https://example-site.net/dl")
+        assertEquals("https://example-site.net/dl", Sub.site)
+        Sub.meta("#tvsite: javascript:alert(1)")
+        assertEquals("nädogry salgy kabul edilmeýär", "https://example-site.net/dl", Sub.site)
+    }
     @Test fun jobScheduledOnce() {
         val ctx = RuntimeEnvironment.getApplication()
         Upd.schedule(ctx); Upd.schedule(ctx)
