@@ -103,6 +103,7 @@ open class Main : Activity() {
         }
         Sub.load(this)
         runCatching { Upd.clean(this, Msg.ver(this)) }   // gurnalan wersiýanyň (ýa-da könäniň) ýüklemesi galmasyn
+        Upd.schedule(this)   // 1.47.21: täze wersiýa bildirişi (programma ýapyk bolsa-da)
         if (b == null && State.now != State.ON && State.now != State.WAIT) State.selectSameAuto(this)
         if (Build.VERSION.SDK_INT >= 33) requestPermissions(arrayOf("android.permission.POST_NOTIFICATIONS"), 2)
         web.loadUrl("https://$HOST/index.html" + (if (intent?.action == CHAT) "#chat" else ""))

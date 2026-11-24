@@ -176,10 +176,53 @@ object Upd {
             .setContentText(text).setStyle(Notification.BigTextStyle().bigText(text)).setContentIntent(pi).setAutoCancel(true).build())
     }
 
+    /**
+     * 1.47.21: täze wersiýa çykanda telefona bildiriş — programma ýapyk bolsa-da (UpdJob her 3 sagatda abunany barlaýar).
+     * Bir wersiýa üçin iň köp 3 gezek, 24 sagatda bir. Basanda turkmenvpn.ru açylýar.
+     */
+    fun notifyNew(ctx: Context) {
+        val u = available(Msg.ver(ctx)) ?: return
+        val p = p(ctx); val now = System.currentTimeMillis()
+        val n = if (p.getString("updNv", "") == u.first) p.getInt("updNn", 0) else 0
+        if (n >= 3 || (n > 0 && now - p.getLong("updNat", 0) < 24 * 3600_000L)) return
+        p.edit().putString("updNv", u.first).putInt("updNn", n + 1).putLong("updNat", now).apply()
+        val text = t("Täze wersiýa ${u.first} çykdy! Basyň — turkmenvpn.ru saýtyndan ýükläň.",
+            "Вышла новая версия ${u.first}! Нажмите — скачайте с сайта turkmenvpn.ru.",
+            "Yeni sürüm ${u.first} çıktı! Dokunun — turkmenvpn.ru sitesinden indirin.")
+        val nm = ctx.getSystemService(NotificationManager::class.java)
+        if (Build.VERSION.SDK_INT >= 26) nm.createNotificationChannel(NotificationChannel("u", "Täzelenme", NotificationManager.IMPORTANCE_DEFAULT))
+        val pi = PendingIntent.getActivity(ctx, 10, Intent(Intent.ACTION_VIEW, Uri.parse("https://turkmenvpn.ru")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        val b = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(ctx, "u") else Notification.Builder(ctx)
+        runCatching { nm.notify(3, b.setSmallIcon(R.drawable.ic_notif).setContentTitle(ctx.getString(R.string.app_name))
+            .setContentText(text).setStyle(Notification.BigTextStyle().bigText(text)).setContentIntent(pi).setAutoCancel(true).build()) }
+    }
+
+    /** 1.47.21: 3 sagatda bir fon barlagy (telefon täzeden açylsa hem dowam edýär). */
+    fun schedule(ctx: Context) = runCatching {
+        val js = ctx.getSystemService(android.app.job.JobScheduler::class.java)
+        if (js.getPendingJob(JOB) != null) return@runCatching
+        js.schedule(android.app.job.JobInfo.Builder(JOB, android.content.ComponentName(ctx, UpdJob::class.java))
+            .setPeriodic(3 * 3600_000L).setRequiredNetworkType(android.app.job.JobInfo.NETWORK_TYPE_ANY).setPersisted(true).build())
+    }
+    private const val JOB = 4721
+
     /** Köne wersiýalaryň Android ýüklemesi gutaranda (indi ulanylmaýar, manifestde galýar). */
     class Done : BroadcastReceiver() {
         override fun onReceive(ctx: Context, i: Intent) {}
     }
+}
+
+/** 1.47.21: fon barlagy — abuna faýlyny okaýar, täze wersiýa bar bolsa bildiriş. */
+class UpdJob : android.app.job.JobService() {
+    override fun onStartJob(params: android.app.job.JobParameters): Boolean {
+        Thread {
+            runCatching { State.app = applicationContext; Lang.init(this); Sub.load(this); Sub.refresh(this, 15_000); Upd.notifyNew(this) }
+            jobFinished(params, false)
+        }.start()
+        return true
+    }
+    override fun onStopJob(params: android.app.job.JobParameters) = true
 }
 
 /** İnen APK'yı sistem yükleyicisine verir (kendi dosyalarımız, sadece okuma). */
