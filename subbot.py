@@ -2516,6 +2516,19 @@ def app_sync(force=False):
         fb_ = None; RUN["free_hps"] = list(free_)   # 1.47.15: Premium-dan mugta wagtlaýyn serwer berilmeýär (eýesiniň islegi) — diňe PUBG/Russiýa düzgüni (aşakda) galýar
         free_ = app_free_pubg(codes, free_, cfg.get("hp_ms"), add=not cfg.get("pubg_free_off"))   # 1.47: Premium-da 2+ PUBG bolsa biri mugta (eýesi öçürip bilýär — trafik köp bolanda)
         if (fb_ or {}).get("hp") != (cfg.get("fborrow") or {}).get("hp"): vlog(f"🔁 Mugt serwer: {'Premium-dan wagtlaýyn ' + fb_['hp'] if fb_ else 'wagtlaýyn Premium serwer yzyna alyndy'}")   # 1.43.2: mugt — her ýurtdan iň gowy işleýän bir kod + kanal + 2 PUBG
+        try:   # 1.47.17: Türkmenistanda telefonlarda işleýändigi ölçülen kodlar sanawyň başynda — programma ilki şolary barlaýar (9 s içinde işleýän tapylsyn)
+            hm_ = cfg.get("hp_ms") or {}
+            now_r = time.time()
+            def _rank(c):   # 0 — soňky 3 sagatda işledi (ms boýunça), 1 — näbelli, 2 — soňky 1 sagatda işlemedi
+                v_ = hm_.get(app_x_hp(c))
+                try:
+                    ms_, ts_ = int(v_[0]), float(v_[1])
+                    if ms_ > 0 and now_r - ts_ < 3 * 3600: return (0, ms_)
+                    if ms_ <= 0 and now_r - ts_ < 3600: return (2, 0)
+                except Exception: pass
+                return (1, 0)
+            codes = sorted(codes, key=_rank)
+        except Exception as e: log.info("rank: %s", e)
         codes = app_brand_names(codes)   # 1.29: abunanyň atlary görünmesin
         free_set = set(free_)
         both_ = sorted({app_x_hp(v["c"]) for v in (cfg.get("xcodes") or {}).values() if v.get("src") in ("tg", "tgs")} & free_set)
