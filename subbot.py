@@ -4034,14 +4034,44 @@ async def app_staff_notify(app, text, payload, kb=None, silent=False, skip=None)
         try: await asyncio.to_thread(app_send, d_, dict(payload))
         except Exception as e: log.info("staff notify %s: %s", d_, e)
 
+NICK_IDX_TTL = 60
+def app_nick_idx(a, fresh=False):
+    """1.47.23: nik → telefon (kiçi harp; öz saýlan «nk» we programmanyň beren «nick»; göçürilen köne telefonlar ýok). 60 sn keş."""
+    c_ = RUN.get("nick_idx")
+    if not fresh and c_ and time.time() - c_[0] < NICK_IDX_TTL: return c_[1]
+    idx = {}
+    for d_, u_ in (a.get("devs") or {}).items():
+        if u_.get("mvto"): continue
+        for v_ in (u_.get("nk"), u_.get("nick")):
+            v_ = str(v_ or "").strip().casefold()
+            if v_ and v_ != "?": idx.setdefault(v_, d_)
+    RUN["nick_idx"] = (time.time(), idx); return idx
+
+def app_nick_taken(a, n, dev):
+    """1.47.23: bu nik başga ulanyjyda barmy (iki adam bir nigi ulanyp bilmeýär)."""
+    d_ = app_nick_idx(a).get(str(n or "").strip().casefold())
+    return bool(d_) and d_ != dev
+
+def app_nick_free(a, n, dev):
+    """1.47.23: gaýtalanýan awtomatik nik üçin boş nusga: «SilverWolf_33» → «SilverWolf_517»."""
+    base = re.sub(r"_?\d+$", "", str(n or "").strip())[:15] or "User"
+    idx = app_nick_idx(a)
+    for i in range(40):
+        c_ = f"{base}_{random.randint(10, 999) if i < 30 else random.randint(1000, 99999)}"
+        if c_.casefold() not in idx: return c_
+    return f"{base}_{dev[:5]}"
+
 async def app_on_msg(app, fid, o):
     """Programdan gelen bir mesaj."""
     dev = str(o.get("dev") or "")
     if not DEV_RE.match(dev): return
     k = o.get("k"); now = int(time.time())
+    a00_ = app_cfg(load_db_ro())
+    dup_nick = bool(o.get("nick")) and app_nick_taken(a00_, str(o.get("nick"))[:40], dev)   # 1.47.23: programmanyň beren nigi başga adamda bar
     def reg(a):
         u = a.setdefault("devs", {}).setdefault(dev, {"f": now})
         for f_ in ("nick", "model", "ver", "lang", "sg"):
+            if f_ == "nick" and dup_nick: continue
             if o.get(f_): u[f_] = str(o[f_])[:40]
         u["l"] = now
         day_ = tm_now().strftime("%Y-%m-%d")
@@ -4054,11 +4084,20 @@ async def app_on_msg(app, fid, o):
         if not u.get("mvto"): a.setdefault("codes", {})[app_ref_code(dev)] = dev   # 1.47: göçürilen köne telefon kody täzesinde galýar
     a0_ = app_cfg(load_db_ro()); u0_ = (a0_.get("devs") or {}).get(dev)   # 1.47: hiç zat üýtgemedik bolsa baza ýazylmaýar (her habarda ýazmak — bot haýallaýardy)
     if (u0_ is None or u0_.get("ld") != tm_now().strftime("%Y-%m-%d") or now - int(u0_.get("l") or 0) > 300 or app_ref_code(dev) not in (a0_.get("codes") or {})
-            or any(o.get(f_) and str(o[f_])[:40] != u0_.get(f_) for f_ in ("nick", "model", "ver", "lang", "sg"))
+            or any(o.get(f_) and str(o[f_])[:40] != u0_.get(f_) for f_ in (("model", "ver", "lang", "sg") if dup_nick else ("nick", "model", "ver", "lang", "sg")))
             or (o.get("vpn") and (u0_.get("vld") != tm_now().strftime("%Y-%m-%d") or now - int(u0_.get("vl") or 0) > 1800))):
         app_mut_later(reg)   # 1.47: toplumlaýyn (2 sn)
     try: await asyncio.to_thread(app_resend, fid, dev, int(o.get("ack") or 0))
     except Exception: pass
+    if dup_nick and not (u0_ or {}).get("nk") and time.time() - RUN.setdefault("nick_fix", {}).get(dev, 0) > 120:   # 1.47.23: gaýtalanýan awtomatik nik — täze nik berilýär
+        RUN["nick_fix"][dev] = time.time()
+        new_ = app_nick_free(a00_, str(o.get("nick")), dev)
+        def fnx(x):
+            uu = (x.get("devs") or {}).get(dev)
+            if uu is not None: uu["nick"] = new_
+        app_mut(fnx); app_nick_idx(app_cfg(load_db_ro()), True); RUN["app_dirty"] = True
+        try: await asyncio.to_thread(app_send, dev, {"k": "nick", "ok": True, "n": new_, "why": "dup"})
+        except Exception as e: log.info("nick fix: %s", e)
     if dev in RUN.get("lvl_q", set()):
         RUN["lvl_q"].discard(dev)
         try: await asyncio.to_thread(app_lvl_check, dev, True)
@@ -4110,6 +4149,7 @@ async def app_on_msg(app, fid, o):
         def fts(x):
             devs_ = x.get("devs") or {}
             if any(d2 != dev and str(u2.get("tg") or "") == t_ for d2, u2 in devs_.items()): return "taken"
+            if any(d2 != dev and not u2.get("mvto") and t_ in ((u2.get("nk") or "").casefold(), (u2.get("nick") or "").casefold()) for d2, u2 in devs_.items()): return "taken"   # 1.47.23: başga adamyň nigi hem bolmaz (@ agzalanda bulaşmasyn)
             if dev not in devs_: return "bad"
             devs_[dev]["tg"] = t_; return "ok"
         r_ = app_mut(fts)
@@ -4351,11 +4391,11 @@ async def app_on_msg(app, fid, o):
         if not re.fullmatch(r"[\w .\-]{3,20}", n_) or any(w in low for w in APP_NICK_RESERVED):
             await asyncio.to_thread(app_send, dev, {"k": "nick", "ok": False, "n": n_, "why": "bad"}); return
         def fn_(a_):
-            for dv, u_ in (a_.get("devs") or {}).items():
-                if dv != dev and (u_.get("nk") or "").casefold() == low: return False
+            for dv, u_ in (a_.get("devs") or {}).items():   # 1.47.23: başga adamyň öz saýlan we awtomatik nigi hem
+                if dv != dev and not u_.get("mvto") and (low in ((u_.get("nk") or "").casefold(), (u_.get("nick") or "").casefold()) or low == str(u_.get("tg") or "")): return False
             a_["devs"][dev]["nk"] = n_; a_["devs"][dev]["nick"] = n_; return True
         ok_ = app_mut(fn_)
-        if ok_: RUN["app_dirty"] = True
+        if ok_: RUN["app_dirty"] = True; app_nick_idx(app_cfg(load_db_ro()), True)
         await asyncio.to_thread(app_send, dev, {"k": "nick", "ok": ok_, "n": n_, "why": "" if ok_ else "taken"})
     elif k == "kunbind":   # 1.44: ulanyjy açaryny öz telefonyndan aýyrdy
         h = str(o.get("h") or "")
