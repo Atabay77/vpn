@@ -2836,12 +2836,15 @@ def app_min_ver(cfg):
 def app_upd_link_check():
     """1.45.4: VPS-e täze APK goýulsa — sabit salgydaky wersiýa özi täzelenýär (link üýtgemeýär). Dönüş: täze wersiýa ýa-da None."""
     ul_ = app_cfg(load_db()).get("upd_link") or {}
-    if not ul_.get("url") or not (ul_.get("auto") or apk_is_latest(ul_["url"])): return None
-    v_, fn_ = apk_head_ver(ul_["url"], True); vk = lambda v: [int(x) if x.isdigit() else 0 for x in str(v or "0").split(".")]
-    if v_ and v_ == str(ul_.get("ver")) and fn_ and fn_ != ul_.get("fn"):   # 1.47.17: şol wersiýa, faýl ady täze (wersiýaly salgy üçin)
+    u0_ = str(ul_.get("url") or "")
+    if not u0_ or DRIVE_ID_RE.search(u0_) or "drive.google." in u0_: return None
+    # 1.47.26: öz serweriňizdäki islendik salgy (wersiýaly hem) — serwerdäki iň täze APK yzarlanýar (öň diňe «auto» bolsa)
+    lu_ = u0_ if apk_is_latest(u0_) else u0_.split("?")[0].rstrip("/").rsplit("/", 1)[0] + "/turkmenvpn.apk"
+    v_, fn_ = apk_head_ver(lu_, True); vk = lambda v: [int(x) if x.isdigit() else 0 for x in str(v or "0").split(".")]
+    if v_ and v_ == str(ul_.get("ver")) and fn_ and fn_ != ul_.get("fn") and lu_ == u0_:   # 1.47.17: şol wersiýa, faýl ady täze (wersiýaly salgy üçin)
         mutate(lambda d: d.setdefault("app", {}).setdefault("upd_link", {}).update({"fn": fn_})); RUN["app_dirty"] = True; return None
-    if not v_ or not ul_.get("auto") or vk(v_) <= vk(ul_.get("ver")): return None
-    mutate(lambda d: d.setdefault("app", {}).setdefault("upd_link", {}).update({"ver": v_, "fn": fn_, "ts": int(time.time())}))
+    if not v_ or vk(v_) <= vk(ul_.get("ver")): return None
+    mutate(lambda d: d.setdefault("app", {}).setdefault("upd_link", {}).update({"ver": v_, "fn": fn_, "url": lu_, "auto": True, "ts": int(time.time())}))
     RUN["app_dirty"] = True; vlog(f"📦 VPS-de täze APK: {v_} — programa ýaýradyldy")
     try: app_upd_news(v_)   # 1.47.22: «Habarlar»-a täze wersiýa habary
     except Exception as e: log.info("upd news: %s", e)
