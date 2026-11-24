@@ -3652,6 +3652,7 @@ async def app_mig_finish(app, old, new, res):
     RUN["app_dirty"] = True
 
 TAG_ABC = "abcdefghijklmnopqrstuvwxyz"
+NAME_LOCK = 3 * 86400   # 1.47.26: nik / @belgi üýtgedilenden soň 3 gün täzeden üýtgedip bolmaýar (eýesi däl)
 TAG_SET_RE = re.compile(r"[a-z][a-z0-9_]{5,19}")   # 1.47.22: öz saýlan @belgi — iň az 6 harp
 # 1.47.24: diňe eýesiniň @belgileri (Telegram ýaly köp at) — başga hiç kim alyp bilmeýär; gözlände / basanda eýesiniň profili açylýar
 OWNER_TAGS = ["turkmenvpn", "turkmen_vpn", "tmvpn", "tm_vpn", "vpn", "turkmen", "owner", "admin", "admins", "administrator", "moderator", "mod",
@@ -4156,11 +4157,15 @@ async def app_on_msg(app, fid, o):
         own_ = dev in set(app_founder_devs(a))   # 1.47.24: eýesi gadagan atlary hem alyp bilýär
         if not (TAG_SET_RE.fullmatch(t_) and t_ not in TAG_RESERVED) and not (own_ and (t_ in OWNER_TAGS or TAG_SET_RE.fullmatch(t_))):
             await asyncio.to_thread(app_send, dev, {"k": "tagset", "ok": False, "why": "bad"}); return
+        left_ = 0 if own_ else NAME_LOCK - (now - int(((a.get("devs") or {}).get(dev) or {}).get("tg_at") or 0))
+        if left_ > 0 and str(((a.get("devs") or {}).get(dev) or {}).get("tg") or "") != t_:
+            await asyncio.to_thread(app_send, dev, {"k": "tagset", "ok": False, "why": "wait", "s": int(left_)}); return
         def fts(x):
             devs_ = x.get("devs") or {}
             if any(d2 != dev and str(u2.get("tg") or "") == t_ for d2, u2 in devs_.items()): return "taken"
             if any(d2 != dev and not u2.get("mvto") and t_ in ((u2.get("nk") or "").casefold(), (u2.get("nick") or "").casefold()) for d2, u2 in devs_.items()): return "taken"   # 1.47.23: başga adamyň nigi hem bolmaz (@ agzalanda bulaşmasyn)
             if dev not in devs_: return "bad"
+            if devs_[dev].get("tg") != t_: devs_[dev]["tg_at"] = now
             devs_[dev]["tg"] = t_; return "ok"
         r_ = app_mut(fts)
         await asyncio.to_thread(app_send, dev, {"k": "tagset", "ok": r_ == "ok", "t": t_, "why": r_ or "bad"}); return
@@ -4400,9 +4405,14 @@ async def app_on_msg(app, fid, o):
         low = n_.casefold()
         if not re.fullmatch(r"[\w .\-]{3,20}", n_) or any(w in low for w in APP_NICK_RESERVED):
             await asyncio.to_thread(app_send, dev, {"k": "nick", "ok": False, "n": n_, "why": "bad"}); return
+        u_me = (a.get("devs") or {}).get(dev) or {}
+        left_ = 0 if dev in set(app_founder_devs(a)) else NAME_LOCK - (now - int(u_me.get("nk_at") or 0))
+        if left_ > 0 and (u_me.get("nk") or "") != n_:   # 1.47.26: 3 gün
+            await asyncio.to_thread(app_send, dev, {"k": "nick", "ok": False, "n": n_, "why": "wait", "s": int(left_)}); return
         def fn_(a_):
             for dv, u_ in (a_.get("devs") or {}).items():   # 1.47.23: başga adamyň öz saýlan we awtomatik nigi hem
                 if dv != dev and not u_.get("mvto") and (low in ((u_.get("nk") or "").casefold(), (u_.get("nick") or "").casefold()) or low == str(u_.get("tg") or "")): return False
+            if a_["devs"][dev].get("nk") != n_: a_["devs"][dev]["nk_at"] = now
             a_["devs"][dev]["nk"] = n_; a_["devs"][dev]["nick"] = n_; return True
         ok_ = app_mut(fn_)
         if ok_: RUN["app_dirty"] = True; app_nick_idx(app_cfg(load_db_ro()), True)

@@ -644,7 +644,10 @@
       r.tgIn = s.tgIn != null ? s.tgIn : (tagOf(INFO.dev) || ''); r.onTg = this.onTg; r.saveTg = this.saveTg;   // 1.47.22: öz @belgisi
       r.tgMsg = s.tgSt === 'ok' ? tx.tg_ok : s.tgSt === 'bad' ? tx.tg_bad : s.tgSt === 'taken' ? tx.tg_taken : s.tgSt === 'wait' ? '…' : tx.tg_hint;
       r.tgCls = s.tgSt === 'ok' ? 'nk-ok' : (s.tgSt === 'bad' || s.tgSt === 'taken') ? 'nk-bad' : '';
-      r.nkMsg = s.nkSt ? tx['nk_' + s.nkSt] : ''; r.nkCls = s.nkSt === 'ok' ? 'nk-ok' : s.nkSt === 'wait' ? '' : s.nkSt ? 'nk-bad' : '';
+      const lockT = (sec0) => { const sec = +sec0 || 0, d = Math.floor(sec / 86400), h = Math.ceil((sec % 86400) / 3600);   // 1.47.26: 3 gün
+        return tx.nm_lock.replace('{t}', (d ? d + ' ' + tx.days + ' ' : '') + (h ? h + ' ' + tx.nm_h + ' ' : '')); };
+      if (s.tgSt === 'lock') { r.tgMsg = lockT(s.tgLeft); r.tgCls = 'nk-bad'; }
+      r.nkMsg = s.nkSt === 'lock' ? lockT(s.nkLeft) : s.nkSt ? tx['nk_' + s.nkSt] : ''; r.nkCls = s.nkSt === 'ok' ? 'nk-ok' : s.nkSt === 'wait' ? '' : s.nkSt ? 'nk-bad' : '';
       const bgUrl = (d) => (d ? 'linear-gradient(rgba(6,16,11,.45),rgba(6,16,11,.88)),url(' + d + ')' : 'none');
       { const mt2 = rkT((LS.get('lvl', {}) || {}).lv || 1); r.meFrN = String(mt2); r.meFrCls = mt2 >= 10 ? 'frx' : ''; }   // 1.47: öz çarçuwam
       r.pfBgImg = bgUrl(s.pbg); r.hasBg = !!s.pbg; r.onBg = this.onBg; r.delBg = this.delBg;
@@ -1731,7 +1734,7 @@
         if (TAGW && m.q === '@' + TAGW.t && Date.now() - TAGW.at < 20000) { const hit = (m.l || []).find((u) => u.t === TAGW.t); TAGW = null;   // 1.47.22: basylan @belgi
           if (hit) setTimeout(() => C.openProf(hit.d), 0); else C.say('⚠️ ' + tx.tg_none); }
       } else if (m.k === 'bcai') { up.bcAiWait = false; if (m.ok) { up.bcT = m.t || ''; up.bcX = m.x || ''; C.say('✨ ' + tx.bc_aiOk); } else C.say('⚠️ ' + tx.bc_aiBad);   // 1.47.22
-      } else if (m.k === 'tagset') { if (m.ok) { tagPut(INFO.dev, m.t); up.tgSt = 'ok'; up.tgIn = null; up.tagTick = t; } else up.tgSt = m.why === 'taken' ? 'taken' : 'bad';   // 1.47.22: öz @belgisi
+      } else if (m.k === 'tagset') { if (m.ok) { tagPut(INFO.dev, m.t); up.tgSt = 'ok'; up.tgIn = null; up.tagTick = t; } else if (m.why === 'wait') { up.tgSt = 'lock'; up.tgLeft = +m.s || 0; } else up.tgSt = m.why === 'taken' ? 'taken' : 'bad';   // 1.47.22: öz @belgisi
       } else if (m.k === 'utag') { tagPut(m.d, m.t); up.tagTick = t;   // 1.47.4: @belgi
       } else if (m.k === 'top') { LS.set('top', m.l || []); up.payTick = t; }
       else if (m.k === 'lvs') { const tn = Date.now(); Object.keys(m.m || {}).forEach((d) => { LVB[d] = [+m.m[d] || 0, tn]; }); LS.set('lvb', LVB); up.gTick = (s.gTick || 0) + 1; }
@@ -1759,7 +1762,7 @@
       else if (m.k === 'refbad') up.refMsg = m.why === 'own' ? 'own' : 'bad';
       else if (m.k === 'kbad') { up.keyMsg = 'used'; }
       else if (m.k === 'nick') {
-        if (m.ok) { C.meName = m.n; LS.set('nick', m.n); up.nkSt = 'ok'; up.nkIn = null; if (C._nkCustom && !INFO.nkb) { try { NB.nickBonus(); } catch (e2) {} INFO.nkb = true; } } else up.nkSt = m.why === 'taken' ? 'taken' : 'bad';
+        if (m.ok) { C.meName = m.n; LS.set('nick', m.n); up.nkSt = 'ok'; up.nkIn = null; if (C._nkCustom && !INFO.nkb) { try { NB.nickBonus(); } catch (e2) {} INFO.nkb = true; } } else if (m.why === 'wait') { up.nkSt = 'lock'; up.nkLeft = +m.s || 0; } else up.nkSt = m.why === 'taken' ? 'taken' : 'bad';
       } else if (m.k === 'uban') { INFO.uban = !!m.on; up.banTick = Date.now(); }   // 1.47.21: tutuş ekran gadagan ýazgysy (ýazyp / basyp bolmaýar)
       else if (m.k === 'quota') { qAdd(m.id, m.t, m.at); up.qTick = (s.qTick || 0) + 1; }
       else if (m.k === 'atk') { if (INFO.adm) { C.say((m.new ? tx.atk_new : '🎫') + ' #' + m.tid + (m.n ? ' · ' + m.n : '') + ': ' + String(m.t || '').slice(0, 70)); admAt = 0; } }
