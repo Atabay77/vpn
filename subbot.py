@@ -1413,11 +1413,46 @@ def app_ru_check():
         vlog(f"🎮 Mugt PUBG (kanal, synalan Russiýa): {len(after)} kod")
     return len(todo), len(after)
 
+APP_UDP_RETEST = 6 * 3600; APP_UDP_VALID = 12 * 3600
+def app_is_udp_native(c): return str(c).strip().lower().startswith(("hy2://", "hysteria2://", "hysteria://", "tuic://"))
+
+def app_udp_ok(a, now=None):
+    """1.47.19: UDP geçirýän kanal kodlary (host:port) — PUBG oýny UDP bilen; hy2 özi UDP (QUIC)."""
+    now = now or time.time()
+    ok = {h for h, v in (a.get("udp_ok") or {}).items() if v and v[0] and now - float(v[1]) < APP_UDP_VALID}
+    for v in (a.get("xcodes") or {}).values():
+        if app_is_udp_native(v.get("c") or ""): ok.add(app_x_hp(v["c"]))
+    return ok
+
+def app_udp_check():
+    """1.47.19: kanal kodlaryny Xray arkaly UDP-a barlaýar (DNS soragy). Diňe UDP geçirýänler PUBG bolýar."""
+    a = app_cfg(load_db()); now = time.time(); old = dict(a.get("udp_ok") or {})
+    ch = {}
+    for v in (a.get("xcodes") or {}).values():
+        c_ = v.get("c") or ""
+        if v.get("src") in ("tg", "tgs") and not app_is_udp_native(c_):
+            h_ = app_x_hp(c_)
+            if h_: ch[h_] = c_
+    todo = [c_ for h_, c_ in ch.items() if h_ not in old or now - float(old[h_][1]) > APP_UDP_RETEST]
+    res = hunt_test(todo[:80], threads=20, batch=40, port0=24000, timeout=6, udp=True) if todo else {}
+    new = {h_: v_ for h_, v_ in old.items() if h_ in ch}
+    for c_ in todo: new[app_x_hp(c_)] = [1 if res.get(c_) else 0, int(now)]
+    before = app_udp_ok(a, now)
+    app_mut(lambda x: x.__setitem__("udp_ok", new))
+    if app_udp_ok(app_cfg(load_db()), now) != before: RUN["app_dirty"] = True
+    return len(todo), sum(1 for v_ in new.values() if v_[0])
+
+def app_pubg_ok(a, now=None):
+    """1.47.19: mugt PUBG kanal kodlary = (synalan Russiýa ýa-da PUBG pingi gowy) WE UDP geçirýär."""
+    return (app_ru_proven(a, now) | app_eu_good(a, now)) & app_udp_ok(a, now)
+
 async def app_ru_loop(app):
     await asyncio.sleep(90)
     while True:
         try: await asyncio.to_thread(app_ru_check)
         except Exception as e: log.info("ru check: %s", e)
+        try: await asyncio.to_thread(app_udp_check)   # 1.47.19
+        except Exception as e: log.info("udp check: %s", e)
         await asyncio.sleep(APP_RU_EVERY)
 
 APP_EU_KEEP = 6 * 3600   # 1.47.18: PUBG (Frankfurt) ping ölçegleri 6 sagat hasaba alynýar
@@ -1477,7 +1512,7 @@ def app_x_named(base_codes, a):
     hosts = [code_host(v["c"]) for v in xs.values() if code_host(v["c"])]
     try: geo = geo_lookup(hosts)
     except Exception: geo = {}
-    out = []; ru_ok = app_ru_proven(a); eu_ok = app_eu_good(a)
+    out = []; pg_ok = app_pubg_ok(a); ru_ok = app_ru_proven(a) & pg_ok; eu_ok = app_eu_good(a) & pg_ok   # 1.47.19: UDP geçirmeýän — PUBG däl
     for k, v in sorted(xs.items(), key=lambda kv: (kv[1].get("src") != "m", kv[1].get("ts", 0))):
         # 1.47: kanal abunasynyň kodlary derrew sanawda (supervpntm ýaly); işlemeýänler telefon hasabatynda aýrylýar
         cc = exit_country(v["c"], geo)[0] or ""
@@ -1832,7 +1867,37 @@ def hunt_outbound(link, tag):
     except Exception: return None
     return None
 
-def hunt_test(codes, threads=40, batch=80, port0=21000, timeout=6, cc=False):
+def udp_probe(port, timeout=6, dns=("1.1.1.1", 53)):
+    """1.47.19: socks5 UDP ASSOCIATE arkaly DNS soragy (PUBG UDP bilen oýnalýar — UDP geçirmeýän serwerde oýun açylmaýar). Dönüş: ms ýa-da 0."""
+    tcp = udp = None
+    try:
+        tcp = socket.create_connection(("127.0.0.1", port), timeout=timeout)
+        tcp.sendall(b"\x05\x01\x00")
+        if tcp.recv(2) != b"\x05\x00": return 0
+        tcp.sendall(b"\x05\x03\x00\x01\x00\x00\x00\x00\x00\x00")
+        r = tcp.recv(32)
+        if len(r) < 10 or r[1] != 0: return 0
+        if r[3] == 1: bh, bp = socket.inet_ntoa(r[4:8]), int.from_bytes(r[8:10], "big")
+        elif r[3] == 3: n_ = r[4]; bh, bp = r[5:5 + n_].decode(), int.from_bytes(r[5 + n_:7 + n_], "big")
+        else: return 0
+        if bh in ("0.0.0.0", ""): bh = "127.0.0.1"
+        tid = os.urandom(2)
+        q = tid + b"\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00" + b"".join(bytes([len(x)]) + x.encode() for x in "google.com".split(".")) + b"\x00\x00\x01\x00\x01"
+        udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); udp.settimeout(timeout)
+        t0 = time.time()
+        udp.sendto(b"\x00\x00\x00\x01" + socket.inet_aton(dns[0]) + dns[1].to_bytes(2, "big") + q, (bh, bp))
+        while time.time() - t0 < timeout:
+            d, _ = udp.recvfrom(2048)
+            off = 10 if len(d) > 10 and d[3] == 1 else (7 + d[4] if len(d) > 5 and d[3] == 3 else 22)
+            if d[off:off + 2] == tid: return max(1, int((time.time() - t0) * 1000))
+        return 0
+    except Exception: return 0
+    finally:
+        for x in (udp, tcp):
+            try: x and x.close()
+            except Exception: pass
+
+def hunt_test(codes, threads=40, batch=80, port0=21000, timeout=6, cc=False, udp=False):
     """Kodlary hakyky Xray bilen barlaýar (her kod üçin socks giriş → çykyş). Dönüş: {kod: ms} — diňe işleýänler.
     1.47.17: cc=True — kodyň üsti bilen çykyş IP-niň ýurdy soralýar, dönüş {kod: "RU"}."""
     xb = xray_bin(); res = {}
@@ -1844,7 +1909,7 @@ def hunt_test(codes, threads=40, batch=80, port0=21000, timeout=6, cc=False):
             ob = hunt_outbound(c, f"o{i}")
             if not ob: continue
             ok_cs.append((i, c)); obs.append(ob)
-            ins.append({"tag": f"i{i}", "protocol": "socks", "listen": "127.0.0.1", "port": port_base + i, "settings": {"udp": False}})
+            ins.append({"tag": f"i{i}", "protocol": "socks", "listen": "127.0.0.1", "port": port_base + i, "settings": {"udp": bool(udp), "ip": "127.0.0.1"}})
             rules.append({"type": "field", "inboundTag": [f"i{i}"], "outboundTag": f"o{i}"})
         if not ok_cs: return
         cfg_ = {"log": {"loglevel": "none"}, "inbounds": ins, "outbounds": obs + [{"tag": "direct", "protocol": "freedom"}], "routing": {"rules": rules}}
@@ -1862,6 +1927,7 @@ def hunt_test(codes, threads=40, batch=80, port0=21000, timeout=6, cc=False):
                 return
             def one(ic):
                 i, c = ic
+                if udp: return c, udp_probe(port_base + i, timeout)   # 1.47.19: UDP geçirýärmi (PUBG)
                 if cc:   # çykyş ýurdy (ady däl — hakyky çykyş IP)
                     for u_ in ("http://ip-api.com/line/?fields=countryCode", "https://ipinfo.io/country"):
                         try:
@@ -2595,7 +2661,7 @@ def app_sync(force=False):
                 if hp_: php.add(hp_)
                 if code_key(c) not in keys: keys.add(code_key(c)); codes.append(c)
         plast = {k_: v_ for k_, v_ in plast.items() if k_ in {hashlib.md5(u.encode()).hexdigest()[:8] for u in psubs}}
-        ru_ok_ = app_ru_proven(cfg) | app_eu_good(cfg)   # 1.47.18: + PUBG pingi Russiýa ýaly gowy kanal kodlary
+        ru_ok_ = app_pubg_ok(cfg)   # 1.47.18: + PUBG pingi Russiýa ýaly gowy kanal kodlary; 1.47.19: diňe UDP geçirýänler
         codes = [c for c in codes if not app_is_game(c) or app_x_hp(c) in php or app_x_hp(c) in ru_ok_]   # 1.47.17: PUBG — Premium abunasy (diňe Premium-da) ýa-da kanaldan synalyp çykyşy Russiýa subut edilen (Free)
         keys = {code_key(c) for c in codes}
         try:   # 1.47.15: her serweriň çeşmesi (diňe eýesiniň admin panelinde görünýär — ulanyjylara gitmeýär)
@@ -6726,21 +6792,21 @@ async def cmd_minver(u: Update, c: ContextTypes.DEFAULT_TYPE):
 
 def app_eu_view(a):
     """1.47.18: /pubgms — Türkmen telefonlaryndan ölçenen PUBG (Avrupa, Frankfurt) pingi."""
-    eu = app_eu_ms(a); ru = app_ru_proven(a); good = app_eu_good(a)
+    eu = app_eu_ms(a); ru = app_ru_proven(a); good = app_pubg_ok(a); uo = app_udp_ok(a); ut = a.get("udp_ok") or {}
     if not eu: return "🎮 <b>PUBG ms (Avrupa)</b>\nHenüz ölçüm yok — 1.47.19 telefonlar 20 dakikada bir ölçüp gönderir; bir sunucu en az 3 farklı telefonda ölçülünce görünür."
     ref = [eu[h] for h in ru if h in eu]
     src = {}
     for v in (a.get("xcodes") or {}).values(): src[app_x_hp(v.get("c") or "")] = "📡" if v.get("src") in ("tg", "tgs") else "✍️"
     rows = []
     for h, ms in sorted(eu.items(), key=lambda kv: kv[1])[:30]:
-        mk = "🇷🇺" if h in ru else ("✅🎮" if h in good else "")
+        mk = ("🇷🇺" if h in ru else "") + ("✅🎮" if h in good and h not in ru else "") + ("" if h in uo else (" 🚫UDP" if h in ut else ""))
         rows.append(f"<code>~{app_eu_game(a, ms):>3} ms</code> ({ms}) {src.get(h, '🌐')} {mk} <code>{esc(h[:40])}</code>")
     glim = int(a.get("eu_lim") or APP_EU_LIM); dv = a.get("eu_div") or APP_EU_DIV
     return (f"🎮 <b>PUBG ms (Avrupa · Frankfurt)</b> — en az {APP_EU_PHONES} farklı Türkmen telefonundan (ortanca), VPN'in içinden\n"
             + f"Kural: oyunda ~<b>{glim} ms</b> altı" + (f" <b>veya</b> en iyi kanıtlı Rusya ({min(ref)}) +{APP_EU_MARGIN} ölçümü" if ref else "") + "\n"
             + f"<i>~ms = oyundaki tahmini ms (ölçüm ÷ {dv}); parantezde ham ölçüm.</i>\n"
             + "<blockquote expandable>" + "\n".join(rows) + "</blockquote>\n"
-            + "<i>🇷🇺 kanıtlı Rusya · ✅🎮 Rusya değil ama PUBG'de iyi → Free PUBG'ye eklendi · 📡 kanal · ✍️ elle · 🌐 abonelik. "
+            + "<i>🇷🇺 kanıtlı Rusya · ✅🎮 Rusya değil ama PUBG'de iyi → Free PUBG'ye eklendi · 🚫UDP oyun trafiğini (UDP) geçirmiyor → PUBG'ye girmez · 📡 kanal · ✍️ elle · 🌐 abonelik. "
             + "Ham ölçüm = telefon→VPN→Frankfurt bağlantı + istek (oyundaki ms'in ~2 katı).\n"
             + "<code>/pubgms 100</code> — sınırı değiştir · <code>/pubgms bol 2.5</code> — oyundaki ms ile ölçüm oranı (bir sunucuda oyunda gördüğün ms'e göre ayarla).</i>")
 
