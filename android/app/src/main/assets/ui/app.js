@@ -352,8 +352,8 @@
       r.showUl = on && !s.hasKey && !s.nolim;
       // 1.44: nigini üýtgetmedik (mugt, wagt çägi bar) ulanyja — her 6 sagatda bir gezek, açylandan 15 sekunt soň
       { const nbAt = +(LS.get('nbAt', 0) || 0), want = !INFO.nkb && !s.hasKey && !s.nolim && !INFO.prem && SESS > 0 && Date.now() - nbAt > 6 * 3600000;
-        if (want && !this._nbT) this._nbT = setTimeout(() => this.setState({ nbShow: true }), 15000);
-        r.nbOn = s.page === 'main' && want && !!s.nbShow && !s.menu;
+        if (false && want && !this._nbT) this._nbT = setTimeout(() => this.setState({ nbShow: true }), 15000);
+        r.nbOn = false;   // 1.47.25: «Nigiňi üýtget — +30 minut» bildirişi aýryldy (eýesiniň islegi); bonus nik üýtgände galýar
         r.nbS = tx.nb_s.replace('{a}', hrsT(s.lang, SESS)).replace('{b}', hrsT(s.lang, SESS + 30));
         const hide = () => { LS.set('nbAt', Date.now()); this.setState({ nbShow: false }); };
         r.nbGo = () => { hide(); this.setState({ page: 'profile' }); }; r.nbX = hide; }
@@ -639,7 +639,7 @@
         r.gAllNa = gp.length > 0 && gp.every((m) => m != null && m < 0); r.gHasNa = !r.gAllNa;
         r.gRefCls = s.refreshing || s.testing ? 'spin' : '';
         r.gRefresh = () => { if (this.state.refreshing) return; this.setState({ refreshing: true, gRetest: true }); NB.refresh(); }; } r.meNcls = myRole === 'o' ? 'goldtxt' : '';
-      r.nkBonT = INFO.nkb ? tx.nk_bonYes : tx.nk_bonNo;
+      r.nkBonT = INFO.nkb ? tx.nk_bonYes : '';   // 1.47.25: «üýtgetseňiz +30 minut» maslahaty görkezilmeýär; üýtgedenden soň «✅ 1,5 sagat» galýar
       r.nkIn = s.nkIn == null ? this.meName : s.nkIn; r.onNk = this.onNk; r.saveNk = this.saveNk;
       r.tgIn = s.tgIn != null ? s.tgIn : (tagOf(INFO.dev) || ''); r.onTg = this.onTg; r.saveTg = this.saveTg;   // 1.47.22: öz @belgisi
       r.tgMsg = s.tgSt === 'ok' ? tx.tg_ok : s.tgSt === 'bad' ? tx.tg_bad : s.tgSt === 'taken' ? tx.tg_taken : s.tgSt === 'wait' ? '…' : tx.tg_hint;
