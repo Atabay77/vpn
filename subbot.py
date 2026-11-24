@@ -1422,6 +1422,13 @@ async def app_ru_loop(app):
 
 APP_EU_KEEP = 6 * 3600   # 1.47.18: PUBG (Frankfurt) ping ölçegleri 6 sagat hasaba alynýar
 APP_EU_MARGIN = 15        # Russiýa serweriniň iň gowusyndan iň köp +15 ms — PUBG-a ýaraýar
+APP_EU_LIM = 120          # 1.47.19: oýundaky (çaklanan) ms 120-den az bolsa — PUBG (eýesiniň islegi); /pubgms 100 bilen üýtgeýär
+APP_EU_DIV = 2.0          # ölçeg (TCP birikme + HTTP sorag) oýundaky ms-den ~2 esse uly: oýun ms ≈ ölçeg / 2; /pubgms bol 2.5 bilen sazlanýar
+def app_eu_game(a, ms):
+    """Ölçegden oýundaky ms çaklamasy."""
+    try: d_ = float(a.get("eu_div") or APP_EU_DIV)
+    except Exception: d_ = APP_EU_DIV
+    return int(round(ms / max(d_, 1.0)))
 
 def app_eu_report(dev, pr):
     """1.47.18: telefondan «telefon → VPN → Frankfurt» pingleri {host:port: ms}. hp_eu[hp] = [[ms, wagt, enjam], …]."""
@@ -1453,10 +1460,10 @@ def app_eu_good(a, now=None):
     Russiýa serwerleriniň iň gowusyndan +15 ms-den köp däl. Russiýa ölçegi ýok bolsa — hiç biri (deňeşdirer ýaly zat ýok)."""
     eu = app_eu_ms(a, now); ru = app_ru_proven(a, now)
     ref = [eu[h] for h in ru if h in eu]
-    if not ref: return set()
-    lim = min(ref) + APP_EU_MARGIN
+    lim = min(ref) + APP_EU_MARGIN if ref else -1
+    glim = int(a.get("eu_lim") or APP_EU_LIM)   # 1.47.19: oýundaky ms < 120 — Russiýa ölçegi bolmasa hem
     ch = {app_x_hp(v.get("c") or "") for v in (a.get("xcodes") or {}).values() if v.get("src") in ("tg", "tgs")}   # vless hem (eýesiniň islegi: ms gowy bolsa)
-    return {h for h, ms in eu.items() if h in ch and h not in ru and ms <= lim}
+    return {h for h, ms in eu.items() if h in ch and h not in ru and (app_eu_game(a, ms) < glim or ms <= lim)}
 
 def app_x_named(base_codes, a):
     """Goşmaça kodlar programyň sanawyna: ady «🇹🇷 Türkiýe · tm» (şol baýdak öň bar bolsa «Türkiýe 2»), Russiýa — 🎮 oýun bölümi."""
@@ -6726,15 +6733,25 @@ def app_eu_view(a):
     rows = []
     for h, ms in sorted(eu.items(), key=lambda kv: kv[1])[:30]:
         mk = "🇷🇺" if h in ru else ("✅🎮" if h in good else "")
-        rows.append(f"<code>{ms:>4} ms</code> {src.get(h, '🌐')} {mk} <code>{esc(h[:40])}</code>")
+        rows.append(f"<code>~{app_eu_game(a, ms):>3} ms</code> ({ms}) {src.get(h, '🌐')} {mk} <code>{esc(h[:40])}</code>")
+    glim = int(a.get("eu_lim") or APP_EU_LIM); dv = a.get("eu_div") or APP_EU_DIV
     return ("🎮 <b>PUBG ms (Avrupa · Frankfurt)</b> — Türkmen telefonlarından, VPN'in içinden\n"
-            + (f"En iyi kanıtlı Rusya: <b>{min(ref)} ms</b> → sınır {min(ref) + APP_EU_MARGIN} ms\n" if ref else "Kanıtlı Rusya ölçümü yok — otomatik ekleme kapalı\n")
+            + f"Kural: oyunda ~<b>{glim} ms</b> altı" + (f" <b>veya</b> en iyi kanıtlı Rusya ({min(ref)}) +{APP_EU_MARGIN} ölçümü" if ref else "") + "\n"
+            + f"<i>~ms = oyundaki tahmini ms (ölçüm ÷ {dv}); parantezde ham ölçüm.</i>\n"
             + "<blockquote expandable>" + "\n".join(rows) + "</blockquote>\n"
             + "<i>🇷🇺 kanıtlı Rusya · ✅🎮 Rusya değil ama PUBG'de iyi → Free PUBG'ye eklendi · 📡 kanal · ✍️ elle · 🌐 abonelik. "
-            + "Sayı = telefon→VPN→Frankfurt (TCP, oyundaki ms'e yakın, karşılaştırma için).</i>")
+            + "Ham ölçüm = telefon→VPN→Frankfurt bağlantı + istek (oyundaki ms'in ~2 katı).\n"
+            + "<code>/pubgms 100</code> — sınırı değiştir · <code>/pubgms bol 2.5</code> — oyundaki ms ile ölçüm oranı (bir sunucuda oyunda gördüğün ms'e göre ayarla).</i>")
 
 async def cmd_pubgms(u: Update, c: ContextTypes.DEFAULT_TYPE):
     if not is_fo(u.effective_user.id): return
+    ar = [x.lower().replace(",", ".") for x in (c.args or [])]
+    try:
+        if len(ar) == 1 and ar[0].isdigit() and 20 <= int(ar[0]) <= 500:
+            app_mut(lambda x: x.__setitem__("eu_lim", int(ar[0]))); RUN["app_dirty"] = True
+        elif len(ar) == 2 and ar[0] == "bol" and 1.0 <= float(ar[1]) <= 5.0:
+            app_mut(lambda x: x.__setitem__("eu_div", round(float(ar[1]), 2))); RUN["app_dirty"] = True
+    except ValueError: pass
     await c.bot.send_message(u.effective_user.id, app_eu_view(app_cfg(load_db())), parse_mode="HTML")
 
 async def cmd_koruma(u: Update, c: ContextTypes.DEFAULT_TYPE):
