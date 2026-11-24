@@ -924,7 +924,7 @@ def app_meta(cfg):
         n_ = int(v.get("n") or 1); dv_ = app_key_devs(v)
         if n_ <= 1: out.append(f"#tvk: {app_key_hash(k)} {int(v.get('exp') or 0)}" + (f" {dv_[0]}" if dv_ else ""))
         else: out.append(f"#tvk: {app_key_hash(k)} {int(v.get('exp') or 0)} {','.join(dv_) or '-'} {n_}")   # 1.16: köp adamlyk açar
-    for n_ in (cfg.get("news") or [])[:10]:
+    for n_ in (cfg.get("news") or [])[:NEWS_MAX]:
         out.append(f"#tvn: {n_['id']} {int(n_['ts'])} " + base64.urlsafe_b64encode(json.dumps({"t": n_["t"], "x": n_["x"], **({"img": n_["img"]} if n_.get("img") else {}), **({"btn": n_["btn"]} if n_.get("btn") else {}), **({"poll": n_["poll"]} if n_.get("poll") else {})}, ensure_ascii=False).encode()).decode().rstrip("="))
     if RUN.get("app_on"): out.append(f"#tvon: {int(RUN['app_on'])}")
     if (cfg.get("gpin") or {}).get("id"):   # 1.46.4: Global chatda berkidilen habar
@@ -1588,7 +1588,7 @@ def app_news_fs(a=None):
     """Habarlar Firestore-a hem (n/list): programlar açyk wagty 2 minutda bir okaýar — abuna faýlyna garaşmaýar."""
     a = a if a is not None else app_cfg(load_db()); fid = a.get("fid")
     if not (fid and a.get("fs_ok") and a.get("fs_proj")): return
-    lst = [{"id": n_["id"], "ts": int(n_["ts"]), "t": n_["t"], "x": n_["x"], **({"img": n_["img"]} if n_.get("img") else {}), **({"btn": n_["btn"]} if n_.get("btn") else {}), **({"poll": n_["poll"]} if n_.get("poll") else {})} for n_ in (a.get("news") or [])[:10]]
+    lst = [{"id": n_["id"], "ts": int(n_["ts"]), "t": n_["t"], "x": n_["x"], **({"img": n_["img"]} if n_.get("img") else {}), **({"btn": n_["btn"]} if n_.get("btn") else {}), **({"poll": n_["poll"]} if n_.get("poll") else {})} for n_ in (a.get("news") or [])[:NEWS_MAX]]
     body = json.dumps({"news": lst}, ensure_ascii=False, sort_keys=True)
     if RUN.get("news_fs") == body: return
     fs_write(a["fs_proj"], "n/list", app_enc(fid, body), None, False)
@@ -2843,6 +2843,8 @@ def app_upd_link_check():
     if not v_ or not ul_.get("auto") or vk(v_) <= vk(ul_.get("ver")): return None
     mutate(lambda d: d.setdefault("app", {}).setdefault("upd_link", {}).update({"ver": v_, "fn": fn_, "ts": int(time.time())}))
     RUN["app_dirty"] = True; vlog(f"📦 VPS-de täze APK: {v_} — programa ýaýradyldy")
+    try: app_upd_news(v_)   # 1.47.22: «Habarlar»-a täze wersiýa habary
+    except Exception as e: log.info("upd news: %s", e)
     return v_
 
 def app_publish_link(link):
@@ -2868,6 +2870,8 @@ def app_publish_link(link):
         if not mv: raise RuntimeError("Sürüm bulunamadı — dosya adında olsun (TurkmenVPN-1.44.3.apk) ya da başına yaz: «1.44.3 http://…»")
         ver_ = mv.group(1)
         mutate(lambda d: d.setdefault("app", {}).__setitem__("upd_link", {"ver": ver_, "url": url_[:400], "ts": int(time.time()), "auto": auto_}))
+        try: app_upd_news(ver_)   # 1.47.22: «Habarlar»-a täze wersiýa habary
+        except Exception as e: log.info("upd news: %s", e)
         app_sync(True)
         return ver_
     m = DRIVE_ID_RE.search(link) or re.search(r"/d/([\w-]{20,})", link) or re.search(r"[?&]id=([\w-]{20,})", link)
@@ -3648,6 +3652,8 @@ async def app_mig_finish(app, old, new, res):
     RUN["app_dirty"] = True
 
 TAG_ABC = "abcdefghijklmnopqrstuvwxyz"
+TAG_SET_RE = re.compile(r"[a-z][a-z0-9_]{5,19}")   # 1.47.22: öz saýlan @belgi — iň az 6 harp
+TAG_RESERVED = {"admin", "admins", "owner", "support", "turkmenvpn", "tmvpn", "moderator", "system", "premium", "official"}
 def app_tag_make(a, d):
     """1.47.4: her ulanyja 5 harply iňlis @belligi (meselem @kvrom) — gaýtalanmaýar, bir gezek berilýär."""
     used = {str(u.get("tg")) for u in (a.get("devs") or {}).values() if u.get("tg")}
@@ -4094,6 +4100,20 @@ async def app_on_msg(app, fid, o):
         if time.time() - RUN.setdefault("usq_at", {}).get(dev, 0) < 1.5: return
         RUN["usq_at"][dev] = time.time()
         await asyncio.to_thread(app_send, dev, {"k": "usr", "q": str(o.get("q") or "")[:32], "l": app_user_find(a, o.get("q"), dev)}); return
+    if k == "tagset":   # 1.47.22: ulanyjy öz @belgisini saýlaýar (iň az 6 harp: a-z, 0-9, _; harp bilen başlaýar; gaýtalanmaýar)
+        rl_ = RUN.setdefault("tagset_at", {})
+        if time.time() - rl_.get(dev, 0) < 3: return
+        rl_[dev] = time.time()
+        t_ = str(o.get("t") or "").strip().lstrip("@").lower()[:20]
+        if not TAG_SET_RE.fullmatch(t_) or t_ in TAG_RESERVED:
+            await asyncio.to_thread(app_send, dev, {"k": "tagset", "ok": False, "why": "bad"}); return
+        def fts(x):
+            devs_ = x.get("devs") or {}
+            if any(d2 != dev and str(u2.get("tg") or "") == t_ for d2, u2 in devs_.items()): return "taken"
+            if dev not in devs_: return "bad"
+            devs_[dev]["tg"] = t_; return "ok"
+        r_ = app_mut(fts)
+        await asyncio.to_thread(app_send, dev, {"k": "tagset", "ok": r_ == "ok", "t": t_, "why": r_ or "bad"}); return
     if k == "utag":   # 1.47.4: @belgi (öz belgisi ýa-da başga adamyňky)
         rl_ = RUN.setdefault("utag_at", {})
         if time.time() - rl_.get(dev, 0) < 0.4: return
@@ -4363,6 +4383,7 @@ async def app_on_msg(app, fid, o):
         if r == "bad": await asyncio.to_thread(app_send, dev, {"k": "kbad"})
         if r == "new": RUN["app_dirty"] = True
 
+NEWS_MAX = 20   # 1.47.22: «Habarlar»-da iň köp (öň 10)
 APP_NEWS_BTN = ("invite", "key", "global", "chat", "servers", "gift", "dms", "update", "vpn")   # habaryň aşagyndaky düwmeler (programda sahypa açýar)
 APP_NICK_RESERVED = ("owner", "admin", "kurucu", "türkmen vpn", "turkmen vpn", "moderator", "support")
 GCHAT_LINK = re.compile(r"(https?://|www\.|t\.me/|\b[\w-]{2,}\.(com|net|org|ru|tm|me|io|xyz|info|top|site|online|link|app|dev|tk|ly|gg|uz|kz|tr|de|co|su|pro|club|shop|store|live|tv|cc|biz|ua|by)\b)", re.I)
@@ -5168,10 +5189,16 @@ async def app_adm(app, dev, o):
                         await asyncio.to_thread(fs_write, a["fs_proj"], f"n/{nw_['id']}", app_enc(a["fid"], json.dumps({"ph": data_})), None, False)
                         nw_["img"] = nw_["id"]
                 elif r.get("img"): err = "surat doly gelmedi — täzeden synanyşyň"
-                app_mut(lambda x: x.__setitem__("news", ([nw_] + (x.get("news") or []))[:10]))
+                app_mut(lambda x: x.__setitem__("news", ([nw_] + (x.get("news") or []))[:NEWS_MAX]))
                 try: RUN.__setitem__("app_dirty", True)   # 1.47: fonda (admin jogaby garaşmasyn)
                 except Exception as e2: RUN["app_err"] = str(e2)[:150]
                 msg = "bc"
+        elif act == "bcai" and f_:   # 1.47.22: eýesiniň habaryny AI owadanlaşdyrýar (iberilmeýär — eýesi görüp, düzedip özi iberýär)
+            t1, x1 = str(r.get("t") or "").strip()[:200], str(r.get("x") or "").strip()[:1500]
+            if not (t1 or x1): err = "tekst ýok"
+            elif not ai_key(): err = "AI açary ýok"
+            else:
+                asyncio.create_task(app_bc_ai(dev, t1, x1)); msg = "bcai"
         elif act == "ai" and f_:
             mutate(lambda d: d.__setitem__("ai_sup", bool(r.get("on"))))
             try: RUN.__setitem__("app_dirty", True)   # 1.47: fonda (admin jogaby garaşmasyn)
@@ -5227,6 +5254,45 @@ def apw_make(uid, name, role, perm, pw=None):
         ap[apw_id(pw)] = {"pw": pw, "uid": int(uid), "name": name[:32], "role": role, "perm": perm, "dev": None, "ts": int(time.time()), "made": 0}
     app_mut(f)
     return pw
+
+NEWS_AI_SYS = """Sen «Türkmen VPN» programmasynyň habar redaktory. Eýesi ulanyjylara habar ýazdy — sen ony owadan, düzgünli we düşnükli edip täzeden ýaz.
+Düzgünler:
+- Manysyny üýtgetme, täze fakt, wada, baha ýa-da sene GOŞMA; hiç bir zady aýyrma.
+- Sanlary, bahalary, wagtlary, linkleri, @belgileri, TM-kodlary we açarlary (meselem ABCD-EFGH-JKLM) harpma-harp şol durşuna galdyr.
+- Habar haýsy dilde ýazylan bolsa şol dilde ýaz (türkmençe bolsa sowatly, edebi, ýöne ýönekeý türkmen dilinde; ň ä ö ü ý ž ş ç harplary bilen).
+- Ady («t»): gysga we özüne çekiji, iň köp 60 harp, başynda bir laýyk emoji.
+- Teksti («x»): 1–3 gysga abzas; zerur bolsa «• » bilen sanaw; birnäçe laýyk emoji (köp däl); iň soňunda gerek bolsa gysga çagyryş (meselem «Täzeläň!»). 600 harpdan geçmesin.
+- Markdown (**, #, _) ULANMA — diňe ýönekeý tekst, emoji we setir aralary.
+Diňe JSON ber: {"t": "...", "x": "..."}"""
+
+async def app_bc_ai(dev, t1, x1):
+    """1.47.22: AI bilen owadanlanan habar eýesiniň telefonyna (ýazgy meýdançalaryna) gaýdýar."""
+    try:
+        raw = await asyncio.to_thread(ai_call, NEWS_AI_SYS, [{"role": "user", "content": f"Ady: {t1 or '(ýok — özüň goý)'}\nTeksti:\n{x1 or '(ýok)'}"}], None, 1200, 90)
+        mj = re.search(r"\{.*\}", raw or "", re.S); j = json.loads(mj.group(0)) if mj else {}
+        t2, x2 = str(j.get("t") or "").strip()[:80], str(j.get("x") or "").strip()[:600]
+        if not (t2 and x2): raise RuntimeError("AI jogaby boş")
+        await asyncio.to_thread(app_send, dev, {"k": "bcai", "ok": True, "t": t2, "x": x2})
+    except Exception as e:
+        log.info("bc ai: %s", e)
+        try: await asyncio.to_thread(app_send, dev, {"k": "bcai", "ok": False, "e": str(e)[:120]})
+        except Exception: pass
+
+APP_UPD_NEWS = "upd"   # 1.47.22: täze wersiýa habary (awtomatik — diňe şu)
+def app_upd_news(ver):
+    """1.47.22: täze wersiýa çykanda «Habarlar»-a özi habar goşýar (öňki awtomatik wersiýa habary aýrylýar)."""
+    ver = str(ver or "").strip()
+    if not re.fullmatch(r"\d+(\.\d+)+", ver): return False
+    def f(x):
+        nw = [n_ for n_ in (x.get("news") or []) if n_.get("auto") != APP_UPD_NEWS]
+        if any(n_.get("auto") == APP_UPD_NEWS and n_.get("v") == ver for n_ in (x.get("news") or [])): return False
+        item = {"id": news_id(nw), "ts": int(time.time()), "auto": APP_UPD_NEWS, "v": ver, "btn": ["update"],
+                "t": f"🆕 Täze wersiýa {ver} çykdy!",
+                "x": f"Türkmen VPN-iň täze wersiýasy {ver} taýýar.\n\n📥 turkmenvpn.ru saýtyndan ýükläň we köne programmanyň üstünden gurnaň — maglumatlaryňyz galýar.\n\n⚠️ Täze wersiýany gurnamasaňyz VPN-e birigip bilmersiňiz."}
+        x["news"] = ([item] + nw)[:NEWS_MAX]; return True
+    ok = bool(app_mut(f))
+    if ok: RUN["app_dirty"] = True; vlog(f"📰 Täze wersiýa habary: {ver}")
+    return ok
 
 def app_news_view(a):
     nw = a.get("news") or []
@@ -7078,7 +7144,7 @@ async def msg_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
             ls_ = [x for x in txt.splitlines()]
             if len(ls_) < 2 or not ls_[0].strip(): STATE[uid] = st; await u.message.reply_text("⚠️ Birinji setir ady, ikinji setirden tekst bolmaly.", reply_markup=back("anews")); return
             nw_ = {"id": news_id(app_cfg(load_db()).get("news")), "ts": int(time.time()), "t": ls_[0].strip()[:80], "x": "\n".join(ls_[1:]).strip()[:600]}
-            app_mut(lambda x: x.__setitem__("news", ([nw_] + (x.get("news") or []))[:10]))
+            app_mut(lambda x: x.__setitem__("news", ([nw_] + (x.get("news") or []))[:NEWS_MAX]))
             try: await asyncio.to_thread(app_sync, True); RUN.pop("app_err", None)
             except Exception as e: RUN["app_err"] = str(e)[:150]
             t_, kb_ = app_news_view(app_cfg(load_db()))
