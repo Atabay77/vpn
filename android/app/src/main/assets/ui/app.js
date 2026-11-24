@@ -49,7 +49,7 @@
   const phAsked = {};
   let A = null;         // admin paneli: botdan gelen ýagdaý (biletler, ulanyjylar, açarlar…)
   let admAt = 0, admPend = 0;
-  const ADM_PAGES = ['admin', 'adm_t', 'adm_u', 'adm_b', 'adm_k', 'adm_kd', 'adm_x', 'adm_l', 'adm_s', 'adm_st', 'adm_ai', 'adm_or'];
+  const ADM_PAGES = ['admin', 'adm_t', 'adm_u', 'adm_b', 'adm_k', 'adm_kd', 'adm_x', 'adm_l', 'adm_s', 'adm_st', 'adm_ai', 'adm_or', 'adm_bn'];
   const act = (a, o) => { NB.adm(JSON.stringify(Object.assign({ a }, o || {}))); if (!admPend) admPend = Date.now(); if (a !== 'get' && a !== 'alog') alogPush('a', a + ' ' + JSON.stringify(o || {}).slice(0, 90)); };
   const TKO = {};   // 1.46.7: bilet ýagdaýy (ýapdym / açdym) — bot jogap berýänçä
   // 1.46.7: admin log — eýesinden başga adminleriň programmadaky hereketleri (basan düwmesi, açan sahypasy, eden işi) bota; diňe eýesi görýär
@@ -526,6 +526,7 @@
         r.statTiles = [[tx.st_users, S.users, '#F3E7D0'], [tx.st_today, S.today, '#6FDB9C'], [tx.st_vpn, S.vpn, '#6FDB9C'], [tx.st_new, S.new, '#FFD27A'], [tx.st_keys, S.keys, '#FFD27A'],
           [tx.st_open, S.open, '#FFB0A6'], [tx.st_ai, S.ai, '#A8D4FF'], [tx.st_admins, (S.admins || [0, 0]).join(' / '), '#F3E7D0']].map((q) => ({ k: q[0], v: String(q[1] == null ? '—' : q[1]), c: q[2] }));
       }
+      r.banOn = !!INFO.uban && !s.admOn; r.banTxt = tx.ub_full;   // 1.47.21: gadagan — tutuş ekran (hiç bir düwmä basyp bolmaýar)
       r.cfOn = !!s.cf; r.cfText = s.cf ? s.cf.text : ''; r.cfOk = s.cf ? s.cf.ok : ''; r.cfNo = this.cfNo; r.cfYes = this.cfYes;
       r.cfBg = s.cf && s.cf.danger ? 'linear-gradient(90deg,#FF8A78,#E05A48)' : 'linear-gradient(90deg,#E0B04A,#C8902E)';
       // Awtomatik kartasy: haýsy ýurtlar bar we näçe serwer
@@ -545,6 +546,16 @@
         r.kSum = tx.bk_sum.replace('{d}', dd === 0 ? tx.bk_unl : dd === 30 ? tx.bk_month : dd + ' ' + tx.days).replace('{n}', String(nn)); }
       // goşmaça kodlar (Telegram kanaly + admin)
       r.isAdmX = s.page === 'adm_x' && s.admOn;
+      { // 1.47.21: Engelliler 🩼 — möhletsiz gadagan edilenler (diňe eýesi); «Aç» — gadaganlygy aýyrýar
+        const bl = (A && A.bans) || [];
+        if (isF) r.botTiles = r.botTiles.concat([{ i: '🩼', t: tx.bn_title + ' (' + bl.length + ')', go: () => { act('get'); this.setState({ page: 'adm_bn' }); }, st: '' }]);
+        r.isAdmBn = s.page === 'adm_bn' && s.admOn && isF; if (r.isAdmBn) r.pageTitle = '🩼 ' + tx.bn_title;
+        r.bnEmpty = !bl.length;
+        r.bnList = bl.map((b) => ({ n: b.n || '?', sub: (b.code || '') + (b.at ? ' · ' + b.at : '') + (b.ver ? ' · v' + b.ver : ''),
+          prof: () => this.openProf(b.dev),
+          un: () => this.confirm(tx.bn_unQ.replace('{n}', b.n || '?'), '✅ ' + tx.bn_un, () => {
+            act('ban', { dev: b.dev, on: false }); A.bans = bl.filter((x) => x.dev !== b.dev); if (A.us && A.us[b.dev]) A.us[b.dev].ban = false;
+            this.setState({ admTick: (this.state.admTick || 0) + 1 }); }) })); }
       if (r.isAdmX) r.pageTitle = '🧩 ' + tx.x_title;
       if (isF) r.botTiles = r.botTiles.concat([{ i: '🧩', t: tx.x_title, go: () => this.setState({ page: 'adm_x' }), st: '' }]);
       { const ow = ((A && A.orders) || []).filter((o) => o.st === 'w').length;
@@ -1289,7 +1300,7 @@
     C.goBack = () => {
       const p = C.state.page;
       if (p === 'adm_kd') { C.setState({ page: 'adm_k' }); return; }
-      if (p === 'adm_x' || p === 'adm_or') { C.setState({ page: 'admin', admTab: 'bot' }); return; }
+      if (p === 'adm_x' || p === 'adm_or' || p === 'adm_bn') { C.setState({ page: 'admin', admTab: 'bot' }); return; }
       if (p === 'dm') { C.setState({ page: C._dmBack && C._dmBack !== 'dm' && C._dmBack !== 'main' ? C._dmBack : 'dms' }); return; }
       if (p === 'uprof') { C.setState({ page: C._back && C._back !== 'uprof' ? C._back : 'global' }); return; }
       if (p === 'rank') { C.setState({ page: C._rkBack && C._rkBack !== 'rank' ? C._rkBack : 'main' }); return; }
@@ -1692,7 +1703,7 @@
       else if (m.k === 'kbad') { up.keyMsg = 'used'; }
       else if (m.k === 'nick') {
         if (m.ok) { C.meName = m.n; LS.set('nick', m.n); up.nkSt = 'ok'; up.nkIn = null; if (C._nkCustom && !INFO.nkb) { try { NB.nickBonus(); } catch (e2) {} INFO.nkb = true; } } else up.nkSt = m.why === 'taken' ? 'taken' : 'bad';
-      } else if (m.k === 'uban') { INFO.uban = !!m.on; if (m.on) C.say('⛔ ' + tx.ub_msg); }
+      } else if (m.k === 'uban') { INFO.uban = !!m.on; up.banTick = Date.now(); }   // 1.47.21: tutuş ekran gadagan ýazgysy (ýazyp / basyp bolmaýar)
       else if (m.k === 'quota') { qAdd(m.id, m.t, m.at); up.qTick = (s.qTick || 0) + 1; }
       else if (m.k === 'atk') { if (INFO.adm) { C.say((m.new ? tx.atk_new : '🎫') + ' #' + m.tid + (m.n ? ' · ' + m.n : '') + ': ' + String(m.t || '').slice(0, 70)); admAt = 0; } }
       else if (m.k === 'mute') { LS.set('muteUntil', (m.until || 0) * 1000); C.say('🔇 ' + tx.g_muteOn); }

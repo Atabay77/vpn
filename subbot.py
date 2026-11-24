@@ -937,7 +937,7 @@ def app_meta(cfg):
     if ai_on: out.append("#tvai: 1")
     mv_ = [d_ for d_, u_ in (cfg.get("devs") or {}).items() if u_.get("mvto")][-1500:]   # 1.47: täze programma geçirilen köne telefonlar — Global chatda görünmeýär
     if cfg.get("gbans") or mv_: out.append("#tvban: " + ",".join(list(cfg.get("gbans") or [])[-200:] + mv_))
-    if cfg.get("ubans"): out.append("#tvuban: " + ",".join(cfg["ubans"][-200:]))
+    if cfg.get("ubans"): out.append("#tvuban: " + ",".join(cfg["ubans"][-1000:]))   # 1.47.21: möhletsiz gadaganlyk — sanaw uly bolup biler
     seen_, devs_ = set(), cfg.get("devs") or {}
     for x in sorted((cfg.get("apw") or {}).values(), key=lambda x: x.get("role") != "f"):   # 1.16: 👑 Owner / 🛡 Admin
         if not apw_valid(x): continue
@@ -4065,6 +4065,13 @@ async def app_on_msg(app, fid, o):
             await asyncio.to_thread(app_send, dev, {"k": "uban", "on": True})
             if k == "tk": await asyncio.to_thread(app_send, dev, {"k": "tk", "who": "a", "t": "✅ Siziň hasabyňyz täze programma geçirildi. Bu köne programma indi işlemeýär — täze programmany ulanyň we muny pozuň.", "tid": int(o.get("tid") or 0)})
         return
+    if dev in (a.get("ubans") or []) and k not in ("pr", "pe", "fcm", "fcmerr", "reach"):   # 1.47.21: möhletsiz gadagan — hiç zat edip bilmeýär (ýazmak, sowgat, açar, Premium…)
+        rl_ = RUN.setdefault("ban_at", {})
+        if time.time() - rl_.get(dev, 0) > 600:   # programma bilmeýän bolsa (habar ýetmedik) — ýene aýdylýar
+            rl_[dev] = time.time()
+            try: await asyncio.to_thread(app_send, dev, {"k": "uban", "on": True})
+            except Exception as e: log.info("uban resend: %s", e)
+        return
     if k == "adm": await app_adm(app, dev, o); return
     if k == "pr": await asyncio.to_thread(app_x_report, dev, o.get("p")); return
     if k == "pe": await asyncio.to_thread(app_eu_report, dev, o.get("p")); return   # 1.47.18: PUBG Ýewropa pingi
@@ -4125,7 +4132,6 @@ async def app_on_msg(app, fid, o):
             except Exception as e: log.info("preq %s: %s", d_, e)
         await notify_founders(app, f"👑 <b>Premium haýyşy</b> — {esc(nk_)} · {'1 ýyl' if plan_ == 'y' else '1 hepde' if plan_ == 'w' else '1 aý'}" + (f" → {esc(sl_.get(to_) or '?')}" if to_ else ""), silent=True)
         return
-    if dev in (a.get("ubans") or []) and k in ("tk", "human", "fb", "rate", "ref", "gift", "nick"): return   # 1.16.4: gadagan — diňe VPN (20 min)
     if k == "tk":
         text = str(o.get("t") or "").strip()[:1000]
         pi_ = str(o.get("pi") or "") if re.fullmatch(r"[\w\-]{4,40}", str(o.get("pi") or "")) else ""   # 1.47.6: surat (töleg çeki)
@@ -4697,6 +4703,8 @@ def app_adm_snap(a, e, dev):
                              "left": (f"{max(0, int((v['exp'] - now) // 86400))} gün" if v.get("exp") else "çäksiz"), "by": by_.replace("prem:", "").replace("app:", "")})
     prem_out.sort(key=lambda x: (x["exp"] == 0, x["exp"]))
     need |= {q["dev"] for q in preq_out if q.get("dev")} | {x["dev"] for x in prem_out[:300]}
+    ban_ids = list(dict.fromkeys(list(a.get("ubans") or []) + list(a.get("gbans") or []))) if f_ else []   # 1.47.21: Engelliler 🩼 (diňe eýesi)
+    need |= set(ban_ids[-300:])
     pool = (devs.keys() if full else need)
     for dv in pool:
         u = devs.get(dv)
@@ -4713,6 +4721,10 @@ def app_adm_snap(a, e, dev):
     out = {"me": {"role": "f" if f_ else e.get("role"), "perm": "all" if f_ else e.get("perm"), "name": e.get("name") or "", "o2": o2}, "tk": tk_out, "us": users,
            "preq": preq_out, "prem": prem_out[:300], "plans": [list(x_) for x_ in APP_PLANS]}
     if f_: out["sess"] = app_sess(a); out["fast"] = bool(a.get("fs_fast"))
+    if f_:   # 1.47.21: gadagan edilenler — iň soňky gadagan edilen ýokarda
+        ba_ = a.get("ban_at") or {}
+        out["bans"] = [{"dev": d_, "n": ((devs.get(d_) or {}).get("nick") or "?"), "code": app_ref_code(d_), "ver": (devs.get(d_) or {}).get("ver") or "",
+                        "at": app_hm(ba_.get(d_)) if ba_.get(d_) else ""} for d_ in sorted(ban_ids, key=lambda d_: -int(ba_.get(d_) or 0))[:300]]
     if f_: out["pay"] = {"t": str(a.get("pay_txt") or db.get("pay_info") or "")[:1500], "img": a.get("pay_img") or ""}
     if full:
         mine = None if f_ else f"app:{e.get('name')}"
@@ -5065,7 +5077,8 @@ async def app_adm(app, dev, o):
             if DEV_RE.match(dv):
                 on_ = bool(r.get("on"))
                 app_mut(lambda x: (x.__setitem__("gbans", [b for b in (x.get("gbans") or []) if b != dv] + ([dv] if on_ else [])),
-                                   x.__setitem__("ubans", [b for b in (x.get("ubans") or []) if b != dv] + ([dv] if on_ else []))))
+                                   x.__setitem__("ubans", [b for b in (x.get("ubans") or []) if b != dv] + ([dv] if on_ else [])),
+                                   x.setdefault("ban_at", {}).__setitem__(dv, int(now)) if on_ else (x.get("ban_at") or {}).pop(dv, None)))   # 1.47.21: möhletsiz gadaganlyk (Engelliler 🩼)
                 await asyncio.to_thread(app_send, dv, {"k": "uban", "on": on_})
                 if on_: asyncio.create_task(asyncio.to_thread(app_g_purge, dv))   # 1.47: gadagan — Global chatdaky habarlary pozulýar
                 try: RUN.__setitem__("app_dirty", True)   # 1.47: fonda (admin jogaby garaşmasyn)

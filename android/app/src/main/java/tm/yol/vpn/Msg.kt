@@ -360,7 +360,11 @@ object Msg {
             o.optString("key").takeIf { it.isNotEmpty() }?.let { k -> if (Lic.exp(c) == null || o.optString("k") == "buy" || o.optString("k") == "lvl" || o.optString("k") == "prem") Lic.save(c, k) }   // sowgat / çagyryş / satyn alnan açar / 1.43: Premium
             if (o.optString("k") == "punprem") Lic.setOwnOff(c, true) else if (o.optString("k") == "prem") Lic.setOwnOff(c, false)   // 1.46.4: eýesi hem
             if (o.optString("k") == "prem" || o.optString("k") == "punprem" || (o.optString("k") == "lvl" && o.optString("key").isNotEmpty())) subDue = true   // 1.43: täze açar abuna faýlynda — derrew täzele (1.45: Premium aýryldy hem)
-            if (o.optString("k") == "uban") Lic.setBanned(c, o.optBoolean("on"))
+            if (o.optString("k") == "uban") {   // 1.47.21: möhletsiz gadaganlyk — VPN derrew kesilýär; açylanda abuna sanawyna garaşylmaýar
+                val on = o.optBoolean("on"); Lic.setBanned(c, on)
+                if (!on) Sub.ubans = Sub.ubans - dev(c)
+                else if (State.now == State.ON || State.now == State.WAIT) runCatching { c.startService(android.content.Intent(c, Svc::class.java).setAction(Svc.STOP)) }
+            }
             if (o.optString("k") == "migok") prefs(c).edit().putBoolean("migd", true).apply()   // 1.47: köne programmadan göçürildi
             pend(c, JSONObject().put("k", "in").put("m", o))
             if (!visible && o.optString("k") == "tk" && o.optString("who") == "a") Svc.notifyReply(c, o.optString("t"))

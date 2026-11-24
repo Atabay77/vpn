@@ -408,6 +408,7 @@ open class Main : Activity() {
     // ---------- bağlan ----------
     private fun connect() {
         if (Msg.migNeed(this)) { push(JSONObject().put("k", "mig")); return }   // 1.47: ilki köne programmadan göçmek (hökmany)
+        if (Lic.banned(this)) { push(JSONObject().put("k", "in").put("m", JSONObject().put("k", "uban").put("on", true))); return }   // 1.47.21: gadagan — VPN ýok
         if (Upd.busy(this)) { toast(t("Täze wersiýa ýüklenýär, gutarýança garaşyň", "Идёт загрузка новой версии, подождите", "Yeni sürüm iniyor, bitene kadar bekleyin")); return }
         Upd.available(Msg.ver(this))?.let { u ->   // zorunlu güncelleme (1.44.3: salgy işlemese — birikmäge rugsat, programmany ulanyp bolsun)
             if (!(Upd.isLink(u.second) && Upd.linkFail == u.first)) { askUpdate(true); return }

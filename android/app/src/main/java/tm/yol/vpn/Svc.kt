@@ -223,6 +223,7 @@ class Svc : VpnService() {
             if (want && State.now == State.ON && !hcBusy && now0 - hcAt > 15_000 && now0 - State.onAt > 20_000) {
                 hcAt = now0; hcBusy = true; Thread { try { health() } finally { hcBusy = false } }.start()
             }
+            if (want && Lic.banned(this@Svc)) { stop(); return }   // 1.47.21: birikip durka gadagan edildi — derrew kesilýär
             // 1 sagat dolunca (key yoksa) VPN durur; kullanıcı elle yeniden başlatır
             if (want && State.now == State.ON && Lic.left(this@Svc) == 0L) { stop(); expired(); return }
             // 1.46.8: awtomatik saýlawda bagly serwer jogap bermeýär — 25 sn soň sanaw derrew täzelenýär we işleýän serwere geçilýär
@@ -268,6 +269,7 @@ class Svc : VpnService() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == STOP) { stop(); return START_NOT_STICKY }
+        if (Lic.banned(this)) { stop(); return START_NOT_STICKY }   // 1.47.21: gadagan — VPN asla açylmaýar (Tile / awtomatik hem)
         foreground()
         if (Upd.busy(this)) { stopForeground(STOP_FOREGROUND_REMOVE); stopSelf(); return START_NOT_STICKY }   // güncelleme bitene kadar VPN açılmaz
         val reconnect = State.now == State.ON && Lic.start(this) > 0   // sunucu değiştirmek süreyi sıfırlamaz
