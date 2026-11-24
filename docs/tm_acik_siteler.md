@@ -22,6 +22,11 @@ Sadece ana alan adı test edildi; alt alan adları (ör. `x.onrender.com`) ayrı
 | VPS firması | cloud.yandex.ru (0,56) · reg.ru (0,63) · ibm.com (0,77) · cloud4y.ru (0,84) · vultr.com (1,08) · euserv.com (1,18) · ps.kz (1,21) · netcup.eu (1,32) · huaweicloud.com (1,54) · sprinthost.ru (1,75) · buyvm.net (2,06) · serverspace.io (3,20) |
 Açılmayan: timeweb.cloud, beget, firstvds, selectel, aeza, vdsina, hostkey, ruvds, hoster.kz, hetzner, contabo, digitalocean, linode, ably, pusher, supabase, hf.space …
 
+## 3. test — gerçek sunucu / uygulama adresleri (24.11.2026)
+AÇIK: panel.serv00.com, cache.serv00.com, s2.ct8.pl, hello.zeabur.app, www.choreoapps.dev, speedtest.lv.buyvm.net (Las Vegas, http), ps.kz
+KAPALI: hello.b4a.run, Vultr (Frankfurt, Amsterdam, Varşova), speedtest.lu.buyvm.net (Lüksemburg)
+→ Ön VPS adayları: serv00/ct8 (bedava, SSH), Zeabur (*.zeabur.app), BuyVM **Las Vegas** (ücretli, sınırsız trafik), Choreo.
+
 ## Açılmayan önemli olanlar
 github.com, raw.githubusercontent.com (GitHub `apk` dalı linkleri TM'de VPN'siz açılmaz — VPS'e indirme için sorun yok),
 ntfy.sh, api.telegram.org, t.me, drive.google.com, docs.google.com, dropbox.com, cdn.jsdelivr.net, workers.dev, pages.dev, vercel.app,
