@@ -67,7 +67,7 @@ class H(http.server.SimpleHTTPRequestHandler):
         if not f or not os.path.isfile(f): return s.send(404, b"yok")
         st = os.stat(f); size = st.st_size
         etag = '"%x-%x"' % (size, int(st.st_mtime)); lm = s.date_time_string(int(st.st_mtime))
-        a, b = 0, size - 1; part = False
+        a, b = 0, size - 1; part = False; y = ""
         rg = s.headers.get("Range", ""); ir = s.headers.get("If-Range", "")
         if rg.startswith("bytes=") and (not ir or ir in (etag, lm)):
             try:
@@ -76,8 +76,13 @@ class H(http.server.SimpleHTTPRequestHandler):
                 else: a = max(0, size - int(y))   # soňky N baýt
                 b = min(b, size - 1); part = True
             except Exception: a, b, part = 0, size - 1, False
-            if part and a >= size:
-                s.send_response(416); s.send_header("Content-Range", "bytes */%d" % size); s.send_header("Content-Length", "0"); s.end_headers(); return
+            # 1.47.17: programma faýly doly ýükläp, soňky pursatda baglanyşyk kesilse «bytes=SIZE-» soraýar — 416 bersek köne programmalar
+            # 6 gezek synanyşyp ýüklemäni «bolmady» sanaýar we 0%-dan başlaýar. Doly bolsa: boş 206 (programma «gutardy» diýýär);
+            # başga (uly) faýlyň bölegi bolsa: 200 bilen doly faýl (programma başdan ýazýar, bozuk APK bolmaýar).
+            if part and a == size and not y:
+                s.send_response(206); s.send_header("Content-Type", "application/vnd.android.package-archive"); s.send_header("Accept-Ranges", "bytes")
+                s.send_header("ETag", etag); s.send_header("Content-Range", "bytes */%d" % size); s.send_header("Content-Length", "0"); s.end_headers(); return
+            if part and a >= size: a, b, part = 0, size - 1, False
         s.send_response(206 if part else 200)
         s.send_header("Content-Type", "application/vnd.android.package-archive")
         s.send_header("Accept-Ranges", "bytes"); s.send_header("ETag", etag); s.send_header("Last-Modified", lm)

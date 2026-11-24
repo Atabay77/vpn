@@ -954,7 +954,7 @@ def app_meta(cfg):
     for abi, u in sorted((cfg.get("upd") or {}).items()):
         if u.get("fid") and u.get("ver"): out.append(f"#tvu{abi}: {u['ver']} {u['fid']}")
     ul_ = cfg.get("upd_link") or {}
-    if ul_.get("ver") and ul_.get("url"): out.append(f"#tvul: {ul_['ver']} {ul_['url']}")   # 1.44.3: göni salgy (köne programmalar okamaýar)
+    if ul_.get("ver") and ul_.get("url"): out.append(f"#tvul: {ul_['ver']} {app_ul_url(ul_)}")   # 1.44.3: göni salgy (köne programmalar okamaýar)
     ad = cfg.get("ad") or {}
     if ad.get("fid") and ad.get("on", True): out.append(f"#tvad: {ad['fid']} {urllib.parse.quote(ad.get('link', ''), safe='')}")
     return out
@@ -1382,6 +1382,43 @@ def app_free_pick(codes, base1, hpms=None):
             out.pop()
     return out
 
+APP_RU_EVERY = 600        # 1.47.17: kanal kodlarynyň çykyş ýurdy 10 minutda bir barlanýar
+APP_RU_RETEST = 6 * 3600  # bir kod 6 sagatda bir gaýtadan
+APP_RU_VALID = 12 * 3600  # «RU» subutnamasy 12 sagat güýçde
+
+def app_ru_proven(a, now=None):
+    """Kanal kodlary: Xray arkaly synalyp çykyşy hakykatdan Russiýa bolanlar (host:port)."""
+    now = now or time.time()
+    return {h for h, v in (a.get("ru_cc") or {}).items() if v and v[0] == "RU" and now - float(v[1]) < APP_RU_VALID}
+
+def app_ru_check():
+    """1.47.17: kanaldan alnan (vless däl) kodlary hakyky Xray bilen synap çykyş ýurdyny ýazýar; RU bolanlar mugt PUBG."""
+    a = app_cfg(load_db()); now = time.time(); old = dict(a.get("ru_cc") or {})
+    ch = {}
+    for v in (a.get("xcodes") or {}).values():
+        c_ = v.get("c") or ""
+        if v.get("src") in ("tg", "tgs") and not c_.lower().startswith("vless://"):
+            h_ = app_x_hp(c_)
+            if h_: ch[h_] = c_
+    todo = [c_ for h_, c_ in ch.items() if h_ not in old or now - float(old[h_][1]) > APP_RU_RETEST]
+    res = hunt_test(todo[:80], threads=20, batch=40, port0=23000, timeout=8, cc=True) if todo else {}
+    new = {h_: v_ for h_, v_ in old.items() if h_ in ch}
+    for c_ in todo: new[app_x_hp(c_)] = [res.get(c_, ""), int(now)]
+    before = app_ru_proven(a, now)
+    app_mut(lambda x: x.__setitem__("ru_cc", new))
+    after = {h_ for h_, v_ in new.items() if v_[0] == "RU" and now - float(v_[1]) < APP_RU_VALID}
+    if after != before:
+        RUN["app_dirty"] = True
+        vlog(f"🎮 Mugt PUBG (kanal, synalan Russiýa): {len(after)} kod")
+    return len(todo), len(after)
+
+async def app_ru_loop(app):
+    await asyncio.sleep(90)
+    while True:
+        try: await asyncio.to_thread(app_ru_check)
+        except Exception as e: log.info("ru check: %s", e)
+        await asyncio.sleep(APP_RU_EVERY)
+
 def app_x_named(base_codes, a):
     """Goşmaça kodlar programyň sanawyna: ady «🇹🇷 Türkiýe · tm» (şol baýdak öň bar bolsa «Türkiýe 2»), Russiýa — 🎮 oýun bölümi."""
     xs = a.get("xcodes") or {}
@@ -1393,13 +1430,17 @@ def app_x_named(base_codes, a):
     hosts = [code_host(v["c"]) for v in xs.values() if code_host(v["c"])]
     try: geo = geo_lookup(hosts)
     except Exception: geo = {}
-    out = []
+    out = []; ru_ok = app_ru_proven(a)
     for k, v in sorted(xs.items(), key=lambda kv: (kv[1].get("src") != "m", kv[1].get("ts", 0))):
         # 1.47: kanal abunasynyň kodlary derrew sanawda (supervpntm ýaly); işlemeýänler telefon hasabatynda aýrylýar
         cc = exit_country(v["c"], geo)[0] or ""
         flag = flag_of(cc) if len(cc) == 2 else "🌐"
         tag = "tm" if v.get("src") in ("tg", "tgs") else "VIP"
-        if cc == "ru":
+        if tag == "tm":   # 1.47.17: kanal kodlary — Russiýa diňe Xray synagynda çykyşy RU bolsa (ady / IP däl)
+            if app_x_hp(v["c"]) in ru_ok:
+                out.append(set_name(v["c"], "🇷🇺 Russia · 🎮 tm")); continue
+            if cc == "ru": continue   # ady / IP Russiýa, ýöne synagda subut edilmedi — goşulmaýar
+        elif cc == "ru":
             out.append(set_name(v["c"], f"🇷🇺 Russia · 🎮 {tag}")); continue
         n_ = used.get(flag, 0) + 1; used[flag] = n_
         nm = TM_CNAME.get(cc) or (COUNTRIES.get(cc, ("", cc.upper()))[1] if cc in COUNTRIES else "Serwer")
@@ -1742,8 +1783,9 @@ def hunt_outbound(link, tag):
     except Exception: return None
     return None
 
-def hunt_test(codes, threads=40, batch=80, port0=21000, timeout=6):
-    """Kodlary hakyky Xray bilen barlaýar (her kod üçin socks giriş → çykyş). Dönüş: {kod: ms} — diňe işleýänler."""
+def hunt_test(codes, threads=40, batch=80, port0=21000, timeout=6, cc=False):
+    """Kodlary hakyky Xray bilen barlaýar (her kod üçin socks giriş → çykyş). Dönüş: {kod: ms} — diňe işleýänler.
+    1.47.17: cc=True — kodyň üsti bilen çykyş IP-niň ýurdy soralýar, dönüş {kod: "RU"}."""
     xb = xray_bin(); res = {}
     if not xb or not codes: return res
     env_ = {k: v for k, v in os.environ.items() if "proxy" not in k.lower()}   # diňe Xray arkaly
@@ -1771,6 +1813,15 @@ def hunt_test(codes, threads=40, batch=80, port0=21000, timeout=6):
                 return
             def one(ic):
                 i, c = ic
+                if cc:   # çykyş ýurdy (ady däl — hakyky çykyş IP)
+                    for u_ in ("http://ip-api.com/line/?fields=countryCode", "https://ipinfo.io/country"):
+                        try:
+                            r = subprocess.run(["curl", "-s", "--noproxy", "", "-m", str(timeout), "-x", f"socks5h://127.0.0.1:{port_base + i}", u_],
+                                               capture_output=True, text=True, timeout=timeout + 4, env=env_)
+                            v_ = r.stdout.strip().upper()
+                            if re.fullmatch(r"[A-Z]{2}", v_): return c, v_
+                        except Exception: pass
+                    return c, ""
                 try:
                     r = subprocess.run(["curl", "-s", "--noproxy", "", "-o", "/dev/null", "-m", str(timeout), "-w", "%{http_code} %{time_total}",
                                         "-x", f"socks5h://127.0.0.1:{port_base + i}", HUNT_URL], capture_output=True, text=True, timeout=timeout + 4, env=env_)
@@ -2495,7 +2546,8 @@ def app_sync(force=False):
                 if hp_: php.add(hp_)
                 if code_key(c) not in keys: keys.add(code_key(c)); codes.append(c)
         plast = {k_: v_ for k_, v_ in plast.items() if k_ in {hashlib.md5(u.encode()).hexdigest()[:8] for u in psubs}}
-        codes = [c for c in codes if not app_is_game(c) or app_x_hp(c) in php]   # 1.47.16: PUBG/oýun serwerleri diňe Premium abunasyndan (kanaldan / kod awyndan tapylan PUBG däl)
+        ru_ok_ = app_ru_proven(cfg)
+        codes = [c for c in codes if not app_is_game(c) or app_x_hp(c) in php or app_x_hp(c) in ru_ok_]   # 1.47.17: PUBG — Premium abunasy (diňe Premium-da) ýa-da kanaldan synalyp çykyşy Russiýa subut edilen (Free)
         keys = {code_key(c) for c in codes}
         try:   # 1.47.15: her serweriň çeşmesi (diňe eýesiniň admin panelinde görünýär — ulanyjylara gitmeýär)
             hs_ = {}
@@ -2514,7 +2566,7 @@ def app_sync(force=False):
           except Exception as e: log.info("prem fill: %s", e)
         free_ = app_free_pubg(codes, free_)   # 1.47: mugt adaty serwerlerde PUBG ýok
         fb_ = None; RUN["free_hps"] = list(free_)   # 1.47.15: Premium-dan mugta wagtlaýyn serwer berilmeýär (eýesiniň islegi) — diňe PUBG/Russiýa düzgüni (aşakda) galýar
-        free_ = app_free_pubg(codes, free_, cfg.get("hp_ms"), add=not cfg.get("pubg_free_off"))   # 1.47: Premium-da 2+ PUBG bolsa biri mugta (eýesi öçürip bilýär — trafik köp bolanda)
+        free_ = app_free_pubg(codes, free_, cfg.get("hp_ms"), add=False)   # 1.47.17: Premium-yň Russiýa/PUBG serweri diňe Premium-da galýar   # 1.47: Premium-da 2+ PUBG bolsa biri mugta (eýesi öçürip bilýär — trafik köp bolanda)
         if (fb_ or {}).get("hp") != (cfg.get("fborrow") or {}).get("hp"): vlog(f"🔁 Mugt serwer: {'Premium-dan wagtlaýyn ' + fb_['hp'] if fb_ else 'wagtlaýyn Premium serwer yzyna alyndy'}")   # 1.43.2: mugt — her ýurtdan iň gowy işleýän bir kod + kanal + 2 PUBG
         try:   # 1.47.17: Türkmenistanda telefonlarda işleýändigi ölçülen kodlar sanawyň başynda — programma ilki şolary barlaýar (9 s içinde işleýän tapylsyn)
             hm_ = cfg.get("hp_ms") or {}
@@ -2598,17 +2650,31 @@ def app_publish(abi, ver, data):
     app_sync(True)
     return fid
 
-def apk_head_ver(url):
-    """1.45.4: sabit salgy (meselem http://IP:8091/TurkmenVPN.apk) — serwer häzir haýsy faýly berýär: Content-Disposition-dan wersiýa."""
+def apk_head_ver(url, fn=False):
+    """1.45.4: sabit salgy (meselem http://IP:8091/TurkmenVPN.apk) — serwer häzir haýsy faýly berýär: Content-Disposition-dan wersiýa.
+    1.47.17: fn=True — (wersiýa, faýl ady)."""
     try:
         req = urllib.request.Request(url, method="HEAD", headers={"User-Agent": "Mozilla/5.0"})
         with urllib.request.urlopen(req, timeout=12) as r:
             cd = r.headers.get("Content-Disposition") or ""
         m = re.search(r'filename="?([^";]+)', cd)
         mv = re.search(r"(\d+\.\d+(?:\.\d+)?)", m.group(1)) if m else None
-        return mv.group(1) if mv else None
+        v_ = mv.group(1) if mv else None
+        return (v_, m.group(1).strip() if v_ else None) if fn else v_
     except Exception as e:
-        log.info("apk head %s: %s", url, e); return None
+        log.info("apk head %s: %s", url, e); return (None, None) if fn else None
+
+def apk_is_latest(url):
+    """1.47.17: hemişe iň täze APK berýän sabit salgy (/turkmenvpn.apk, /latest.apk)."""
+    return urllib.parse.unquote(str(url or "").split("?")[0].rstrip("/").rsplit("/", 1)[-1]).lower() in ("turkmenvpn.apk", "latest.apk")
+
+def app_ul_url(ul_):
+    """1.47.17: programma sabit salgydan däl, wersiýaly faýldan ýüklesin (TurkmenVPN-1.47.17.apk) — ýükleme ýarym galyp, VPS-e täze APK goýulsa
+    galan bölegi başga faýldan goşulmasyn (bozuk APK / täzeden 0%)."""
+    u_, fn_ = ul_.get("url") or "", ul_.get("fn") or ""
+    if fn_ and apk_is_latest(u_) and re.search(r"(?<![\d.])" + re.escape(str(ul_.get("ver") or "-")) + r"(?!\.?\d)", fn_):
+        return u_.split("?")[0].rstrip("/").rsplit("/", 1)[0] + "/" + urllib.parse.quote(fn_)
+    return u_
 
 def app_online_now(fid):
     """1.47: soňky 10 minutda VPN-i işleýänler (ntfy.sh signallary — diňe 11 minutlyk, ýeňil)."""
@@ -2655,10 +2721,12 @@ def app_min_ver(cfg):
 def app_upd_link_check():
     """1.45.4: VPS-e täze APK goýulsa — sabit salgydaky wersiýa özi täzelenýär (link üýtgemeýär). Dönüş: täze wersiýa ýa-da None."""
     ul_ = app_cfg(load_db()).get("upd_link") or {}
-    if not ul_.get("url") or not ul_.get("auto"): return None
-    v_ = apk_head_ver(ul_["url"]); vk = lambda v: [int(x) if x.isdigit() else 0 for x in str(v or "0").split(".")]
-    if not v_ or vk(v_) <= vk(ul_.get("ver")): return None
-    mutate(lambda d: d.setdefault("app", {}).setdefault("upd_link", {}).update({"ver": v_, "ts": int(time.time())}))
+    if not ul_.get("url") or not (ul_.get("auto") or apk_is_latest(ul_["url"])): return None
+    v_, fn_ = apk_head_ver(ul_["url"], True); vk = lambda v: [int(x) if x.isdigit() else 0 for x in str(v or "0").split(".")]
+    if v_ and v_ == str(ul_.get("ver")) and fn_ and fn_ != ul_.get("fn"):   # 1.47.17: şol wersiýa, faýl ady täze (wersiýaly salgy üçin)
+        mutate(lambda d: d.setdefault("app", {}).setdefault("upd_link", {}).update({"fn": fn_})); RUN["app_dirty"] = True; return None
+    if not v_ or not ul_.get("auto") or vk(v_) <= vk(ul_.get("ver")): return None
+    mutate(lambda d: d.setdefault("app", {}).setdefault("upd_link", {}).update({"ver": v_, "fn": fn_, "ts": int(time.time())}))
     RUN["app_dirty"] = True; vlog(f"📦 VPS-de täze APK: {v_} — programa ýaýradyldy")
     return v_
 
@@ -3544,7 +3612,7 @@ Ulanyjynyň iň soňky habaryna jogap ber. Salamlaşsa ýa-da «sen kim» diýse
 FAKTLAR:
 - Programma mugt: her birikme 1 sagat dowam edýär (profilde nigini üýtgedenlere 1,5 sagat), soň täzeden birigip bolýar. Premium bilen çäk ýok.
 - Mugt ulanyjylar: «Serwerler» sahypasyndaky «Awtomatik» — iň gowy mugt serwere özi birikýär (mugt serwerleriň sanawy görkezilmeýär), birikme wagty çäkli.
-- PUBG serwerleri DIŇE Premium üçin. Mugt ulanyjylar üçin PUBG serweri ÝOK.
+- PUBG serwerleri: mugt ulanyjylar üçin hem BAR (Free bölüminde «🎮 PUBG» / «🇷🇺 Russia» — synalyp çykyşy Russiýa bolan serwerler; käwagt bolmasa birnäçe minutdan täzeden barla). Premium-da aýratyn, has durnukly PUBG serwerleri bar.
 - Premium: ähli serwerler («Premium» we «PUBG» bölümleri), wagt çägi ýok, profilde we chatda ýalpyldaýan 👑 Premium nyşany.
 - Premium bahasy: 1 hepde — 50 TMT, 1 aý — 100 TMT, 1 ýyl — 700 TMT (iň amatlysy ýyllyk).
 - Premium satyn almak: baş sahypanyň ýokarsyndaky «👑 Premium satyn al» düwmesi → möhleti we satyjyny saýla → oňa ýaz. Satyjy tölegden soň Premium-y siziň profiliňize özi berýär. Sen özüň Premium berme; töleg maglumaty diňe aşakdaky «PREMIUM SATYN ALMAK» bölümindäki, başga oýlap tapma.
@@ -3556,11 +3624,11 @@ FAKTLAR:
 - «Dostuňy çagyr»: dostuň programmany açyp seniň kodyňy (TM-XXXXX) ýazsa, saňa 1 gün wagt çäksiz; her täze dost +1 gün (bu Premium däl).
 - «Günlük sowgat»: 7 gün yzygiderli basylsa 2 gün wagt çäksiz (Premium däl).
 - Programma pozulsa: tkmvpnn@gmail.com salgysyna «vpn» diýip hat ýaz — ýükläp almak linki geler (VPN-siz açylýar).
-- Täze wersiýa çykanda programma özi soraýar — «Hawa» bas.
+- Täze wersiýa çykanda programma özi soraýar — «Hawa» bas: turkmenvpn.ru saýty açylýar, şol ýerden ýükläp gurnaň (köne programmany pozmaň, üstünden gurnalýar). Saýt açylmasa VPN-e birigip açyň.
 - «Global chat» — ähli ulanyjylaryň umumy çaty.
 - Mugt birikmek: baş sahypanyň aşagyndaky «Awtomatik · 🎁 MUGT KOD» kartasy (ýa-da Serwerler → «Awtomatik») — basyp, soň uly düwmä bas. Mugt kod BAR, VPN diňe pully däl.
 - Premium ulanyjylarda baş sahypada «👑 Premium / Free» saýlaýjy bar; Premium bölümindäki ähli serwerler Premium-a degişli (👑).
-- PUBG: baş sahypadaky «PUBG» düwmesi (Premium). PUBG serwerleri jogap bermese (N/A) düwme özi öçýär we birikme üýtgemeýär — birnäçe minutdan täzeden synanyş.
+- PUBG: baş sahypadaky «PUBG» düwmesi (mugt hem, Premium hem). PUBG serwerleri jogap bermese (N/A) düwme özi öçýär we birikme üýtgemeýär — birnäçe minutdan täzeden synanyş.
 - Her ulanyjynyň 5 harply @belgisi bar (mysal @kvrom): profilde adyň aşagynda (basanda göçürilýär).
 - Ulanyjy gözlemek: Menýu (☰) açylanda iň ýokarda gözleg — nik ýa-da @belgi ýaz.
 - Derejeler: 15 dereje (Bürünç I … Rowaýat); bal ýygnadygyňça dereje we profil çarçuwasy owadanlaşýar. Jikme-jigi: profil → Dereje («Ählisi»).
@@ -5533,6 +5601,7 @@ async def post_init(app):
     app.bot_data["apptg"] = asyncio.create_task(app_tg_loop())
     app.bot_data["hunt"] = asyncio.create_task(hunt_loop(app))   # 1.46: kod awy
     app.bot_data["online"] = asyncio.create_task(app_online_loop(app))   # 1.47: onlaýn sany her minut
+    app.bot_data["rucheck"] = asyncio.create_task(app_ru_loop(app))   # 1.47.17: kanal kodlarynyň çykyş ýurdy
     app.bot_data["mutq"] = asyncio.create_task(app_mutq_loop(app))   # 1.47: toplumlaýyn ýazgylar
     app.bot_data["leader"] = asyncio.create_task(leader_loop(app))   # 1.47: diňe bir VPS-de bot
     try: app_mut(lambda x: x.pop("fs_fast", None))   # 1.47: «çalt rejim» aýryldy
