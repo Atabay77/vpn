@@ -1221,8 +1221,9 @@ TM_CNAME = {"nl": "Niderlandlar", "fi": "Finlýandiýa", "gb": "Beýik Britaniý
 
 def app_is_game(c):
     """Oýun (PUBG) kody: adynda 🎮 ýa-da pubg/gaming/oýun/game."""
-    if str(c).strip().lower().startswith("vless://"): return False   # 1.47.16: PUBG-da vless ýok (diňe ss, hy2 we beýlekiler) — adaty serwer bolýar
     nm = orig_name(c)
+    if str(c).strip().lower().startswith("vless://"):   # 1.47.16: PUBG-da vless ýok (diňe ss, hy2 we beýlekiler) — adaty serwer bolýar
+        return bool(re.search(r"🎮 tm$|· tm · PUBG \d+ 🎮$", nm.strip()))   # 1.47.18: ýöne telefonlarda PUBG (Frankfurt) pingi gowy subut edilen kanal vless kody — PUBG
     return "🎮" in nm or "🇷🇺" in nm or "🇺🇿" in nm or "🇰🇿" in nm or bool(re.search(r"pubg|gaming|oýun|game|uzbek|kazak", nm, re.I))   # 1.45.2: Russiýa serwerleri — PUBG bölüminde (1.47: Özbegistan / Gazagystan hem)
 
 def app_prem_fill(codes, free_, cfg, lo=15, hi=20, keep_free=3):
@@ -1448,14 +1449,13 @@ def app_eu_ms(a, now=None):
     return out
 
 def app_eu_good(a, now=None):
-    """1.47.18: Russiýa däl, ýöne PUBG-da Russiýa ýaly gowy ms berýän kanal kodlary (vless däl): Frankfurt pingi subut edilen
+    """1.47.18: Russiýa däl, ýöne PUBG-da Russiýa ýaly gowy ms berýän kanal kodlary (vless hem): Frankfurt pingi subut edilen
     Russiýa serwerleriniň iň gowusyndan +15 ms-den köp däl. Russiýa ölçegi ýok bolsa — hiç biri (deňeşdirer ýaly zat ýok)."""
     eu = app_eu_ms(a, now); ru = app_ru_proven(a, now)
     ref = [eu[h] for h in ru if h in eu]
     if not ref: return set()
     lim = min(ref) + APP_EU_MARGIN
-    ch = {app_x_hp(v.get("c") or "") for v in (a.get("xcodes") or {}).values()
-          if v.get("src") in ("tg", "tgs") and not str(v.get("c") or "").lower().startswith("vless://")}
+    ch = {app_x_hp(v.get("c") or "") for v in (a.get("xcodes") or {}).values() if v.get("src") in ("tg", "tgs")}   # vless hem (eýesiniň islegi: ms gowy bolsa)
     return {h for h, ms in eu.items() if h in ch and h not in ru and ms <= lim}
 
 def app_x_named(base_codes, a):

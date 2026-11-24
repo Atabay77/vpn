@@ -117,10 +117,10 @@ object State {
     }
 
     /** 1.47.18: PUBG (Ýewropa — Frankfurt) pingi: telefon → VPN serwer → Frankfurt. Türkmen internetinden haýsy serweriň PUBG-da gowy
-     *  ms berýändigini bilmek üçin (diňe Russiýa däl). Iň çalt 20 serwer (vless däl), netije bota «pe». */
+     *  ms berýändigini bilmek üçin (diňe Russiýa däl). Iň çalt 20 serwer (1.47.19: vless hem), netije bota «pe». */
     const val EU = "http://ec2.eu-central-1.amazonaws.com/ping"
     private fun pingEu(ctx: Context) {
-        val xs = Sub.list.filter { it.proto != "VLESS" && (pings[it.key] ?: -1L) > 0 }.sortedBy { pings[it.key] ?: Long.MAX_VALUE }.take(20)
+        val xs = Sub.list.filter { (pings[it.key] ?: -1L) > 0 }.sortedBy { pings[it.key] ?: Long.MAX_VALUE }.take(20)
         if (xs.isEmpty()) return
         Thread {
             val got = ConcurrentHashMap<String, Long>()
