@@ -25,3 +25,8 @@
 - **Siteden inen APK «paket geçersiz / поврежден»** (çözüldü): Chrome dosyayı 3 parçaya bölüp paralel indiriyor, Türkmen internetinde
   orta parça kopunca 12 MB sıfır kalıyordu (boyut doğru görünür). Çözüm: `relay/apk_srv.py` tam (Range'siz) cevapta
   `Accept-Ranges` göndermez; Range isteklerine 206 verir (kaldığı yerden devam çalışır). Bunu geri ekleme.
+
+## Türkmenistan'da VPN'siz açılan siteler
+- Liste ve test yöntemi: `docs/tm_acik_siteler.md` (kullanıcının telefonundan test). Dosya / site / sunucu seçerken önce ona bak.
+- Önemli: github.com ve raw.githubusercontent.com TM'de VPN'siz AÇILMIYOR; turkmenvpn.ru alan adı engelli. İndirme: VPS IP'si (http) ya da `da.gd/tmvpn2` → sites.google.com.
+
