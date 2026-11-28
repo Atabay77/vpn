@@ -103,7 +103,7 @@ object Cfg {
     }
 
     /** Tam ayar. tun=true ise VPN arayüzü (TUN) girişi eklenir; false ise yalnız ms ölçümü için. */
-    fun full(uri: String, tun: Boolean, socks: Int = 0): String {
+    fun full(uri: String, tun: Boolean, socks: Int = 0, dnsck: Int = 0): String {
         val c = JSONObject()
         c.put("log", JSONObject().put("loglevel", "warning"))
         // 1.47.20: DNS — her sorag täze TCP birikmesi (tcp://). Öň DoH bir uzak birikmäni ulanýardy: 1–2 minutdan ol sessiz kesilýär
@@ -117,6 +117,9 @@ object Cfg {
             // (SOCKS däl: Android-yň köne SOCKS müşderisi salgyny telefonda çözýär, Türkmenistanda bu ýapyk bolup biler)
             if (socks > 0) ins.put(JSONObject().put("tag", "loc").put("protocol", "http").put("listen", "127.0.0.1").put("port", socks)
                 .put("settings", JSONObject().put("allowTransparent", false)))
+            // 1.47.31: DNS barlagy — telefonyň DNS soraglary ýaly (dns-out → ýokardaky DNS serwerleri). ms bar, ýöne DNS işlemese saýtlar açylmaýar.
+            if (dnsck > 0) ins.put(JSONObject().put("tag", "dnsck").put("protocol", "dokodemo-door").put("listen", "127.0.0.1").put("port", dnsck)
+                .put("settings", JSONObject().put("address", "1.1.1.1").put("port", 53).put("network", "udp")))
             c.put("inbounds", ins)
         }
         c.put("outbounds", JSONArray()
@@ -126,10 +129,13 @@ object Cfg {
         c.put("routing", JSONObject().put("domainStrategy", "AsIs").put("rules", JSONArray()
             .put(JSONObject().put("type", "field").put("inboundTag", JSONArray().put("tun"))
                 .put("port", "53").put("outboundTag", "dns-out"))
+
             .put(JSONObject().put("type", "field").put("ip", JSONArray()
                 .put("10.0.0.0/8").put("172.16.0.0/12").put("192.168.0.0/16").put("127.0.0.0/8")
                 .put("169.254.0.0/16").put("fc00::/7").put("fe80::/10"))
                 .put("outboundTag", "direct"))))
+        if (tun && dnsck > 0) c.getJSONObject("routing").getJSONArray("rules")
+            .put(JSONObject().put("type", "field").put("inboundTag", JSONArray().put("dnsck")).put("outboundTag", "dns-out"))   // 1.47.31: DNS barlagy
         return c.toString()
     }
 }

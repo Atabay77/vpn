@@ -89,19 +89,35 @@ object State {
         if (s.proto != "Hysteria" && !tcpOk(s, 1400)) -1L else Libv2ray.measureOutboundDelay(Cfg.full(s.uri, false), PING)
     }.getOrDefault(-1L).let { if (it > 0) it else -1L }.also { pings[s.key] = it }
 
+    /** 1.47.31: köp serwer birden — Happ ýaly (bir Xray, KeepAlive, Pinger). Pinger işläp bilmese köne usul (her serwer aýratyn).
+     *  each — her netije; stop — true bolsa galanlaryna garaşylmaýar. Netijeler pings-e ýazylýar (köne bahalar öçürilmeýär — «n/a» ýalpyldamasyn). */
+    fun pingAll(list: List<Server>, each: ((Server, Long) -> Unit)? = null, stop: ((Server, Long) -> Boolean)? = null, maxWaitMs: Long = 9000): Map<String, Long> {
+        if (list.isEmpty()) return emptyMap()
+        val cb: (Server, Long) -> Unit = { s, v -> pings[s.key] = if (v > 0) v else -1L; each?.invoke(s, v) }
+        var r = Pinger.run(list, each = cb, stop = stop, maxWaitMs = maxWaitMs)
+        if (r == null) {   // başga ölçeg dowam edýär — gutarmagyna garaş, soň ýene synanyş
+            val t0 = System.currentTimeMillis()
+            while (System.currentTimeMillis() - t0 < maxWaitMs && r == null) { Thread.sleep(150); r = Pinger.run(list, each = cb, stop = stop, maxWaitMs = maxWaitMs) }
+        }
+        if (r == null || (r.isEmpty() && list.isNotEmpty())) {   // Xray açylmady — köne usul
+            val got = ConcurrentHashMap<String, Long>(); val done = java.util.concurrent.atomic.AtomicBoolean(false)
+            val pool = java.util.concurrent.Executors.newFixedThreadPool(minOf(list.size, 8))
+            list.forEach { s -> pool.execute { if (!done.get()) { val v = ping(s); got[s.key] = v; runCatching { each?.invoke(s, v) }; if (stop?.invoke(s, v) == true) done.set(true) } } }
+            pool.shutdown(); val end = System.currentTimeMillis() + maxWaitMs + 6000
+            while (!pool.isTerminated && !done.get() && System.currentTimeMillis() < end) pool.awaitTermination(80, java.util.concurrent.TimeUnit.MILLISECONDS)
+            pool.shutdownNow(); r = got
+        }
+        pingAt = System.currentTimeMillis()
+        return r
+    }
+
     /** Arka planda bütün adayları ölçer (açılışta). */
     @Volatile var warmAt = 0L   // 1.47.9: açylyşdaky barlag dowam edýär (iň köp 30 s) — şol wagt birikmek garaşdyrylýar
     fun warming() = System.currentTimeMillis() - warmAt < 30_000L
     fun warm() {
-        val c = cands(); if (c.isEmpty()) return
+        val c = Sub.list.toList(); if (c.isEmpty()) return   // 1.47.31: ähli serwerler (Free, Premium, PUBG) — sahypa açylanda ms taýýar bolsun
         warmAt = System.currentTimeMillis()
-        try { warm0(c) } finally { warmAt = 0L }
-    }
-    private fun warm0(c: List<Server>) {
-        val pool = java.util.concurrent.Executors.newFixedThreadPool(minOf(c.size, 12))
-        c.forEach { s -> pool.execute { ping(s) } }
-        pool.shutdown(); pool.awaitTermination(15, java.util.concurrent.TimeUnit.SECONDS)
-        pingAt = System.currentTimeMillis()
+        try { pingAll(c) } finally { warmAt = 0L }
     }
 
     @Volatile private var repAt = 0L
@@ -123,10 +139,9 @@ object State {
         val xs = Sub.list.filter { (pings[it.key] ?: -1L) > 0 }.sortedBy { pings[it.key] ?: Long.MAX_VALUE }.take(20)
         if (xs.isEmpty()) return
         Thread {
-            val got = ConcurrentHashMap<String, Long>()
-            val pool = java.util.concurrent.Executors.newFixedThreadPool(minOf(xs.size, 6))
-            xs.forEach { s -> pool.execute { got[s.key] = runCatching { Libv2ray.measureOutboundDelay(Cfg.full(s.uri, false), EU) }.getOrDefault(-1L).let { if (it > 0) it else -1L } } }
-            pool.shutdown(); pool.awaitTermination(40, java.util.concurrent.TimeUnit.SECONDS)
+            var got: Map<String, Long>? = null
+            for (i in 0 until 20) { got = Pinger.run(xs, host = "ec2.eu-central-1.amazonaws.com", path = "/ping", parallel = 8, maxWaitMs = 15000); if (got != null) break; Thread.sleep(500) }   // 1.47.31: bir Xray (Happ ýaly)
+            if (got == null) return@Thread
             if (got.values.none { it > 0 }) return@Thread
             val o = org.json.JSONObject(); got.forEach { (k, v) -> o.put(k.substringAfter('|'), v) }
             Msg.send(ctx, org.json.JSONObject().put("k", "pe").put("p", o))
@@ -143,10 +158,7 @@ object State {
         val xs = Sub.list.filter { isExtra(it) }
         if (xs.isEmpty()) return
         Thread {
-            val got = ConcurrentHashMap<String, Long>()
-            val pool = java.util.concurrent.Executors.newFixedThreadPool(minOf(xs.size, 4))
-            xs.forEach { s -> pool.execute { got[s.key] = ping(s) } }
-            pool.shutdown(); pool.awaitTermination(25, java.util.concurrent.TimeUnit.SECONDS)
+            val got = pingAll(xs, maxWaitMs = 12000)   // 1.47.31
             if (got.values.none { it > 0 } && !online(ctx)) return@Thread   // internet ýok — «işlemeýär» diýilmesin
             val o = org.json.JSONObject(); got.forEach { (k, v) -> o.put(k.substringAfter('|'), v) }
             Msg.send(ctx, org.json.JSONObject().put("k", "pr").put("p", o))
@@ -176,29 +188,21 @@ object State {
      * yanıt verenlerden biri seçilir (ilk yanıttan sonra kısa süre beklenir, iyi olanlar arasından rastgele).
      * Hiçbiri yanıt vermezse null: ms vermeyen koda asla bağlanılmaz.
      */
+    const val FAST_MS = 200L   // 1.47.31: şundan çalt ilkinji serwere derrew birikilýär (eýesiniň islegi — garaşdyrmasyn)
     fun best(ctx: Context): Server? {
         noPing = false; noNet = false
-        if (!online(ctx)) { noNet = true; return null }
         val c = cands()
         if (c.isEmpty()) return null
+        // 1) soňky 2 minutda ölçenen we 200 ms-den çalt serwer bar bolsa — derrew (täzeden ölçemezden)
+        if (System.currentTimeMillis() - pingAt < 120_000L)
+            c.filter { (pings[it.key] ?: -1L) in 1..FAST_MS }.minByOrNull { pings[it.key] ?: Long.MAX_VALUE }?.let { ms = pings[it.key] ?: 0L; return it }
+        // 2) ölçeg: 200 ms-den çalt ilkinji serwer tapylan badyna — şoňa
         val got = ConcurrentHashMap<Server, Long>()
-        val pool = java.util.concurrent.Executors.newFixedThreadPool(minOf(c.size, 12))
-        c.forEach { s -> pool.execute { ping(s).takeIf { it > 0 }?.let { got[s] = it } } }
-        pool.shutdown()
-        val end = System.currentTimeMillis() + 9000
-        var first = 0L
-        while (System.currentTimeMillis() < end && !pool.isTerminated) {
-            if (got.isNotEmpty() && first == 0L) first = System.currentTimeMillis()
-            if (first > 0 && System.currentTimeMillis() - first > 1200) break   // ilk yanıttan sonra 1.2 sn daha
-            Thread.sleep(80)
-        }
-        pool.shutdownNow()
-        pingAt = System.currentTimeMillis()
+        pingAll(c, each = { s, v -> if (v > 0) got[s] = v }, stop = { _, v -> v in 1..FAST_MS }, maxWaitMs = 8000)
         if (got.isEmpty()) { if (online(ctx)) noPing = true else noNet = true; return null }
-        val min = got.values.min()
-        val good = got.filter { it.value <= min * 2 + 150 }.keys.toList()   // en iyiye yakın olanlar
-        val last = active?.key
-        return (good.filter { it.key != last }.ifEmpty { good }).random().also { ms = got[it] ?: 0L }     // her seferinde aynısına takılmasın
+        val pick = got.filter { it.value <= FAST_MS }.minByOrNull { it.value }?.key ?: got.minByOrNull { it.value }!!.key
+        ms = got[pick] ?: 0L
+        return pick
     }
     const val PING = "https://www.gstatic.com/generate_204"
 }
@@ -251,10 +255,26 @@ class Svc : VpnService() {
     private val AUTO_SWITCH = false   // 1.47.9: birikme wagtynda başga serwere awtomatik geçmek öçürildi
     @Volatile private var wasOn = false   // 1.28: şu gezek birikme bolupdy (kill switch diňe şonda petikleýär)
 
+    @Volatile private var dnsPort = 0; @Volatile private var dnsBad = 0; @Volatile private var dnsAt = 0L
     private fun health() {
         val c = core ?: return
         val v = runCatching { c.measureDelay(State.PING) }.getOrDefault(-1L)
-        if (v in 1..2999) { State.ms = v; bad = 0; State.dead = false; return }
+        if (v in 1..2999) {
+            State.ms = v; bad = 0
+            // 1.47.31: ms bar, ýöne DNS işlemeýär — telefonda hiç zat açylmaýar (mugt serwerlerde bolýar). 2 gezek yzly-yzyna — işlemeýär diýip bellenýär.
+            val now = System.currentTimeMillis()
+            if (dnsPort > 0 && now - dnsAt > 45_000L) {
+                dnsAt = now
+                if (Dns.ok(dnsPort, 7000)) dnsBad = 0
+                else if (++dnsBad >= 2 && State.online(this)) {
+                    State.dead = true
+                    State.active?.let { a -> Msg.send(this, org.json.JSONObject().put("k", "pr").put("p", org.json.JSONObject().put(a.hp, -1)).put("why", "dns")) }
+                    return
+                }
+            }
+            if (dnsBad < 2) State.dead = false
+            return
+        }
         if (++bad >= 2) {
             State.dead = State.online(this)   // telefonyň öz interneti ýok bolsa serwer günäkär däl
             val a = State.active   // 1.46.8: bagly serwer jogap bermeýär — bota derrew (mugt serwerler bloklananda Premium-dan biri berilsin)
@@ -303,7 +323,8 @@ class Svc : VpnService() {
             if (sel != null) State.ms = State.pings[sel.key]?.takeIf { it > 0 && System.currentTimeMillis() - State.pingAt < 5 * 60_000 } ?: 0L
             State.active = s
             val port = 20000 + java.security.SecureRandom().nextInt(20000)
-            val cfg = Cfg.full(s.uri, true, port)
+            val cfg = Cfg.full(s.uri, true, port, port + 1)
+            dnsPort = port + 1; dnsBad = 0; dnsAt = System.currentTimeMillis()
             Libv2ray.initCoreEnv(filesDir.absolutePath, "")
             val b = Builder().setSession(getString(R.string.app_name)).setMtu(1500)
                 .addAddress("172.19.0.1", 30).addRoute("0.0.0.0", 0)

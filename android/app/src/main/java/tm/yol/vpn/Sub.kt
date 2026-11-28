@@ -44,6 +44,10 @@ object Sub {
     @Volatile var kdev: Map<String, String> = emptyMap()               // key özeti → baglanan telefon(lar), otur bilen
     @Volatile var newsFs: List<Triple<String, Long, String>>? = null   // Firestore-dan (n/list) — täzeräk, abuna faýlyndakydan öň
     @Volatile var osel = false   // 1.47.30: eýesi hem Premium satyjy (#tvosel)
+    @Volatile var gp = false     // 1.47.31: Global chat bot arkaly (#tvgp)
+    @Volatile var tg = "https://t.me/TurkmenVPN_Channel"   // 1.47.31: baş sahypadaky Telegram nyşany (#tvtg)
+    @Volatile var rt = ""        // 1.47.31: programmanyň bahasy we saýlanan teswirler (#tvrt, JSON)
+    @Volatile var pbuy = ""      // 1.47.31: Premium alanlaryň profilleri (#tvpb, JSON)
     @Volatile var site = "https://turkmenvpn.ru"   // 1.47.27: täze wersiýa ýüklenýän sahypa (#tvsite — bloklansa bot çalşýar)
     @Volatile var ubans: Set<String> = emptySet()                      // doly gadagan edilenler (diňe VPN, 20 min)
     @Volatile var pin = ""   // 1.46.4: Global chatda berkidilen habar (JSON: id, n, t)
@@ -73,7 +77,7 @@ object Sub {
     fun meta(text: String) {
         val k = HashMap<String, Long>(); val u = HashMap<String, Pair<String, String>>(); var a: Pair<String, String>? = null
         val kd = HashMap<String, String>(); val kn2 = HashMap<String, Int>(); val rl = HashMap<String, Pair<String, String>>(); val ub = HashSet<String>(); val nw = ArrayList<Triple<String, Long, String>>(); var on = 0; var se = 60; var fa = false; var fc = ""; var aiOn = false; val bn = HashSet<String>(); var rel = ""; var fp = ""; var fk = ""; var fd = "(default)"; var fb = ""; val fr = HashSet<String>(); val bo = HashSet<String>(); var pk: HashSet<String>? = null; var pn = ""
-        var os2 = false
+        var os2 = false; var gp2 = false; var rt2 = ""; var pb2 = ""
         for (l in body(text).lineSequence()) {
             val p = l.trim().split(Regex("\\s+"))
             if (p.size >= 3 && p[0] == "#tvk:") p[2].toLongOrNull()?.let { k[p[1]] = it; if (p.size >= 4 && p[3] != "-") kd[p[1]] = p[3]; if (p.size >= 5) p[4].toIntOrNull()?.let { n -> kn2[p[1]] = n } }
@@ -82,6 +86,10 @@ object Sub {
             }
             if (p.size >= 2 && p[0] == "#tvkp:") pk = HashSet(p[1].split(',').filter { it.length >= 8 })
             if (p.size >= 2 && p[0] == "#tvosel:") os2 = p[1] == "1"
+            if (p.size >= 2 && p[0] == "#tvgp:") gp2 = p[1] == "1"
+            if (p.size >= 2 && p[0] == "#tvtg:" && Regex("^https://(t\\.me|telegram\\.me)/[A-Za-z0-9_+/\\-]{3,64}$").matches(p[1])) tg = p[1]
+            if (p.size >= 2 && p[0] == "#tvrt:") rt2 = runCatching { String(android.util.Base64.decode(p[1], android.util.Base64.URL_SAFE or android.util.Base64.NO_PADDING), Charsets.UTF_8) }.getOrDefault("")
+            if (p.size >= 2 && p[0] == "#tvpb:") pb2 = runCatching { String(android.util.Base64.decode(p[1], android.util.Base64.URL_SAFE or android.util.Base64.NO_PADDING), Charsets.UTF_8) }.getOrDefault("")
             if (p.size >= 2 && p[0] == "#tvsite:" && Regex("^https?://[\\w.\\-]+(:\\d+)?(/[\\w./\\-]*)?$").matches(p[1])) site = p[1]   // 1.47.27: ýükleme sahypasy (botdan)
             if (p.size >= 2 && p[0] == "#tvboth:") bo.addAll(p[1].split(',').map { it.trim() }.filter { it.contains(':') })
             if (p.size >= 2 && p[0] == "#tvfree:") fr.addAll(p[1].split(',').map { it.trim() }.filter { it.contains(':') })
@@ -101,7 +109,7 @@ object Sub {
             if (p.size >= 3 && p[0].startsWith("#tvu") && p[0].endsWith(":")) u[p[0].removePrefix("#tvu").removeSuffix(":")] = p[1] to p[2]
             if (p.size >= 2 && p[0] == "#tvad:") a = p[1] to Cfg.dec(p.getOrElse(2) { "" })
         }
-        osel = os2
+        osel = os2; gp = gp2; rt = rt2; pbuy = pb2
         keys = k; upd = u; ad = a; kdev = kd; kn = kn2; roles = rl; ubans = ub; news = newsFs ?: nw; online = on; sess = se; fast = fa; fcmApp = fc; ai = aiOn; bans = bn; relay = rel; fsProj = fp; fsKey = fk; fsDb = fd; fsBase = fb; free = fr; both = bo; pkeys = pk; pin = pn
     }
 

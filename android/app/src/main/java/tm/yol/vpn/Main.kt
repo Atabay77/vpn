@@ -2,6 +2,7 @@ package tm.yol.vpn
 
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.app.ActivityManager
 import android.app.AlertDialog
 import android.app.DownloadManager
 import android.app.StatusBarManager
@@ -205,6 +206,7 @@ open class Main : Activity() {
                 }
                 measureLive()
             }
+            autoPing()   // 1.47.31
             watchDownload()
             h.postDelayed(this, 1000)
         }
@@ -222,6 +224,11 @@ open class Main : Activity() {
     }
 
     private fun push(o: JSONObject) { Msg.events.add(o) }
+    /** 1.47.31: gowşak telefon (RAM ≤ 4 GB ýa-da az ýadro) — agyr effektler (bulanyk aýna, hemişelik animasiýalar) öçürilýär. */
+    private fun lite(c: android.content.Context): Boolean = runCatching {
+        val am = c.getSystemService(ActivityManager::class.java); val mi = ActivityManager.MemoryInfo().also { am.getMemoryInfo(it) }
+        am.isLowRamDevice || mi.totalMem < (4L shl 30) - (256L shl 20) || Runtime.getRuntime().availableProcessors() <= 4
+    }.getOrDefault(false)
 
     // ---------- JS köprüsi ----------
     inner class Bridge {
@@ -247,10 +254,10 @@ open class Main : Activity() {
             return JSONObject().put("dev", Msg.dev(c)).put("code", Msg.code(c)).put("ver", Msg.ver(c)).put("lang", Lang.cur)
                 .put("snd", Snd.on(c)).put("news", nw).put("ai", Sub.ai).put("online", Sub.online).put("bans", JSONArray(Sub.bans.toList()))
                 .put("key", Lic.saved(c) ?: "").put("model", Build.MANUFACTURER + " " + Build.MODEL).put("relay", Sub.relay.isNotEmpty() || Fs.on()).put("fs", Fs.on()).put("fsb", if (Fs.vps()) Sub.fsBase else Sub.fsProj)
-                .put("osel", Sub.osel).put("prem", Lic.prem(c)).put("pexp", Lic.exp(c) ?: -1L).put("pdevs", JSONArray(Lic.premDevs().toList())).put("pfree", Sub.free.isNotEmpty())
+                .put("osel", Sub.osel).put("tg", Sub.tg).put("rt", runCatching { JSONObject(Sub.rt) }.getOrNull() ?: JSONObject.NULL).put("pbuy", runCatching { JSONArray(Sub.pbuy) }.getOrNull() ?: JSONArray()).put("prem", Lic.prem(c)).put("pexp", Lic.exp(c) ?: -1L).put("pdevs", JSONArray(Lic.premDevs().toList())).put("pfree", Sub.free.isNotEmpty())
                 .put("dl", Sub.upd["l"]?.second?.takeIf { Upd.isLink(it) } ?: (Sub.upd["all"] ?: Sub.upd["64"] ?: Sub.upd["32"])?.let { runCatching { Sub.fileUrl(it.second) }.getOrNull() } ?: "")   // 1.44.3: salgy bar bolsa şol
                 .put("roles", JSONObject().apply { Sub.roles.forEach { (d, rn) -> put(d, JSONArray().put(rn.first).put(rn.second)) } })
-                .put("uban", Lic.banned(c)).put("gpin", runCatching { JSONObject(Sub.pin) }.getOrNull() ?: JSONObject.NULL)
+                .put("uban", Lic.banned(c)).put("clone", Lic.clone(c)).put("lite", lite(c)).put("gpin", runCatching { JSONObject(Sub.pin) }.getOrNull() ?: JSONObject.NULL)
                 .put("nkb", Lic.bonus(c)).put("kson", Lic.kill(c))
                 .put("disg", runCatching { packageManager.getComponentEnabledSetting(android.content.ComponentName(c, "tm.yol.vpn.Calc")) == android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED }.getOrDefault(false))
                 .put("adm", Msg.admPw(c) != null).put("admMe", Msg.admMe(c) ?: JSONObject()).toString()
@@ -294,6 +301,7 @@ open class Main : Activity() {
             }.start()
         }
         @JavascriptInterface fun test() = measure()
+        @JavascriptInterface fun srvPage(on: Boolean) { srvPage = on; if (on && System.currentTimeMillis() - State.pingAt > 15_000L) ui { measure(true) } }   // 1.47.31
         /** 1.19: açar satyn almak — töleg çekiniň suraty Firestore-a (gi/), sargyt bota. */
         @JavascriptInterface fun buy(json: String) {
             val o = runCatching { JSONObject(json) }.getOrNull() ?: return
@@ -428,24 +436,27 @@ open class Main : Activity() {
         if (Build.VERSION.SDK_INT >= 26) startForegroundService(i) else startService(i)
     }
 
-    private fun measure() {
+    /** 1.47.31: ähli serwerleriň (Free, Premium, PUBG) pingi — Happ ýaly bir Xray bilen; köne netijeler öçürilmeýär (sahypa «n/a» bilen ýalpyldamasyn).
+     *  silent — awtomatik (sahypa açyk / fonda): netije ýok bolsa duýduryş görkezilmeýär. */
+    private fun measure(silent: Boolean = false) {
         if (testing) return
-        val list = Sub.list.filter { State.allowed(this, it) }   // 1.46.2: Premium ýok — Premium serwerleriň pingi ölçenmeýär
+        val list = Sub.list.toList()
         if (list.isEmpty()) return
-        testing = true; State.pings.clear(); push(JSONObject().put("k", "srv"))
-        val pool = Executors.newFixedThreadPool(12)   // 1.47.16: has köp paralel — çalt ölçeg
-        var left = list.size
-        for (s in list) pool.execute {
-            State.ping(s)
-            synchronized(this) {
-                left--
-                if (left == 0) {
-                    testing = false; pool.shutdown(); State.pingAt = System.currentTimeMillis(); State.report(this)
-                    if (State.pings.values.none { it > 0 }) Thread { val on = State.online(this); ui { info(if (on) noCodes() else noNet()) } }.start()
-                }
-            }
-            push(JSONObject().put("k", "srv"))
-        }
+        testing = true; push(JSONObject().put("k", "srv"))
+        Thread {
+            var lastPush = 0L
+            try {
+                State.pingAll(list, each = { _, _ -> val n = System.currentTimeMillis(); if (n - lastPush > 250) { lastPush = n; push(JSONObject().put("k", "srv")) } })
+            } finally { testing = false }
+            push(JSONObject().put("k", "srv")); State.report(this)
+            if (!silent && State.pings.values.none { it > 0 }) { val on = State.online(this); ui { info(if (on) noCodes() else noNet()) } }
+        }.start()
+    }
+    @Volatile var srvPage = false   // 1.47.31: «Serwerler» sahypasy açyk — ping 30 sn-da bir özi täzelenýär
+    private fun autoPing() {
+        val now = System.currentTimeMillis()
+        if (testing || State.warming() || Sub.list.isEmpty()) return
+        if (now - State.pingAt > (if (srvPage) 30_000L else 120_000L)) measure(true)
     }
 
     private fun addTile() {

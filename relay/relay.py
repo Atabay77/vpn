@@ -93,6 +93,10 @@ fs_idx = {}                              # kolleksiýa → [(t, id)] (t boýunç
 fs_last = [0]
 BOTKEY = [os.environ.get("BOTKEY", "")]
 KEYFILE = os.path.join(DATA, "botkey")
+# 1.47.31: Global chat-a diňe bot ýazyp bilýär (programma habary bota iberýär, bot barlap goýýar) — modlanan programma
+# başganyň adyndan ýazyp / habar pozup bilmesin. Bot «/_glock» bilen açýar (köne wersiýalar täzelenenden soň).
+GLOCKFILE = os.path.join(DATA, "glock")
+GLOCK = [os.path.exists(GLOCKFILE)]
 # Firestore düzgünleri (subbot.py FS_RULES): kolleksiýa → (okap bolýar, täze resminama çägi, üýtgedip bolýar)
 RULE1 = {"m": (False, 9000, False), "g": (True, 5000, False), "gi": (True, 160000, False),
          "p": (True, 120000, True), "q": (True, 600000, True), "n": (True, 0, False)}
@@ -276,6 +280,7 @@ def fs_handle(h, method, path, body):
                 if who != "bot":
                     r = fs_rule(p)
                     lim = r[1] if r else 0
+                    if GLOCK[0] and p.split("/")[0] == "g": lim = 0   # 1.47.31: Global chat — diňe bot
                     allowed = bool(r) and ((r[2] and exists) or (not exists and lim > 0)) and b.startswith("v1.") and len(b) < lim
                     if not allowed: return fs_err(403, "PERMISSION_DENIED", "Missing or insufficient permissions.")
                 plan.append(("put", p, b))
@@ -338,7 +343,7 @@ class H(BaseHTTPRequestHandler):
 
     def do_GET(self):
         u = urlparse(self.path); parts = u.path.strip("/").split("/")
-        if u.path in ("/", "/health"): return self.send(200, ("ok 1.42 fs " + SID).encode())   # 1.40: wersiýa; 1.41: «fs» — Firestore meňzeşi; 1.42: bazanyň kimligi
+        if u.path in ("/", "/health"): return self.send(200, ("ok 1.42 fs " + SID + (" glock" if GLOCK[0] else "")).encode())   # 1.40: wersiýa; 1.41: «fs» — Firestore meňzeşi; 1.42: bazanyň kimligi
         if u.path.startswith("/v1/"): return self.fs("GET")
         if not rate(self.ip(), "g", RATE_GET): return self.send(429, b"kop")
         if len(parts) != 2 or parts[1] != "json" or not TOPIC.match(parts[0]): return self.send(404, b"yok")
@@ -364,7 +369,15 @@ class H(BaseHTTPRequestHandler):
     def do_POST(self):
         u = urlparse(self.path); t = u.path.strip("/")
         if u.path.startswith("/v1/"): return self.fs("POST")
+        if u.path == "/_glock":   # 1.47.31: bot Global chat gulpuny açýar / ýapýar
+            if fs_who(self) != "bot": return self.send(403, b"yok")
+            n = int(self.headers.get("Content-Length") or 0); on = (self.rfile.read(min(n, 8)) if n > 0 else b"").strip() == b"1"
+            GLOCK[0] = on
+            if on: open(GLOCKFILE, "w").close()
+            elif os.path.exists(GLOCKFILE): os.remove(GLOCKFILE)
+            return self.send(200, b"1" if on else b"0")
         if not TOPIC.match(t): return self.send(404, b"yok")
+        if GLOCK[0] and len(t) > 20 and t.startswith("tvpn") and t[20] == "g" and fs_who(self) != "bot": return self.send(403, b"bot")
         if not rate(self.ip(), "p", RATE_POST): return self.send(429, b"kop")
         _, _, mx = kind_of(t)
         n = int(self.headers.get("Content-Length") or 0)

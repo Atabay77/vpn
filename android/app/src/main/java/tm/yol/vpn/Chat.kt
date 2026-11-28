@@ -37,11 +37,20 @@ object Chat {
         val pr = p(c); val kf = KeyFactory.getInstance("EC")
         val got = runCatching {
             KeyPair(kf.generatePublic(X509EncodedKeySpec(unb64(pr.getString("pub", null)!!))), kf.generatePrivate(PKCS8EncodedKeySpec(unb64(pr.getString("priv", null)!!))))
-        }.getOrNull() ?: KeyPairGenerator.getInstance("EC").run { initialize(ECGenParameterSpec("secp256r1")); generateKeyPair() }.also {
+        }.getOrNull() ?: (stableKeys(c) ?: KeyPairGenerator.getInstance("EC").run { initialize(ECGenParameterSpec("secp256r1")); generateKeyPair() }).also {
             pr.edit().putString("pub", b64(it.public.encoded)).putString("priv", b64(it.private.encoded)).apply()
         }
         kp = got; return got
     }
+
+    /** 1.47.31: täze gurnalanda DM açary telefonyň öz kimliginden (ANDROID_ID — diňe şu programma görýär) çykarylýar:
+     *  programma pozulyp gaýtadan gurnalsa-da açar şol — köne habarlar okalýar, garşydaşlar täze açara geçmeli däl
+     *  (öň täze açar döreýärdi: gelen habarlar açylmaýardy, «täze habar bar» diýip boş söhbet görünýärdi). */
+    fun stableKeys(c: Context): KeyPair? = runCatching {
+        val aid = android.provider.Settings.Secure.getString(c.contentResolver, android.provider.Settings.Secure.ANDROID_ID)
+        if (aid.isNullOrBlank() || aid == "9774d56d682e549c") return null   // köne emulýator / näbelli
+        Ec.keyPair(sha(("tvdmk|" + c.packageName + "|" + aid).toByteArray()))
+    }.getOrNull()
     fun pub(c: Context): String = b64(keys(c).public.encoded)
 
     private val secrets = ConcurrentHashMap<String, String>()
@@ -123,19 +132,26 @@ object Chat {
     }
 
     @Volatile var watch: String? = null   // açyk otagyň garşydaşy
+    private val keyStale = java.util.Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>())   // 1.47.31: täze haýyş geldi — garşydaşyň açaryny täzeden al
 
     private fun pollRoom(c: Context, room: String, full: Boolean, peer0: String? = null) {
         if (!Fs.on()) return
         val r = rooms(c).optJSONObject(room)
         val peer = peer0 ?: r?.optString("p")?.takeIf { DEV.matches(it) } ?: return
         if (r?.optString("st") == "blk" && !full) return
-        val k = (if (full || r?.optString("k").isNullOrEmpty()) peerKey(c, peer, room) else r?.optString("k")) ?: return
-        val sec = secret(c, k) ?: return
+        var k = (if (full || r?.optString("k").isNullOrEmpty() || keyStale.remove(peer)) peerKey(c, peer, room) else r?.optString("k")) ?: return
+        var sec = secret(c, k) ?: return
         val got = (if (full) Fs.query("x/$room", "i", null, 200, desc = true)?.reversed() else Fs.query("x/$room", "i", r?.optString("t"), 60)) ?: return
         val me = Msg.dev(c); val out = JSONArray(); var last = r?.optString("t").orEmpty()
+        var fresh = full
         for ((id, b, t) in got) {
+            var o = Msg.decK("dm|$sec", b)?.let { runCatching { JSONObject(it) }.getOrNull() }
+            if (o == null && !fresh) {   // 1.47.31: açylmady — garşydaş programmasyny gaýtadan gurup açary üýtgän bolmagy mümkin: açary täzeden alyp synanyş
+                fresh = true
+                peerKey(c, peer, room)?.takeIf { it != k }?.let { nk -> secret(c, nk)?.let { ns -> k = nk; sec = ns; o = Msg.decK("dm|$sec", b)?.let { runCatching { JSONObject(it) }.getOrNull() } } }
+            }
             if (t > last) last = t
-            val o = Msg.decK("dm|$sec", b)?.let { runCatching { JSONObject(it) }.getOrNull() } ?: continue
+            if (o == null) continue
             val f = o.optString("f"); if (f != me && f != peer) continue
             if (o.optString("sys") == "acc" && f == peer && rooms(c).optJSONObject(room)?.optString("st") == "out") upd(c, room) { it.put("st", "acc") }
             out.put(JSONObject().put("id", id).put("t", Fs.sec(t)).put("f", f).put("x", o.optString("x").take(2000)).put("ph", o.optString("ph")).put("st", o.optString("st").take(16)).put("sys", o.optString("sys"))
@@ -167,6 +183,9 @@ object Chat {
                 val pr = p(c); val me = Msg.dev(c)
                 // 1.47.29: gelen gutusy sahypa-sahypa (öň her barlagda diňe 30 — köp habar / hekaýa görüldi bolsa täze ýazanlar sagatlap gijä galýardy)
                 var pg = 0
+                // 1.47.31: täze gurnalan programma — diňe soňky 2 günüň haýyşlary (öň 30 günüň ähli köne haýyşlary «täze» bolup gelýärdi)
+                if (pr.getString("rIn", null) == null) pr.edit().putString("rIn", java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'.000000Z'", java.util.Locale.US)
+                    .apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }.format(java.util.Date(System.currentTimeMillis() - 48 * 3600_000L))).apply()
                 while (pg++ < 20) {
                 val got = Fs.query("r/$me", "i", pr.getString("rIn", null), 100) ?: break
                 for ((_, b, t) in got) {
@@ -177,6 +196,7 @@ object Chat {
                     val room = room(me, f); val cur = rooms(c).optJSONObject(room)
                     if (cur?.optString("st") == "blk") continue
                     upd(c, room) { it.put("p", f).put("n", o.optString("n").take(32)); if (it.optString("st").isEmpty()) it.put("st", "in") }
+                    keyStale.add(f)
                     Msg.events.add(JSONObject().put("k", "dmreq").put("peer", f).put("n", o.optString("n").take(32)))
                     runCatching { pollRoom(c, room, false, f) }
                 }

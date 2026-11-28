@@ -10,7 +10,11 @@ object Lic {
     const val BANNED_MS = 20 * 60 * 1000L     // gadagan edilen: açar işlemeýär, VPN 20 minut
 
     /** Admin gadagan etdi: bot habar iberdi ýa-da abuna faýlynda (#tvuban). */
-    fun banned(ctx: Context): Boolean = p(ctx).getBoolean("uban", false) || Msg.dev(ctx) in Sub.ubans
+    fun banned(ctx: Context): Boolean = p(ctx).getBoolean("uban", false) || Msg.dev(ctx) in Sub.ubans || clone(ctx)
+    /** 1.47.31: klon programma — bot aýtdy (şol telefonda esasy programma bar; 24 sagat, bot her gezek täzeleýär).
+     *  Wirtual gurşawy programmanyň özi tapsa-da petiklemeýär (ýalňyş netije howpy) — diňe bota habar berýär. */
+    fun clone(ctx: Context): Boolean = System.currentTimeMillis() - p(ctx).getLong("cloneAt", 0L) < 24 * 3600_000L
+    fun setClone(ctx: Context, on: Boolean) = p(ctx).edit().putLong("cloneAt", if (on) System.currentTimeMillis() else 0L).apply()
     fun bonus(ctx: Context) = p(ctx).getBoolean("nkb", false)
     fun kill(ctx: Context) = p(ctx).getBoolean("ks", true)   // 1.28: kill switch (1.47: adaty ýagdaýda açyk)
     fun setKill(ctx: Context, on: Boolean) = p(ctx).edit().putBoolean("ks", on).apply()

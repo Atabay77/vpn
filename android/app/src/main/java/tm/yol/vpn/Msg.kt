@@ -129,7 +129,10 @@ object Msg {
     // ---- 1.40: öz VPS (relay) — VPN-siz açylýan bolsa esasy ýol (okalyş çägi ýok); jogap bermese 2 minut Firestore ----
     @Volatile private var relBadUntil = 0L
     fun relOn() = Sub.relay.isNotEmpty() && System.currentTimeMillis() > relBadUntil
-    private fun relFail() { relBadUntil = System.currentTimeMillis() + 120_000L; subDue = true }
+    // 1.47.31: bir gezek jogap bermedi diýip 2 minut VPS-den el çekilmeýär (Türkmen internetinde ýeke-tük ýalňyşlyk köp — «5 minut garaşmak» şondan) —
+    // 3 gezek yzly-yzyna bolsa 20 sekunt
+    @Volatile private var relFails = 0
+    private fun relFail() { if (++relFails >= 3) { relBadUntil = System.currentTimeMillis() + 20_000L; relFails = 0 }; subDue = true }
     // 1.41: abuna faýly (VPS salgysy, baza) — bot üýtgedende programma köne salgyda galmasyn: ekranda 5 minutda bir, VPS jogap bermese 1 minutda
     @Volatile private var subDue = false
     @Volatile private var subTry = 0L
@@ -154,7 +157,9 @@ object Msg {
         return c
     }
 
-    private fun tries(): List<Boolean> = if (State.now == State.ON && State.socks > 0) listOf(true, false) else listOf(false)
+    // 1.47.31: ilki göni (öňdäki VPS Türkmenistandan VPN-siz açylýar — VPN serweri arkaly aýlanmak haýal), soňky işlän ýol ýatda saklanýar
+    @Volatile private var lastVia = false
+    private fun tries(): List<Boolean> = if (State.now == State.ON && State.socks > 0) (if (lastVia) listOf(true, false) else listOf(false, true)) else listOf(false)
 
     private fun post(topic: String, body: String): Boolean {
         for (t in tries()) {
@@ -165,7 +170,7 @@ object Msg {
                 c.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
                 val code = c.responseCode; c.disconnect(); code in 200..299
             }.getOrDefault(false)
-            if (ok) return true
+            if (ok) { lastVia = t; relFails = 0; return true }
         }
         return false
     }
@@ -180,7 +185,7 @@ object Msg {
                 txt.lineSequence().filter { it.isNotBlank() }.mapNotNull { runCatching { JSONObject(it) }.getOrNull() }
                     .filter { it.optString("event") == "message" }.toList()
             }.getOrNull()
-            if (r != null) return r
+            if (r != null) { lastVia = t; relFails = 0; return r }
         }
         return null
     }
@@ -194,6 +199,8 @@ object Msg {
         o.put("dev", dev(c)).put("ver", ver(c)).put("lang", Lang.cur).put("ts", System.currentTimeMillis() / 1000)
             .put("model", android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL).put("code", code(c)).put("vpn", State.now == State.ON)
             .put("ack", prefs(c).getInt("seq", 0)).put("sg", sg(c))   // 1.47.16: gorag ýagdaýy — bot modlary tanamak üçin
+            .put("hw", Dev.hw(c)).put("bt", Dev.boot())   // 1.47.31: şol bir telefondaky klon programmany tanamak
+        if (Dev.virt(c)) o.put("cl", 1)
         if (o.optString("k") == "ref" && oldApp(c)) o.put("old", true)   // 1.47: köne programma bar — täze ulanyjy däl (çagyryş bonusy berilmeýär)
         if (o.optString("k") in setOf("tk", "ref", "gift", "human", "ka", "adm", "buy", "payq", "vote", "lvlq", "kgift", "lvof")) waitAt = System.currentTimeMillis()
         synchronized(this) {
@@ -216,6 +223,11 @@ object Msg {
     /** 1.40: Global chat setiri — VPS-e (kimligi bilen) we Firestore-a (köne wersiýalar görsün; «rl» — bot VPS-e gaýtadan goýmasyn).
      *  Kimlik ikisinde-de birmeňzeş, şonuň üçin jogap / tepki / pozmak hemme ýerde işleýär. Iş akymynda (Thread) çagyrylýar. */
     fun gPut(o: JSONObject): Boolean {
+        val c0 = app
+        if (Sub.gp && c0 != null) {   // 1.47.31: täze bot — chat habary bota gidýär, bot barlap goýýar (modlanan programma başganyň adyndan ýazyp / pozup bilmez)
+            send(c0, JSONObject().put("k", "gp").put("r", JSONObject(o.toString()).put("id", o.optString("id").ifEmpty { Fs.newId() })))
+            return true
+        }
         val id = Fs.newId(); val tp = topicG()
         var rel = false
         if (relOn() && tp != null) { rel = enc(JSONObject(o.toString()).put("id", id).toString())?.let { post(tp, it) } ?: false; if (!rel) relFail() }
@@ -365,6 +377,11 @@ object Msg {
                 if (!on) Sub.ubans = Sub.ubans - dev(c)
                 else if (State.now == State.ON || State.now == State.WAIT) runCatching { c.startService(android.content.Intent(c, Svc::class.java).setAction(Svc.STOP)) }
             }
+            if (o.optString("k") == "clone") {   // 1.47.31: şol telefonda esasy programma bar — bu klon işlemeýär (VPN derrew kesilýär)
+                Lic.setClone(c, o.optBoolean("on", true))
+                if (Lic.clone(c) && (State.now == State.ON || State.now == State.WAIT)) runCatching { c.startService(android.content.Intent(c, Svc::class.java).setAction(Svc.STOP)) }
+            }
+            if (o.optString("k") == "gack" && !o.optBoolean("ok")) events.add(JSONObject().put("k", "gfail").put("why", o.optString("why")).put("id", o.optString("id")))   // 1.47.31: bot chat habaryny kabul etmedi
             if (o.optString("k") == "migok") prefs(c).edit().putBoolean("migd", true).apply()   // 1.47: köne programmadan göçürildi
             pend(c, JSONObject().put("k", "in").put("m", o))
             if (!visible && o.optString("k") == "tk" && o.optString("who") == "a") Svc.notifyReply(c, o.optString("t"))

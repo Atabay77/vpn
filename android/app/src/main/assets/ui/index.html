@@ -20,6 +20,34 @@
 html,body{margin:0;height:100%;background:#06100B;overflow:hidden;-webkit-tap-highlight-color:transparent;-webkit-user-select:none;user-select:none;overscroll-behavior:none}
 input,textarea{-webkit-user-select:text;user-select:text}
 #app{position:absolute;left:0;top:0;width:390px;transform-origin:0 0}
+
+/* 1.47.31: Premium — baha we Premium alanlar */
+.psh-rt{display:flex;gap:12px;align-items:center;padding:10px 12px;border-radius:14px;background:rgba(0,0,0,.25);border:1px solid rgba(224,176,74,.25)}
+.psh-rt-a{display:flex;flex-direction:column;align-items:center;min-width:72px}
+.psh-rt-a b{font-size:26px;font-weight:900;color:#FFD27A;line-height:1}
+.psh-rt-st{font-size:12px;color:#FFD27A;letter-spacing:1px}
+.psh-rt-c{font-size:10px;color:#C9BFA8}
+.psh-rt-bars{flex:1;display:flex;flex-direction:column;gap:3px}
+.psh-rt-bars div{display:flex;align-items:center;gap:6px;font-size:10px;color:#C9BFA8}
+.psh-rt-bars i{flex:1;height:5px;border-radius:3px;background:rgba(255,255,255,.12);overflow:hidden}
+.psh-rt-bars em{display:block;height:100%;background:linear-gradient(90deg,#E0B04A,#FFD27A)}
+.psh-rv{display:flex;gap:8px;overflow-x:auto;padding-bottom:2px;scrollbar-width:none}
+.psh-rv::-webkit-scrollbar{display:none}
+.psh-rv-i{flex:0 0 78%;max-width:280px;text-align:left;display:flex;flex-direction:column;gap:4px;padding:10px 12px;border-radius:14px;border:1px solid rgba(224,176,74,.25);background:rgba(10,28,20,.6);color:#F3E7D0;cursor:pointer}
+.psh-rv-h{display:flex;justify-content:space-between;gap:8px;font-size:12px}
+.psh-rv-h span{color:#FFD27A;font-size:11px;white-space:nowrap}
+.psh-rv-t{font-size:12px;line-height:1.35;color:#E8DFC9;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.psh-pb-t{font-size:11px;font-weight:900;letter-spacing:.12em;color:#E0B04A}
+.psh-pb{display:flex;gap:10px;overflow-x:auto;padding-bottom:2px;scrollbar-width:none}
+.psh-pb::-webkit-scrollbar{display:none}
+.psh-pb-i{flex:0 0 auto;width:58px;display:flex;flex-direction:column;align-items:center;gap:4px;border:none;background:none;color:#F3E7D0;cursor:pointer;padding:0}
+.psh-pb-av{width:46px;height:46px;border-radius:23px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:15px;color:#0B2117;background-size:cover;background-position:center;box-shadow:0 0 0 2px #E0B04A}
+.psh-pb-n{font-size:10px;max-width:58px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* 1.47.31: gowşak telefonlar — bulanyk aýna (backdrop-filter) we hemişelik bezeg animasiýalary öçürilýär (aýlanýan ýükleme nyşanlary galýar) */
+.lite *{-webkit-backdrop-filter:none!important;backdrop-filter:none!important}
+.lite .glass{background:rgba(8,24,17,.93)!important}
+.lite .rk *,.lite .rk-sp,.lite .rk-em,.lite .rk-ry,.lite .rk-au,.lite .rk-sh,.lite .own-prof *,.lite .osp,.lite .goldtxt,.lite .ppill,.lite .bdg-p,.lite .bdg-o{animation:none!important}
 </style></head>
 <body><div id="app"></div>
 <script src="dc.js"></script>
