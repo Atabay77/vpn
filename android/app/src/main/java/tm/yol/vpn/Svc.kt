@@ -73,8 +73,8 @@ object State {
     fun allowed(ctx: Context?, s: Server): Boolean = ctx == null || (Sub.free.isEmpty() && Sub.pkeys == null) || Lic.prem(ctx) || s.hp in Sub.free   // 1.47: täze bot (#tvkp bar) — mugt sanaw boş bolsa hem Premium serwerler açylmaýar
     private fun cands(): List<Server> {
         val c = app
-        if (c != null && pubg(c)) return Sub.list.filter { it.game && allowed(c, it) }   // 1.47: PUBG düwmesi
-        val base = Sub.list.filter { !it.ru && !it.game && allowed(c, it) }.ifEmpty { Sub.list.filter { !it.ru && allowed(c, it) } }
+        if (c != null && pubg(c)) return Sub.list.filter { it.game && allowed(c, it) && !bad(it) }   // 1.47: PUBG düwmesi; 1.47.32: barlagdan geçmedik / Russiýa däl — ýok
+        val base = Sub.list.filter { !it.ru && !it.game && allowed(c, it) && !bad(it) }.ifEmpty { Sub.list.filter { !it.ru && allowed(c, it) && !bad(it) } }
         if (c == null || Sub.free.isEmpty() || !Lic.prem(c)) return base
         if (autoBoth(c)) return base   // 1.47.9: Auto — ikisinden iň gowy ms
         return if (autoPrem(c)) base.filter { it.hp !in Sub.free || it.hp in Sub.both } else base.filter { it.hp in Sub.free }.ifEmpty { base }   // 1.46.4 (1.47: Premium-da kod ýok — bestFb mugta geçirýär)
@@ -108,6 +108,26 @@ object State {
             pool.shutdownNow(); r = got
         }
         pingAt = System.currentTimeMillis()
+        return r
+    }
+
+    // ---- 1.47.32: doly barlag (birikmezden öň): DNS, ýükleme, çykyş ýurdy — işlemeýän serwere birikilmeýär ----
+    val chk = ConcurrentHashMap<String, Pair<Pinger.Full, Long>>()
+    @Volatile var fullAt = 0L
+    private const val CHK_TTL = 40 * 60_000L
+    private fun chkOf(s: Server) = chk[s.key]?.takeIf { System.currentTimeMillis() - it.second < CHK_TTL }?.first
+    /** Barlagdan geçmedi (DNS ýok / ýüklenmeýär) ýa-da PUBG serweri Russiýa däl. */
+    fun bad(s: Server): Boolean { val f = chkOf(s) ?: return false; return !f.ok || (s.game && f.cc.isNotEmpty() && f.cc != "RU") }
+    fun badKey(k: String): Boolean = Sub.list.firstOrNull { it.key == k }?.let { bad(it) } ?: false
+    fun fullAll(ctx: Context, list: List<Server>, each: ((Server, Pinger.Full) -> Unit)? = null): Map<String, Pinger.Full>? {
+        val r = Pinger.runFull(list, each = { s, f -> chk[s.key] = f to System.currentTimeMillis(); pings[s.key] = if (f.ok) f.ms else -1L; each?.invoke(s, f) }) ?: return null
+        fullAt = System.currentTimeMillis()
+        runCatching {   // bota: işlemeýänler (-1) we PUBG serwerleriniň çykyş ýurdy
+            val o = org.json.JSONObject(); var bad = 0
+            r.forEach { (k, f) -> if (f.ms > 0 && !f.ok) { o.put(k.substringAfter('|'), -1); bad++ } }
+            if (bad > 0 && r.values.count { it.ok } > 0) Msg.send(ctx, org.json.JSONObject().put("k", "pr").put("p", o).put("why", "chk"))
+            list.filter { it.game }.forEach { s -> r[s.key]?.cc?.takeIf { it.isNotEmpty() }?.let { cc -> Msg.send(ctx, org.json.JSONObject().put("k", "cc").put("hp", s.hp).put("c", cc)) } }
+        }
         return r
     }
 
@@ -195,12 +215,18 @@ object State {
         if (c.isEmpty()) return null
         // 1) soňky 2 minutda ölçenen we 200 ms-den çalt serwer bar bolsa — derrew (täzeden ölçemezden)
         if (System.currentTimeMillis() - pingAt < 120_000L)
-            c.filter { (pings[it.key] ?: -1L) in 1..FAST_MS }.minByOrNull { pings[it.key] ?: Long.MAX_VALUE }?.let { ms = pings[it.key] ?: 0L; return it }
+            c.filter { (pings[it.key] ?: -1L) in 1..FAST_MS && chkOf(it)?.ok == true }.minByOrNull { pings[it.key] ?: Long.MAX_VALUE }?.let { ms = pings[it.key] ?: 0L; return it }   // 1.47.32: diňe doly barlagdan geçenler
         // 2) ölçeg: 200 ms-den çalt ilkinji serwer tapylan badyna — şoňa
         val got = ConcurrentHashMap<Server, Long>()
         pingAll(c, each = { s, v -> if (v > 0) got[s] = v }, stop = { _, v -> v in 1..FAST_MS }, maxWaitMs = 8000)
         if (got.isEmpty()) { if (online(ctx)) noPing = true else noNet = true; return null }
-        val pick = got.filter { it.value <= FAST_MS }.minByOrNull { it.value }?.key ?: got.minByOrNull { it.value }!!.key
+        // 1.47.32: saýlanan serwer täze barlanmadyk bolsa — birikmezden öň doly barlag (DNS, ýükleme, PUBG-da ýurt); geçmese indiki
+        val order = got.entries.sortedBy { it.value }.map { it.key }
+        for (s in order.take(4)) {
+            if (chkOf(s) == null) fullAll(ctx, listOf(s))
+            if (!bad(s)) { ms = got[s] ?: 0L; return s }
+        }
+        val pick = order.firstOrNull { !bad(it) } ?: order.first()
         ms = got[pick] ?: 0L
         return pick
     }

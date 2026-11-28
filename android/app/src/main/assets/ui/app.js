@@ -911,6 +911,9 @@
         const inTab = (q, premTab) => !PF || (premTab ? !(q.v && q.v.free) || !!(q.v && q.v.both) : !!(q.v && q.v.free));   // 1.47.2: kanal kodlary iki bölümde hem
         if (Array.isArray(r.srvList)) r.srvList = tab === 'pubg' ? [] : r.srvList.map((x, j) => ({ x, v: ng[j] })).filter((q) => inTab(q, tab === 'prem')).map((q) => mark(q.x, q.v, tab === 'prem'));
         if (Array.isArray(r.gList)) r.gList = r.gList.map((x, j) => ({ x, v: gg[j] })).filter((q) => inTab(q, tab !== 'free')).map((q) => mark(q.x, q.v, tab !== 'free'));
+        { const msv = (o) => { const n = parseInt(o && o.ms, 10); return n > 0 ? n : 1e9; };   // 1.47.32: iň gowy ms ýokarda (n/a — aşakda)
+          if (Array.isArray(r.srvList)) r.srvList.sort((p1, p2) => msv(p1) - msv(p2));
+          if (Array.isArray(r.gList)) r.gList.sort((p1, p2) => msv(p1) - msv(p2)); }
         if (tab === 'pubg') r.svEmpty = false;
         if (tab === 'free' && FHID) { r.srvList = []; r.gList = []; r.svEmpty = false; }
         r.svOwnNote = tab === 'free' && FHID ? ({ ru: '👁 Бесплатные серверы видите только вы (владелец). Пользователи видят только «Авто».', tr: '👁 Ücretsiz sunucuları sadece siz (sahip) görüyorsunuz. Kullanıcılar sadece «Otomatik» görür.' }[s.lang]

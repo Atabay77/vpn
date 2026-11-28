@@ -292,7 +292,7 @@ object Sub {
 
     /** 1.47.31: täze gurnalan programma (ýatda sanaw ýok) Google-dan alyp bilmese — programmada ýazylan öňdäki VPS-den (n/sub).
      *  Öň diňe Google Drive bardy: käbir telefonlarda (ýa-da Google ýapylsa) täze ulanyjyda «0 serwer» galýardy. */
-    private val SEEDS = listOf("http://81.26.177.63:8090")
+    private val SEEDS = listOf("http://23.95.197.251:8090", "http://81.26.177.63:8090")   // 1.47.32: baza hem (Türkmenistandan açylýar)
     private fun fromSeed(ctx: Context, timeoutMs: Int): Boolean {
         for (seed in SEEDS) {
             fsBase = seed

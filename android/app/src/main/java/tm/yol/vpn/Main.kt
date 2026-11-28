@@ -277,7 +277,7 @@ open class Main : Activity() {
             val c = this@Main
             Sub.list.forEach { s -> a.put(JSONObject().put("key", s.key).put("flag", s.flag).put("country", s.country).put("title", s.title).put("proto", s.proto).put("game", s.game)
                 .put("free", (Sub.free.isEmpty() && Sub.pkeys == null) || s.hp in Sub.free).put("lock", !State.allowed(c, s)).put("both", s.hp in Sub.both)) }   // 1.43: mugt / Premium
-            val p = JSONObject(); State.pings.forEach { (k, v) -> p.put(k, v) }
+            val p = JSONObject(); State.pings.forEach { (k, v) -> p.put(k, if (v > 0 && State.badKey(k)) -1L else v) }   // 1.47.32: barlagdan geçmedik — n/a (aşakda)
             return JSONObject().put("list", a).put("pings", p).toString()
         }
 
@@ -469,8 +469,17 @@ open class Main : Activity() {
     private fun autoPing() {
         val now = System.currentTimeMillis()
         if (testing || State.warming() || Sub.list.isEmpty()) return
-        if (now - State.pingAt > (if (srvPage) 30_000L else 120_000L)) measure(true)
+        if (now - State.pingAt > (if (srvPage) 30_000L else 120_000L)) { measure(true); return }
+        if (now - State.fullAt > 30 * 60_000L && now - fullTry > 5 * 60_000L && State.pings.values.any { it > 0 }) {   // 1.47.32: doly barlag 30 minutda bir — birikmezden öň bilinsin
+            fullTry = now; testing = true
+            // trafik az bolsun: diňe ulanyjynyň saýlap bilýän iň çalt 15 serweri (her biri ~100 KB) + ähli PUBG serwerleri (ýurt)
+            val c = this
+            val pick = Sub.list.filter { State.allowed(c, it) && (State.pings[it.key] ?: -1L) > 0 }.sortedBy { State.pings[it.key] ?: Long.MAX_VALUE }
+            val list = (pick.filter { !it.game }.take(15) + pick.filter { it.game }.take(8)).distinctBy { it.key }
+            Thread { try { State.fullAll(this, list, each = { _, _ -> push(JSONObject().put("k", "srv")) }) } finally { testing = false }; push(JSONObject().put("k", "srv")) }.start()
+        }
     }
+    @Volatile private var fullTry = 0L
 
     private fun addTile() {
         if (Build.VERSION.SDK_INT >= 33) {
