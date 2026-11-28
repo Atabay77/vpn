@@ -109,8 +109,17 @@ open class Main : Activity() {
         if (Build.VERSION.SDK_INT >= 33) requestPermissions(arrayOf("android.permission.POST_NOTIFICATIONS"), 2)
         web.loadUrl("https://$HOST/index.html" + (if (intent?.action == CHAT) "#chat" else ""))
         Thread {
-            val ok = Sub.refresh(this, 7000)
+            var ok = Sub.refresh(this, 7000)
             push(JSONObject().put("k", "srv").put("ok", ok))
+            if (!ok && Sub.list.isEmpty()) clockCheck()   // 1.47.31: täze telefon — sene/wagt nädogry bolsa serwerler ýüklenmeýär
+            // 1.47.31: sanaw ýok — 15 sn-da bir (has uzyn garaşyp) gaýtadan synanyşýar (öň 1–5 minut garaşylýardy)
+            var tries = 0
+            while (!ok && Sub.list.isEmpty() && tries++ < 20 && !isDestroyed) {
+                Thread.sleep(15_000L)
+                ok = Sub.refresh(this, 20_000)
+                push(JSONObject().put("k", "srv").put("ok", ok))
+                if (!ok && tries == 2) clockCheck()
+            }
             // 1.13-den täzelenenler: ýatda saklanan açar heniz telefona baglanmadyk bolsa bota habar (1 açar = 1 telefon)
             Lic.saved(this)?.let { k -> val h = Lic.hash(k); if (ok && Sub.keys.containsKey(h) && Msg.dev(this) !in Lic.devs(h) && Lic.exp(this) != null) Msg.send(this, JSONObject().put("k", "ka").put("h", h)) }
             Stats.beat(this, false)
@@ -556,6 +565,34 @@ open class Main : Activity() {
         b.show()
     }
     private fun ui(f: () -> Unit) = runOnUiThread { if (!isDestroyed) f() }
+
+    /** 1.47.31: telefonyň sagady — HTTP «Date» (TLS-siz, sene nädogry bolsa-da açylýar) bilen deňeşdirilýär.
+     *  5 minutdan köp tapawut ýa-da awtomatik wagt öçük bolsa — «Sene we wagt» sazlamalaryna ugradylýar. */
+    @Volatile private var clockAskAt = 0L
+    private fun clockCheck() {
+        if (System.currentTimeMillis() - clockAskAt < 120_000L) return
+        val auto = runCatching { android.provider.Settings.Global.getInt(contentResolver, android.provider.Settings.Global.AUTO_TIME, 1) == 1 }.getOrDefault(true)
+        var skew: Long? = null
+        for (u in listOf("http://connectivitycheck.gstatic.com/generate_204", "http://www.google.com/generate_204")) {
+            skew = runCatching {
+                val c = URL(u).openConnection() as HttpURLConnection
+                c.connectTimeout = 8000; c.readTimeout = 8000; c.instanceFollowRedirects = false
+                try { c.responseCode; c.getHeaderFieldDate("Date", 0L).takeIf { it > 0 }?.let { System.currentTimeMillis() - it } } finally { c.disconnect() }
+            }.getOrNull()
+            if (skew != null) break
+        }
+        val bad = (skew != null && kotlin.math.abs(skew) > 5 * 60_000L) || (!auto && skew == null)
+        if (!bad) return
+        clockAskAt = System.currentTimeMillis()
+        ui {
+            ask(t("Telefonyňyzyň senesi ýa-da wagty nädogry — şonuň üçin serwerler ýüklenmeýär. «Awtomatik sene we wagt»-y açyň.",
+                  "Неверная дата или время на телефоне — поэтому серверы не загружаются. Включите «Автоматические дата и время».",
+                  "Telefonunuzun tarihi veya saati yanlış — bu yüzden sunucular yüklenmiyor. «Otomatik tarih ve saat»i açın."),
+                t("Sazlamalar", "Настройки", "Ayarlar"), t("Soň", "Позже", "Sonra")) {
+                runCatching { startActivity(Intent(android.provider.Settings.ACTION_DATE_SETTINGS)) }.onFailure { runCatching { startActivity(Intent(android.provider.Settings.ACTION_SETTINGS)) } }
+            }
+        }
+    }
 
     companion object {
         const val GO = "tm.yol.vpn.GO"
