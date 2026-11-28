@@ -251,13 +251,13 @@ object Sub {
     /** Aboneliği indirir; başarılıysa şifreli önbelleğe yazar. Hata olursa önbellek kullanılır. */
     @Volatile private var vpsBadUntil = 0L
     /** 1.45.3: sanaw ilki öz VPS-den (bot n/sub ýazýar — Türkmenistanda VPN-siz çalt); işlemese Google Drive-dan; ikisi hem bolmasa — ýatdaky sanaw. */
-    private fun fromVps(ctx: Context, timeoutMs: Int): Boolean {
-        if (!Fs.vps() || System.currentTimeMillis() < vpsBadUntil) return false
+    private fun fromVps(ctx: Context, timeoutMs: Int, anyAge: Boolean = false): Boolean {
+        if (!Fs.vps() || (!anyAge && System.currentTimeMillis() < vpsBadUntil)) return false
         val g = runCatching { Fs.get("n/sub", minOf(timeoutMs, 4000)) }.getOrNull()
         val at = g?.second?.takeIf { it.length >= 19 }?.let { ts -> runCatching { java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", java.util.Locale.US)
             .apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }.parse(ts.take(19))?.time }.getOrNull() } ?: 0L
         // bot her 30 minutda täzeden ýazýar — 3 sagatdan köne bolsa (bot VPS-e ýazyp bilmeýär) Drive-dan alynýar
-        val t = if (System.currentTimeMillis() - at > 3 * 3600_000L) null else g?.first?.let { Msg.dec(it) ?: it }   // diňe bot ýazyp bilýär (n/); şifrsiz hem kabul
+        val t = if (!anyAge && System.currentTimeMillis() - at > 3 * 3600_000L) null else g?.first?.let { Msg.dec(it) ?: it }   // diňe bot ýazyp bilýär (n/); şifrsiz hem kabul
         val exp = t?.let { decode(it) }
         val l = exp?.let { parse(it) }.orEmpty()
         if (exp == null || l.isEmpty()) { vpsBadUntil = System.currentTimeMillis() + 120_000L; return false }
@@ -286,7 +286,21 @@ object Sub {
             } finally { c.disconnect() }
         }.getOrDefault(false)
         if (!ok && list.isEmpty()) load(ctx)
+        if (!ok && list.isEmpty() && !Fs.vps()) return fromSeed(ctx, timeoutMs)
         return ok
+    }
+
+    /** 1.47.31: täze gurnalan programma (ýatda sanaw ýok) Google-dan alyp bilmese — programmada ýazylan öňdäki VPS-den (n/sub).
+     *  Öň diňe Google Drive bardy: käbir telefonlarda (ýa-da Google ýapylsa) täze ulanyjyda «0 serwer» galýardy. */
+    private val SEEDS = listOf("http://81.26.177.63:8090")
+    private fun fromSeed(ctx: Context, timeoutMs: Int): Boolean {
+        for (seed in SEEDS) {
+            fsBase = seed
+            val ok = runCatching { fromVps(ctx, maxOf(timeoutMs, 8000), anyAge = true) }.getOrDefault(false)
+            if (ok) { if (fsBase.isEmpty()) fsBase = seed; return true }
+            fsBase = ""
+        }
+        return false
     }
 
     /** Aynı Drive anahtarıyla başka bir dosyanın linki (güncelleme APK'sı için). */
