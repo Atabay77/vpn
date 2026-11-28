@@ -991,14 +991,21 @@ def app_rate_sum(cfg):
             "s": [sum(1 for r in vals if int(r["n"]) == i) for i in range(5, 0, -1)],
             "l": [{"d": r["dev"], "n": nk(r["dev"]), "r": int(r["n"]), "t": str(r["c"]).strip()[:300], "ts": int(r.get("ts") or 0)} for r in good]}
 
-def app_prem_buyers(cfg, n=24):
-    """1.47.31: Premium satyn alanlaryň profilleri (iň täzeleri; synag / sowgat däl; gadagan edilenler ýok)."""
-    devs = cfg.get("devs") or {}; bans = set(cfg.get("ubans") or []) | set(cfg.get("gbans") or []); out, seen = [], set()
-    staff = set(app_founder_devs(cfg)) | set(app_seller_devs(cfg))
-    for q in reversed(cfg.get("prem_log") or []):
-        d_ = q.get("dev")
-        if not d_ or d_ in seen or d_ in bans or d_ in staff or int(q.get("d") or 0) not in (7, 30, 365) or d_ not in devs or devs[d_].get("mvto"): continue
-        seen.add(d_); out.append({"d": d_, "n": str(devs[d_].get("nk") or devs[d_].get("nick") or "")[:32]})
+def app_prem_buyers(cfg, n=30):
+    """1.47.31: Premium alanlaryň profilleri — häzir Premium-y açyk, satyjy / eýesi beren (synag däl, sowgat açar däl); iň täzeleri.
+    Gadagan edilenler, adminler we satyjylar ýok."""
+    devs = cfg.get("devs") or {}; bans = set(cfg.get("ubans") or []) | set(cfg.get("gbans") or []); now = time.time()
+    staff = set(app_founder_devs(cfg)) | set(app_seller_devs(cfg)); got = {}
+    for v in (cfg.get("keys") or {}).values():
+        if not str(v.get("by") or "").startswith("prem:") or v.get("trial") or not app_key_prem(v): continue
+        if int(v.get("exp") or 0) and int(v["exp"]) <= now: continue
+        for d_ in app_key_devs(v): got[d_] = max(got.get(d_, 0), int(v.get("ts") or 0))
+    for q in cfg.get("prem_log") or []:   # soňky berlen wagty (uzaldylan bolsa)
+        if q.get("dev") in got: got[q["dev"]] = max(got[q["dev"]], int(q.get("ts") or 0))
+    out = []
+    for d_, _ in sorted(got.items(), key=lambda kv: -kv[1]):
+        if d_ in bans or d_ in staff or d_ not in devs or devs[d_].get("mvto"): continue
+        out.append({"d": d_, "n": str(devs[d_].get("nk") or devs[d_].get("nick") or "")[:32]})
         if len(out) >= n: break
     return out
 
@@ -1430,10 +1437,32 @@ APP_RU_EVERY = 600        # 1.47.17: kanal kodlarynyň çykyş ýurdy 10 minutda
 APP_RU_RETEST = 6 * 3600  # bir kod 6 sagatda bir gaýtadan
 APP_RU_VALID = 12 * 3600  # «RU» subutnamasy 12 sagat güýçde
 
+APP_RU_PH_KEEP = 3 * 86400   # 1.47.31: telefonlar «Russiýa däl» diýen serwer 3 gün mugt PUBG bolmaýar
 def app_ru_proven(a, now=None):
-    """Kanal kodlary: Xray arkaly synalyp çykyşy hakykatdan Russiýa bolanlar (host:port)."""
+    """Kanal kodlary: Xray arkaly synalyp çykyşy hakykatdan Russiýa bolanlar (host:port).
+    1.47.31: telefonlardan birikip görlende Russiýa däl çykan (eýesiniň telefony ýa-da 2 dürli telefon) — aýrylýar."""
     now = now or time.time()
-    return {h for h, v in (a.get("ru_cc") or {}).items() if v and v[0] == "RU" and now - float(v[1]) < APP_RU_VALID}
+    bad = {h for h, v in (a.get("ru_ph_bad") or {}).items() if now - float(v) < APP_RU_PH_KEEP}
+    return {h for h, v in (a.get("ru_cc") or {}).items() if v and v[0] == "RU" and now - float(v[1]) < APP_RU_VALID and h not in bad}
+
+def app_cc_report(dev, hp, cc):
+    """1.47.31: telefon PUBG serwerine birikip çykyş ýurdyny ölçedi. Russiýa däl: eýesiniň telefony — derrew, beýlekiler — 2 dürli telefon (24 sagat)."""
+    hp = str(hp or "")[:80]; cc = str(cc or "").upper()[:2]
+    if not hp or not re.fullmatch(r"[A-Z]{2}", cc): return False
+    own = dev in set(app_founder_devs()); now = int(time.time()); res = {}
+    def f(x):
+        ph = x.setdefault("ru_ph", {}); L = [r for r in (ph.get(hp) or []) if now - int(r[2]) < 86400 and r[0] != dev[:8]] + [[dev[:8], cc, now]]
+        ph[hp] = L[-10:]
+        if len(ph) > 500:
+            for k_ in sorted(ph, key=lambda k2: ph[k2][-1][2])[:len(ph) - 500]: ph.pop(k_, None)
+        non = {r[0] for r in L if r[1] != "RU"}
+        if cc != "RU" and (own or len(non) >= 2):
+            if hp not in (x.get("ru_ph_bad") or {}): res["new"] = True
+            x.setdefault("ru_ph_bad", {})[hp] = now
+        elif cc == "RU" and own: (x.get("ru_ph_bad") or {}).pop(hp, None)
+    app_mut(f)
+    if res.get("new"): RUN["app_dirty"] = True; vlog(f"🎮 PUBG serweri Russiýa däl ({cc}) — telefondan barlandy, mugt PUBG-dan aýryldy: {hp}")
+    return bool(res.get("new"))
 
 def app_ru_check():
     """1.47.17: kanaldan alnan (vless däl) kodlary hakyky Xray bilen synap çykyş ýurdyny ýazýar; RU bolanlar mugt PUBG."""
@@ -4210,9 +4239,11 @@ async def app_on_msg(app, fid, o):
     if k == "adm": await app_adm(app, dev, o); return
     if k == "gp":   # 1.47.31: Global chat setiri — bot barlap goýýar (gadagan / ses öçürilen / spam / başganyň habaryny pozmak bolmaýar)
         r_ = await asyncio.to_thread(app_gpost, dev, o.get("r"), a)
-        await asyncio.to_thread(app_send, dev, {"k": "gack", "id": r_[2], "ok": r_[0], "why": r_[1]}); return
+        if not r_[0]: await asyncio.to_thread(app_send, dev, {"k": "gack", "id": r_[2], "ok": False, "why": r_[1]})   # kabul edilse — habar chatda görünýär (jogap gerek däl)
+        return
     if k == "pr": await asyncio.to_thread(app_x_report, dev, o.get("p")); return
     if k == "pe": await asyncio.to_thread(app_eu_report, dev, o.get("p")); return   # 1.47.18: PUBG Ýewropa pingi
+    if k == "cc": await asyncio.to_thread(app_cc_report, dev, o.get("hp"), o.get("c")); return   # 1.47.31: PUBG serweriň telefondan çykyş ýurdy
     if k == "alog": await asyncio.to_thread(alog_add, dev, o.get("e")); return   # 1.47: admin log
     if k == "gmen":   # 1.47: Global chatda jogap / @agzamak — şol adama bildiriş (programma ýapyk bolsa-da)
         rl_ = RUN.setdefault("gmen_at", {})
@@ -4842,6 +4873,10 @@ async def app_msg_loop(app):
         except Exception: fast_ = rel_ = False
         await asyncio.sleep(APP_MSG_FAST if fast_ else 3 if rel_ else APP_MSG_EVERY)   # 1.40: VPS-de okalyş tölegsiz — 3 sn
 
+async def app_on_msg_safe(app, fid, o):
+    try: await app_on_msg(app, fid, o)
+    except Exception: log.exception("app msg (task)")
+
 async def app_relay_loop(app):
     """1.40.1: öz VPS — programdan gelen habarlar garaşýan sorag bilen (habar gelen badyna, 3 sn gijikme ýok)."""
     await asyncio.sleep(15)
@@ -4857,6 +4892,8 @@ async def app_relay_loop(app):
                 if not pt: continue
                 try: o = json.loads(pt)
                 except Exception: continue
+                if o.get("k") == "gp":   # 1.47.31: chat habary nobata garaşmaýar (beýleki habarlar bilen yzly-yzyna däl)
+                    asyncio.create_task(app_on_msg_safe(app, fid, o)); continue
                 try: await app_on_msg(app, fid, o)
                 except Exception: log.exception("app msg (relay)")
             if got: await asyncio.to_thread(app_mut, lambda a_, i_=got[-1].get("id"): a_.__setitem__("msg_since", i_))   # 1.47: her habarda däl, toplumda bir gezek (bot haýallamasyn)

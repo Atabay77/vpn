@@ -449,13 +449,17 @@ open class Main : Activity() {
      *  silent — awtomatik (sahypa açyk / fonda): netije ýok bolsa duýduryş görkezilmeýär. */
     private fun measure(silent: Boolean = false) {
         if (testing) return
-        val list = Sub.list.toList()
-        if (list.isEmpty()) return
+        // 1.47.31: Free, Premium we PUBG gezekleşip ölçülýär (öň Free gutarmasa Premium-yň ms-i görünmeýärdi)
+        val all = Sub.list.toList()
+        if (all.isEmpty()) return
+        val groups = listOf(all.filter { it.game }, all.filter { !it.game && it.hp in Sub.free }, all.filter { !it.game && it.hp !in Sub.free })
+        val list = ArrayList<Server>(); var gi = 0
+        while (list.size < all.size) { groups.forEach { g -> g.getOrNull(gi)?.let { list.add(it) } }; gi++ }
         testing = true; push(JSONObject().put("k", "srv"))
         Thread {
             var lastPush = 0L
             try {
-                State.pingAll(list, each = { _, _ -> val n = System.currentTimeMillis(); if (n - lastPush > 250) { lastPush = n; push(JSONObject().put("k", "srv")) } })
+                State.pingAll(list, each = { _, _ -> val n = System.currentTimeMillis(); if (n - lastPush > 250) { lastPush = n; push(JSONObject().put("k", "srv")) } }, maxWaitMs = 15_000L, parallel = 32)
             } finally { testing = false }
             push(JSONObject().put("k", "srv")); State.report(this)
             if (!silent && State.pings.values.none { it > 0 }) { val on = State.online(this); ui { info(if (on) noCodes() else noNet()) } }

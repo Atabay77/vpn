@@ -91,13 +91,13 @@ object State {
 
     /** 1.47.31: köp serwer birden — Happ ýaly (bir Xray, KeepAlive, Pinger). Pinger işläp bilmese köne usul (her serwer aýratyn).
      *  each — her netije; stop — true bolsa galanlaryna garaşylmaýar. Netijeler pings-e ýazylýar (köne bahalar öçürilmeýär — «n/a» ýalpyldamasyn). */
-    fun pingAll(list: List<Server>, each: ((Server, Long) -> Unit)? = null, stop: ((Server, Long) -> Boolean)? = null, maxWaitMs: Long = 9000): Map<String, Long> {
+    fun pingAll(list: List<Server>, each: ((Server, Long) -> Unit)? = null, stop: ((Server, Long) -> Boolean)? = null, maxWaitMs: Long = 9000, parallel: Int = 16): Map<String, Long> {
         if (list.isEmpty()) return emptyMap()
         val cb: (Server, Long) -> Unit = { s, v -> pings[s.key] = if (v > 0) v else -1L; each?.invoke(s, v) }
-        var r = Pinger.run(list, each = cb, stop = stop, maxWaitMs = maxWaitMs)
+        var r = Pinger.run(list, each = cb, stop = stop, maxWaitMs = maxWaitMs, parallel = parallel)
         if (r == null) {   // başga ölçeg dowam edýär — gutarmagyna garaş, soň ýene synanyş
             val t0 = System.currentTimeMillis()
-            while (System.currentTimeMillis() - t0 < maxWaitMs && r == null) { Thread.sleep(150); r = Pinger.run(list, each = cb, stop = stop, maxWaitMs = maxWaitMs) }
+            while (System.currentTimeMillis() - t0 < maxWaitMs && r == null) { Thread.sleep(150); r = Pinger.run(list, each = cb, stop = stop, maxWaitMs = maxWaitMs, parallel = parallel) }
         }
         if (r == null || (r.isEmpty() && list.isNotEmpty())) {   // Xray açylmady — köne usul
             val got = ConcurrentHashMap<String, Long>(); val done = java.util.concurrent.atomic.AtomicBoolean(false)
@@ -255,6 +255,21 @@ class Svc : VpnService() {
     private val AUTO_SWITCH = false   // 1.47.9: birikme wagtynda başga serwere awtomatik geçmek öçürildi
     @Volatile private var wasOn = false   // 1.28: şu gezek birikme bolupdy (kill switch diňe şonda petikleýär)
 
+    /** 1.47.31: birikenden soň VPN arkaly çykyş ýurdy (ip-api) — PUBG serweri Russiýa däl bolsa bota («cc»), bot ony mugt PUBG-dan aýyrýar. */
+    private fun exitCheck(s: Server, port: Int) {
+        Thread.sleep(4000)
+        if (State.now != State.ON || State.active?.key != s.key) return
+        val proxy = java.net.Proxy(java.net.Proxy.Type.HTTP, java.net.InetSocketAddress("127.0.0.1", port))
+        for (u in listOf("http://ip-api.com/line/?fields=countryCode", "http://ipinfo.io/country")) {
+            val cc = runCatching {
+                val c = java.net.URL(u).openConnection(proxy) as java.net.HttpURLConnection
+                c.connectTimeout = 8000; c.readTimeout = 8000
+                try { if (c.responseCode == 200) c.inputStream.use { it.readBytes() }.toString(Charsets.UTF_8).trim().uppercase() else "" } finally { c.disconnect() }
+            }.getOrDefault("")
+            if (Regex("^[A-Z]{2}$").matches(cc)) { Msg.send(this, org.json.JSONObject().put("k", "cc").put("hp", s.hp).put("c", cc)); return }
+        }
+    }
+
     @Volatile private var dnsPort = 0; @Volatile private var dnsBad = 0; @Volatile private var dnsAt = 0L
     private fun health() {
         val c = core ?: return
@@ -324,7 +339,7 @@ class Svc : VpnService() {
             State.active = s
             val port = 20000 + java.security.SecureRandom().nextInt(20000)
             val cfg = Cfg.full(s.uri, true, port, port + 1)
-            dnsPort = port + 1; dnsBad = 0; dnsAt = System.currentTimeMillis()
+            dnsPort = port + 1; dnsBad = 0; dnsAt = System.currentTimeMillis() - 40_000L   // ilkinji DNS barlagy birikenden ~20 sn soň
             Libv2ray.initCoreEnv(filesDir.absolutePath, "")
             val b = Builder().setSession(getString(R.string.app_name)).setMtu(1500)
                 .addAddress("172.19.0.1", 30).addRoute("0.0.0.0", 0)
@@ -349,6 +364,7 @@ class Svc : VpnService() {
             State.onAt = System.currentTimeMillis(); premAtOn = Lic.prem(this)
             State.set(State.ON); wasOn = true
             Msg.start(applicationContext); Msg.kick()
+            if (s.game) { val ps = port; Thread { exitCheck(s, ps) }.start() }   // 1.47.31: PUBG serweri hakykatdan Russiýamy (telefondan çykyş IP)
             runCatching { getSystemService(NotificationManager::class.java).notify(1, note(s)) }   // bildirim: «Birikdirildi · ülke»
             if (slow) Thread { if (System.currentTimeMillis() - Sub.okAt > 60_000) Sub.refresh(app) }.start()
         } catch (e: Throwable) {

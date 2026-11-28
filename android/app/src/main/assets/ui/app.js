@@ -1123,9 +1123,14 @@
           r.svvOn = s.svv === cur.id; r.svvX = () => { this.setState({ svv: null }); this._svT = setTimeout(() => this.svNext(), 4000); };
           r.svvList = Object.keys(vw).sort((a, b) => vw[b][1] - vw[a][1]).map((d) => Object.assign(ava(d), { name: nameOf(d) || vw[d][0] || '?', ago: this.hm(vw[d][1] * 1000) }));
           r.svvEmpty = !r.svvList.length;
+          r.svRpOn = V.d !== me1; r.svRpIn = s.svRpIn || '';   // 1.47.31: hekaýa jogap (Telegram ýaly) — eýesine hususy habar + bildiriş
+          r.svRpHold = () => clearTimeout(this._svT);
+          r.onSvRp = (e) => { clearTimeout(this._svT); this.setState({ svRpIn: String(e.target.value || '').slice(0, 600) }); };
+          r.svRpSend = () => { const t = (this.state.svRpIn || '').trim(); if (!t) return;
+            if (this._dmPush) this._dmPush(V.d, { x: t, rp: { i: V.d, n: r.svName, t: '📷 ' + tx.sv_rpQ } }); this.setState({ svRpIn: '' }); this.say('✉️ ' + tx.sv_rpOk); this._svT = setTimeout(() => this.svNext(), 2500); };
           r.svCanDel = V.d === me1 || !!(s.admOn && full);   // 1.39: doly hukukly adminler hem pozup bilýär
           r.svDel = () => this.confirm(tx.m_delQ, '🗑 ' + tx.m_del, () => { if (V.d === me1) this.gSendX({ dl: cur.id }); else { act('gdel', { id: cur.id }); gDel[cur.id] = true; } this.setState({ sv: null }); this.say('🗑 ' + tx.sty_del); });
-        } else { if (this._svKey) { clearTimeout(this._svT); this._svKey = null; } Object.assign(r, { svImg: '', svHasImg: false, svNoImg: true, svIsVid: false, svVid: '', svName: '', svAgo: '', svBars: [], svCanDel: false, svDel: null, svMine: false, svViews: '0', svvOn: false, svvList: [], svvEmpty: true, svvOpen: null, svvX: null }); }
+        } else { if (this._svKey) { clearTimeout(this._svT); this._svKey = null; } Object.assign(r, { svRpOn: false, svImg: '', svHasImg: false, svNoImg: true, svIsVid: false, svVid: '', svName: '', svAgo: '', svBars: [], svCanDel: false, svDel: null, svMine: false, svViews: '0', svvOn: false, svvList: [], svvEmpty: true, svvOpen: null, svvX: null }); }
         r.svX = () => this.setState({ sv: null }); r.svNext = this.svNext; r.svPrev = this.svPrev; }
       // 1.28: öz habaryň menýusy we üýtgedilýän habar
       { const M = s.ma; r.maOn = !!M; r.maT = M ? M.t : ''; r.maHasT = !!(M && M.t); r.maCanEd = !!(M && M.t && M.own);
@@ -1253,6 +1258,7 @@
       if (PP && PP.d === dev && !PP.sent && (j.x || j.ph || j.st) && Date.now() - (PP.at || 0) < 7 * 86400000) {
         NB.send(JSON.stringify({ k: 'preq', to: PP.d, plan: PP.plan, n: C.meName })); LS.set('preqPend', Object.assign({}, PP, { sent: true })); LS.set('preqTo', { d: PP.d, at: Date.now() }); }
     };
+    C._dmPush = dmPush;   // 1.47.31: hekaýa jogaby üçin
     C.dmSendT = () => { const t = (C.state.dmIn || '').trim(); if (!t || !C.state.dmPeer) return; if (C.state.dmEdit) { dmPush(C.state.dmPeer, { ed: C.state.dmEdit, x: t }); C.setState({ dmIn: '', dmEdit: null }); return; } dmPush(C.state.dmPeer, { x: t }); C.setState({ dmIn: '' }); };
     // 1.28: öz habaryňy basyp saklamak → göçür / üýtget / poz
     C.msgMenu = (id, kind, t, own) => C.setState({ ma: { id, kind, t: t || '', own: own !== false }, rxFor: null });
